@@ -32,8 +32,13 @@ full clean slate; `unwrap --dry-run` lists what would go and removes nothing.
 
 A native binary, so a workstation needs no JDK to run it:
 
-    ./mvnw package -Dnative -DskipTests      # needs JAVA_HOME on a GraalVM
+    sdk env                                  # .sdkmanrc names the GraalVM; sets JAVA_HOME
+    ./mvnw package -Dnative -DskipTests
     ./target/qits-cli-bootstrap-1.0.0-SNAPSHOT-runner bootstrap
+
+Without sdkman, name the GraalVM by hand instead of the first line:
+
+    JAVA_HOME=$HOME/.sdkman/candidates/java/25.0.2-graalce ./mvnw package -Dnative -DskipTests
 
 Copy that one file wherever it is wanted. The build takes about half a minute and the binary is
 roughly 45 MB.
@@ -55,7 +60,7 @@ are and shells the host's docker and git. Nothing needs the docker socket mounte
 What it needs to run: a reachable docker daemon with the compose plugin, `git`, `stty`, roughly
 4 GB of RAM free per native build it starts, and reach to quay.io, registry.access.redhat.com,
 docker.io and npm — a cold start cannot pull through the mirror it is starting. What it needs to
-build: a GraalVM 25 for the binary, any JDK 25 for the jar and the tests.
+build: the GraalVM `.sdkmanrc` names for the binary, any JDK 25 for the jar and the tests.
 
 Cost, honestly: every seed image and every pipeline run is a cold GraalVM native build with no
 maven cache. The first run is measured in hours. Reruns skip what exists —

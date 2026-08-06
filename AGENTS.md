@@ -51,10 +51,15 @@ README under "How it differs from the script". Add to that list rather than devi
 
 ## Build forms
 
-    ./mvnw package -Dnative -DskipTests   the binary people run; needs JAVA_HOME on a GraalVM
-    ./mvnw clean verify                   the uber-jar and the tests; the loop while working here
+    sdk env && ./mvnw package -Dnative -DskipTests   the binary people run
+    ./mvnw clean verify                              the uber-jar and the tests; the working loop
 
-The native profile carries every flag the native build needs, so that command takes no others.
+`.sdkmanrc` names the GraalVM (25.0.2-graalce, the platform's pin), so `sdk env` sets JAVA_HOME and
+nobody exports it by hand. Without sdkman, name it on the command line instead:
+`JAVA_HOME=$HOME/.sdkman/candidates/java/25.0.2-graalce ./mvnw package -Dnative -DskipTests`.
+
+The native profile carries every flag the native build needs, so that command takes no others. Run
+`clean verify` BEFORE a native package, never after: clean wipes the runner.
 
 ## Tests
 
