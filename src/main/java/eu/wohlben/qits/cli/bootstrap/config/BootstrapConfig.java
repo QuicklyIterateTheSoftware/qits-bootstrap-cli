@@ -1,5 +1,6 @@
 package eu.wohlben.qits.cli.bootstrap.config;
 
+import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithDefault;
 
@@ -81,7 +82,7 @@ public interface BootstrapConfig {
     @WithDefault("local-dev")
     String pushToken();
 
-    /** 1 = machine-token enforcement ON for ci, cd, artifacts and serviceregistry. */
+    /** 1 = machine-token enforcement ON for ci, platform-deployments, artifacts and idp. */
     @WithDefault("true")
     boolean machineAuth();
 
@@ -89,7 +90,7 @@ public interface BootstrapConfig {
     @WithDefault("dev")
     String envName();
 
-    /** The image used to reach services that publish no host port (qits-idp, qits-serviceregistry). */
+    /** The image used to reach a service that publishes no host port (qits-idp). */
     @WithDefault("curlimages/curl:latest")
     String curlImage();
 
@@ -110,6 +111,14 @@ public interface BootstrapConfig {
         return "environment/" + envName();
     }
 
+    /**
+     * The branch the platform plane deploys from — the {@code platform/*} convention mirroring
+     * {@code environment/*}. One scope, so one branch.
+     */
+    default String platformBranch() {
+        return PlatformModel.PLATFORM_BRANCH;
+    }
+
     /** The issuer string, and the address consumers dial. One value, on qits-net. */
     default String idpIssuer() {
         return "http://qits-idp:8080/idp";
@@ -125,8 +134,12 @@ public interface BootstrapConfig {
         return "http://127.0.0.1:" + port() + "/ci";
     }
 
-    /** qits-cd, as seen from the host: through the gateway's route table. */
-    default String cdUrl() {
-        return "http://127.0.0.1:" + port() + "/cd";
+    /**
+     * qits-platform-deployments, as seen from the host: through the gateway's route table. The
+     * segment is the service name without the {@code qits-} prefix, and every route of the service
+     * — its API, its health, its client — hangs off it.
+     */
+    default String platformDeploymentsUrl() {
+        return "http://127.0.0.1:" + port() + "/platform-deployments";
     }
 }

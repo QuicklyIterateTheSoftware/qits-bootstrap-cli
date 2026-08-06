@@ -12,7 +12,8 @@ import java.util.Map;
 /**
  * The platform's HTTP, spoken directly with java.net.http. Everything the bootstrap calls is
  * reachable from the host: qits-artifacts on its published registry port (the registry, the git
- * host and the artifacts API), qits-ci and qits-cd through the gateway's route table.
+ * host and the artifacts API), qits-ci and qits-platform-deployments through the gateway's
+ * route table.
  * <p>
  * Failures are answers, not exceptions: a call made while qits-gateway or qits-artifacts is mid
  * cutover is expected, and a poll that treats it as fatal would fail a boot that is working.

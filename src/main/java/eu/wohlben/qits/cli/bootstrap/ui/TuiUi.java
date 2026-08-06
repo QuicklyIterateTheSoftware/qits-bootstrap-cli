@@ -28,10 +28,10 @@ import java.util.concurrent.TimeUnit;
  *     … 6 earlier phases done
  *     ok  7/47 publish qits-eventstream 1.0.0 (41s)
  *     ok  8/47 build the seed image qits/ci:latest (11m02s)
- *   ▸  9/47 build the seed image qits/cd:latest        ⠹ 2m10s
+ *   ▸  9/45 build the seed image qits/idp:latest       ⠹ 2m10s
  *      waiting for the native build — 2m10s elapsed
  *   ─────────────────────────────────────────────────────────
- *   [INFO] Building qits-cd 2026.802.191319
+ *   [INFO] Building qits-idp 2026.802.191319
  *   ... the last N lines of the running command ...
  * </pre>
  *

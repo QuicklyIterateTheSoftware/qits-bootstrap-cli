@@ -10,13 +10,15 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Two services publish no host port and sit on no gateway route on purpose: qits-idp, because
- * {@code /idp/token} behind an unauthenticated gateway is a token vending machine, and
- * qits-serviceregistry, because cd proxies every read a human needs.
+ * qits-idp publishes no host port and sits on no gateway route on purpose: {@code /idp/token}
+ * behind an unauthenticated gateway is a token vending machine.
  * <p>
- * The script reached them by joining qits-net — it was a container. This CLI runs on the host, so
- * it borrows a network position instead: one throwaway curl container per call, on qits-net. That
+ * The script reached it by joining qits-net — it was a container. This CLI runs on the host, so it
+ * borrows a network position instead: one throwaway curl container per call, on qits-net. That
  * changes nothing about what the platform exposes, which is the property worth keeping.
+ * <p>
+ * It is also the fallback for a service that HAS a gateway route while the route is not up yet: a
+ * seed health poll asks the gateway first and the container's own alias second.
  * <p>
  * The image reference is direct (docker.io), like the other bootstrap-only images: a cold start
  * cannot pull through the mirror it is starting.

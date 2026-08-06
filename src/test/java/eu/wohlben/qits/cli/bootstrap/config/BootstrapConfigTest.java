@@ -69,8 +69,11 @@ class BootstrapConfigTest {
 
         assertThat(config.artifactsUrl()).isEqualTo("http://127.0.0.1:9091/artifacts");
         assertThat(config.ciUrl()).isEqualTo("http://127.0.0.1:9090/ci");
-        assertThat(config.cdUrl()).isEqualTo("http://127.0.0.1:9090/cd");
+        assertThat(config.platformDeploymentsUrl())
+                .isEqualTo("http://127.0.0.1:9090/platform-deployments");
         assertThat(config.envBranch()).isEqualTo("environment/preprod");
+        // One scope on the platform plane, so one branch, and it is not the tier's.
+        assertThat(config.platformBranch()).isEqualTo("platform/main");
         // The issuer is a value consumers validate, not an address this program dials.
         assertThat(config.idpIssuer()).isEqualTo("http://qits-idp:8080/idp");
     }

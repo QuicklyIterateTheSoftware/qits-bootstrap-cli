@@ -17,10 +17,16 @@ import java.util.Set;
 /**
  * Unwrap: take the platform off this machine again.
  * <p>
- * What is "qits-marked" is what the platform actually marks — cd's own container labels, the
- * compose project of the seed stack, the {@code qits-} name prefixes and the images published under
- * {@code qits/} or the local registry host. There is no single unified label to sweep by, and
+ * What is "qits-marked" is what the platform actually marks — the deployer's own container labels,
+ * the compose project of the seed stack, the {@code qits-} name prefixes and the images published
+ * under {@code qits/} or the local registry host. There is no single unified label to sweep by, and
  * inventing one here would only be true of the containers this program removed.
+ * <p>
+ * <b>Two label namespaces, both forever.</b> {@code qits.platform.deployments.*} is what
+ * qits-platform-deployments writes; {@code qits.cd.*} is what the retired qits-cd wrote. Unwrap is how a pre-v3 platform is
+ * taken off a machine, and a machine that has not been bootstrapped since the merge-back carries
+ * only the old labels — so the old patterns stay, and dropping them would leave containers running
+ * that this command reported as removed.
  * <p>
  * Volumes are the one guarded decision: they hold the platform's databases, the registry's blobs
  * and the git host's repositories. They stay unless {@code --with-volumes} says otherwise.
@@ -70,13 +76,15 @@ public class UnwrapPhases {
         });
     }
 
-    /** Everything qits-cd deployed, plus anything left of the compose project. */
+    /** Everything either deployer deployed, plus anything left of the compose project. */
     private Phase containers() {
         return new Phase("containers", "remove the platform's containers", ctx -> {
             Set<String> ids = new LinkedHashSet<>();
-            ids.addAll(byFilter("label=qits.cd.environment"));
-            ids.addAll(byFilter("label=qits.cd.app-name"));
-            ids.addAll(byFilter("label=qits.cd.target"));
+            for (String namespace : List.of("qits.platform.deployments", "qits.cd")) {
+                ids.addAll(byFilter("label=" + namespace + ".environment"));
+                ids.addAll(byFilter("label=" + namespace + ".app-name"));
+                ids.addAll(byFilter("label=" + namespace + ".target"));
+            }
             ids.addAll(byFilter("label=com.docker.compose.project=qits"));
             ids.addAll(namedQits());
             if (ids.isEmpty()) {
@@ -126,10 +134,12 @@ public class UnwrapPhases {
                     names.add(name);
                 }
             }
-            for (String line : boot.docker.run(Cmd.of(
-                    "docker", "network", "ls", "--filter", "label=qits.cd.network",
-                    "--format", "{{.Name}}"), null).captured()) {
-                names.add(line.trim());
+            for (String label : List.of("qits.platform.deployments.network", "qits.cd.network")) {
+                for (String line : boot.docker.run(Cmd.of(
+                        "docker", "network", "ls", "--filter", "label=" + label,
+                        "--format", "{{.Name}}"), null).captured()) {
+                    names.add(line.trim());
+                }
             }
             names.removeIf(String::isBlank);
             if (names.isEmpty()) {

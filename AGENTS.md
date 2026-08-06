@@ -14,9 +14,12 @@ port of it, and it has NOT yet done a proven cold bootstrap. Until it has:
 - The script is what a real bring-up should use when the two disagree.
 - Every behaviour change here has to be justified against that script's comments, which carry the
   operational knowledge — ordering constraints, the 409/PATCH reconcile, the dual-ref pushes with
-  `-o qits.no-ci`, the singleton and environment deploy refs, the mirror-prefix rewrite, the
+  `-o qits.no-ci`, the platform and environment deploy refs, the mirror-prefix rewrite, the
   release replays, the lost-event self-heal, the machine-token minting. Those comments were ported
   with the code on purpose. Do not thin them out.
+- The script predates the v3 merge-back, so on qits-cd and qits-serviceregistry it is **not** the
+  reference: one component, qits-platform-deployments, replaced both. Where it says cd or the
+  registry, read the deployer.
 - When the first cold bootstrap succeeds, say so here and in the README, and record what differed.
 
 Known deviations from the script, all consequences of running on the host, are listed in the
@@ -44,6 +47,9 @@ README under "How it differs from the script". Add to that list rather than devi
   time and the deadline. A silent wait is a bug in this repository, whatever it is waiting for.
 - **Phases are rerun-safe**, the same way the script's are: 409s tolerated, existing networks
   adopted, up-to-date pushes no-ops, publishes probed before they are made.
+- **`unwrap` keeps the retired platform's patterns forever.** Cleaning a pre-merge-back machine is
+  in scope, so the qits-cd labels and name prefixes stay beside the current ones. Adding a
+  namespace is how this changes; removing one is not.
 - **Failure stops the boot** (exit 2). A deployment that never landed is a warning (`ctx.warn`,
   exit 1) — the script's `overall=1` — because the applications behind it still deserve their turn.
 - **Secrets never reach the screen or the log.** Put them through `Cmd.mask`.

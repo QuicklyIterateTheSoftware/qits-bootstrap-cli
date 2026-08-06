@@ -19,11 +19,11 @@ public class RunState {
     public Path daemonBinary;
     /** The digest that is also the daemon's version coordinate. */
     public String daemonSha;
-    /** The docker socket's group id, which ci and cd join. */
+    /** The docker socket's group id, which ci and the deployer join. */
     public String dockerGid = "0";
     /** The idp's client secrets: given, kept or generated. */
     public final Map<String, String> secrets = new LinkedHashMap<>();
-    /** The environment row cd reconciled. */
+    /** The environment row the deployer reconciled. */
     public String environmentId;
     /** The temporary maven-over-HTTP container that breaks the first-boot dependency cycle. */
     public String authSeedContainer;

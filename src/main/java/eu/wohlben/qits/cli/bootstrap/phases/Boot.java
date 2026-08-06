@@ -1,7 +1,7 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
 import eu.wohlben.qits.cli.bootstrap.api.ArtifactsApi;
-import eu.wohlben.qits.cli.bootstrap.api.CdApi;
+import eu.wohlben.qits.cli.bootstrap.api.PdApi;
 import eu.wohlben.qits.cli.bootstrap.api.CiApi;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.IdpApi;
@@ -34,7 +34,7 @@ public class Boot {
     public final Http http = new Http();
     public final ArtifactsApi artifacts;
     public final CiApi ci;
-    public final CdApi cd;
+    public final PdApi pd;
     public final IdpApi idp;
     public final InNetworkHttp inNetwork;
 
@@ -46,7 +46,7 @@ public class Boot {
         this.git = new Git(runner);
         this.artifacts = new ArtifactsApi(http, config.artifactsUrl());
         this.ci = new CiApi(http, config.ciUrl());
-        this.cd = new CdApi(http, config.cdUrl());
+        this.pd = new PdApi(http, config.platformDeploymentsUrl());
         this.inNetwork = new InNetworkHttp(docker, config.curlImage(), NETWORK);
         this.idp = new IdpApi(inNetwork, config.idpIssuer());
     }

@@ -46,12 +46,14 @@ class BootstrapPlanTest {
         // publishes land before the ci image that consumes them is built.
         assertThat(ids).containsSubsequence("seed-image-artifacts", "seed-artifacts",
                 "publish-qits-eventstream", "publish-qits-auth-core", "publish-ui-components",
-                "publish-angular", "seed-image-ci", "seed-image-cd", "seed-image-idp",
-                "seed-image-serviceregistry", "ci-daemon");
-        // The daemon digest is written into the compose file and cd's run-args, so it is measured
-        // before either is generated.
+                "publish-angular", "seed-image-ci", "seed-image-platform-deployments",
+                "seed-image-idp", "ci-daemon");
+        // The daemon digest is written into the compose file and the deployer's run-args, so it is
+        // measured before either is generated.
         assertThat(ids).containsSubsequence("ci-daemon", "idp-secrets", "compose-file",
-                "cd-run-args", "seed-stack", "seed-health");
+                "pd-run-args", "seed-stack", "seed-health");
+        // The retired pair is built by nothing: one component replaced both.
+        assertThat(ids).doesNotContain("seed-image-cd", "seed-image-serviceregistry");
     }
 
     @Test
@@ -59,8 +61,10 @@ class BootstrapPlanTest {
         List<String> ids = ids(plan(Map.of()));
 
         assertThat(ids).containsSubsequence("environment", "deploy-observability", "deploy-idp",
-                "deploy-serviceregistry", "deploy-stt", "deploy-projects", "deploy-workspaces",
-                "deploy-events", "deploy-gateway", "deploy-artifacts", "deploy-ci", "deploy-cd");
+                "deploy-stt", "deploy-projects", "deploy-workspaces", "deploy-events",
+                "deploy-gateway", "deploy-artifacts", "deploy-ci",
+                "deploy-platform-deployments");
+        assertThat(ids).doesNotContain("deploy-cd", "deploy-serviceregistry");
     }
 
     @Test
@@ -81,6 +85,6 @@ class BootstrapPlanTest {
                 .doesNotContain("ci-daemon", "seed-image-ci", "auth-core-seed");
         assertThat(warm.size()).isLessThan(cold.size());
         // The pipeline half is untouched: a warm rerun still pushes and still waits.
-        assertThat(warm).contains("deploy-cd", "release-train-push", "summary");
+        assertThat(warm).contains("deploy-platform-deployments", "release-train-push", "summary");
     }
 }

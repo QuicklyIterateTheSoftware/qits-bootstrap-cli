@@ -487,25 +487,26 @@ public class SeedPhases {
     }
 
     /**
-     * cd's per-application run arguments, as a config file on a named volume: quarkus reads
-     * config/application.properties next to the binary, and a self-update's successor mounts the
-     * same volume — which is the whole reason this is a file and not compose env.
+     * The deployer's per-application run arguments, as a config file on a named volume: quarkus
+     * reads config/application.properties next to the binary, and a self-update's successor mounts
+     * the same volume — which is the whole reason this is a file and not compose env.
      */
-    public Phase cdRunArgs() {
-        return new Phase("cd-run-args", "write cd's run-args config volume", ctx -> {
-            boot.docker.ensureVolume("qits-cd-config", ctx::log);
+    public Phase pdRunArgs() {
+        return new Phase("pd-run-args", "write the deployer's run-args config volume", ctx -> {
+            boot.docker.ensureVolume("qits-platform-deployments-config", ctx::log);
             String properties = ComposeTemplate.runArgs(tokens());
             ProcessResult result = boot.docker.run(Cmd.of(List.of(
-                            "docker", "run", "--rm", "-i", "-v", "qits-cd-config:/cfg",
+                            "docker", "run", "--rm", "-i",
+                            "-v", "qits-platform-deployments-config:/cfg",
                             "--entrypoint", "sh", "alpine/git",
                             "-c", "cat > /cfg/application.properties "
                                     + "&& chown 1001:0 /cfg/application.properties"))
                     .stdin(properties)
                     .mask(boot.config.pushToken())
                     .mask(boot.state.secrets.getOrDefault("qits-ci", "")), ctx::log);
-            Boot.must(result, "writing cd's run-args failed");
-            ctx.log("  " + properties.lines().filter(l -> l.startsWith("qits.cd.run-args")).count()
-                    + " applications configured on the qits-cd-config volume");
+            Boot.must(result, "writing the deployer's run-args failed");
+            ctx.log("  " + properties.lines().filter(l -> l.startsWith("qits.platform.deployments.run-args")).count()
+                    + " applications configured on the qits-platform-deployments-config volume");
         });
     }
 
@@ -525,6 +526,7 @@ public class SeedPhases {
         values.put("MACHINE_CLIENT", String.valueOf(boot.config.machineAuth()));
         values.put("DOCKER_GID", boot.state.dockerGid);
         values.put("DAEMON_SHA", boot.state.daemonSha == null ? "" : boot.state.daemonSha);
+        values.put("IDP_AUDIENCES", PlatformModel.IDP_AUDIENCES);
         for (String client : PlatformModel.IDP_CLIENTS) {
             values.put("IDP_SECRET_" + PlatformModel.clientKey(client),
                     boot.state.secrets.getOrDefault(client, ""));

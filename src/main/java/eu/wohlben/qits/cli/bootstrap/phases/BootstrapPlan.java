@@ -43,9 +43,8 @@ public final class BootstrapPlan {
             phases.add(seed.uiComponentsPublish());
             phases.add(seed.angularPublish());
             phases.add(seed.seedImage("ci"));
-            phases.add(seed.seedImage("cd"));
+            phases.add(seed.seedImage("platform-deployments"));
             phases.add(seed.seedImage("idp"));
-            phases.add(seed.seedImage("serviceregistry"));
             for (String image : List.of("ci-base", "maven-base", "userflows-base", "node-base",
                     "node-docker-base")) {
                 phases.add(seed.stepImage(image));
@@ -55,7 +54,7 @@ public final class BootstrapPlan {
 
         phases.add(seed.idpSecrets());
         phases.add(seed.composeFile());
-        phases.add(seed.cdRunArgs());
+        phases.add(seed.pdRunArgs());
         phases.add(pipeline.seedStackUp());
         phases.add(pipeline.seedHealth());
         phases.add(pipeline.daemonPublish());

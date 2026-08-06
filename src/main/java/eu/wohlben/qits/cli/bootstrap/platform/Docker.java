@@ -41,7 +41,7 @@ public class Docker {
         return runner.run(Cmd.of("docker", "compose", "version"), null).ok();
     }
 
-    /** The docker socket's group. cd and ci join it rather than running as root. */
+    /** The docker socket's group. The deployer and ci join it rather than running as root. */
     public String socketGroupId() {
         Path socket = Path.of("/var/run/docker.sock");
         try {
@@ -60,7 +60,7 @@ public class Docker {
         return runner.run(Cmd.of("docker", "network", "inspect", name), null).ok();
     }
 
-    /** Creates the network unless it is there. cd and compose both adopt an existing one. */
+    /** Creates the network unless it is there. The deployer and compose both adopt an existing one. */
     public void ensureNetwork(String name, Consumer<String> out) {
         if (!networkExists(name)) {
             runner.run(Cmd.of("docker", "network", "create", name), out);
@@ -81,7 +81,7 @@ public class Docker {
         return lines(runner.run(Cmd.of("docker", "ps", "-a", "--format", "{{.Names}}"), null));
     }
 
-    /** "name image" per running container — how a singleton's live sha is read. */
+    /** "name image" per running container — how a platform service's live sha is read. */
     public List<String> runningNamesAndImages() {
         return lines(runner.run(Cmd.of("docker", "ps", "--format", "{{.Names}} {{.Image}}"), null));
     }
