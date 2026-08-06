@@ -19,6 +19,9 @@ step for step; what is new is that a four-hour cold start is no longer four hour
     │  … the running step's own output, live                                     │
     └────────────────────────────────────────────────────────────────────────────┘
 
+The same run is also served to a browser at `http://localhost:8480` while it runs — see
+[The browser view](#the-browser-view).
+
 ## Two modes
 
     qits bootstrap     # bring the platform up (the default when no mode is given)
@@ -98,6 +101,9 @@ the same names `qits-local-up.sh` read:
 | `QITS_ENV_NAME` | `dev` | the environment, deployed from `environment/<name>` |
 | `QITS_IDP_CLIENT_<ID>_SECRET` | generated | pin one idp client's secret instead of generating it |
 | `QITS_TUI` | `1` | 0 = plain output even on a terminal |
+| `QITS_WEB` | `1` | 0 = no browser view; the HTTP server never binds |
+| `QITS_WEB_PORT` | `8480` | the browser view's port |
+| `QITS_WEB_HOST` | `127.0.0.1` | what it binds; `0.0.0.0` puts it on the network |
 | `QITS_TAIL_LINES` | `2000` | lines of the running step kept for the body |
 | `QITS_LOG_FILE` | `qits-bootstrap-cli.log` | the full log of every command |
 | `QITS_CURL_IMAGE` | `curlimages/curl:latest` | how the CLI reaches qits-idp, which publishes no host port |
@@ -129,6 +135,47 @@ own clock.
 **A failure** stops the boot, paints the failing tail and the exit code, and says which phase it
 was. Exit codes: `0` all good, `1` something warned (a deployment that never landed — the script's
 `overall=1`), `2` a phase failed and stopped the run.
+
+## The browser view
+
+The same run, in a browser, from phase 1:
+
+    http://localhost:8480
+
+It is printed on the first line of every run. The page is the terminal display in HTML — the phase
+list with the finished ones dimmed, the running one with its elapsed time counting, the wait line,
+the pending count — and under it the running step's output, scrolling and sticky at the bottom
+unless you scroll up. It costs the boot nothing: the engine appends to a bounded state, and each
+connection reads what is new four times a second.
+
+It is not instead of the terminal display, it is beside it: **both** are fed every event, so a
+bootstrap started over ssh can be watched from a browser, on a phone, or by someone else. `unwrap`
+serves it too.
+
+Three doors, no assets, nothing to fetch — the page is one self-contained file, which matters for a
+program whose whole job is that the platform is not up yet:
+
+| | |
+| --- | --- |
+| `GET /` | the page |
+| `GET /events` | the run as it happens: one `snapshot` on connect, then `phase`, `status`, `line` and `done` as server-sent events, with a comment every 15s so nothing in the middle calls it dead |
+| `GET /state.json` | the same state in one answer, for `curl` |
+
+Knobs: `QITS_WEB_PORT` (default `8480` — 8080 is the gateway, 8081 is qits-artifacts, and 8090 is
+taken often enough to be a poor default), `QITS_WEB_HOST` (default `127.0.0.1`; `0.0.0.0` puts it
+on whatever network this machine is joined to), and `QITS_WEB=0`, which turns it off entirely — no
+server, no port.
+
+**A port already in use stops the CLI before the boot starts**, with Quarkus saying which port it
+was. That is the one thing to know: a second run while one is going needs `QITS_WEB_PORT=8481` or
+`QITS_WEB=0`.
+
+**Proxying it through qits-gateway** — for a bootstrap watched from another machine — is a possible
+follow-up, not something this does. It would need two things: the gateway container reaching the
+host, `--add-host=host.docker.internal:host-gateway` plus a route entry pointing at it, and the
+gateway's own handling of a streamed response checked first. The page already sends
+`X-Accel-Buffering: no` and asks for no transform; a proxy that buffers anyway turns a live view
+into a page that arrives when the run is over, so that is what to verify before wiring it.
 
 ## What it does, in order
 

@@ -29,7 +29,9 @@ README under "How it differs from the script". Add to that list rather than devi
 
     engine/     the phase state machine: Phase, PhaseEngine, PhaseContext, Waiter
     proc/       ProcessRunner and friends: streaming, bounded tails, the full log
-    ui/         Ui, the live TuiUi (JLine Display), the PlainUi fallback
+    ui/         Ui, the live TuiUi (JLine Display), the PlainUi fallback, the WebUi that keeps
+                the run's state for the browser, and the CompositeUi that feeds them all
+    web/        the browser view's three routes and the one page they serve
     config/     BootstrapConfig (@ConfigMapping, read from .env) and its command-line overrides
     platform/   what the platform is made of: PlatformModel, the generated compose and run-args,
                 the seed-Dockerfile rewrite, the recorded state, thin Docker and Git facades
@@ -52,7 +54,11 @@ README under "How it differs from the script". Add to that list rather than devi
   namespace is how this changes; removing one is not.
 - **Failure stops the boot** (exit 2). A deployment that never landed is a warning (`ctx.warn`,
   exit 1) — the script's `overall=1` — because the applications behind it still deserve their turn.
-- **Secrets never reach the screen or the log.** Put them through `Cmd.mask`.
+- **Secrets never reach the screen or the log.** Put them through `Cmd.mask`. The browser view
+  shows the same lines the screen does, so that one rule covers it too.
+- **The displays are fed, never asked.** A new display implements `Ui` and is added to the
+  `CompositeUi` in `UiFactory`; the engine knows nothing about how many there are. A display that
+  throws must not end the boot — the composite swallows a watcher's failure on purpose.
 - Parentless pom, Quarkus pinned to the platform's version.
 
 ## Build forms
@@ -92,3 +98,12 @@ passed yet.
   be built without naming the provider.
 - The output of a command is read on its own thread. Without that, the timeout is not a deadline: a
   command that prints nothing is waited on inside `readLine`, where no clock is looking.
+- **The browser view's port is bound before the boot starts, so a port in use ends the run** with
+  Quarkus' "Port 8480 seems to be in use". `QITS_WEB_PORT` moves it, `QITS_WEB=0` stops it binding
+  at all. Two runs at once need one of the two.
+- The browser view's page is a Java string constant, not a resource. A constant is in the native
+  image by construction; a resource has to be registered and can be right in the jar and missing in
+  the binary. Keep it that way.
+- The SSE stream is drained by a timer on the event loop, never written from the boot thread: a
+  Vert.x response belongs to the context that made it. `WebUi.close` waits up to 600 ms while
+  someone is connected so the last frames leave before the process does.
