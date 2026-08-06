@@ -69,6 +69,16 @@
             <artifactId>quarkus-jackson</artifactId>
         </dependency>
         <dependency>
+            <!-- The browser view's HTTP server. Command mode does not stop the server starting:
+                 it serves for as long as the boot runs and goes when the process does.
+
+                 The bare vertx-http extension, not a REST one — three routes registered on the
+                 Router are the whole surface, and a JAX-RS stack would only add to the native
+                 image. Off entirely with QITS_WEB=0, which stops it binding at all. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-vertx-http</artifactId>
+        </dependency>
+        <dependency>
             <!-- Only the terminal module, and only its `exec` provider.
 
                  The aggregate `jline` artifact carries every provider: jni, ffm, jansi and jna.

@@ -118,4 +118,19 @@ public class OverridableConfig implements BootstrapConfig {
     public int tailLines() {
         return base.tailLines();
     }
+
+    @Override
+    public boolean web() {
+        return base.web();
+    }
+
+    @Override
+    public int webPort() {
+        return base.webPort();
+    }
+
+    @Override
+    public String webHost() {
+        return base.webHost();
+    }
 }

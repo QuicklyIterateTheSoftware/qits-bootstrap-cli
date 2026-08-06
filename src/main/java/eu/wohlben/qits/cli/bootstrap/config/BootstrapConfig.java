@@ -106,6 +106,23 @@ public interface BootstrapConfig {
     @WithDefault("true")
     boolean tui();
 
+    /**
+     * 0 = no browser view at all: the HTTP server never binds a port.
+     * <p>
+     * These three are read twice — here, and in {@code application.properties}, which maps them
+     * onto {@code quarkus.http.*} so the server binds what they say. Change a default in both.
+     */
+    @WithDefault("true")
+    boolean web();
+
+    /** The browser view's port. Away from 8080 (gateway) and 8081 (artifacts) on purpose. */
+    @WithDefault("8480")
+    int webPort();
+
+    /** What the browser view binds. 0.0.0.0 puts it on the network this machine is joined to. */
+    @WithDefault("127.0.0.1")
+    String webHost();
+
     /** The branch the environment deploys from. main stays the integration trunk. */
     default String envBranch() {
         return "environment/" + envName();
