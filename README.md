@@ -103,7 +103,7 @@ the same names `qits-local-up.sh` read:
 | `QITS_TUI` | `1` | 0 = plain output even on a terminal |
 | `QITS_WEB` | `1` | 0 = no browser view; the HTTP server never binds |
 | `QITS_WEB_PORT` | `8480` | the browser view's port |
-| `QITS_WEB_HOST` | `127.0.0.1` | what it binds; `0.0.0.0` puts it on the network |
+| `QITS_WEB_HOST` | `0.0.0.0` | what it binds (WSL2 browsers need non-loopback); `127.0.0.1` keeps it off the LAN |
 | `QITS_TAIL_LINES` | `2000` | lines of the running step kept for the body |
 | `QITS_LOG_FILE` | `qits-bootstrap-cli.log` | the full log of every command |
 | `QITS_CURL_IMAGE` | `curlimages/curl:latest` | how the CLI reaches qits-idp, which publishes no host port |
@@ -162,9 +162,9 @@ program whose whole job is that the platform is not up yet:
 | `GET /state.json` | the same state in one answer, for `curl` |
 
 Knobs: `QITS_WEB_PORT` (default `8480` — 8080 is the gateway, 8081 is qits-artifacts, and 8090 is
-taken often enough to be a poor default), `QITS_WEB_HOST` (default `127.0.0.1`; `0.0.0.0` puts it
-on whatever network this machine is joined to), and `QITS_WEB=0`, which turns it off entirely — no
-server, no port.
+taken often enough to be a poor default), `QITS_WEB_HOST` (default `0.0.0.0` — on WSL2 the
+Windows-side browser cannot reliably reach a WSL-loopback bind; set `127.0.0.1` to keep the view
+off the LAN), and `QITS_WEB=0`, which turns it off entirely — no server, no port.
 
 **A port already in use stops the CLI before the boot starts**, with Quarkus saying which port it
 was. That is the one thing to know: a second run while one is going needs `QITS_WEB_PORT=8481` or

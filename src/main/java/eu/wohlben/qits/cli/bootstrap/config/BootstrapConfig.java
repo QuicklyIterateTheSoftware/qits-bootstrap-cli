@@ -119,8 +119,13 @@ public interface BootstrapConfig {
     @WithDefault("8480")
     int webPort();
 
-    /** What the browser view binds. 0.0.0.0 puts it on the network this machine is joined to. */
-    @WithDefault("127.0.0.1")
+    /**
+     * What the browser view binds. 0.0.0.0 by default: on WSL2 the browser lives on the Windows
+     * side, and the localhost relay does not reliably forward WSL-loopback binds — a loopback
+     * default made the view unreachable for exactly the person it exists for. Set 127.0.0.1 to
+     * keep it off the LAN.
+     */
+    @WithDefault("0.0.0.0")
     String webHost();
 
     /** The branch the environment deploys from. main stays the integration trunk. */
