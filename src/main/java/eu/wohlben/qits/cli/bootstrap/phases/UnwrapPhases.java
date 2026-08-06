@@ -1,5 +1,6 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
+import eu.wohlben.qits.cli.bootstrap.config.WrapperDir;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
@@ -53,8 +54,10 @@ public class UnwrapPhases {
     /** The seed stack, through compose, so its own bookkeeping goes with it. */
     private Phase composeDown() {
         return new Phase("compose-down", "stop the compose seed stack", ctx -> {
-            Path compose = Path.of(boot.config.wrapperDir()).toAbsolutePath().normalize()
-                    .resolve("docker-compose.qits.yml");
+            WrapperDir.Resolved wrapper =
+                    WrapperDir.resolve(boot.config.wrapperDir(), Path.of("").toAbsolutePath());
+            ctx.log("  wrapper: " + wrapper.path() + "  (" + wrapper.how() + ")");
+            Path compose = wrapper.path().resolve("docker-compose.qits.yml");
             if (!Files.isRegularFile(compose)) {
                 ctx.skip("no generated compose file at " + compose);
             }

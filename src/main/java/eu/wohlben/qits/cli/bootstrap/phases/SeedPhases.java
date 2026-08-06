@@ -1,6 +1,7 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
 import eu.wohlben.qits.cli.bootstrap.api.Http;
+import eu.wohlben.qits.cli.bootstrap.config.WrapperDir;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.platform.BootstrapState;
@@ -55,7 +56,14 @@ public class SeedPhases {
             boot.state.dockerGid = boot.docker.socketGroupId();
             ctx.log("  docker socket group: " + boot.state.dockerGid);
 
-            Path wrapper = Path.of(boot.config.wrapperDir()).toAbsolutePath().normalize();
+            // The CLI lives at cli/qits-cli-bootstrap inside the wrapper, so an unset
+            // QITS_WRAPPER_DIR is answered by walking up from here rather than by assuming the
+            // working directory IS the wrapper. Which of the two happened is printed: a run
+            // against the wrong checkout is otherwise indistinguishable from a run against the
+            // right one until the sources phase clones something surprising.
+            WrapperDir.Resolved resolved =
+                    WrapperDir.resolve(boot.config.wrapperDir(), Path.of("").toAbsolutePath());
+            Path wrapper = resolved.path();
             if (!Files.isDirectory(wrapper)) {
                 throw new IllegalStateException("no wrapper directory at " + wrapper);
             }
@@ -63,7 +71,7 @@ public class SeedPhases {
             boot.state.srcDir = Path.of(boot.config.src()).toAbsolutePath().normalize();
             boot.state.composeFile = wrapper.resolve("docker-compose.qits.yml");
             Files.createDirectories(boot.state.srcDir);
-            ctx.log("  wrapper: " + wrapper);
+            ctx.log("  wrapper: " + wrapper + "  (" + resolved.how() + ")");
             ctx.log("  sources: " + boot.state.srcDir);
 
             long local = PlatformModel.platformRepos().stream()

@@ -57,6 +57,11 @@ shells docker and git for a living.
 It runs **on the host**, not in a container: it reads the wrapper repository's checkouts where they
 are and shells the host's docker and git. Nothing needs the docker socket mounted anywhere.
 
+It also **finds the wrapper by itself**. This CLI lives at `cli/qits-cli-bootstrap` inside it, so
+running from anywhere in the checkout is enough: the working directory is walked upwards for the
+first `.gitmodules` naming the qits submodules. `QITS_WRAPPER_DIR` (or `--wrapper-dir`) still wins,
+and preflight prints which of the two happened.
+
 What it needs to run: a reachable docker daemon with the compose plugin, `git`, `stty`, roughly
 4 GB of RAM free per native build it starts, and reach to quay.io, registry.access.redhat.com,
 docker.io and npm — a cold start cannot pull through the mirror it is starting. What it needs to
@@ -74,7 +79,7 @@ the same names `qits-local-up.sh` read:
 
 | knob | default | what it is |
 | --- | --- | --- |
-| `QITS_WRAPPER_DIR` | `.` | the wrapper repository whose checkouts are the sources, and where the compose file and `.qits-bootstrap.env` land |
+| `QITS_WRAPPER_DIR` | detected | the wrapper repository whose checkouts are the sources, and where the compose file and `.qits-bootstrap.env` land — found by walking up when unset |
 | `QITS_SRC` | `.qits-bootstrap-src` | where those checkouts are cloned to |
 | `QITS_ORG_URL` | the GitHub org | fallback for a repository with no local checkout |
 | `QITS_PORT` | `8080` | the gateway's host port; the CLI reaches ci and cd through it |

@@ -4,6 +4,7 @@ import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithDefault;
 
 import java.time.Duration;
+import java.util.Optional;
 
 /**
  * The bootstrap's knobs, one for one with the ones {@code qits-local-up.sh} reads from the
@@ -25,9 +26,12 @@ public interface BootstrapConfig {
      * The wrapper repository (qits-qits or a worktree of it) whose submodule checkouts are the
      * sources. This is what replaces the script's {@code /out} mount: the CLI runs on the host and
      * reads the checkouts where they are.
+     * <p>
+     * Optional, and the absence is the ordinary case: this CLI lives at
+     * {@code cli/qits-cli-bootstrap} inside the wrapper, so {@link WrapperDir} finds it by walking
+     * up from the working directory. Set this to run from somewhere else entirely.
      */
-    @WithDefault(".")
-    String wrapperDir();
+    Optional<String> wrapperDir();
 
     /**
      * Where sources are cloned to. The clone is not ceremony: seed builds write a placeholder SPA

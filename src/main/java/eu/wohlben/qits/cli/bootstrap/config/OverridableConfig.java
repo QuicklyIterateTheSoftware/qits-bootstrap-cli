@@ -1,6 +1,7 @@
 package eu.wohlben.qits.cli.bootstrap.config;
 
 import java.time.Duration;
+import java.util.Optional;
 
 /**
  * The configured values with a few command-line answers on top. Only the knobs a person changes
@@ -34,8 +35,8 @@ public class OverridableConfig implements BootstrapConfig {
     }
 
     @Override
-    public String wrapperDir() {
-        return wrapperDir != null ? wrapperDir : base.wrapperDir();
+    public Optional<String> wrapperDir() {
+        return wrapperDir != null ? Optional.of(wrapperDir) : base.wrapperDir();
     }
 
     @Override

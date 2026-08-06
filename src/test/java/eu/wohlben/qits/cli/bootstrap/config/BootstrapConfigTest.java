@@ -31,6 +31,8 @@ class BootstrapConfigTest {
         assertThat(config.deployTimeout()).isEqualTo(Duration.ofHours(1));
         assertThat(config.envName()).isEqualTo("dev");
         assertThat(config.orgUrl()).isEqualTo("https://github.com/QuicklyIterateTheSoftware");
+        // No default: unset means "find it by walking up from here" (WrapperDir), not ".".
+        assertThat(config.wrapperDir()).isEmpty();
     }
 
     @Test
@@ -55,7 +57,7 @@ class BootstrapConfigTest {
         assertThat(config.skipBuild()).isTrue();
         assertThat(config.machineAuth()).isFalse();
         assertThat(config.deployTimeout()).isEqualTo(Duration.ofMinutes(10));
-        assertThat(config.wrapperDir()).isEqualTo("/home/me/code/qits-qits");
+        assertThat(config.wrapperDir()).contains("/home/me/code/qits-qits");
         assertThat(config.src()).isEqualTo("/tmp/sources");
         assertThat(config.envName()).isEqualTo("preprod");
     }
@@ -82,7 +84,7 @@ class BootstrapConfigTest {
                 .skipBuild(Boolean.TRUE)
                 .tui(Boolean.FALSE);
 
-        assertThat(effective.wrapperDir()).isEqualTo("/from/the/command/line");
+        assertThat(effective.wrapperDir()).contains("/from/the/command/line");
         assertThat(effective.skipBuild()).isTrue();
         assertThat(effective.tui()).isFalse();
         // Everything not answered on the command line still comes from the file.
@@ -95,7 +97,7 @@ class BootstrapConfigTest {
 
         BootstrapConfig effective = new OverridableConfig(base).wrapperDir(null).skipBuild(null);
 
-        assertThat(effective.wrapperDir()).isEqualTo("/from/env");
+        assertThat(effective.wrapperDir()).contains("/from/env");
         assertThat(effective.skipBuild()).isFalse();
         assertThat(effective.tui()).isTrue();
     }
