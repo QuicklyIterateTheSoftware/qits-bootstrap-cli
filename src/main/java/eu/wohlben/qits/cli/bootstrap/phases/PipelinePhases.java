@@ -102,11 +102,17 @@ public class PipelinePhases {
             // restart, every request 500s for a few seconds — reads included. Poll one read per
             // guarded service until it answers non-5xx, so every phase after this one inherits a
             // warm auth plane.
-            boot.awaitHealth(ctx, "qits-ci auth plane (runs listing)",
-                    () -> boot.http.get(boot.config.ciUrl() + "/api/runs/active", Map.of()));
-            boot.awaitHealth(ctx, "qits-platform-deployments auth plane (environments listing)",
-                    () -> boot.http.get(boot.config.platformDeploymentsUrl() + "/api/environments",
-                            Map.of()));
+            // WRITE-shaped probes, deliberately: a read does not initialize the OIDC tenant on
+            // every service, so a read-probe can pass while the first real write still hits the
+            // idp race and 500s. An unauthenticated POST answers 401 the moment the tenant is
+            // warm and 5xx before it — 4xx IS the healthy answer here.
+            boot.awaitHealth(ctx, "qits-ci auth plane (unauthenticated trigger -> 401)",
+                    () -> warmWhenRefused(boot.http.postJson(
+                            boot.config.ciUrl() + "/api/events/trigger", "{}", Map.of())));
+            boot.awaitHealth(ctx, "qits-platform-deployments auth plane (unauthenticated intake -> 401)",
+                    () -> warmWhenRefused(boot.http.postJson(
+                            boot.config.platformDeploymentsUrl() + "/api/events/build-succeeded",
+                            "{}", Map.of())));
         });
     }
 
@@ -552,6 +558,13 @@ public class PipelinePhases {
         } catch (Exception e) {
             throw new IllegalStateException("waiting for " + repo + " failed: " + e, e);
         }
+    }
+
+    /** A 4xx from an unauthenticated write means the guard answered: the auth plane is warm. */
+    private static Http.Response warmWhenRefused(Http.Response response) {
+        return response.status() >= 400 && response.status() < 500
+                ? new Http.Response(200, "auth plane warm (" + response.status() + ")")
+                : response;
     }
 
     /** Retried: the gateway this call travels through is itself one of the applications deployed. */
