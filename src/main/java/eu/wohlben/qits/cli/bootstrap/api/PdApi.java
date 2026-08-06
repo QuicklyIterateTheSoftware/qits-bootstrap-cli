@@ -46,17 +46,25 @@ public class PdApi {
         return Optional.empty();
     }
 
-    public Http.Response createEnvironment(String name, String branch, String network) {
+
+    /** The writes are machine-guarded on the merged deployer (cd's ancestors were not). */
+    private static Map<String, String> bearer(String token) {
+        return token == null || token.isBlank() ? Map.of()
+                : Map.of("Authorization", "Bearer " + token);
+    }
+    public Http.Response createEnvironment(String name, String branch, String network,
+            String token) {
         return http.postJson(base + "/api/environments",
-                Json.object("name", name, "branch", branch, "network", network), Map.of());
+                Json.object("name", name, "branch", branch, "network", network),
+                bearer(token));
     }
 
     /**
      * RECONCILE, NEVER RECREATE. A DELETE tears down every container of the environment, which
      * here is the whole platform, the deployer included.
      */
-    public Http.Response patchEnvironment(String id, String json) {
-        return http.patchJson(base + "/api/environments/" + id, json, Map.of());
+    public Http.Response patchEnvironment(String id, String json, String token) {
+        return http.patchJson(base + "/api/environments/" + id, json, bearer(token));
     }
 
     /** The newest deployment row of an application in an environment. */

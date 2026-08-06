@@ -288,7 +288,8 @@ public class PipelinePhases {
                     boot.state.environmentId = preRename.get();
                     ctx.log("  renamed the 'qits' environment to '" + name + "' on " + branch);
                 } else {
-                    Http.Response created = boot.pd.createEnvironment(name, branch, Boot.NETWORK);
+                    Http.Response created = boot.pd.createEnvironment(name, branch, Boot.NETWORK,
+                            boot.tokenOrNull("qits-ci", "qits-platform-deployments"));
                     if (created.status() == 201) {
                         boot.state.environmentId = Json.text(
                                 Json.parse(created.body()).path("environment"), "id");
@@ -312,7 +313,8 @@ public class PipelinePhases {
     }
 
     private void patch(String id, String json) {
-        Http.Response response = boot.pd.patchEnvironment(id, json);
+        Http.Response response = boot.pd.patchEnvironment(id, json,
+                boot.tokenOrNull("qits-ci", "qits-platform-deployments"));
         if (!response.ok()) {
             throw new IllegalStateException("environment " + id + " reconcile failed: "
                     + response.describe());
