@@ -1,0 +1,26 @@
+# Build outputs
+target/
+target-ide/
+
+# The run's own files: the local answers, the sources it clones, the log it writes
+.env
+.qits-bootstrap-src/
+.qits-bootstrap/
+qits-bootstrap-cli.log
+
+# IDE
+.vscode/
+.idea/
+.project
+.classpath
+.factorypath
+.settings/
+*.iml
+
+# OS
+.DS_Store
+
+# Home-relative caches a tool leaks into the repo root when run with the repo as its cwd
+.cache/
+.m2/
+.local/
