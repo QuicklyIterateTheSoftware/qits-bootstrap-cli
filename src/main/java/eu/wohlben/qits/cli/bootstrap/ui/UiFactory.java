@@ -9,6 +9,11 @@ import java.io.PrintStream;
 /**
  * Picks the display. A real terminal gets the live one; a pipe, a dumb TERM or
  * {@code QITS_TUI=0} gets plain lines, which is what a CI job wants anyway.
+ * <p>
+ * JLine is asked for its {@code exec} provider by name. Left to itself it prefers the providers
+ * that call libc — through JNI or the foreign function API — and neither survives being compiled
+ * into a native image. {@code exec} shells {@code /bin/stty}, which costs one process per terminal
+ * and behaves the same in both build forms.
  */
 public final class UiFactory {
 
@@ -20,7 +25,11 @@ public final class UiFactory {
             return new PlainUi(out);
         }
         try {
-            Terminal terminal = TerminalBuilder.builder().system(true).dumb(false).build();
+            Terminal terminal = TerminalBuilder.builder()
+                    .provider("exec")
+                    .system(true)
+                    .dumb(false)
+                    .build();
             if (terminal.getHeight() < 12 || terminal.getWidth() < 40) {
                 terminal.close();
                 return new PlainUi(out);

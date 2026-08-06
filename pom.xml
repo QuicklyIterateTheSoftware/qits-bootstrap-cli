@@ -12,9 +12,8 @@
          with no monorepo and no parent to inherit from. Versions that must stay in step with the
          platform (Quarkus, the JDK release) are duplicated here deliberately.
 
-         Plain JVM only. There is no native profile and no Quinoa: this is a terminal program that
-         shells docker and git, and a native image would buy a startup second that no bootstrap
-         measured in hours can notice. -->
+         Two build forms. `./mvnw package -Dnative -DskipTests` makes the binary people run;
+         `./mvnw clean verify` makes the uber-jar and is the loop while working on the CLI. -->
     <groupId>eu.wohlben.qits</groupId>
     <artifactId>qits-cli-bootstrap</artifactId>
     <version>1.0.0-SNAPSHOT</version>
@@ -31,8 +30,7 @@
         <quarkus.platform.version>3.34.6</quarkus.platform.version>
 
         <!-- The terminal library. In NO BOM, so it is pinned here. 3.30.x is the current 3.x
-             line; the aggregate `jline` artifact carries the terminal providers, which is what
-             lets TerminalBuilder find a real tty without extra dependencies. -->
+             line. `jline-terminal`, not the aggregate `jline`: see the dependency below. -->
         <jline.version>3.30.16</jline.version>
 
         <!-- Not in any BOM, so it is pinned here. -->
@@ -71,8 +69,21 @@
             <artifactId>quarkus-jackson</artifactId>
         </dependency>
         <dependency>
+            <!-- Only the terminal module, and only its `exec` provider.
+
+                 The aggregate `jline` artifact carries every provider: jni, ffm, jansi and jna.
+                 A native image has to analyse all of them, and two cannot be analysed on this
+                 GraalVM — jni's initializer unpacks libjlinenative.so at class-init time, and the
+                 ffm provider's downcall handles stop the analysis dead ("linkToNative"). The exec
+                 provider needs neither: it shells /bin/stty, which a program that already shells
+                 docker and git can certainly do.
+
+                 `jline-terminal` holds the exec and dumb providers, Display and AttributedString
+                 — everything this CLI uses — and ships the native-image reflection and resource
+                 config the exec provider needs. Its `jline-native` dependency comes along and is
+                 never called; the native profile keeps its initializer off the build. -->
             <groupId>org.jline</groupId>
-            <artifactId>jline</artifactId>
+            <artifactId>jline-terminal</artifactId>
             <version>${jline.version}</version>
         </dependency>
 
@@ -128,4 +139,28 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <!-- `./mvnw package -Dnative -DskipTests` builds the binary. Everything the native
+                 build needs is here, so that command needs no flags of its own. It needs a
+                 GraalVM on JAVA_HOME; the JDK that runs the tests does not have to be one. -->
+            <id>native</id>
+            <activation>
+                <property>
+                    <name>native</name>
+                </property>
+            </activation>
+            <properties>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+                <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
+
+                <!-- org.jline.nativ is jline-terminal's unused half: a JNI loader whose class
+                     initializer unpacks libjlinenative.so into /tmp. Run at build time it fails
+                     outright ("Content differs"), and this CLI's exec provider never calls it.
+                     Deferring the initializer to run time is enough to keep it out of the way. -->
+                <quarkus.native.additional-build-args>--initialize-at-run-time=org.jline.nativ</quarkus.native.additional-build-args>
+            </properties>
+        </profile>
+    </profiles>
 </project>
