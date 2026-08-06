@@ -464,8 +464,15 @@ public class SeedPhases {
 
     public Phase composeFile() {
         return new Phase("compose-file", "generate the seed compose file", ctx -> {
-            Files.writeString(boot.state.composeFile, ComposeTemplate.compose(tokens()),
-                    StandardCharsets.UTF_8);
+            try {
+                Files.writeString(boot.state.composeFile, ComposeTemplate.compose(tokens()),
+                        StandardCharsets.UTF_8);
+            } catch (java.nio.file.AccessDeniedException e) {
+                // Same migration relic as the state file: a pre-CLI bootstrap wrote it as root.
+                Files.deleteIfExists(boot.state.composeFile);
+                Files.writeString(boot.state.composeFile, ComposeTemplate.compose(tokens()),
+                        StandardCharsets.UTF_8);
+            }
             ctx.log("  " + boot.state.composeFile);
             ctx.note(boot.state.composeFile.getFileName().toString());
         });
