@@ -439,8 +439,22 @@ public class PipelinePhases {
         Optional<JsonNode> row = boot.pd.newestDeployment(boot.state.environmentId, repo);
         if (row.isPresent() && "ACTIVE".equals(Json.text(row.get(), "status"))
                 && sha.equals(Json.text(row.get(), "commitSha"))) {
-            ctx.log("  " + repo + " already ACTIVE at " + sha.substring(0, 7));
-            return true;
+            // The row alone is not proof: an unwrap keeps the deployer's volume, so rows survive
+            // containers. Trusting a row whose container is gone skipped the dev plane on a warm
+            // boot. The container named on the row must actually be running and not unhealthy.
+            String containerName = Json.text(row.get(), "containerName");
+            boolean running = !containerName.isBlank()
+                    && boot.docker.ps("{{.Names}}|{{.Status}}").stream()
+                            .map(line -> line.split("\\|"))
+                            .anyMatch(parts -> parts.length >= 2
+                                    && parts[0].equals(containerName)
+                                    && !parts[1].contains("unhealthy"));
+            if (running) {
+                ctx.log("  " + repo + " already ACTIVE at " + sha.substring(0, 7));
+                return true;
+            }
+            ctx.log("  " + repo + " has an ACTIVE row at " + sha.substring(0, 7)
+                    + " but its container is gone — redeploying");
         }
         return false;
     }
