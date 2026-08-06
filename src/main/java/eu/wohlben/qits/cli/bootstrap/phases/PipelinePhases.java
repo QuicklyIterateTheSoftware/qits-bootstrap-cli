@@ -352,8 +352,12 @@ public class PipelinePhases {
                     "HEAD:refs/heads/" + ref, boot.config.pushToken(), ctx::log);
             Boot.must(push, "push of " + repo + " to " + ref + " failed");
             String sha = boot.git.head(src);
-            boolean upToDate = push.tailText(50).toLowerCase(Locale.ROOT).contains("up to date")
-                    || push.out().toLowerCase(Locale.ROOT).contains("up to date");
+            // git spells it "Everything up-to-date" — hyphens. Matching only the spaced form
+            // meant no event was ever posted for an unchanged repo: environment applications were
+            // rescued by the stale-row replay, and a singleton hung for its whole timeout on an
+            // event nobody sent. Found by the tenth proving run. Match both spellings.
+            String pushText = (push.tailText(50) + "\n" + push.out()).toLowerCase(Locale.ROOT);
+            boolean upToDate = pushText.contains("up to date") || pushText.contains("up-to-date");
 
             if (alreadyLive(ctx, name, repo, sha)) {
                 ctx.note("already live at " + sha.substring(0, 7));
