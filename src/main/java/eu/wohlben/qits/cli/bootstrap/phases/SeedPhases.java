@@ -292,6 +292,7 @@ public class SeedPhases {
                     String script = """
                             set -eu
                             apk add --no-cache git >/dev/null
+                            git config --global --add safe.directory '*'
                             git clone -q /src /src-004
                             cd /src-004
                             git checkout -q 9f9648482d6fe025cc7af9bd4496afab417f33f9
@@ -323,6 +324,7 @@ public class SeedPhases {
                     String script = """
                             set -eu
                             apk add --no-cache git >/dev/null
+                            git config --global --add safe.directory '*'
                             git clone -q /src /src-001
                             cd /src-001
                             git checkout -q 3f405717f14f0942399340d84db4ef0ca3769101
