@@ -244,6 +244,26 @@ public class PipelinePhases {
     public Phase environment() {
         return new Phase("environment", "reconcile the '" + boot.config.envName()
                 + "' environment in qits-cd", ctx -> {
+            // The seed restart can recreate the registry moments before this call, and its OIDC
+            // tenant needs a not-yet-recovered idp — a seconds-wide window where even reads 500.
+            // Cutovers blip; callers retry. Bounded and visible, like every other wait here.
+            IllegalStateException last = null;
+            for (int attempt = 1; attempt <= 12; attempt++) {
+                try {
+                    reconcileEnvironmentOnce(ctx);
+                    return;
+                } catch (IllegalStateException e) {
+                    last = e;
+                    ctx.status("registry not answering yet (attempt " + attempt + "/12) — "
+                            + e.getMessage());
+                    Thread.sleep(5_000);
+                }
+            }
+            throw last;
+        });
+    }
+
+    private void reconcileEnvironmentOnce(PhaseContext ctx) throws Exception {
             String name = boot.config.envName();
             String branch = boot.config.envBranch();
             Optional<String> existing = boot.cd.environmentId(name);
@@ -281,7 +301,6 @@ public class PipelinePhases {
             ctx.log("  environment " + name + " (" + boot.state.environmentId + ") — branch "
                     + branch + ", network " + Boot.NETWORK);
             ctx.note(name + " on " + branch);
-        });
     }
 
     private void patch(String id, String json) {
