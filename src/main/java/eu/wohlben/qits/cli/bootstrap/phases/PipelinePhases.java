@@ -368,7 +368,13 @@ public class PipelinePhases {
                 ctx.log("  pushed " + sha.substring(0, 7)
                         + ", waiting for the deployment (a cold native build — be patient)");
             }
-            awaitDeployment(ctx, name, repo, sha, ref);
+            // The newest row BEFORE this phase acts is the baseline: a terminal row with that id
+            // is an earlier run's outcome at this sha, not this one's. Judging it fresh made a
+            // stale FAILED row fail the phase in zero seconds. Found by the ninth proving run.
+            String baselineRowId = PlatformModel.isSingleton(name) ? null
+                    : boot.cd.newestDeployment(boot.state.environmentId, repo)
+                            .map(r -> Json.text(r, "id")).orElse(null);
+            awaitDeployment(ctx, name, repo, sha, ref, baselineRowId);
         });
     }
 
@@ -445,7 +451,8 @@ public class PipelinePhases {
         return Optional.empty();
     }
 
-    private void awaitDeployment(PhaseContext ctx, String name, String repo, String sha, String ref) {
+    private void awaitDeployment(PhaseContext ctx, String name, String repo, String sha,
+            String ref, String baselineRowId) {
         boolean singleton = PlatformModel.isSingleton(name);
         long[] greenForMillis = {0};
         boolean[] replayed = {false};
@@ -471,7 +478,8 @@ public class PipelinePhases {
                             if (row.isPresent()) {
                                 String status = Json.text(row.get(), "status");
                                 deploymentState = status.isBlank() ? "PENDING" : status;
-                                if (sha.equals(Json.text(row.get(), "commitSha"))) {
+                                boolean stale = Json.text(row.get(), "id").equals(baselineRowId);
+                                if (sha.equals(Json.text(row.get(), "commitSha")) && !stale) {
                                     if ("ACTIVE".equals(status)) {
                                         return Waiter.Poll.done(
                                                 "ACTIVE " + Json.text(row.get(), "containerName"),
@@ -482,6 +490,10 @@ public class PipelinePhases {
                                         return Waiter.Poll.done("DEPLOY " + status + ": "
                                                 + (detail.isBlank() ? "no detail" : detail), status);
                                     }
+                                }
+                                if (stale) {
+                                    deploymentState = "stale " + deploymentState
+                                            + " row from an earlier run";
                                 }
                             }
                         }
@@ -496,7 +508,13 @@ public class PipelinePhases {
                         // which alone can outlast a minute.
                         if ("SUCCESS".equals(runStatus) && !singleton) {
                             greenForMillis[0] += interval;
-                            if (greenForMillis[0] >= 60_000 && !replayed[0]) {
+                            // A stale terminal row means cd consumed this sha's event long ago and
+                            // will never act unprompted — replay at once instead of after a minute.
+                            boolean staleTerminal = boot.cd.newestDeployment(
+                                            boot.state.environmentId, repo)
+                                    .map(r -> Json.text(r, "id").equals(baselineRowId))
+                                    .orElse(false);
+                            if ((greenForMillis[0] >= 60_000 || staleTerminal) && !replayed[0]) {
                                 ctx.warn(repo + " run is green but no deployment appeared — "
                                         + "replaying the build event");
                                 postBuildEvent(ctx, repo, sha, ref);
