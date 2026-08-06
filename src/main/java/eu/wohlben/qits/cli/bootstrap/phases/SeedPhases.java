@@ -12,6 +12,7 @@ import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 import org.eclipse.microprofile.config.ConfigProvider;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -270,10 +271,28 @@ public class SeedPhases {
 
     // --- the publishes the seed builds need -------------------------------------------------------
 
+    /** The version the repo's root pom would publish: its first version element outside parent. */
+    static String checkedOutVersion(Path repoDir) {
+        try {
+            String pom = Files.readString(repoDir.resolve("pom.xml"), StandardCharsets.UTF_8);
+            String withoutParent = pom.replaceAll("(?s)<parent>.*?</parent>", "");
+            java.util.regex.Matcher m =
+                    java.util.regex.Pattern.compile("<version>([^<$]+)</version>").matcher(withoutParent);
+            return m.find() ? m.group(1).trim() : null;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
     public Phase mavenPublish(String repoName, String artifactId, String title) {
         return new Phase("publish-" + artifactId, title, ctx -> {
-            if (boot.artifacts.mavenPublished("eu/wohlben/qits", artifactId, "1.0.0", "jar")) {
-                ctx.skip(artifactId + " 1.0.0 already published");
+            // The checkouts publish their real calver, and the registry refuses to overwrite a
+            // released version (403) — so probe the version this checkout would publish, parsed
+            // from its root pom, before starting a container. Found by the third proving run.
+            String version = checkedOutVersion(boot.state.repoDir(repoName));
+            if (version != null
+                    && boot.artifacts.mavenPublished("eu/wohlben/qits", artifactId, version, "jar")) {
+                ctx.skip(artifactId + " " + version + " already published");
             }
             String cid = create(ctx, List.of(
                     "docker", "create", "--network", Boot.NETWORK, "--user", "root",

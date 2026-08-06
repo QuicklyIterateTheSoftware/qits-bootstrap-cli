@@ -37,9 +37,9 @@ public final class BootstrapPlan {
             phases.add(seed.seedImage("artifacts"));
             phases.add(seed.seedArtifactsStart());
             phases.add(seed.mavenPublish("eventstream", "qits-eventstream",
-                    "publish qits-eventstream 1.0.0 into seed artifacts"));
+                    "publish qits-eventstream into seed artifacts"));
             phases.add(seed.mavenPublish("integrations-quarkus", "qits-auth-core",
-                    "publish qits-auth-core 1.0.0 into seed artifacts"));
+                    "publish qits-auth-core into seed artifacts"));
             phases.add(seed.uiComponentsPublish());
             phases.add(seed.angularPublish());
             phases.add(seed.seedImage("ci"));
