@@ -148,9 +148,12 @@ public class SeedPhases {
     public Phase authCoreSeed() {
         return new Phase("auth-core-seed", "seed qits-auth-core 1.0.0 for the first artifacts build",
                 ctx -> {
-                    String pom = boot.config.artifactsUrl()
-                            + "/maven/maven/eu/wohlben/qits/qits-auth-core/1.0.0/qits-auth-core-1.0.0.pom";
-                    if (boot.http.get(pom, Map.of()).ok()) {
+                    // Version-agnostic on purpose: the checkouts publish their real calver, so a
+                    // pinned-version probe never matches and a rerun collides with whoever holds
+                    // the registry port. Metadata present = auth-core is served, whatever version.
+                    String metadata = boot.config.artifactsUrl()
+                            + "/maven/maven/eu/wohlben/qits/qits-auth-core/maven-metadata.xml";
+                    if (boot.http.get(metadata, Map.of()).ok()) {
                         ctx.skip("already served on port " + boot.config.registryPort());
                     }
                     boot.docker.ensureVolume("qits-maven-seed", ctx::log);
