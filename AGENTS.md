@@ -47,7 +47,14 @@ README under "How it differs from the script". Add to that list rather than devi
 - **Failure stops the boot** (exit 2). A deployment that never landed is a warning (`ctx.warn`,
   exit 1) — the script's `overall=1` — because the applications behind it still deserve their turn.
 - **Secrets never reach the screen or the log.** Put them through `Cmd.mask`.
-- Parentless pom, Quarkus pinned to the platform's version, plain JVM, no native profile.
+- Parentless pom, Quarkus pinned to the platform's version.
+
+## Build forms
+
+    ./mvnw package -Dnative -DskipTests   the binary people run; needs JAVA_HOME on a GraalVM
+    ./mvnw clean verify                   the uber-jar and the tests; the loop while working here
+
+The native profile carries every flag the native build needs, so that command takes no others.
 
 ## Tests
 
@@ -67,5 +74,10 @@ passed yet.
   screen. Anything worth saying goes through the display or the run log.
 - JLine's `Display` arithmetic breaks on wrapped lines, so every line is cut to the terminal width
   and subprocess ANSI escapes are stripped (`proc/Ansi`).
+- **JLine is pinned to its `exec` provider** in `UiFactory`, and the dependency is `jline-terminal`
+  rather than the aggregate `jline`. The providers that call libc cannot be compiled into a native
+  image on this GraalVM: the jni one unpacks a `.so` from its class initializer, and the ffm one
+  stops the analysis at `linkToNative`. Do not widen the dependency back, and do not let a Terminal
+  be built without naming the provider.
 - The output of a command is read on its own thread. Without that, the timeout is not a deadline: a
   command that prints nothing is waited on inside `readLine`, where no clock is looking.

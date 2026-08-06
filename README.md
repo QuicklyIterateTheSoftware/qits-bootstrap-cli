@@ -30,19 +30,32 @@ full clean slate; `unwrap --dry-run` lists what would go and removes nothing.
 
 ## Running it
 
+A native binary, so a workstation needs no JDK to run it:
+
+    ./mvnw package -Dnative -DskipTests      # needs JAVA_HOME on a GraalVM
+    ./target/qits-cli-bootstrap-1.0.0-SNAPSHOT-runner bootstrap
+
+Copy that one file wherever it is wanted. The build takes about half a minute and the binary is
+roughly 45 MB.
+
+While working on the CLI itself, the jar is the faster loop:
+
     ./mvnw clean verify
-    java -jar target/qits-cli-bootstrap-1.0.0-SNAPSHOT-runner.jar bootstrap
-
-or, while working on the CLI itself:
-
+    java -jar target/qits-cli-bootstrap-1.0.0-SNAPSHOT-runner.jar unwrap --dry-run
     ./mvnw quarkus:dev -Dquarkus.args="unwrap --dry-run"
+
+Both forms behave the same, live display included: JLine is pinned to its `exec` terminal provider,
+which shells `/bin/stty` rather than calling libc, because the providers that call libc do not
+survive being compiled into a native image. One process per terminal, on a program that already
+shells docker and git for a living.
 
 It runs **on the host**, not in a container: it reads the wrapper repository's checkouts where they
 are and shells the host's docker and git. Nothing needs the docker socket mounted anywhere.
 
-What it needs: a reachable docker daemon with the compose plugin, `git`, a JDK 25, roughly 4 GB of
-RAM free per native build, and reach to quay.io, registry.access.redhat.com, docker.io and npm — a
-cold start cannot pull through the mirror it is starting.
+What it needs to run: a reachable docker daemon with the compose plugin, `git`, `stty`, roughly
+4 GB of RAM free per native build it starts, and reach to quay.io, registry.access.redhat.com,
+docker.io and npm — a cold start cannot pull through the mirror it is starting. What it needs to
+build: a GraalVM 25 for the binary, any JDK 25 for the jar and the tests.
 
 Cost, honestly: every seed image and every pipeline run is a cold GraalVM native build with no
 maven cache. The first run is measured in hours. Reruns skip what exists —
