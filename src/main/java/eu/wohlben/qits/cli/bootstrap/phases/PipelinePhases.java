@@ -99,6 +99,15 @@ public class PipelinePhases {
                 return viaGateway.ok() ? viaGateway
                         : boot.inNetwork.get("http://qits-cd:8080/cd/q/health/ready");
             });
+            // Health is not enough with the machine gate on: a freshly (re)created service
+            // initializes its OIDC tenant lazily on the FIRST request, and if that races idp's own
+            // restart, every request 500s for a few seconds — reads included. Poll one read per
+            // guarded service until it answers non-5xx, so every phase after this one inherits a
+            // warm auth plane. (cd's environments listing also proves the cd→registry proxy.)
+            boot.awaitHealth(ctx, "qits-ci auth plane (runs listing)",
+                    () -> boot.http.get(boot.config.ciUrl() + "/api/runs/active", Map.of()));
+            boot.awaitHealth(ctx, "qits-cd auth plane (environments via the registry)",
+                    () -> boot.http.get(boot.config.cdUrl() + "/api/environments", Map.of()));
         });
     }
 
