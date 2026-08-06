@@ -82,7 +82,14 @@ public class BootstrapState {
             text.append("IDP_SECRET_").append(PlatformModel.clientKey(client)).append('=')
                     .append(value).append('\n');
         }
-        Files.writeString(file, text.toString(), StandardCharsets.UTF_8);
+        try {
+            Files.writeString(file, text.toString(), StandardCharsets.UTF_8);
+        } catch (java.nio.file.AccessDeniedException e) {
+            // A pre-CLI bootstrap wrote this file as root from inside its container. The directory
+            // is the user's, so replace the file instead of failing the run on a migration relic.
+            Files.deleteIfExists(file);
+            Files.writeString(file, text.toString(), StandardCharsets.UTF_8);
+        }
         values.put("DAEMON_SHA", daemonSha == null ? "" : daemonSha);
         secrets.forEach((client, value) ->
                 values.put("IDP_SECRET_" + PlatformModel.clientKey(client), value));
