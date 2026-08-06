@@ -316,6 +316,12 @@ public class SeedPhases {
      * The shared UI package, twice: the pinned version the checked-out lockfiles install, then
      * whatever the working tree is at now. Publish-if-absent makes both idempotent.
      */
+    /**
+     * Seed publishes are PINNED COMMITS ONLY. A working-tree publish under an already-released
+     * version puts different bytes behind a version every lockfile pins by hash — EINTEGRITY in
+     * every SPA build. The release replays own the released versions; unreleased work reaches the
+     * registry through a release, never through the seed. Found by the v3 proving run.
+     */
     public Phase uiComponentsPublish() {
         return new Phase("publish-ui-components", "publish the shared UI package into seed artifacts",
                 ctx -> {
@@ -337,12 +343,6 @@ public class SeedPhases {
                             cd dist/qits-spa-ui-components
                             npm view @qits/ui-components@0.0.4 version >/dev/null 2>&1 || npm publish
 
-                            cd /src
-                            pnpm install --frozen-lockfile
-                            pnpm build
-                            cd dist/qits-spa-ui-components
-                            version=$(node -p "require(\\"./package.json\\").version")
-                            npm view "@qits/ui-components@$version" version >/dev/null 2>&1 || npm publish
                             """;
                     nodePublish(ctx, "spa-ui-components", script, "UI package publish failed");
                 });
@@ -369,11 +369,6 @@ public class SeedPhases {
                             version=$(node -p "require(\\"./dist/qits-integrations-angular/package.json\\").version")
                             npm view "@qits/angular@$version" version >/dev/null 2>&1 || npm publish ./dist/qits-integrations-angular
 
-                            cd /src
-                            pnpm install --frozen-lockfile
-                            pnpm build
-                            version=$(node -p "require(\\"./dist/qits-integrations-angular/package.json\\").version")
-                            npm view "@qits/angular@$version" version >/dev/null 2>&1 || npm publish ./dist/qits-integrations-angular
                             """;
                     nodePublish(ctx, "integrations-angular", script,
                             "Angular integration publish failed");
