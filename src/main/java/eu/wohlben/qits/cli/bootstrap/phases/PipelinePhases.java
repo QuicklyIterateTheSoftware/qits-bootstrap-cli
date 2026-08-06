@@ -452,8 +452,11 @@ public class PipelinePhases {
      */
     private Optional<String> platformContainer(String name, String sha) {
         String prefix = PlatformModel.pdNamePrefix(name, boot.config.envName());
-        for (String line : boot.docker.ps("{{.Names}}\t{{.Image}}\t{{.Status}}")) {
-            String[] parts = line.split("\t");
+        // A pipe separator, deliberately: the process pipeline strips control characters — tabs
+        // become spaces before a line reaches this loop (Ansi.clean), so a tab-separated format
+        // parses as one field and no container ever matches. Found by the v3 proving run.
+        for (String line : boot.docker.ps("{{.Names}}|{{.Image}}|{{.Status}}")) {
+            String[] parts = line.split("\\|");
             if (parts.length < 3 || !parts[0].startsWith(prefix)) {
                 continue;
             }
