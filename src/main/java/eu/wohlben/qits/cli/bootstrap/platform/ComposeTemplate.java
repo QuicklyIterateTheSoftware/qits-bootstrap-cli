@@ -173,6 +173,7 @@ public final class ComposeTemplate {
                   QITS_GATEWAY_PROXY_HOSTS_WORKSPACES: qits-workspaces
                   QITS_GATEWAY_PROXY_HOSTS_STT: qits-stt
                   QITS_GATEWAY_PROXY_HOSTS_EVENTS: qits-events
+                  QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DOCS: qits-platform-docs
                 networks: [qits-net]
                 # No depends_on: on later runs compose starts only the services the deployer does not already
                 # manage, and a dependency would resurrect a compose sibling next to its deployed replacement.
@@ -268,7 +269,7 @@ public final class ComposeTemplate {
             # needs beyond its image. Whitespace-split, appended verbatim between the deployer's flags and the
             # image. The namespace was qits.cd.run-args before the merge-back; a deployment carrying the old
             # spelling configures nothing.
-            qits.platform.deployments.run-args.qits-gateway=-p ${PORT}:8080 -e QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=qits-artifacts -e QITS_GATEWAY_PROXY_HOSTS_CI=qits-ci -e QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS=qits-platform-deployments -e QITS_GATEWAY_PROXY_HOSTS_OBSERVABILITY=qits-observability -e QITS_GATEWAY_PROXY_HOSTS_PROJECTS=qits-projects -e QITS_GATEWAY_PROXY_HOSTS_WORKSPACES=qits-workspaces -e QITS_GATEWAY_PROXY_HOSTS_STT=qits-stt -e QITS_GATEWAY_PROXY_HOSTS_EVENTS=qits-events
+            qits.platform.deployments.run-args.qits-gateway=-p ${PORT}:8080 -e QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=qits-artifacts -e QITS_GATEWAY_PROXY_HOSTS_CI=qits-ci -e QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS=qits-platform-deployments -e QITS_GATEWAY_PROXY_HOSTS_OBSERVABILITY=qits-observability -e QITS_GATEWAY_PROXY_HOSTS_PROJECTS=qits-projects -e QITS_GATEWAY_PROXY_HOSTS_WORKSPACES=qits-workspaces -e QITS_GATEWAY_PROXY_HOSTS_STT=qits-stt -e QITS_GATEWAY_PROXY_HOSTS_EVENTS=qits-events -e QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DOCS=qits-platform-docs
             # The push token rides here so it is already in place when the default branch's protection is
             # switched on: turning protection on is then one property on the artifacts side, not a two-part
             # change that could leave a running platform locked out of its own bootstrap.
@@ -317,6 +318,15 @@ public final class ComposeTemplate {
             # container->platform URL 404s. qits-gateway, not qits-workspaces or qits-artifacts: it is the one
             # name on qits-net that fronts the WHOLE platform.
             qits.platform.deployments.run-args.qits-workspaces=-v qits-workspaces-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QUARKUS_DATASOURCE_WORKSPACES_JDBC_URL=jdbc:h2:file:/data/workspaces/h2/workspaces -e QUARKUS_DATASOURCE_EVENTSTREAM_JDBC_URL=jdbc:h2:file:/data/eventstream/h2/eventstream -e QITS_PROJECTS_URL=http://qits-projects:8080 -e QITS_ARTIFACTS_URL=http://qits-artifacts:8080 -e QITS_EVENTS_URL=http://qits-events:8080 -e QITS_WORKSPACE_GIT_HOST=qits-gateway
+            # The reading surface over qits-artifacts' docs repository. ONE line and no volume,
+            # because this service stores nothing — `latest` is a query over the store's rows rather
+            # than a pointer it holds, so a redeploy loses nothing and there is no datasource URL to
+            # spell. The address equals the service's own shipped default and is spelled anyway, for
+            # the reason qits-projects' QITS_ARTIFACTS_URL is: an address a deployment inherits
+            # silently is an address nobody knows to change. It is the SAME value qits-ci injects
+            # into a publishing step as $QITS_DOCS_URL, so the publisher and the reader cannot
+            # disagree about where documentation lives.
+            qits.platform.deployments.run-args.qits-platform-docs=-e QITS_PLATFORM_DOCS_ARTIFACTS_URL=http://qits-artifacts:8080/artifacts/docs/docs
             qits.platform.deployments.run-args.qits-events=-v qits-events-data:/data -e QUARKUS_DATASOURCE_EVENTS_JDBC_URL=jdbc:h2:file:/data/events/h2/events
             """;
 }

@@ -46,7 +46,10 @@ class PlatformModelTest {
     void theThreeEnvironmentServicesAreTheOnesNotOnThePlatformPlane() {
         assertThat(PlatformModel.PLATFORM_SERVICES).containsExactlyInAnyOrder(
                 "platform-deployments", "idp", "artifacts", "ci", "events", "projects",
-                "observability");
+                "observability", "platform-docs");
+        // Still three, and the count is the assertion: platform-docs joined the PLATFORM plane
+        // rather than this list, because the docs repository it reads is one store for the whole
+        // platform and a reader per environment would be two front doors onto it.
         assertThat(PlatformModel.DEPLOYABLES)
                 .filteredOn(name -> !PlatformModel.isPlatformService(name))
                 .containsExactlyInAnyOrder("gateway", "workspaces", "stt");

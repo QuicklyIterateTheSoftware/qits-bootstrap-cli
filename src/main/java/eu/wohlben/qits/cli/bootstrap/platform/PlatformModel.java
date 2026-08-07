@@ -31,7 +31,7 @@ public final class PlatformModel {
      * repos last, platform-deployments at the very end — its deployment is the self-update handoff.
      */
     public static final List<String> DEPLOYABLES = List.of(
-            "observability", "idp", "stt", "projects", "workspaces", "events",
+            "observability", "idp", "stt", "projects", "workspaces", "events", "platform-docs",
             "gateway", "artifacts", "ci", "platform-deployments");
 
     /**
@@ -44,10 +44,15 @@ public final class PlatformModel {
      * The word used to be 'singleton'. It named a cardinality where what is being said is which
      * plane a service lives on, and qits-platform-deployments — cross-environment from its first
      * commit — is why the rename happened.
+     * <p>
+     * qits-platform-docs is here because the thing it reads is: there is one docs repository in
+     * qits-artifacts, holding what the whole platform has published, so a second reader per
+     * environment would be two front doors onto one store. It holds no state of its own, which is
+     * what makes that a free choice rather than a constraint.
      */
     public static final List<String> PLATFORM_SERVICES = List.of(
             "platform-deployments", "idp", "artifacts", "ci", "events", "projects",
-            "observability");
+            "observability", "platform-docs");
 
     /**
      * Repositories that need a repository on the platform git host and a main push, but are not
@@ -65,6 +70,7 @@ public final class PlatformModel {
      */
     public static final List<String> SEEDED_REPOS = List.of(
             "oci", "ci-daemon", "eventstream", "spa-ui-components", "userflows",
+            "platform-spa-docs",
             "integrations-angular", "integrations-quarkus", "spa-home", "spa-projects",
             "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events", "spa-ci",
             "spa-cd", "cd", "serviceregistry");
