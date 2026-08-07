@@ -23,6 +23,14 @@ import java.util.concurrent.TimeoutException;
 /** From "the seed is up" to "the platform deployed itself". */
 public class PipelinePhases {
 
+    /**
+     * What the auth-plane probe presents. Deliberately not a real token: a valid one would prove
+     * the idp can mint, which is a different question. This asks only whether the service can reach
+     * its issuer well enough to REFUSE something — which is the step that initializes the tenant.
+     */
+    private static final Map<String, String> PROBE_BEARER =
+            Map.of("Authorization", "Bearer qits-bootstrap-auth-plane-probe");
+
     private final Boot boot;
 
     public PipelinePhases(Boot boot) {
@@ -104,15 +112,21 @@ public class PipelinePhases {
             // warm auth plane.
             // WRITE-shaped probes, deliberately: a read does not initialize the OIDC tenant on
             // every service, so a read-probe can pass while the first real write still hits the
-            // idp race and 500s. An unauthenticated POST answers 401 the moment the tenant is
-            // warm and 5xx before it — 4xx IS the healthy answer here.
-            boot.awaitHealth(ctx, "qits-ci auth plane (unauthenticated trigger -> 401)",
-                    () -> warmWhenRefused(boot.http.postJson(
-                            boot.config.ciUrl() + "/api/events/trigger", "{}", Map.of())));
-            boot.awaitHealth(ctx, "qits-platform-deployments auth plane (unauthenticated intake -> 401)",
-                    () -> warmWhenRefused(boot.http.postJson(
+            // idp race and 500s.
+            //
+            // The probe CARRIES A BEARER, and that is the whole point of it. Nothing initializes
+            // the tenant until a request actually presents a credential to validate — so an
+            // unauthenticated body is rejected at validation (400) by a service whose auth plane is
+            // still stone cold, and the probe passes having proved nothing. A junk bearer answers
+            // 401 once the tenant is warm and 5xx before it. Measured, not assumed: `{}` with no
+            // header answers 400 on both services, `{}` with one answers 401.
+            boot.awaitHealth(ctx, "qits-ci auth plane (junk bearer -> 401)",
+                    () -> warmWhenGuardRefused(boot.http.postJson(
+                            boot.config.ciUrl() + "/api/events/trigger", "{}", PROBE_BEARER)));
+            boot.awaitHealth(ctx, "qits-platform-deployments auth plane (junk bearer -> 401)",
+                    () -> warmWhenGuardRefused(boot.http.postJson(
                             boot.config.platformDeploymentsUrl() + "/api/events/build-succeeded",
-                            "{}", Map.of())));
+                            "{}", PROBE_BEARER)));
         });
     }
 
@@ -350,6 +364,24 @@ public class PipelinePhases {
             // has to exist and point here, so it goes up with -o qits.no-ci: a second post-receive
             // for the same sha would queue a second cold native build of an image the first one
             // already published.
+            // BEFORE the pushes, and that is the whole point of where these two lines sit. A
+            // terminal row carrying the baseline id belongs to an earlier run, not this one — but
+            // the push is what creates this one, and post-receive can register it before the read
+            // below returns. Captured after the push, the baseline is this phase's OWN run: every
+            // later poll calls it stale, the FAILED short-circuit never fires, and a build that
+            // died in seven seconds is waited on for the full hour. Found by the 2026-08-07
+            // teardown run, where qits-projects did exactly that.
+            String baselineRowId = PlatformModel.isPlatformService(name) ? null
+                    : boot.pd.newestDeployment(boot.state.environmentId, repo)
+                            .map(r -> Json.text(r, "id")).orElse(null);
+            // The CI run needs the same baseline, for the same reason. A rerun pushes nothing, so
+            // the newest run at this sha is whatever the last boot left — and a repository can hold
+            // several runs at one commit, red and green side by side, from a release train's twin
+            // builds. Reading the newest as this phase's outcome failed qits-workspaces in zero
+            // seconds against a red row from the evening before, while the deployment it had just
+            // asked for went on to land. Found by the 2026-08-07 proving run.
+            String baselineRunId = boot.ci.newestRun(repo).map(r -> Json.text(r, "id")).orElse(null);
+
             String quietRef = "main";
             ctx.status("pushing " + repo + " to " + quietRef + " (quietly)");
             Boot.must(boot.git.push(src, boot.artifacts.gitUrl(repo),
@@ -384,19 +416,6 @@ public class PipelinePhases {
                 ctx.log("  pushed " + sha.substring(0, 7)
                         + ", waiting for the deployment (a cold native build — be patient)");
             }
-            // The newest row BEFORE this phase acts is the baseline: a terminal row with that id
-            // is an earlier run's outcome at this sha, not this one's. Judging it fresh made a
-            // stale FAILED row fail the phase in zero seconds. Found by the ninth proving run.
-            String baselineRowId = PlatformModel.isPlatformService(name) ? null
-                    : boot.pd.newestDeployment(boot.state.environmentId, repo)
-                            .map(r -> Json.text(r, "id")).orElse(null);
-            // The CI run needs the same baseline, for the same reason. A rerun pushes nothing, so
-            // the newest run at this sha is whatever the last boot left — and a repository can hold
-            // several runs at one commit, red and green side by side, from a release train's twin
-            // builds. Reading the newest as this phase's outcome failed qits-workspaces in zero
-            // seconds against a red row from the evening before, while the deployment it had just
-            // asked for went on to land. Found by the 2026-08-07 proving run.
-            String baselineRunId = boot.ci.newestRun(repo).map(r -> Json.text(r, "id")).orElse(null);
             awaitDeployment(ctx, name, repo, sha, ref, baselineRowId, baselineRunId);
         });
     }
@@ -549,6 +568,12 @@ public class PipelinePhases {
                         // which is exactly what the replay below acts on.
                         if (!staleRun
                                 && ("FAILED".equals(runStatus) || "CONFIG_ERROR".equals(runStatus))) {
+                            newestRun.map(r -> Json.text(r, "id"))
+                                    .flatMap(boot.ci::failedStepOutput)
+                                    .ifPresent(output -> {
+                                        ctx.log("  the step that failed said:");
+                                        output.lines().forEach(line -> ctx.log("    " + line));
+                                    });
                             return Waiter.Poll.done("CI " + runStatus, runStatus);
                         }
                         // The run's own announcement is fire-and-forget and can be lost.
@@ -594,9 +619,14 @@ public class PipelinePhases {
         }
     }
 
-    /** A 4xx from an unauthenticated write means the guard answered: the auth plane is warm. */
-    private static Http.Response warmWhenRefused(Http.Response response) {
-        return response.status() >= 400 && response.status() < 500
+    /**
+     * Only the GUARD's own answers count as warm. 401 and 403 are the token being read and refused,
+     * which is the thing being waited for; a 400 or a 404 is the request never reaching the guard,
+     * and treating those as warm is what let a cold auth plane through — the release replay's
+     * authenticated call was then the first request to touch OIDC, and it 500'd.
+     */
+    private static Http.Response warmWhenGuardRefused(Http.Response response) {
+        return response.status() == 401 || response.status() == 403
                 ? new Http.Response(200, "auth plane warm (" + response.status() + ")")
                 : response;
     }

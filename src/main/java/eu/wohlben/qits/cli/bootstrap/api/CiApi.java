@@ -70,6 +70,31 @@ public class CiApi {
         return Optional.empty();
     }
 
+    /**
+     * Why a run failed, in the words of the step that failed it. A red run otherwise reports only
+     * its status, and the reason is three API calls away — which is three calls made by hand, at
+     * the point where a bootstrap has just stopped and the operator has the least context. The tail
+     * is bounded because a build log is not a thing to print in full.
+     */
+    public Optional<String> failedStepOutput(String runId) {
+        Http.Response response = http.get(base + "/api/runs/" + runId, Map.of());
+        if (!response.ok()) {
+            return Optional.empty();
+        }
+        for (JsonNode step : Json.parse(response.body()).path("steps")) {
+            if (!"FAILED".equals(Json.text(step, "status"))) {
+                continue;
+            }
+            String output = Json.text(step, "output");
+            if (output.isBlank()) {
+                return Optional.empty();
+            }
+            return Optional.of(output.length() <= 1200 ? output
+                    : "…" + output.substring(output.length() - 1200));
+        }
+        return Optional.empty();
+    }
+
     private static Map<String, String> bearer(String token) {
         Map<String, String> headers = new LinkedHashMap<>();
         if (token != null && !token.isBlank()) {
