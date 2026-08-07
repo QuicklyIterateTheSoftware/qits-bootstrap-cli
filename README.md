@@ -268,5 +268,7 @@ the shim in front of this CLI.
   15 fixes found by the proving runs. Warm cycle the same evening: `unwrap` 11s, `bootstrap` 3m29s.
 - 2026-08-07: two `unwrap` + `bootstrap` cycles, the retirement's own proof. The first found the
   stale-CI-row bug (a red row from the evening before failed a phase in zero seconds). The second,
-  run through the shim with that fixed, finished clean — 43 phases, no phase warnings, all ten
-  applications healthy, and every gateway route serving, `/workspaces/` checked in a browser.
+  run through the shim with that fixed, finished clean in 3m44s — 43 phases of 45, 2 skipped as
+  already published, no phase warnings, all ten applications healthy, every gateway route serving,
+  `/workspaces/` checked in a browser. `unwrap` removes the seed images but not docker's build
+  cache, which is why the rebuilds behind that number cost seconds rather than minutes.
