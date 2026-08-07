@@ -54,17 +54,18 @@ public class CiApi {
         return Optional.empty();
     }
 
-    /** The status of the run of one commit, if qits-ci has one. */
-    public Optional<String> runStatus(String repoId, String commitSha) {
+    /**
+     * The newest run of a repository, whatever it is. The caller needs the whole row, not just the
+     * status: a repository can hold several runs at one commit, so only the row's id says whether
+     * the newest one is this phase's or an earlier one's.
+     */
+    public Optional<JsonNode> newestRun(String repoId) {
         Http.Response response = http.get(base + "/api/runs?repositoryId=" + repoId + "&limit=1", Map.of());
         if (!response.ok()) {
             return Optional.empty();
         }
         for (JsonNode run : Json.parse(response.body()).path("runs")) {
-            if (commitSha.equals(Json.text(run, "commitSha"))) {
-                String status = Json.text(run, "status");
-                return status.isBlank() ? Optional.empty() : Optional.of(status);
-            }
+            return Optional.of(run);
         }
         return Optional.empty();
     }

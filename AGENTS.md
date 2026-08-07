@@ -8,22 +8,26 @@ what it is doing.
 
 ## Read this first
 
-**`qits-local-up.sh` in the wrapper repository (qits-qits) is still the reference.** This CLI is a
-port of it, and it has NOT yet done a proven cold bootstrap. Until it has:
+**This CLI is the bootstrap. There is no second implementation to fall back to.** It has done
+proven cold and warm bootstraps of the real platform, and `qits-local-up.sh` in the wrapper
+repository (qits-qits) is now a shim that compiles this CLI and runs it. The 1298-line shell port
+it replaced is in that repository's git history (`git log -- qits-local-up.sh`).
 
-- The script is what a real bring-up should use when the two disagree.
-- Every behaviour change here has to be justified against that script's comments, which carry the
-  operational knowledge — ordering constraints, the 409/PATCH reconcile, the dual-ref pushes with
-  `-o qits.no-ci`, the platform and environment deploy refs, the mirror-prefix rewrite, the
-  release replays, the lost-event self-heal, the machine-token minting. Those comments were ported
-  with the code on purpose. Do not thin them out.
-- The script predates the v3 merge-back, so on qits-cd and qits-serviceregistry it is **not** the
-  reference: one component, qits-platform-deployments, replaced both. Where it says cd or the
-  registry, read the deployer.
-- When the first cold bootstrap succeeds, say so here and in the README, and record what differed.
+That changes what care means here:
 
-Known deviations from the script, all consequences of running on the host, are listed in the
-README under "How it differs from the script". Add to that list rather than deviating quietly.
+- **The operational knowledge is in these comments and nowhere else** — ordering constraints, the
+  409/PATCH reconcile, the dual-ref pushes with `-o qits.no-ci`, the platform and environment
+  deploy refs, the mirror-prefix rewrite, the release replays, the lost-event self-heal, the
+  machine-token minting. They were ported from the script on purpose, and the script is no longer
+  there to check them against. Do not thin them out.
+- **A behaviour change is a change to the only bring-up path there is.** Prove it with a real
+  bootstrap, not with reasoning about what the script used to do.
+- The retired components stay visible on purpose: `unwrap` sweeps qits-cd's label namespace, and
+  the bootstrap still creates and pushes the qits-cd and qits-serviceregistry repositories. It
+  deploys neither — qits-platform-deployments is the merge-back of both.
+
+The README's "How it differs from the shell port" lists the deviations that running on the host
+forced. Add to that list rather than deviating quietly.
 
 ## Layout
 
@@ -47,7 +51,7 @@ README under "How it differs from the script". Add to that list rather than devi
 - **Every phase is visible and every wait is observable.** A phase that polls something remote must
   go through `Waiter.await`, which prints what is being polled, what was last seen, the elapsed
   time and the deadline. A silent wait is a bug in this repository, whatever it is waiting for.
-- **Phases are rerun-safe**, the same way the script's are: 409s tolerated, existing networks
+- **Phases are rerun-safe**, the same way the script's were: 409s tolerated, existing networks
   adopted, up-to-date pushes no-ops, publishes probed before they are made.
 - **`unwrap` keeps the retired platform's patterns forever.** Cleaning a pre-merge-back machine is
   in scope, so the qits-cd labels and name prefixes stay beside the current ones. Adding a
@@ -82,8 +86,10 @@ shape and order, the compose and run-args generation, the seed-Dockerfile rewrit
 state file, and the plain renderer's output.
 
 The phases that shell docker are deliberately not unit-tested — a fake docker daemon would prove
-that the fake works. They are proven by a real bootstrap, which is the gate this repository has not
-passed yet.
+that the fake works. **A real bootstrap is their test**, and it is the gate a change to them has to
+pass. `unwrap` then `bootstrap` on a machine whose volumes stayed is the cheap form of it: the
+registry blobs and the databases survive, so the seed images rebuild from docker's layer cache and
+the deployables are pulled rather than rebuilt.
 
 ## Gotchas
 

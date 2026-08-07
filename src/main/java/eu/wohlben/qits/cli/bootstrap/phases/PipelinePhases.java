@@ -390,7 +390,14 @@ public class PipelinePhases {
             String baselineRowId = PlatformModel.isPlatformService(name) ? null
                     : boot.pd.newestDeployment(boot.state.environmentId, repo)
                             .map(r -> Json.text(r, "id")).orElse(null);
-            awaitDeployment(ctx, name, repo, sha, ref, baselineRowId);
+            // The CI run needs the same baseline, for the same reason. A rerun pushes nothing, so
+            // the newest run at this sha is whatever the last boot left — and a repository can hold
+            // several runs at one commit, red and green side by side, from a release train's twin
+            // builds. Reading the newest as this phase's outcome failed qits-workspaces in zero
+            // seconds against a red row from the evening before, while the deployment it had just
+            // asked for went on to land. Found by the 2026-08-07 proving run.
+            String baselineRunId = boot.ci.newestRun(repo).map(r -> Json.text(r, "id")).orElse(null);
+            awaitDeployment(ctx, name, repo, sha, ref, baselineRowId, baselineRunId);
         });
     }
 
@@ -486,7 +493,7 @@ public class PipelinePhases {
     }
 
     private void awaitDeployment(PhaseContext ctx, String name, String repo, String sha,
-            String ref, String baselineRowId) {
+            String ref, String baselineRowId, String baselineRunId) {
         boolean platformService = PlatformModel.isPlatformService(name);
         long[] greenForMillis = {0};
         boolean[] replayed = {false};
@@ -531,8 +538,17 @@ public class PipelinePhases {
                                 }
                             }
                         }
-                        String runStatus = boot.ci.runStatus(repo, sha).orElse("");
-                        if ("FAILED".equals(runStatus) || "CONFIG_ERROR".equals(runStatus)) {
+                        Optional<JsonNode> newestRun = boot.ci.newestRun(repo);
+                        String runStatus = newestRun
+                                .filter(r -> sha.equals(Json.text(r, "commitSha")))
+                                .map(r -> Json.text(r, "status")).orElse("");
+                        boolean staleRun = newestRun
+                                .map(r -> Json.text(r, "id").equals(baselineRunId)).orElse(false);
+                        // A red row this phase did not cause is not this phase's outcome. A green
+                        // one is still worth reading even when stale: it says no new run is coming,
+                        // which is exactly what the replay below acts on.
+                        if (!staleRun
+                                && ("FAILED".equals(runStatus) || "CONFIG_ERROR".equals(runStatus))) {
                             return Waiter.Poll.done("CI " + runStatus, runStatus);
                         }
                         // The run's own announcement is fire-and-forget and can be lost.
@@ -557,7 +573,8 @@ public class PipelinePhases {
                             }
                         }
                         return Waiter.Poll.pending("ci run "
-                                + (runStatus.isBlank() ? "not started" : runStatus)
+                                + (runStatus.isBlank() ? "not started"
+                                        : runStatus + (staleRun ? " (an earlier run's)" : ""))
                                 + ", deployment " + deploymentState);
                     });
             if (outcome.startsWith("ACTIVE")) {

@@ -3,8 +3,9 @@
 Brings the qits platform up on your workstation's docker daemon, **through the platform's own
 pipeline**, and tells you what it is doing while it does it.
 
-It replaces `qits-local-up.sh` in the wrapper repository. The choreography is that script's,
-step for step; what is new is that a four-hour cold start is no longer four hours of silence.
+It **is** `qits-local-up.sh` in the wrapper repository — that file is now a shim that compiles this
+CLI and runs it. The choreography is the shell port's, step for step; what is new is that a
+four-hour cold start is no longer four hours of silence.
 
     ┌ qits bootstrap · 41m12s elapsed · log qits-bootstrap-cli.log ──────────────┐
     │   … 18 earlier phases done                                                 │
@@ -37,7 +38,16 @@ for, forever.
 
 ## Running it
 
-A native binary, so a workstation needs no JDK to run it:
+From the wrapper repository, which compiles this CLI first and passes everything through:
+
+    ./qits-local-up.sh                     # bootstrap
+    ./qits-local-up.sh unwrap --dry-run    # any mode or flag below
+
+That is the everyday door. It recompiles only when the sources are newer than the binary
+(`QITS_CLI_BUILD=always` or `never` overrides), and it pins the wrapper directory, the clones and
+the log, so the run is the same from any working directory.
+
+The binary directly, which is what the shim ends up running — a workstation needs no JDK for it:
 
     sdk env                                  # .sdkmanrc names the GraalVM; sets JAVA_HOME
     ./mvnw package -Dnative -DskipTests
@@ -227,7 +237,10 @@ the execution (deployment rows, the health-gated cutover, the rollback pins). It
 of qits-cd and qits-serviceregistry, and both are superseded — the bootstrap still creates their
 repositories and pushes their histories, and deploys neither.
 
-## How it differs from the script
+## How it differs from the shell port
+
+`qits-local-up.sh` was a POSIX shell script run as a throwaway `docker:cli` container with the
+docker socket and the wrapper mounted. It is in the wrapper repository's git history.
 
 Same phases, same order, same idempotence. Three deliberate differences, all from running on the
 host rather than as a container on `qits-net`:
@@ -243,10 +256,17 @@ host rather than as a container on `qits-net`:
   unchanged, which is the property worth keeping.
 
 One addition: a platform service is only counted live when its container is not `unhealthy`. The
-script's docker-based check once counted a `running/unhealthy` idp as live, and the rollback that
-followed looked like a success.
+shell port's docker-based check once counted a `running/unhealthy` idp as live, and the rollback
+that followed looked like a success.
 
 ## Status
 
-**The script remains the reference until this CLI has done a proven cold bootstrap.** See
-`AGENTS.md`.
+**Proven, and the only bring-up path there is.** The shell port is retired; `qits-local-up.sh` is
+the shim in front of this CLI.
+
+- 2026-08-06: green cold bootstrap of the real platform in 22m29s, ten applications healthy, after
+  15 fixes found by the proving runs. Warm cycle the same evening: `unwrap` 11s, `bootstrap` 3m29s.
+- 2026-08-07: two `unwrap` + `bootstrap` cycles, the retirement's own proof. The first found the
+  stale-CI-row bug (a red row from the evening before failed a phase in zero seconds). The second,
+  run through the shim with that fixed, finished clean — 43 phases, no phase warnings, all ten
+  applications healthy, and every gateway route serving, `/workspaces/` checked in a browser.
