@@ -16,7 +16,7 @@
          `./mvnw clean verify` makes the uber-jar and is the loop while working on the CLI. -->
     <groupId>eu.wohlben.qits</groupId>
     <artifactId>qits-cli-bootstrap</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>2026.807.193132</version>
     <name>qits-cli-bootstrap</name>
 
     <properties>
