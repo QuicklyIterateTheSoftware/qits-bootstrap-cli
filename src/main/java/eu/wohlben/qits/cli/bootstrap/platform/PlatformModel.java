@@ -120,9 +120,9 @@ public final class PlatformModel {
         return switch (name) {
             case "ci-daemon" -> "daemons/qits-ci-daemon";
             case "oci" -> "images/qits-oci";
-            case "eventstream", "spa-ui-components", "userflows" -> "libs/qits-" + name;
-            case "integrations-angular" -> "integrations/qits-integrations-angular";
-            case "integrations-quarkus" -> "integrations/qits-integrations-quarkus";
+            // Framework glue is shared code, so the integrations sit in libs/ like any other lib.
+            case "eventstream", "spa-ui-components", "userflows",
+                 "integrations-angular", "integrations-quarkus" -> "libs/qits-" + name;
             // Anything served at a URL is a frontend, whether it is spelled qits-spa-<x> or
             // qits-platform-spa-<x>. Missing the second spelling does not fail loudly: the sources
             // phase falls back to GitHub when the wrapper path is not a checkout, so a wrong path

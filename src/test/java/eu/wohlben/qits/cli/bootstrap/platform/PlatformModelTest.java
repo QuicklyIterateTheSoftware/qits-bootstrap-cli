@@ -17,8 +17,11 @@ class PlatformModelTest {
                 .isEqualTo("frontends/qits-platform-spa-deployments");
         assertThat(PlatformModel.repoPath("platform-spa-docs"))
                 .isEqualTo("frontends/qits-platform-spa-docs");
+        // Framework glue is a lib; the wrapper has no integrations/ directory.
         assertThat(PlatformModel.repoPath("integrations-angular"))
-                .isEqualTo("integrations/qits-integrations-angular");
+                .isEqualTo("libs/qits-integrations-angular");
+        assertThat(PlatformModel.repoPath("integrations-quarkus"))
+                .isEqualTo("libs/qits-integrations-quarkus");
     }
 
     @Test
