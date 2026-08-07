@@ -62,18 +62,12 @@ public final class PlatformModel {
      * ci-daemon belongs here and nowhere else. It ships no image and no health endpoint, so it is
      * not a deployable — but its binary is an ordinary release-train artifact, and a release train
      * needs the repository on the git host.
-     * <p>
-     * qits-cd and qits-serviceregistry are here for a different reason: qits-platform-deployments
-     * is their merge-back and both are superseded, so nothing deploys them any more. Their
-     * histories still belong on the git host — a platform that cannot show where its own deployer
-     * came from has lost the record.
      */
     public static final List<String> SEEDED_REPOS = List.of(
             "oci", "ci-daemon", "eventstream", "spa-ui-components", "userflows",
-            "platform-spa-docs",
+            "platform-spa-docs", "platform-spa-deployments",
             "integrations-angular", "integrations-quarkus", "spa-home", "spa-projects",
-            "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events", "spa-ci",
-            "spa-cd", "cd", "serviceregistry");
+            "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events", "spa-ci");
 
     /** The publishers whose released versions the wrapper builds install. Order is dependency order. */
     public static final List<String> RELEASE_PUBLISHERS =

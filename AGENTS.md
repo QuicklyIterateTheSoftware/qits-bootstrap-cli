@@ -22,9 +22,6 @@ That changes what care means here:
   there to check them against. Do not thin them out.
 - **A behaviour change is a change to the only bring-up path there is.** Prove it with a real
   bootstrap, not with reasoning about what the script used to do.
-- The retired components stay visible on purpose: `unwrap` sweeps qits-cd's label namespace, and
-  the bootstrap still creates and pushes the qits-cd and qits-serviceregistry repositories. It
-  deploys neither — qits-platform-deployments is the merge-back of both.
 
 The README's "How it differs from the shell port" lists the deviations that running on the host
 forced. Add to that list rather than deviating quietly.
