@@ -13,7 +13,10 @@ class PlatformModelTest {
         assertThat(PlatformModel.repoPath("ci-daemon")).isEqualTo("daemons/qits-ci-daemon");
         assertThat(PlatformModel.repoPath("oci")).isEqualTo("images/qits-oci");
         assertThat(PlatformModel.repoPath("eventstream")).isEqualTo("libs/qits-eventstream");
-        assertThat(PlatformModel.repoPath("spa-cd")).isEqualTo("frontends/qits-spa-cd");
+        assertThat(PlatformModel.repoPath("platform-spa-deployments"))
+                .isEqualTo("frontends/qits-platform-spa-deployments");
+        assertThat(PlatformModel.repoPath("platform-spa-docs"))
+                .isEqualTo("frontends/qits-platform-spa-docs");
         assertThat(PlatformModel.repoPath("integrations-angular"))
                 .isEqualTo("integrations/qits-integrations-angular");
     }
@@ -56,20 +59,17 @@ class PlatformModelTest {
     }
 
     @Test
-    void theRetiredDeployersAreSeededButNotDeployed() {
-        // qits-platform-deployments is the merge-back of both; nothing deploys them any more, and
-        // their histories still belong on the git host.
-        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("cd", "serviceregistry");
-        assertThat(PlatformModel.CORE).doesNotContain("cd", "serviceregistry");
-        assertThat(PlatformModel.SEEDED_REPOS).contains("cd", "serviceregistry");
+    void theRetiredDeployersAreGone() {
+        assertThat(PlatformModel.platformRepos()).doesNotContain("cd", "serviceregistry");
     }
 
     @Test
-    void theDeployerPackagesTheClientItInheritedFromItsAncestor() {
-        // service/src/main/webui is still the qits-spa-cd submodule, so the bundle directory is
-        // named after that client. The Dockerfile's `test -f` guard checks this exact path.
+    void aClientNotNamedAfterItsServiceIsSpelledOut() {
+        // A bundle directory is the Angular project key, so it moves when the client is renamed —
+        // and the service's Dockerfile checks this exact path with `test -f`. A stale spelling here
+        // fails the seed build minutes in, which is how the deployments client's rename was found.
         assertThat(PlatformModel.seedUiPath("platform-deployments"))
-                .isEqualTo("service/src/main/webui/dist/qits-spa-cd/browser");
+                .isEqualTo("service/src/main/webui/dist/qits-platform-spa-deployments/browser");
         assertThat(PlatformModel.seedUiPath("gateway"))
                 .isEqualTo("src/main/webui/dist/qits-spa-home/browser");
         assertThat(PlatformModel.seedUiPath("ci"))

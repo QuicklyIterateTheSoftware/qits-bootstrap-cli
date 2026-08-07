@@ -123,7 +123,13 @@ public final class PlatformModel {
             case "eventstream", "spa-ui-components", "userflows" -> "libs/qits-" + name;
             case "integrations-angular" -> "integrations/qits-integrations-angular";
             case "integrations-quarkus" -> "integrations/qits-integrations-quarkus";
-            default -> name.startsWith("spa-") ? "frontends/qits-" + name : "services/qits-" + name;
+            // Anything served at a URL is a frontend, whether it is spelled qits-spa-<x> or
+            // qits-platform-spa-<x>. Missing the second spelling does not fail loudly: the sources
+            // phase falls back to GitHub when the wrapper path is not a checkout, so a wrong path
+            // here silently ignores local commits instead.
+            default -> name.startsWith("spa-") || name.startsWith("platform-spa-")
+                    ? "frontends/qits-" + name
+                    : "services/qits-" + name;
         };
     }
 
@@ -161,15 +167,18 @@ public final class PlatformModel {
      * Dockerfiles consume an already-built SPA — and a clean checkout has no dist directory while
      * the hosted npm registry does not exist yet. The registry answers JSON only, so it has none.
      * <p>
-     * qits-platform-deployments packages the qits-spa-cd submodule unchanged, so its bundle
-     * directory is still named after that client — its cutover onto the new segment is a commit in
-     * that repository. The path here is the one its Dockerfile's {@code test -f} guard checks, and
-     * a guess would fail the seed build minutes in.
+     * Two services name their client something other than {@code qits-spa-<name>}, so they are
+     * spelled out: qits-gateway packages qits-spa-home, and qits-platform-deployments packages
+     * qits-platform-spa-deployments. A bundle directory is the Angular project key, so it moves
+     * whenever that client is renamed — and the path here is the one the service's Dockerfile
+     * checks with {@code test -f}, so a stale spelling fails the seed build minutes in rather than
+     * at the edit.
      */
     public static String seedUiPath(String name) {
         return switch (name) {
             case "gateway" -> "src/main/webui/dist/qits-spa-home/browser";
-            case "platform-deployments" -> "service/src/main/webui/dist/qits-spa-cd/browser";
+            case "platform-deployments" ->
+                    "service/src/main/webui/dist/qits-platform-spa-deployments/browser";
             default -> "service/src/main/webui/dist/qits-spa-" + name + "/browser";
         };
     }
