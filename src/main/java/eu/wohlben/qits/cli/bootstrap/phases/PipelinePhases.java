@@ -239,6 +239,9 @@ public class PipelinePhases {
                         + "— nothing to replay");
             }
             ctx.log("  release tag " + version);
+            // The newest finished run BEFORE this attempt triggers is a previous attempt's, and
+            // must not be read as this one's outcome. Null when the repo never ran.
+            String baselineRun = boot.ci.finishedEventRun(repo).map(r -> r[0]).orElse(null);
             ProcessResult push = boot.git.push(src, boot.artifacts.gitUrl(repo),
                     List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
                     "refs/tags/" + version, boot.config.pushToken(), ctx::log);
@@ -264,8 +267,10 @@ public class PipelinePhases {
             String status = Waiter.await(ctx, repo + "'s release run at " + boot.config.ciUrl()
                             + "/api/runs/finished", boot.config.releaseTimeout(),
                     boot.config.pollInterval(), () -> {
-                        Optional<String> finished = boot.ci.finishedEventRunStatus(repo);
-                        return finished.<Waiter.Poll<String>>map(value -> Waiter.Poll.done(value, value))
+                        Optional<String[]> finished = boot.ci.finishedEventRun(repo);
+                        return finished
+                                .filter(r -> !r[0].equals(baselineRun))
+                                .<Waiter.Poll<String>>map(r -> Waiter.Poll.done(r[1], r[1]))
                                 .orElseGet(() -> Waiter.Poll.pending("still running"));
                     });
             if (!"SUCCESS".equals(status)) {

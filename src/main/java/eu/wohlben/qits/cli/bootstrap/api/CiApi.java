@@ -38,8 +38,14 @@ public class CiApi {
         return http.postJson(base + "/api/events/post-receive", eventJson, bearer(token));
     }
 
-    /** The status of the newest finished EVENT run of a repository, if it has finished. */
-    public Optional<String> finishedEventRunStatus(String repoId) {
+    /**
+     * The id and status of the newest finished EVENT run of a repository, if one has finished.
+     * The id travels with the status so a caller can hold a baseline: on a rerun the newest
+     * finished row is the PREVIOUS attempt's, and reading it as this attempt's outcome fails a
+     * phase in zero seconds while the fresh run is still executing — measured on the first prod
+     * bootstrap, the same stale-row family the deploy wait already guards against.
+     */
+    public Optional<String[]> finishedEventRun(String repoId) {
         Http.Response response = http.get(base + "/api/runs/finished?limit=20", Map.of());
         if (!response.ok()) {
             return Optional.empty();
@@ -48,7 +54,8 @@ public class CiApi {
         for (JsonNode run : runs) {
             if (repoId.equals(Json.text(run, "repoId")) && "EVENT".equals(Json.text(run, "triggerType"))) {
                 String status = Json.text(run, "status");
-                return status.isBlank() ? Optional.empty() : Optional.of(status);
+                return status.isBlank() ? Optional.empty()
+                        : Optional.of(new String[] {Json.text(run, "id"), status});
             }
         }
         return Optional.empty();
