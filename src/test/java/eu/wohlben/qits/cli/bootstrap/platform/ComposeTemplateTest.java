@@ -213,6 +213,18 @@ class ComposeTemplateTest {
     }
 
     @Test
+    void artifactsDialsProjectsForBackupsAndForNameResolution() {
+        // Both keys default to a monolith-era localhost, so unset means the service calls itself:
+        // no backups, and a name-addressed git clone that 404s with an empty agent /workspace.
+        String artifacts = runArgsLine("qits-platform-artifacts");
+
+        assertThat(artifacts).contains("-e QITS_PROJECTS_INTAKE_URL=http://prod-qits-projects:8080"
+                + "/projects/api/events/post-receive");
+        assertThat(artifacts).contains("-e QITS_PROJECTS_NAME_RESOLVER_URL="
+                + "http://prod-qits-projects:8080/projects/api/projects");
+    }
+
+    @Test
     void theDeployersOwnDeploymentInheritsItsConfigVolume() {
         // The self-update handoff: without this mount the successor comes up with no run-args at
         // all and every later deployment loses its volumes and its datasource env.
