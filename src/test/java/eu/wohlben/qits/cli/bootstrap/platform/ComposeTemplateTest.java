@@ -189,7 +189,7 @@ class ComposeTemplateTest {
         for (String application : new String[]{"qits-platform-edge", "qits-gateway",
                 "qits-platform-artifacts", "qits-ci", "qits-deployments", "qits-platform-idp",
                 "qits-stt", "qits-projects", "qits-workspaces", "qits-events",
-                "qits-platform-docs"}) {
+                "qits-platform-docs", "qits-observability"}) {
             assertThat(properties).contains("qits.platform.deployments.run-args." + application + "=");
         }
         // The retired pair is deployed by nothing, so it configures nothing.
@@ -244,6 +244,32 @@ class ComposeTemplateTest {
     }
 
     @Test
+    void everythingGeneratedIsToldWhereTelemetryGoes() {
+        // The images ship the bare qits-observability, and the 2026-08-08 rename killed that name.
+        // An exporter dialling a name that does not resolve drops every trace and every log AND
+        // retries, so a missing line here is a dark platform and a container log full of attempts.
+        String url = "http://prod-qits-observability:8080";
+        String compose = ComposeTemplate.compose(tokens());
+
+        for (String name : PlatformModel.CORE) {
+            assertThat(serviceBlock(compose, PlatformModel.wireAlias(name, ENV)))
+                    .as("seed service %s", name)
+                    .contains("QITS_OBSERVABILITY_URL: " + url);
+        }
+        assertThat(ComposeTemplate.runArgs(tokens()).lines()
+                .filter(line -> line.startsWith("qits.platform.deployments.run-args."))
+                .toList())
+                .isNotEmpty()
+                .allSatisfy(line -> assertThat(line)
+                        .contains("-e QITS_OBSERVABILITY_URL=" + url));
+        // The receiver is an ordinary OTLP client of itself. Consistent rather than clever: the
+        // alternative leaves exactly one container spamming retries at a dead name.
+        assertThat(runArgsLine("qits-observability"))
+                .isEqualTo("qits.platform.deployments.run-args.qits-observability="
+                        + "-e QITS_OBSERVABILITY_URL=" + url);
+    }
+
+    @Test
     void theEnvironmentNameReachesEveryGeneratedAddress() {
         Map<String, String> other = tokens();
         other.put("ENV_NAME", "preprod");
@@ -255,6 +281,7 @@ class ComposeTemplateTest {
                 .contains("QITS_IDP_CLIENT_PREPROD_QITS_CI_SECRET");
         assertThat(ComposeTemplate.runArgs(other))
                 .contains("-e QITS_AUTH_MACHINE_AUDIENCE=preprod-qits-ci")
-                .contains("QITS_GATEWAY_PROXY_HOSTS_CI=preprod-qits-ci");
+                .contains("QITS_GATEWAY_PROXY_HOSTS_CI=preprod-qits-ci")
+                .contains("-e QITS_OBSERVABILITY_URL=http://preprod-qits-observability:8080");
     }
 }

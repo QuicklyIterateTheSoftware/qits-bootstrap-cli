@@ -31,6 +31,14 @@ public class PipelinePhases {
     private static final Map<String, String> PROBE_BEARER =
             Map.of("Authorization", "Bearer qits-bootstrap-auth-plane-probe");
 
+    /**
+     * git's "this ref did not exist" sha, which is what a re-announced push carries as its oldSha.
+     * qits-ci ignores the field — the run is read out of newSha — but the wire contract has the
+     * shape of a real hook call and a replay that lies about it would be harder to recognise in a
+     * log than one that says plainly it knows no predecessor.
+     */
+    private static final String NO_PREDECESSOR_SHA = "0".repeat(40);
+
     private final Boot boot;
 
     public PipelinePhases(Boot boot) {
@@ -443,7 +451,20 @@ public class PipelinePhases {
                 ctx.note("already live at " + sha.substring(0, 7));
                 return;
             }
-            if (upToDate) {
+            if (upToDate && staleRedRun(repo, sha, baselineRunId)) {
+                // No push, no event, and the run this sha already has is RED. There is no image to
+                // deploy, so the build event below would only buy an IMAGE_MISSING row — which is
+                // what a human then had to unpick by hand on the first prod bootstrap. Ask for the
+                // BUILD instead, by making the announcement the git host makes on a real push.
+                //
+                // The baseline captured above is the red run's own id, so the wait below already
+                // ignores it and reads only a run NEWER than it. If that one is red too, the phase
+                // warns exactly as it did before: this replaces a dead end with one more attempt,
+                // not with a retry loop.
+                ctx.log("  " + repo + " unchanged and its newest run at " + sha.substring(0, 7)
+                        + " is red — re-announcing the push so ci builds it again");
+                reannouncePush(ctx, repo, sha, ref);
+            } else if (upToDate) {
                 // No push, no event — and not live at HEAD either. The image exists from an
                 // earlier run; hand the deployer the event it never got, naming the ref that
                 // deploys it.
@@ -693,6 +714,61 @@ public class PipelinePhases {
             sleep(5000);
         }
         ctx.warn("could not post the build event for " + repo
+                + (last == null ? "" : ": " + last.describe()));
+    }
+
+    /**
+     * Is the newest run of this repository the one that was there BEFORE this phase pushed, at this
+     * very sha, and red? Only then is there nothing left to wait for: no new run is coming, and the
+     * image the deployer would be sent after does not exist.
+     * <p>
+     * All three conditions are needed. A run at another sha says nothing about this one; a run
+     * newer than the baseline is this phase's own and belongs to the wait; a green stale run means
+     * the image IS there and the lost-event replay is the right answer instead.
+     */
+    private boolean staleRedRun(String repo, String sha, String baselineRunId) {
+        return boot.ci.newestRun(repo)
+                .filter(run -> Json.text(run, "id").equals(baselineRunId))
+                .filter(run -> sha.equals(Json.text(run, "commitSha")))
+                .map(run -> Json.text(run, "status"))
+                .filter(status -> "FAILED".equals(status) || "CONFIG_ERROR".equals(status))
+                .isPresent();
+    }
+
+    /**
+     * Announces the push to ci the way the git host does, so a sha whose only run is red gets
+     * built again. This is a POST-RECEIVE, not a build-succeeded: what is missing is the IMAGE,
+     * and only a run makes one.
+     * <p>
+     * The token is minted as the platform store client, exactly as the release replay's is, because
+     * that is the identity the git host announces with — ci's intake checks the token's project
+     * claim against the repo the event names, and the store speaks for every repository, so it is
+     * the one client granted the wildcard. The branch is the ref that DEPLOYS the application,
+     * spelled the way the hook spells it: the branch name, with no refs/heads/ in front.
+     * <p>
+     * Retried like the build event, and for the same reason: this call travels through the edge and
+     * the gateway, both of which are applications this run deploys.
+     */
+    private void reannouncePush(PhaseContext ctx, String repo, String sha, String ref) {
+        Http.Response last = null;
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            try {
+                String token = boot.tokenOrNull(
+                        PlatformModel.wireAlias("platform-artifacts", boot.config.envName()),
+                        PlatformModel.wireAlias("ci", boot.config.envName()));
+                last = boot.ci.postReceive(Json.object("repoId", repo, "branch", ref,
+                        "oldSha", NO_PREDECESSOR_SHA, "newSha", sha), token);
+                if (last.ok()) {
+                    ctx.log("  post-receive re-announced for " + repo + " on " + ref
+                            + " — waiting for the run it queues");
+                    return;
+                }
+            } catch (RuntimeException e) {
+                ctx.log("  re-announce attempt " + attempt + " failed: " + e.getMessage());
+            }
+            sleep(5000);
+        }
+        ctx.warn("could not re-announce the push for " + repo
                 + (last == null ? "" : ": " + last.describe()));
     }
 

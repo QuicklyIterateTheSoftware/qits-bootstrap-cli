@@ -141,6 +141,14 @@ public final class ComposeTemplate {
                   # for ALL repos, so its grant is the wildcard. The idp only states the claim; qits-ci's own
                   # enforcement is what reads '*' as covering every value.
                   QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_CLAIMS_PROJECT: "*"
+                  # WHERE TELEMETRY GOES, and it has to be spelled in every service below. The
+                  # images ship the bare qits-observability, and that name died with the
+                  # 2026-08-08 rename: observability is an environment service, so its alias
+                  # carries the tier. An OTLP exporter dialling a name that does not resolve drops
+                  # every trace and every log AND retries, so the whole platform goes dark while
+                  # each container fills its own log with the attempts — which is how it was found
+                  # on the first prod bootstrap.
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
                 volumes:
                   - qits-platform-idp-data:/data
                 networks: [qits-net]
@@ -172,6 +180,7 @@ public final class ComposeTemplate {
                   # to the wire aliases the rest of this file hands out.
                   QITS_EDGE_UPSTREAM_HOST_PATTERN: "{env}-qits-gateway"
                   QITS_EDGE_UPSTREAM_PORT: "8080"
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
                 networks: [qits-net]
                 restart: unless-stopped
 
@@ -209,6 +218,7 @@ public final class ComposeTemplate {
                   QITS_AUTH_MACHINE_AUDIENCE: ${ENV_NAME}-qits-deployments
                   QITS_AUTH_MACHINE_REQUIRED: "${MACHINE_REQUIRED}"
                   QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP}
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
                 volumes:
                   - qits-deployments-data:/data
                   - qits-deployments-config:/work/config
@@ -236,6 +246,7 @@ public final class ComposeTemplate {
                   QITS_GATEWAY_PROXY_HOSTS_STT: ${ENV_NAME}-qits-stt
                   QITS_GATEWAY_PROXY_HOSTS_EVENTS: ${ENV_NAME}-qits-events
                   QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DOCS: qits-platform-docs
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
                 networks: [qits-net]
                 # No depends_on: on later runs compose starts only the services the deployer does not already
                 # manage, and a dependency would resurrect a compose sibling next to its deployed replacement.
@@ -287,6 +298,7 @@ public final class ComposeTemplate {
                   # qits-platform-artifacts is already the alias.
                   QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE: ${ENV_NAME}-qits-ci
                   QITS_ARTIFACTS_CLIENT_SECRET: "${IDP_SECRET_PLATFORM_ARTIFACTS}"
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
                 volumes:
                   - qits-platform-artifacts-data:/data
                 networks: [qits-net]
@@ -350,6 +362,7 @@ public final class ComposeTemplate {
                   QUARKUS_OIDC_CLIENT_CLIENT_ID: ${ENV_NAME}-qits-ci
                   QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE: ${ENV_NAME}-qits-deployments
                   QUARKUS_OIDC_CLIENT_CREDENTIALS_SECRET: "${IDP_SECRET_CI}"
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
                 volumes:
                   - qits-ci-data:/data
                   - /var/run/docker.sock:/var/run/docker.sock
@@ -370,36 +383,42 @@ public final class ComposeTemplate {
             # Every hostname in every value below is a WIRE ALIAS: ${ENV_NAME}-qits-<app> for a service of
             # this environment, the bare repository name for one of the four platform services.
             #
+            # EVERY LINE CARRIES QITS_OBSERVABILITY_URL, for the same reason the seed compose spells it on
+            # every service: the images ship the bare qits-observability, and that name died with the
+            # 2026-08-08 rename. An OTLP exporter dialling a name that does not resolve drops every trace
+            # and every log AND retries, so the platform goes dark while each container fills its own log
+            # with the attempts.
+            #
             # THE HOST PORT IS THE EDGE'S. qits-gateway carries no -p at all any more; publishing it from two
             # applications is a bind conflict that only shows up on the second cutover.
-            qits.platform.deployments.run-args.qits-platform-edge=-p ${PORT}:8080 -e QITS_EDGE_ENVIRONMENTS=${ENV_NAME} -e QITS_EDGE_DEFAULT_ENVIRONMENT=${ENV_NAME} -e QITS_EDGE_UPSTREAM_HOST_PATTERN={env}-qits-gateway -e QITS_EDGE_UPSTREAM_PORT=8080
-            qits.platform.deployments.run-args.qits-gateway=-e QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=qits-platform-artifacts -e QITS_GATEWAY_PROXY_HOSTS_CI=${ENV_NAME}-qits-ci -e QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS=${ENV_NAME}-qits-deployments -e QITS_GATEWAY_PROXY_HOSTS_OBSERVABILITY=${ENV_NAME}-qits-observability -e QITS_GATEWAY_PROXY_HOSTS_PROJECTS=${ENV_NAME}-qits-projects -e QITS_GATEWAY_PROXY_HOSTS_WORKSPACES=${ENV_NAME}-qits-workspaces -e QITS_GATEWAY_PROXY_HOSTS_STT=${ENV_NAME}-qits-stt -e QITS_GATEWAY_PROXY_HOSTS_EVENTS=${ENV_NAME}-qits-events -e QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DOCS=qits-platform-docs
+            qits.platform.deployments.run-args.qits-platform-edge=-p ${PORT}:8080 -e QITS_EDGE_ENVIRONMENTS=${ENV_NAME} -e QITS_EDGE_DEFAULT_ENVIRONMENT=${ENV_NAME} -e QITS_EDGE_UPSTREAM_HOST_PATTERN={env}-qits-gateway -e QITS_EDGE_UPSTREAM_PORT=8080 -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.platform.deployments.run-args.qits-gateway=-e QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=qits-platform-artifacts -e QITS_GATEWAY_PROXY_HOSTS_CI=${ENV_NAME}-qits-ci -e QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS=${ENV_NAME}-qits-deployments -e QITS_GATEWAY_PROXY_HOSTS_OBSERVABILITY=${ENV_NAME}-qits-observability -e QITS_GATEWAY_PROXY_HOSTS_PROJECTS=${ENV_NAME}-qits-projects -e QITS_GATEWAY_PROXY_HOSTS_WORKSPACES=${ENV_NAME}-qits-workspaces -e QITS_GATEWAY_PROXY_HOSTS_STT=${ENV_NAME}-qits-stt -e QITS_GATEWAY_PROXY_HOSTS_EVENTS=${ENV_NAME}-qits-events -e QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DOCS=qits-platform-docs -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The push token rides here so it is already in place when the default branch's protection is
             # switched on: turning protection on is then one property on the artifacts side, not a two-part
             # change that could leave a running platform locked out of its own bootstrap.
             # No QITS_AUTH_MACHINE_AUDIENCE: this is a platform service, so its wire alias is its repository
             # name and the image's own default is already that.
-            qits.platform.deployments.run-args.qits-platform-artifacts=-p 127.0.0.1:${REGISTRY_PORT}:8080 -v qits-platform-artifacts-data:/data -e QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL=jdbc:h2:file:/data/artifacts/h2/artifacts -e QITS_ARTIFACTS_BLOBS_DIR=/data/artifacts/blobs -e QITS_CI_INTAKE_URL=http://${ENV_NAME}-qits-ci:8080/ci/api/events/post-receive -e QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN} -e QITS_REPOSITORIES_GIT_PROTECT_DEFAULT_BRANCH=true -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT} -e QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-ci -e QITS_ARTIFACTS_CLIENT_SECRET=${IDP_SECRET_PLATFORM_ARTIFACTS}
+            qits.platform.deployments.run-args.qits-platform-artifacts=-p 127.0.0.1:${REGISTRY_PORT}:8080 -v qits-platform-artifacts-data:/data -e QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL=jdbc:h2:file:/data/artifacts/h2/artifacts -e QITS_ARTIFACTS_BLOBS_DIR=/data/artifacts/blobs -e QITS_CI_INTAKE_URL=http://${ENV_NAME}-qits-ci:8080/ci/api/events/post-receive -e QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN} -e QITS_REPOSITORIES_GIT_PROTECT_DEFAULT_BRANCH=true -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT} -e QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-ci -e QITS_ARTIFACTS_CLIENT_SECRET=${IDP_SECRET_PLATFORM_ARTIFACTS} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL is where a green build is announced. The notify is
             # fire-and-forget and swallowed at debug, so a wrong value deploys nothing and reports nothing.
             # QITS_AUTH_MACHINE_AUDIENCE and QUARKUS_OIDC_CLIENT_CLIENT_ID are both this tier's alias: ci
             # ships the unqualified qits-ci for each, and the idp knows neither name.
-            qits.platform.deployments.run-args.qits-ci=-v qits-ci-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QUARKUS_DATASOURCE_CI_JDBC_URL=jdbc:h2:file:/data/ci/h2/ci;DB_CLOSE_DELAY=-1 -e QUARKUS_DATASOURCE_EVENTSTREAM_JDBC_URL=jdbc:h2:file:/data/eventstream/h2/eventstream -e QITS_CI_GIT_HOST_URL=http://qits-platform-artifacts:8080/artifacts -e QITS_CI_CONTAINER_GIT_URL=http://qits-platform-artifacts:8080/artifacts -e QITS_CI_NETWORK=qits-net -e QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL=http://${ENV_NAME}-qits-deployments:8080/platform-deployments/api/events/build-succeeded -e QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT} -e QITS_CI_DAEMON_VERSION=${DAEMON_SHA} -e QITS_CI_CONTAINER_DAEMON_URL=ws://${ENV_NAME}-qits-ci:8080/ci/daemon -e QITS_CI_WORKSPACES_URL=http://${ENV_NAME}-qits-workspaces:8080 -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-ci -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT} -e QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ID=${ENV_NAME}-qits-ci -e QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-deployments -e QUARKUS_OIDC_CLIENT_CREDENTIALS_SECRET=${IDP_SECRET_CI}
+            qits.platform.deployments.run-args.qits-ci=-v qits-ci-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QUARKUS_DATASOURCE_CI_JDBC_URL=jdbc:h2:file:/data/ci/h2/ci;DB_CLOSE_DELAY=-1 -e QUARKUS_DATASOURCE_EVENTSTREAM_JDBC_URL=jdbc:h2:file:/data/eventstream/h2/eventstream -e QITS_CI_GIT_HOST_URL=http://qits-platform-artifacts:8080/artifacts -e QITS_CI_CONTAINER_GIT_URL=http://qits-platform-artifacts:8080/artifacts -e QITS_CI_NETWORK=qits-net -e QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL=http://${ENV_NAME}-qits-deployments:8080/platform-deployments/api/events/build-succeeded -e QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT} -e QITS_CI_DAEMON_VERSION=${DAEMON_SHA} -e QITS_CI_CONTAINER_DAEMON_URL=ws://${ENV_NAME}-qits-ci:8080/ci/daemon -e QITS_CI_WORKSPACES_URL=http://${ENV_NAME}-qits-workspaces:8080 -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-ci -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT} -e QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ID=${ENV_NAME}-qits-ci -e QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-deployments -e QUARKUS_OIDC_CLIENT_CREDENTIALS_SECRET=${IDP_SECRET_CI} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The deployer's own deployment — the self-update handoff. Three mounts, all load-bearing: the
             # data volume holds the topology AND the deployment history, the config volume holds this very
             # file so the successor inherits every line of it, and the docker socket is what makes it a
             # deployer at all. Machine auth INBOUND only: it validates qits-ci's bearer and mints nothing, so
             # no oidc-client and no secret — but the audience it validates AGAINST is this tier's alias, and
             # the image still ships the pre-rename repository name.
-            qits.platform.deployments.run-args.qits-deployments=-v qits-deployments-data:/data -v qits-deployments-config:/work/config -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QUARKUS_DATASOURCE_PLATFORMDEPLOYMENTS_JDBC_URL=jdbc:h2:file:/data/platformdeployments/h2/platformdeployments -e QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT} -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-deployments -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.run-args.qits-deployments=-v qits-deployments-data:/data -v qits-deployments-config:/work/config -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QUARKUS_DATASOURCE_PLATFORMDEPLOYMENTS_JDBC_URL=jdbc:h2:file:/data/platformdeployments/h2/platformdeployments -e QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT} -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-deployments -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The idp's own deployment. The volume is the whole point: the signing key is in that database, and
             # a redeploy that lands on a fresh one invalidates every token in flight. The claims grant is the
             # git host's wildcard — it announces pushes for every repo, so its project claim covers every value.
             # QITS_IDP_CLIENTS and both audience lists are restated in full, because each key REPLACES the
             # shipped list rather than extending it — and every id in them is a wire alias, so they move with
             # the environment name while the image's defaults cannot.
-            qits.platform.deployments.run-args.qits-platform-idp=-v qits-platform-idp-data:/data -e QUARKUS_DATASOURCE_IDP_JDBC_URL=jdbc:h2:file:/data/idp/h2/idp -e QITS_IDP_ISSUER=${IDP} -e QITS_IDP_CLIENTS=${IDP_CLIENTS} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_SECRET=${IDP_SECRET_CI} -e QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_SECRET=${IDP_SECRET_PLATFORM_ARTIFACTS} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_SECRET=${IDP_SECRET_WORKSPACES} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_GATEWAY_SECRET=${IDP_SECRET_GATEWAY} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_AUDIENCES=${IDP_AUDIENCES} -e QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_AUDIENCES=${IDP_AUDIENCES} -e QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_CLAIMS_PROJECT=*
-            qits.platform.deployments.run-args.qits-stt=-v qits-stt-data:/data -e QITS_SPEECH_HOME=/data/speech
+            qits.platform.deployments.run-args.qits-platform-idp=-v qits-platform-idp-data:/data -e QUARKUS_DATASOURCE_IDP_JDBC_URL=jdbc:h2:file:/data/idp/h2/idp -e QITS_IDP_ISSUER=${IDP} -e QITS_IDP_CLIENTS=${IDP_CLIENTS} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_SECRET=${IDP_SECRET_CI} -e QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_SECRET=${IDP_SECRET_PLATFORM_ARTIFACTS} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_SECRET=${IDP_SECRET_WORKSPACES} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_GATEWAY_SECRET=${IDP_SECRET_GATEWAY} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_AUDIENCES=${IDP_AUDIENCES} -e QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_AUDIENCES=${IDP_AUDIENCES} -e QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_CLAIMS_PROJECT=* -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.platform.deployments.run-args.qits-stt=-v qits-stt-data:/data -e QITS_SPEECH_HOME=/data/speech -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # projects no longer mounts the shared repositories volume at all — it clones its own git mirrors
             # over the wire, through qits.artifacts.url, into its own data dir. QITS_PROJECTS_DATA_DIR is
             # spelled here rather than left to the image default (${user.home}/...), which resolves to the
@@ -410,7 +429,7 @@ public final class ComposeTemplate {
             # line above. projects advances refs on the git host by pushing now, and the default branch is
             # protected here, so without the token every pull that fast-forwards main is refused. A branch
             # delete deliberately sends no token.
-            qits.platform.deployments.run-args.qits-projects=-v qits-projects-data:/data -e QUARKUS_DATASOURCE_PROJECTS_JDBC_URL=jdbc:h2:file:/data/projects/h2/projects -e QUARKUS_DATASOURCE_EPICS_JDBC_URL=jdbc:h2:file:/data/epics/h2/epics -e QITS_PROJECTS_DATA_DIR=/data/mirrors -e QITS_ARTIFACTS_URL=http://qits-platform-artifacts:8080 -e QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN}
+            qits.platform.deployments.run-args.qits-projects=-v qits-projects-data:/data -e QUARKUS_DATASOURCE_PROJECTS_JDBC_URL=jdbc:h2:file:/data/projects/h2/projects -e QUARKUS_DATASOURCE_EPICS_JDBC_URL=jdbc:h2:file:/data/epics/h2/epics -e QITS_PROJECTS_DATA_DIR=/data/mirrors -e QITS_ARTIFACTS_URL=http://qits-platform-artifacts:8080 -e QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # QITS_ARTIFACTS_URL is where release PUSHES the release commit — the git host, over HTTP, so
             # the ordinary post-receive fires and the ordinary pipeline builds it.
             # The eventstream twin (same pair qits-ci carries above): a release publishes SoftwareRelease
@@ -426,7 +445,7 @@ public final class ComposeTemplate {
             # the one name on qits-net that fronts a WHOLE environment. Not the edge either — a workspace
             # belongs to a tier, and the gateway is the tier's own front door, while the edge exists to pick
             # between tiers for traffic that arrived from outside.
-            qits.platform.deployments.run-args.qits-workspaces=-v qits-workspaces-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QUARKUS_DATASOURCE_WORKSPACES_JDBC_URL=jdbc:h2:file:/data/workspaces/h2/workspaces -e QUARKUS_DATASOURCE_EVENTSTREAM_JDBC_URL=jdbc:h2:file:/data/eventstream/h2/eventstream -e QITS_PROJECTS_URL=http://${ENV_NAME}-qits-projects:8080 -e QITS_ARTIFACTS_URL=http://qits-platform-artifacts:8080 -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_WORKSPACE_GIT_HOST=${ENV_NAME}-qits-gateway
+            qits.platform.deployments.run-args.qits-workspaces=-v qits-workspaces-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QUARKUS_DATASOURCE_WORKSPACES_JDBC_URL=jdbc:h2:file:/data/workspaces/h2/workspaces -e QUARKUS_DATASOURCE_EVENTSTREAM_JDBC_URL=jdbc:h2:file:/data/eventstream/h2/eventstream -e QITS_PROJECTS_URL=http://${ENV_NAME}-qits-projects:8080 -e QITS_ARTIFACTS_URL=http://qits-platform-artifacts:8080 -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_WORKSPACE_GIT_HOST=${ENV_NAME}-qits-gateway -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The reading surface over qits-platform-artifacts' docs repository. ONE line and no volume,
             # because this service stores nothing — `latest` is a query over the store's rows rather
             # than a pointer it holds, so a redeploy loses nothing and there is no datasource URL to
@@ -435,7 +454,13 @@ public final class ComposeTemplate {
             # silently is an address nobody knows to change. It is the SAME value qits-ci injects
             # into a publishing step as $QITS_DOCS_URL, so the publisher and the reader cannot
             # disagree about where documentation lives.
-            qits.platform.deployments.run-args.qits-platform-docs=-e QITS_PLATFORM_DOCS_ARTIFACTS_URL=http://qits-platform-artifacts:8080/artifacts/docs/docs
-            qits.platform.deployments.run-args.qits-events=-v qits-events-data:/data -e QUARKUS_DATASOURCE_EVENTS_JDBC_URL=jdbc:h2:file:/data/events/h2/events
+            qits.platform.deployments.run-args.qits-platform-docs=-e QITS_PLATFORM_DOCS_ARTIFACTS_URL=http://qits-platform-artifacts:8080/artifacts/docs/docs -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.platform.deployments.run-args.qits-events=-v qits-events-data:/data -e QUARKUS_DATASOURCE_EVENTS_JDBC_URL=jdbc:h2:file:/data/events/h2/events -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # The receiver's own telemetry, addressed to itself. That is the consistent answer rather than
+            # the clever one: qits-observability is an ordinary OTLP client like every application above,
+            # and leaving it on the dead default would keep exactly one container spamming retries. This
+            # application needed nothing beyond its image until the address had to be spelled, which is why
+            # it had no line at all.
+            qits.platform.deployments.run-args.qits-observability=-e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             """;
 }

@@ -522,6 +522,10 @@ public class SeedPhases {
         return new Phase("pd-run-args", "write the deployer's run-args config volume", ctx -> {
             boot.docker.ensureVolume("qits-deployments-config", ctx::log);
             String properties = ComposeTemplate.runArgs(tokens());
+            // What the volume held BEFORE this write, as a DIGEST rather than as text: the file
+            // carries the push token and every client secret, and reading it back would put both
+            // on the screen and in the log.
+            String before = configDigest();
             ProcessResult result = boot.docker.run(Cmd.of(List.of(
                             "docker", "run", "--rm", "-i",
                             "-v", "qits-deployments-config:/cfg",
@@ -535,7 +539,58 @@ public class SeedPhases {
             Boot.must(result, "writing the deployer's run-args failed");
             ctx.log("  " + properties.lines().filter(l -> l.startsWith("qits.platform.deployments.run-args")).count()
                     + " applications configured on the qits-deployments-config volume");
+            if (!sha256(properties).equals(before)) {
+                restartSeedDeployer(ctx);
+            }
         });
+    }
+
+    /**
+     * The digest of the run-args file already on the volume, or empty when there is none. Computed
+     * inside a container because the volume has no path on the host, and with the same image the
+     * write above uses so nothing extra is pulled.
+     */
+    private String configDigest() {
+        ProcessResult result = boot.docker.run(Cmd.of(List.of(
+                "docker", "run", "--rm",
+                "-v", "qits-deployments-config:/cfg",
+                "--entrypoint", "sh", "alpine/git",
+                // The redirect is the "no file yet" case, which is the ordinary cold boot.
+                "-c", "sha256sum /cfg/application.properties 2>/dev/null | cut -d' ' -f1")), null);
+        for (String line : result.captured()) {
+            String value = line.trim();
+            if (value.matches("[0-9a-f]{64}")) {
+                return value;
+            }
+        }
+        return "";
+    }
+
+    /**
+     * <b>The deployer reads its run-args ONCE, at its own boot.</b> A rerun that changes the file
+     * therefore changes nothing for a deployer that is already running: it goes on deploying from
+     * the previous boot's arguments, and compose will not help — the volume is unchanged as far as
+     * it is concerned, so {@code up -d} leaves the container alone. That is how a qits-ci was
+     * deployed on the first prod bootstrap without the addresses its step containers dial, and the
+     * recovery was a restart by hand.
+     * <p>
+     * Only the SEED deployer, by its wire alias. A deployed one ({@code qits-pd-…}) picked the file
+     * up when its own cutover started it, and restarting it here would interrupt whatever it is
+     * deploying. Restarting an idle seed deployer costs seconds and nothing else, which is what
+     * makes this rerun-safe.
+     */
+    private void restartSeedDeployer(PhaseContext ctx) {
+        String name = PlatformModel.wireAlias("deployments", boot.config.envName());
+        if (!boot.docker.runningNames().contains(name)) {
+            ctx.log("  the run-args changed; no seed deployer is running, so none is holding "
+                    + "the old ones");
+            return;
+        }
+        ctx.log("  the run-args changed and " + name + " is older than the change — restarting it "
+                + "so it deploys from the new ones");
+        Boot.must(boot.docker.exec(Duration.ofMinutes(5), ctx::log, "restart", name),
+                "restarting " + name + " after its run-args changed failed");
+        ctx.note("run-args changed, " + name + " restarted");
     }
 
     /** The values both generated files are filled with. */
@@ -601,8 +656,17 @@ public class SeedPhases {
     }
 
     private static String sha256(Path file) throws Exception {
+        return sha256(Files.readAllBytes(file));
+    }
+
+    /** The same digest sha256sum prints for the bytes a container's {@code cat} would write. */
+    private static String sha256(String text) throws Exception {
+        return sha256(text.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String sha256(byte[] bytes) throws Exception {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        byte[] hash = digest.digest(Files.readAllBytes(file));
+        byte[] hash = digest.digest(bytes);
         StringBuilder hex = new StringBuilder(hash.length * 2);
         for (byte b : hash) {
             hex.append(String.format("%02x", b));

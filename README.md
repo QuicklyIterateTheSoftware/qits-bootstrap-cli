@@ -212,10 +212,17 @@ Built from configuration at startup, so the count in the header is real. A cold 
 | 35–46 | one phase per deployable: push `main` quietly and `environment/<name>` for real, then wait for the CI run and the deployment. qits-platform-edge is second to last: it is the host port, so its cutover takes this program's own door away for a beat |
 | 47–48 | push the seeded repositories; the closing report |
 
-Two things every deploy phase does that are easy to miss: it pushes `main` quietly
-(`-o qits.no-ci`) so a second cold native build is not queued for the same sha, and it replays the
+Three things every deploy phase does that are easy to miss: it pushes `main` quietly
+(`-o qits.no-ci`) so a second cold native build is not queued for the same sha; it replays the
 `build-succeeded` event once when a run is green but no deployment row appeared after a minute —
-the observed lost-event failure.
+the observed lost-event failure; and when the push is up to date and the only run at that sha is
+RED, it re-announces the push to qits-ci once and waits for a run newer than the red one. A red run
+means there is no image, so replaying the build event would only buy an `IMAGE_MISSING` row — a
+rerun has to ask for the BUILD.
+
+Phase 24 restarts the seed deployer when the run-args it just wrote differ from what the volume
+held. The deployer reads that file once, at its own boot, so a rerun that changes it changes
+nothing for a container that is already running.
 
 ## Two planes, one branch
 
@@ -281,11 +288,18 @@ Two additions:
 **The only bring-up path there is.** The shell port is retired; `qits-local-up.sh` is the shim in
 front of this CLI.
 
-**The 2026-08-08 platform re-model is NOT yet proven by a real bootstrap.** One environment named
-`prod`, one deploy ref, six renamed repositories, a platform plane of four, and qits-platform-edge
-in front of the gateway — every list, address, container name and client id in this program moved
-with it, and `./mvnw clean verify` is green, but a green test suite is not the gate this repository
-holds itself to. The runs below are the pre-re-model ones.
+**The 2026-08-08 rerun fixes are NOT yet proven by a real bootstrap.** The first prod bootstrap ran
+that day and found three places where the CLI warned and moved on and a person finished the job by
+hand with raw API calls: a stale RED run was read as an outcome instead of a reason to re-announce
+the push, the seed deployer kept the run-args it had cached at its boot and deployed a qits-ci
+without them, and nothing spelled `QITS_OBSERVABILITY_URL`, so every exporter dialled a name the
+rename had killed. All three are fixed above and `./mvnw clean verify` is green; the gate is the
+next rerun.
+
+**The 2026-08-08 platform re-model reached a real platform** — one environment named `prod`, one
+deploy ref, six renamed repositories, a platform plane of four, and qits-platform-edge in front of
+the gateway. It got there with the three hand-recoveries above, so the re-model's own proof is the
+same rerun the fixes are waiting on. The runs below are the pre-re-model ones.
 
 - 2026-08-06: green cold bootstrap of the real platform in 22m29s, ten applications healthy, after
   15 fixes found by the proving runs. Warm cycle the same evening: `unwrap` 11s, `bootstrap` 3m29s.
