@@ -197,7 +197,7 @@ Built from configuration at startup, so the count in the header is real. A cold 
 | 1–3 | preflight (docker, git, and where the wrapper is); clone or refresh the 28 platform repositories; read `.qits-bootstrap.env` |
 | 4 | seed `qits-auth-core` for the first artifacts build (a temporary file repository, served over HTTP, that breaks the first-boot cycle) |
 | 5–7 | seed images `qits/gateway`, `qits/platform-edge`, `qits/platform-artifacts` |
-| 8 | start the seed qits-platform-artifacts alone, so there is somewhere to publish to |
+| 8 | have qits-platform-artifacts serving the registry port, so there is somewhere to publish to |
 | 9–12 | publish `qits-eventstream`, `qits-auth-core`, `@qits/ui-components`, `@qits/angular` |
 | 13–15 | seed images `qits/ci`, `qits/deployments`, `qits/platform-idp` |
 | 16–20 | the five step images from qits-oci |
@@ -223,6 +223,13 @@ rerun has to ask for the BUILD.
 Phase 24 restarts the seed deployer when the run-args it just wrote differ from what the volume
 held. The deployer reads that file once, at its own boot, so a rerun that changes it changes
 nothing for a container that is already running.
+
+Phases 4 and 8 are the two that bind the registry port, and both ask first whether
+qits-platform-artifacts is already serving it — by GET on the artifacts API's own health, which the
+temporary nginx does not answer. On a platform whose store is deployed, the answer is yes: the
+deployed container publishes the same port from the same volume, so phase 4 skips and phase 8 waits
+for that store instead of starting a seed beside it. Binding it anyway is `port is already
+allocated`, exit 125, and a stopped boot.
 
 ## Two planes, one branch
 
@@ -293,8 +300,10 @@ that day and found three places where the CLI warned and moved on and a person f
 hand with raw API calls: a stale RED run was read as an outcome instead of a reason to re-announce
 the push, the seed deployer kept the run-args it had cached at its boot and deployed a qits-ci
 without them, and nothing spelled `QITS_OBSERVABILITY_URL`, so every exporter dialled a name the
-rename had killed. All three are fixed above and `./mvnw clean verify` is green; the gate is the
-next rerun.
+rename had killed. The validation rerun of those three then stopped at phase 8 with `port is
+already allocated`: the seed store phases predate the skip-when-deployed rule the compose stack
+already had. All four are fixed above and `./mvnw clean verify` is green; the gate is the next
+rerun.
 
 **The 2026-08-08 platform re-model reached a real platform** — one environment named `prod`, one
 deploy ref, six renamed repositories, a platform plane of four, and qits-platform-edge in front of

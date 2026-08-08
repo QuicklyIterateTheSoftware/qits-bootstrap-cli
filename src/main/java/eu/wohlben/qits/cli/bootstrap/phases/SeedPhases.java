@@ -190,6 +190,16 @@ public class SeedPhases {
                     if (boot.http.get(metadata, Map.of()).ok()) {
                         ctx.skip("already served on port " + boot.config.registryPort());
                     }
+                    // The platform's own store may already hold the registry port, and then the
+                    // temporary one cannot have it — the bind fails with "port is already
+                    // allocated" and the boot stops. It does not need it either: the store IS the
+                    // Maven registry the seed builds resolve against, and qits-auth-core is
+                    // published into it by every bootstrap that gets past phase 10. If a store this
+                    // far along somehow has not got it, the seed build below fails by name rather
+                    // than resolving nothing quietly.
+                    storeAlreadyServing().ifPresent(who ->
+                            ctx.skip(who + " serves port " + boot.config.registryPort()
+                                    + " — it is the registry"));
                     boot.docker.ensureVolume("qits-maven-seed", ctx::log);
                     String cid = create(ctx, List.of(
                             "docker", "create", "--user", "root", "--entrypoint", "sh",
@@ -269,11 +279,13 @@ public class SeedPhases {
 
     /**
      * Brings up qits-platform-artifacts alone, so the Maven and npm publishes below have somewhere
-     * to land before any pipeline exists.
+     * to land before any pipeline exists. It STARTS one only when nothing is serving the registry
+     * port yet — what this phase owes the ones after it is a store that answers, not a container it
+     * created.
      */
     public Phase seedArtifactsStart() {
         return new Phase("seed-artifacts",
-                "start the seed qits-platform-artifacts for the Maven bootstrap", ctx -> {
+                "have qits-platform-artifacts serving for the Maven bootstrap", ctx -> {
             // By name and unconditionally: a crashed earlier run leaves the registry running, and
             // this run then skips the seed phase without ever learning the container's name.
             ctx.log("  removing the temporary maven registry, freeing port "
@@ -286,7 +298,20 @@ public class SeedPhases {
             // hand rather than by compose, and the name it takes has to be the same one the compose
             // service would have claimed, or the two run side by side on the registry port.
             String artifacts = PlatformModel.wireAlias("platform-artifacts", boot.config.envName());
-            if (!boot.docker.runningNames().contains(artifacts)) {
+            // Whoever already holds the port, holds it. A seed beside a store that is up is
+            // impossible — the bind answers "port is already allocated", exit 125, and the boot
+            // stopped exactly there on the 2026-08-08 validation rerun — and pointless: a DEPLOYED
+            // store publishes this very port from the same qits-platform-artifacts-data volume and
+            // answers the same API, so it is strictly better than the seed this phase would have
+            // started. This run's own seed container is asked for by name first, so a rerun still
+            // reports it as itself rather than as the deployer's.
+            Optional<String> serving = boot.docker.runningNames().contains(artifacts)
+                    ? Optional.of(artifacts) : storeAlreadyServing();
+            if (serving.isPresent()) {
+                ctx.log("  " + serving.get() + " already serves port " + boot.config.registryPort()
+                        + " from the same volume — no seed store to start");
+                ctx.note(serving.get() + " serves :" + boot.config.registryPort());
+            } else {
                 boot.docker.removeContainer(artifacts, null);
                 Boot.must(boot.docker.exec(ctx::log, "run", "-d", "--name", artifacts,
                                 "--network", Boot.NETWORK,
@@ -301,12 +326,39 @@ public class SeedPhases {
                                 "-v", "qits-platform-artifacts-data:/data",
                                 "qits/platform-artifacts:latest"),
                         "the seed " + artifacts + " did not start");
-            } else {
-                ctx.log("  " + artifacts + " already running");
             }
-            boot.awaitHealth(ctx, artifacts + " on port " + boot.config.registryPort(),
-                    boot.artifacts::health);
+            // Always waited for, whoever is behind the port: every publish after this phase — the
+            // two Maven ones, both npm ones, the daemon upload — needs the store answering, and a
+            // phase that skipped the start still owes them that.
+            boot.awaitHealth(ctx, serving.orElse(artifacts) + " on port "
+                    + boot.config.registryPort(), boot.artifacts::health);
         });
+    }
+
+    /**
+     * Who already holds the registry port, when the platform's own store does — the deployed
+     * container's name if one is running, otherwise the service's plain name.
+     * <p>
+     * <b>The answer comes from the API, not from the container list.</b> A deployed store is named
+     * {@code qits-pd-qits-platform-artifacts-<id8>}, and matching that shape alone would still miss
+     * anything else the port could be behind. The artifacts API's own health is the honest
+     * question: the temporary Maven registry is an nginx serving one mounted directory, so it
+     * answers 404 there, while qits-platform-artifacts answers 200 whether it was started by this
+     * bootstrap, by compose or by the deployer. The container list is then read only to name who it
+     * is, which is what makes the phase log readable.
+     * <p>
+     * Both phases that bind the registry port ask this before they bind it. Neither can win that
+     * bind, and neither needs to: the store on the other end has the same volume.
+     */
+    private Optional<String> storeAlreadyServing() {
+        if (!boot.artifacts.ready()) {
+            return Optional.empty();
+        }
+        String prefix = PlatformModel.pdNamePrefix("platform-artifacts", boot.config.envName());
+        return Optional.of(boot.docker.runningNames().stream()
+                .filter(name -> name.startsWith(prefix))
+                .findFirst()
+                .orElse(PlatformModel.repo("platform-artifacts")));
     }
 
     // --- the publishes the seed builds need -------------------------------------------------------
