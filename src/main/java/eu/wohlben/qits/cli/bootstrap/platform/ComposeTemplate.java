@@ -322,6 +322,13 @@ public final class ComposeTemplate {
                   # here: a step container dials THOSE itself, on qits-net, so ci's shipped defaults are
                   # already right. Copying the localhost mapping above onto them would point every npm install
                   # at the step container's own loopback.
+                  # The websocket a step container's daemon dials BACK to this service. The image ships the
+                  # unqualified ws://qits-ci:8080/ci/daemon, and nothing by that alias exists any more — a
+                  # blank here fails every step with "could not reach qits-ci", which is exactly how it was
+                  # found on the first prod bootstrap.
+                  QITS_CI_CONTAINER_DAEMON_URL: ws://${ENV_NAME}-qits-ci:8080/ci/daemon
+                  # Same class of self-name: the release train asks workspaces for version identity.
+                  QITS_CI_WORKSPACES_URL: http://${ENV_NAME}-qits-workspaces:8080
                   # The binary every step container downloads and execs — uploaded by this bootstrap, digest
                   # pinned. Blank would mean every run fails as never-registered.
                   QITS_CI_DAEMON_VERSION: "${DAEMON_SHA}"
@@ -377,7 +384,7 @@ public final class ComposeTemplate {
             # fire-and-forget and swallowed at debug, so a wrong value deploys nothing and reports nothing.
             # QITS_AUTH_MACHINE_AUDIENCE and QUARKUS_OIDC_CLIENT_CLIENT_ID are both this tier's alias: ci
             # ships the unqualified qits-ci for each, and the idp knows neither name.
-            qits.platform.deployments.run-args.qits-ci=-v qits-ci-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QUARKUS_DATASOURCE_CI_JDBC_URL=jdbc:h2:file:/data/ci/h2/ci;DB_CLOSE_DELAY=-1 -e QUARKUS_DATASOURCE_EVENTSTREAM_JDBC_URL=jdbc:h2:file:/data/eventstream/h2/eventstream -e QITS_CI_GIT_HOST_URL=http://qits-platform-artifacts:8080/artifacts -e QITS_CI_CONTAINER_GIT_URL=http://qits-platform-artifacts:8080/artifacts -e QITS_CI_NETWORK=qits-net -e QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL=http://${ENV_NAME}-qits-deployments:8080/platform-deployments/api/events/build-succeeded -e QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT} -e QITS_CI_DAEMON_VERSION=${DAEMON_SHA} -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-ci -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT} -e QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ID=${ENV_NAME}-qits-ci -e QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-deployments -e QUARKUS_OIDC_CLIENT_CREDENTIALS_SECRET=${IDP_SECRET_CI}
+            qits.platform.deployments.run-args.qits-ci=-v qits-ci-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QUARKUS_DATASOURCE_CI_JDBC_URL=jdbc:h2:file:/data/ci/h2/ci;DB_CLOSE_DELAY=-1 -e QUARKUS_DATASOURCE_EVENTSTREAM_JDBC_URL=jdbc:h2:file:/data/eventstream/h2/eventstream -e QITS_CI_GIT_HOST_URL=http://qits-platform-artifacts:8080/artifacts -e QITS_CI_CONTAINER_GIT_URL=http://qits-platform-artifacts:8080/artifacts -e QITS_CI_NETWORK=qits-net -e QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL=http://${ENV_NAME}-qits-deployments:8080/platform-deployments/api/events/build-succeeded -e QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT} -e QITS_CI_DAEMON_VERSION=${DAEMON_SHA} -e QITS_CI_CONTAINER_DAEMON_URL=ws://${ENV_NAME}-qits-ci:8080/ci/daemon -e QITS_CI_WORKSPACES_URL=http://${ENV_NAME}-qits-workspaces:8080 -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-ci -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT} -e QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ID=${ENV_NAME}-qits-ci -e QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-deployments -e QUARKUS_OIDC_CLIENT_CREDENTIALS_SECRET=${IDP_SECRET_CI}
             # The deployer's own deployment — the self-update handoff. Three mounts, all load-bearing: the
             # data volume holds the topology AND the deployment history, the config volume holds this very
             # file so the successor inherits every line of it, and the docker socket is what makes it a
