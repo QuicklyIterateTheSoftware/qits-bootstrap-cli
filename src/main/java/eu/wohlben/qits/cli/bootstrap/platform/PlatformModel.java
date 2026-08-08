@@ -49,10 +49,14 @@ public final class PlatformModel {
      * qits-artifacts, holding what the whole platform has published, so a second reader per
      * environment would be two front doors onto one store. It holds no state of its own, which is
      * what makes that a free choice rather than a constraint.
+     * <p>
+     * qits-gateway is here because it publishes the host's only port and every environment is
+     * reached through that one origin — a per-tier copy was a second binder for port 8080. Its
+     * {@code environment/dev} branch is deleted; the deploy ref is {@code platform/main} (2026-08-07).
      */
     public static final List<String> PLATFORM_SERVICES = List.of(
             "platform-deployments", "idp", "artifacts", "ci", "events", "projects",
-            "observability", "platform-docs");
+            "observability", "platform-docs", "gateway");
 
     /**
      * Repositories that need a repository on the platform git host and a main push, but are not

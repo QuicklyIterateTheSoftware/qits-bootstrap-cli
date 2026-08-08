@@ -31,7 +31,7 @@ class PlatformModelTest {
         assertThat(PlatformModel.deployRef("platform-deployments", "environment/dev"))
                 .isEqualTo("platform/main");
         assertThat(PlatformModel.deployRef("gateway", "environment/dev"))
-                .isEqualTo("environment/dev");
+                .isEqualTo("platform/main");
         assertThat(PlatformModel.deployRef("workspaces", "environment/dev"))
                 .isEqualTo("environment/dev");
         assertThat(PlatformModel.PLATFORM_BRANCH).isNotEqualTo("main");
@@ -42,23 +42,24 @@ class PlatformModelTest {
         // qits-pd- is the namespace's abbreviation and stays that way: docker's name charset has
         // no dot, and this is what a person greps for on the host. The config keys and the labels
         // spell qits.platform.deployments in full; nothing resolves through the container name.
-        assertThat(PlatformModel.pdNamePrefix("idp", "dev"))
-                .isEqualTo("qits-pd-platform-qits-idp-");
         assertThat(PlatformModel.pdNamePrefix("gateway", "dev"))
-                .isEqualTo("qits-pd-dev-qits-gateway-");
+                .isEqualTo("qits-pd-platform-qits-gateway-");
+        assertThat(PlatformModel.pdNamePrefix("workspaces", "dev"))
+                .isEqualTo("qits-pd-dev-qits-workspaces-");
     }
 
     @Test
-    void theThreeEnvironmentServicesAreTheOnesNotOnThePlatformPlane() {
+    void theTwoEnvironmentServicesAreTheOnesNotOnThePlatformPlane() {
         assertThat(PlatformModel.PLATFORM_SERVICES).containsExactlyInAnyOrder(
                 "platform-deployments", "idp", "artifacts", "ci", "events", "projects",
-                "observability", "platform-docs");
-        // Still three, and the count is the assertion: platform-docs joined the PLATFORM plane
-        // rather than this list, because the docs repository it reads is one store for the whole
-        // platform and a reader per environment would be two front doors onto it.
+                "observability", "platform-docs", "gateway");
+        // Two left, and the count is the assertion: the gateway joined the PLATFORM plane on
+        // 2026-08-07 — it publishes the host's only port, so a per-tier copy was a second binder
+        // for port 8080 — and platform-docs before it, because the docs repository it reads is one
+        // store for the whole platform.
         assertThat(PlatformModel.DEPLOYABLES)
                 .filteredOn(name -> !PlatformModel.isPlatformService(name))
-                .containsExactlyInAnyOrder("gateway", "workspaces", "stt");
+                .containsExactlyInAnyOrder("workspaces", "stt");
     }
 
     @Test
