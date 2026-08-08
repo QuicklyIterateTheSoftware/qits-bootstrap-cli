@@ -48,35 +48,34 @@ class BootstrapStateTest {
     }
 
     @Test
-    void writesEveryClientEvenTheOnesPhaseOneDoesNotUse() throws Exception {
+    void writesWhateverTheRunResolvedRatherThanAListOfItsOwn() throws Exception {
+        // A client id is a wire alias, so the set follows the environment name and only the caller
+        // knows it. This class writes the map it was handed.
         Path file = temp.resolve(BootstrapState.FILE_NAME);
         Map<String, String> secrets = new LinkedHashMap<>();
-        secrets.put("qits-ci", "one");
-        secrets.put("qits-cd", "two");
+        secrets.put("prod-qits-ci", "one");
+        secrets.put("qits-platform-artifacts", "two");
 
         new BootstrapState(file).write("digest", secrets);
 
         String text = Files.readString(file);
         assertThat(text).contains("DAEMON_SHA=digest");
-        assertThat(text).contains("IDP_SECRET_QITS_CI=one");
-        assertThat(text).contains("IDP_SECRET_QITS_CD=two");
-        for (String client : PlatformModel.IDP_CLIENTS) {
-            assertThat(text).contains("IDP_SECRET_" + PlatformModel.clientKey(client) + "=");
-        }
+        assertThat(text).contains("IDP_SECRET_PROD_QITS_CI=one");
+        assertThat(text).contains("IDP_SECRET_QITS_PLATFORM_ARTIFACTS=two");
     }
 
     @Test
     void aWrittenFileReadsBackTheSame() throws Exception {
         Path file = temp.resolve(BootstrapState.FILE_NAME);
         Map<String, String> secrets = new LinkedHashMap<>();
-        PlatformModel.IDP_CLIENTS.forEach(client -> secrets.put(client, "secret-" + client));
+        PlatformModel.idpClients("prod").forEach(client -> secrets.put(client, "secret-" + client));
         new BootstrapState(file).write("abc", secrets);
 
         BootstrapState reread = new BootstrapState(file);
         reread.read();
 
         assertThat(reread.daemonSha()).contains("abc");
-        for (String client : PlatformModel.IDP_CLIENTS) {
+        for (String client : PlatformModel.idpClients("prod")) {
             assertThat(reread.secret(client)).contains("secret-" + client);
         }
     }

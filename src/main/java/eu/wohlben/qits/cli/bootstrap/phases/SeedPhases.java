@@ -87,20 +87,41 @@ public class SeedPhases {
         });
     }
 
+    /**
+     * <b>Both silences here are gone.</b> This phase decides which sha the whole platform is built
+     * from, and both of its old fallbacks answered a broken input with a working-looking run:
+     * <ul>
+     *   <li>A wrapper path that was not a checkout fell through to GitHub. A rename that outran
+     *       {@link PlatformModel#repoPath} then deployed the org's last push instead of the work in
+     *       the checkout — and said so in one line among thousands. Now: an ABSENT directory is
+     *       still answered by the org URL (not every model repository has to be a submodule of this
+     *       wrapper), but a directory that exists and is not a checkout stops the boot.
+     *   <li>A refresh that failed logged "using what is checked out" and built the stale copy. A
+     *       non-fast-forward is the ordinary cause and the ordinary cause is a rebase, so the stale
+     *       copy is a commit that no longer exists anywhere.
+     * </ul>
+     */
     public Phase sources() {
         return new Phase("sources", "clone or refresh the platform's sources", ctx -> {
             for (String name : PlatformModel.platformRepos()) {
                 String repo = PlatformModel.repo(name);
                 Path localSrc = boot.state.wrapperCheckout(name);
+                if (Files.exists(localSrc) && !boot.git.isCheckout(localSrc)) {
+                    throw new IllegalStateException(localSrc + " is not a git checkout, so "
+                            + repo + " has no source. Either the submodule is not initialised "
+                            + "(git submodule update --init) or PlatformModel.repoPath names the "
+                            + "wrong directory for '" + name + "'.");
+                }
                 String from = boot.git.isCheckout(localSrc)
                         ? localSrc.toString()
                         : boot.config.orgUrl() + "/" + repo + ".git";
                 Path target = boot.state.repoDir(name);
                 if (boot.git.isCheckout(target)) {
                     ctx.status("refreshing " + repo);
-                    if (!boot.git.pullFastForward(target, ctx::log).ok()) {
-                        ctx.log("  " + repo + ": pull failed, using what is checked out");
-                    }
+                    Boot.must(boot.git.pullFastForward(target, ctx::log),
+                            "refresh of " + repo + " failed — " + target + " cannot fast-forward "
+                                    + "to " + from + ", so this run would build a commit that is "
+                                    + "no longer anywhere. Delete that directory and rerun");
                 } else {
                     ctx.status("cloning " + repo + " from " + from);
                     Boot.must(boot.git.clone(from, target, ctx::log), "clone of " + repo + " failed");
@@ -121,7 +142,7 @@ public class SeedPhases {
                     boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME));
             state.read();
             boot.state.daemonSha = state.daemonSha().orElse(null);
-            for (String client : PlatformModel.IDP_CLIENTS) {
+            for (String client : PlatformModel.idpClients(boot.config.envName())) {
                 state.secret(client).ifPresent(secret -> boot.state.secrets.put(client, secret));
             }
             if (!state.exists()) {
@@ -133,7 +154,7 @@ public class SeedPhases {
             ctx.log("  recorded daemon digest: "
                     + (boot.state.daemonSha == null ? "none" : shortSha(boot.state.daemonSha)));
             ctx.log("  recorded client secrets: " + boot.state.secrets.size() + " of "
-                    + PlatformModel.IDP_CLIENTS.size());
+                    + PlatformModel.idpClients(boot.config.envName()).size());
             ctx.note("kept " + boot.state.secrets.size() + " secrets");
         });
     }
@@ -153,9 +174,10 @@ public class SeedPhases {
     // --- the first-boot dependency cycle ----------------------------------------------------------
 
     /**
-     * qits-artifacts consumes qits-auth-core, while also being the Maven registry that owns it in
-     * steady state. The cycle is broken with a temporary, bootstrap-owned file repository, served
-     * over HTTP on the registry port and removed before the real artifacts container claims it.
+     * qits-platform-artifacts consumes qits-auth-core while also being the Maven registry that owns
+     * it in steady state. The cycle is broken with a temporary, bootstrap-owned file repository,
+     * served over HTTP on the registry port and removed before the real artifacts container claims
+     * it.
      */
     public Phase authCoreSeed() {
         return new Phase("auth-core-seed", "seed qits-auth-core 1.0.0 for the first artifacts build",
@@ -246,11 +268,12 @@ public class SeedPhases {
     }
 
     /**
-     * Brings up qits-artifacts alone, so the Maven and npm publishes below have somewhere to land
-     * before any pipeline exists.
+     * Brings up qits-platform-artifacts alone, so the Maven and npm publishes below have somewhere
+     * to land before any pipeline exists.
      */
     public Phase seedArtifactsStart() {
-        return new Phase("seed-artifacts", "start the seed qits-artifacts for the Maven bootstrap", ctx -> {
+        return new Phase("seed-artifacts",
+                "start the seed qits-platform-artifacts for the Maven bootstrap", ctx -> {
             // By name and unconditionally: a crashed earlier run leaves the registry running, and
             // this run then skips the seed phase without ever learning the container's name.
             ctx.log("  removing the temporary maven registry, freeing port "
@@ -258,24 +281,30 @@ public class SeedPhases {
             boot.docker.removeContainer(AUTH_SEED_HTTP, ctx::log);
             boot.state.authSeedContainer = null;
             boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
-            boot.docker.ensureVolume("qits-artifacts-data", ctx::log);
-            if (!boot.docker.runningNames().contains("qits-artifacts")) {
-                boot.docker.removeContainer("qits-artifacts", null);
-                Boot.must(boot.docker.exec(ctx::log, "run", "-d", "--name", "qits-artifacts",
+            boot.docker.ensureVolume("qits-platform-artifacts-data", ctx::log);
+            // Named after its wire alias, like every other seed container: this one is started by
+            // hand rather than by compose, and the name it takes has to be the same one the compose
+            // service would have claimed, or the two run side by side on the registry port.
+            String artifacts = PlatformModel.wireAlias("platform-artifacts", boot.config.envName());
+            if (!boot.docker.runningNames().contains(artifacts)) {
+                boot.docker.removeContainer(artifacts, null);
+                Boot.must(boot.docker.exec(ctx::log, "run", "-d", "--name", artifacts,
                                 "--network", Boot.NETWORK,
                                 "-p", "127.0.0.1:" + boot.config.registryPort() + ":8080",
                                 "-e", "QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL=jdbc:h2:file:/data/artifacts/h2/artifacts",
                                 "-e", "QITS_ARTIFACTS_BLOBS_DIR=/data/artifacts/blobs",
-                                "-e", "QITS_CI_INTAKE_URL=http://qits-ci:8080/ci/api/events/post-receive",
+                                "-e", "QITS_CI_INTAKE_URL=http://"
+                                        + PlatformModel.wireAlias("ci", boot.config.envName())
+                                        + ":8080/ci/api/events/post-receive",
                                 "-e", "QITS_REPOSITORIES_GIT_PUSH_TOKEN=" + boot.config.pushToken(),
                                 "-e", "QITS_REPOSITORIES_GIT_PROTECT_DEFAULT_BRANCH=true",
-                                "-v", "qits-artifacts-data:/data",
-                                "qits/artifacts:latest"),
-                        "the seed qits-artifacts did not start");
+                                "-v", "qits-platform-artifacts-data:/data",
+                                "qits/platform-artifacts:latest"),
+                        "the seed " + artifacts + " did not start");
             } else {
-                ctx.log("  qits-artifacts already running");
+                ctx.log("  " + artifacts + " already running");
             }
-            boot.awaitHealth(ctx, "qits-artifacts on port " + boot.config.registryPort(),
+            boot.awaitHealth(ctx, artifacts + " on port " + boot.config.registryPort(),
                     boot.artifacts::health);
         });
     }
@@ -309,7 +338,7 @@ public class SeedPhases {
                     "docker", "create", "--network", Boot.NETWORK, "--user", "root",
                     "--entrypoint", "sh", "maven:3.9-eclipse-temurin-25",
                     "-c", "cd /src && mvn -B -ntp deploy -DskipTests -DaltDeploymentRepository="
-                            + "qits::default::http://qits-artifacts:8080/artifacts/maven/maven"));
+                            + "qits::default::http://qits-platform-artifacts:8080/artifacts/maven/maven"));
             copyIn(ctx, boot.state.repoDir(repoName), cid);
             startAndReap(ctx, cid, artifactId + " publish failed");
         });
@@ -338,8 +367,8 @@ public class SeedPhases {
                             corepack enable
                             cat > /root/.npmrc <<EOF
                             registry=https://registry.npmjs.org/
-                            @qits:registry=http://qits-artifacts:8080/artifacts/npm/npm/
-                            //qits-artifacts:8080/artifacts/npm/npm/:_authToken=qits-bootstrap
+                            @qits:registry=http://qits-platform-artifacts:8080/artifacts/npm/npm/
+                            //qits-platform-artifacts:8080/artifacts/npm/npm/:_authToken=qits-bootstrap
                             EOF
                             pnpm install --frozen-lockfile
                             pnpm build
@@ -364,8 +393,8 @@ public class SeedPhases {
                             corepack enable
                             cat > /root/.npmrc <<EOF
                             registry=https://registry.npmjs.org/
-                            @qits:registry=http://qits-artifacts:8080/artifacts/npm/npm/
-                            //qits-artifacts:8080/artifacts/npm/npm/:_authToken=qits-bootstrap
+                            @qits:registry=http://qits-platform-artifacts:8080/artifacts/npm/npm/
+                            //qits-platform-artifacts:8080/artifacts/npm/npm/:_authToken=qits-bootstrap
                             EOF
                             pnpm install --frozen-lockfile
                             pnpm build
@@ -441,7 +470,7 @@ public class SeedPhases {
     public Phase idpSecrets() {
         return new Phase("idp-secrets", "resolve the idp's client secrets and record the run state",
                 ctx -> {
-                    for (String client : PlatformModel.IDP_CLIENTS) {
+                    for (String client : PlatformModel.idpClients(boot.config.envName())) {
                         Optional<String> given = ConfigProvider.getConfig()
                                 .getOptionalValue("qits.idp.client." + client + ".secret", String.class)
                                 .filter(value -> !value.isBlank());
@@ -459,7 +488,7 @@ public class SeedPhases {
                             origin = "generated";
                         }
                         boot.state.secrets.put(client, value);
-                        ctx.log(String.format("  %-18s %s", client, origin));
+                        ctx.log(String.format("  %-24s %s", client, origin));
                     }
                     BootstrapState state = new BootstrapState(
                             boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME));
@@ -491,27 +520,33 @@ public class SeedPhases {
      */
     public Phase pdRunArgs() {
         return new Phase("pd-run-args", "write the deployer's run-args config volume", ctx -> {
-            boot.docker.ensureVolume("qits-platform-deployments-config", ctx::log);
+            boot.docker.ensureVolume("qits-deployments-config", ctx::log);
             String properties = ComposeTemplate.runArgs(tokens());
             ProcessResult result = boot.docker.run(Cmd.of(List.of(
                             "docker", "run", "--rm", "-i",
-                            "-v", "qits-platform-deployments-config:/cfg",
+                            "-v", "qits-deployments-config:/cfg",
                             "--entrypoint", "sh", "alpine/git",
                             "-c", "cat > /cfg/application.properties "
                                     + "&& chown 1001:0 /cfg/application.properties"))
                     .stdin(properties)
                     .mask(boot.config.pushToken())
-                    .mask(boot.state.secrets.getOrDefault("qits-ci", "")), ctx::log);
+                    .mask(boot.state.secrets.getOrDefault(
+                            PlatformModel.wireAlias("ci", boot.config.envName()), "")), ctx::log);
             Boot.must(result, "writing the deployer's run-args failed");
             ctx.log("  " + properties.lines().filter(l -> l.startsWith("qits.platform.deployments.run-args")).count()
-                    + " applications configured on the qits-platform-deployments-config volume");
+                    + " applications configured on the qits-deployments-config volume");
         });
     }
 
     /** The values both generated files are filled with. */
     Map<String, String> tokens() {
+        String env = boot.config.envName();
         Map<String, String> values = new LinkedHashMap<>();
-        values.put("ENV_NAME", boot.config.envName());
+        values.put("ENV_NAME", env);
+        // The same name in the spelling an env-var key takes, because the idp's per-client keys
+        // embed the client id and a client id starts with the environment name:
+        // QITS_IDP_CLIENT_PROD_QITS_CI_SECRET.
+        values.put("ENV_KEY", PlatformModel.clientKey(env));
         values.put("COMPOSE_FILE", boot.state.composeFile == null ? "docker-compose.qits.yml"
                 : boot.state.composeFile.getFileName().toString());
         values.put("PORT", String.valueOf(boot.config.port()));
@@ -524,10 +559,13 @@ public class SeedPhases {
         values.put("MACHINE_CLIENT", String.valueOf(boot.config.machineAuth()));
         values.put("DOCKER_GID", boot.state.dockerGid);
         values.put("DAEMON_SHA", boot.state.daemonSha == null ? "" : boot.state.daemonSha);
-        values.put("IDP_AUDIENCES", PlatformModel.IDP_AUDIENCES);
-        for (String client : PlatformModel.IDP_CLIENTS) {
-            values.put("IDP_SECRET_" + PlatformModel.clientKey(client),
-                    boot.state.secrets.getOrDefault(client, ""));
+        values.put("IDP_CLIENTS", String.join(",", PlatformModel.idpClients(env)));
+        values.put("IDP_AUDIENCES", PlatformModel.idpAudiences(env));
+        // Keyed by the APPLICATION, not by the client id: the id carries the environment name and
+        // a placeholder cannot be spelled with a value the template does not know yet.
+        for (String app : PlatformModel.IDP_CLIENT_APPS) {
+            values.put("IDP_SECRET_" + PlatformModel.clientKey(app),
+                    boot.state.secrets.getOrDefault(PlatformModel.wireAlias(app, env), ""));
         }
         return values;
     }

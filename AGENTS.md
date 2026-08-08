@@ -16,10 +16,10 @@ it replaced is in that repository's git history (`git log -- qits-local-up.sh`).
 That changes what care means here:
 
 - **The operational knowledge is in these comments and nowhere else** — ordering constraints, the
-  409/PATCH reconcile, the dual-ref pushes with `-o qits.no-ci`, the platform and environment
-  deploy refs, the mirror-prefix rewrite, the release replays, the lost-event self-heal, the
-  machine-token minting. They were ported from the script on purpose, and the script is no longer
-  there to check them against. Do not thin them out.
+  409/PATCH reconcile, the dual-ref pushes with `-o qits.no-ci`, the one deploy ref both planes
+  share, the wire aliases the seed containers are named after, the mirror-prefix rewrite, the
+  release replays, the lost-event self-heal, the machine-token minting. They were ported from the
+  script on purpose, and the script is no longer there to check them against. Do not thin them out.
 - **A behaviour change is a change to the only bring-up path there is.** Prove it with a real
   bootstrap, not with reasoning about what the script used to do.
 
@@ -51,8 +51,16 @@ forced. Add to that list rather than deviating quietly.
 - **Phases are rerun-safe**, the same way the script's were: 409s tolerated, existing networks
   adopted, up-to-date pushes no-ops, publishes probed before they are made.
 - **`unwrap` keeps the retired platform's patterns forever.** Cleaning a pre-merge-back machine is
-  in scope, so the qits-cd labels and name prefixes stay beside the current ones. Adding a
-  namespace is how this changes; removing one is not.
+  in scope, so the qits-cd labels and the pre-rename name prefixes stay beside the current ones.
+  Adding a pattern is how this changes; removing one is not.
+- **A name in `PlatformModel` is the repository name without `qits-`, and it is load-bearing four
+  times over**: the wrapper directory, the git-host repository, the seed image tag and the
+  deployer's application key. The plane lives in the name itself (`platform-idp`,
+  `platform-artifacts`) and the tier lives in the WIRE ALIAS derived from it
+  (`prod-qits-ci`) — never the other way round.
+- **A source this program cannot trust stops the boot.** It decides which sha the whole platform is
+  built from, so a wrapper path that is not a checkout and a refresh that will not fast-forward are
+  both failures, not log lines.
 - **Failure stops the boot** (exit 2). A deployment that never landed is a warning (`ctx.warn`,
   exit 1) — the script's `overall=1` — because the applications behind it still deserve their turn.
 - **Secrets never reach the screen or the log.** Put them through `Cmd.mask`. The browser view

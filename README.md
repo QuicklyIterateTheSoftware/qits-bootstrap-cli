@@ -9,13 +9,13 @@ four-hour cold start is no longer four hours of silence.
 
     ┌ qits bootstrap · 41m12s elapsed · log qits-bootstrap-cli.log ──────────────┐
     │   … 18 earlier phases done                                                 │
-    │   ✓ 24/45 wait for the seed services (1m20s)                               │
-    │   ✓ 25/45 publish the ci-daemon binary to the registry (12s)  — 8d0f1a2b…  │
-    │ ▸ 26/45 create the platform's repositories on the git host   ⠹ 4s          │
+    │   ✓ 26/48 wait for the seed services (1m20s)                               │
+    │   ✓ 27/48 publish the ci-daemon binary to the registry (12s)  — 8d0f1a2b…  │
+    │ ▸ 28/48 create the platform's repositories on the git host   ⠹ 4s          │
     │      PUT http://127.0.0.1:8081/artifacts/git/qits-spa-ci                   │
-    │   19 phases pending — next: pre-seed release-train histories               │
+    │   20 phases pending — next: pre-seed release-train histories               │
     ├────────────────────────────────────────────────────────────────────────────┤
-    │  qits-spa-artifacts -> /artifacts/git/qits-spa-artifacts  (created)        │
+    │  qits-spa-deployments -> /artifacts/git/qits-spa-deployments  (created)    │
     │  qits-spa-observability -> /artifacts/git/qits-spa-observability (created) │
     │  … the running step's own output, live                                     │
     └────────────────────────────────────────────────────────────────────────────┘
@@ -99,16 +99,16 @@ the same names `qits-local-up.sh` read:
 | `QITS_WRAPPER_DIR` | detected | the wrapper repository whose checkouts are the sources, and where the compose file and `.qits-bootstrap.env` land — found by walking up when unset |
 | `QITS_SRC` | `.qits-bootstrap-src` | where those checkouts are cloned to |
 | `QITS_ORG_URL` | the GitHub org | fallback for a repository with no local checkout |
-| `QITS_PORT` | `8080` | the gateway's host port; the CLI reaches ci and the deployer through it |
-| `QITS_REGISTRY_PORT` | `8081` | qits-artifacts' host port: the registry, the artifacts API and the git host |
+| `QITS_PORT` | `8080` | the host's ONE published port, bound by qits-platform-edge; the CLI reaches ci and the deployer through it and the gateway behind it |
+| `QITS_REGISTRY_PORT` | `8081` | qits-platform-artifacts' host port: the registry, the artifacts API and the git host |
 | `QITS_SKIP_BUILD` | `0` | 1 = the seed images and the daemon binary exist; skip to compose and the pushes |
-| `QITS_MACHINE_AUTH` | `1` | machine-token enforcement for ci, platform-deployments and artifacts |
+| `QITS_MACHINE_AUTH` | `1` | machine-token enforcement for ci, deployments and platform-artifacts |
 | `QITS_PUSH_TOKEN` | `local-dev` | the git host's push token — the documented escape hatch, not a secret |
 | `QITS_DEPLOY_TIMEOUT` | `3600` | seconds to wait per application deployment |
 | `QITS_RELEASE_TIMEOUT` | `1800` | seconds to wait per replayed release run |
 | `QITS_HEALTH_TIMEOUT` | `120` | seconds to wait per seed service |
 | `QITS_POLL_INTERVAL` | `10` | seconds between polls |
-| `QITS_ENV_NAME` | `dev` | the environment, deployed from `environment/<name>` |
+| `QITS_ENV_NAME` | `prod` | the environment, and the ONE deploy ref is its `environment/<name>`. It is also inside every wire alias, every deployed container name and every idp client id |
 | `QITS_IDP_CLIENT_<ID>_SECRET` | generated | pin one idp client's secret instead of generating it |
 | `QITS_TUI` | `1` | 0 = plain output even on a terminal |
 | `QITS_WEB` | `1` | 0 = no browser view; the HTTP server never binds |
@@ -116,7 +116,7 @@ the same names `qits-local-up.sh` read:
 | `QITS_WEB_HOST` | `0.0.0.0` | what it binds (WSL2 browsers need non-loopback); `127.0.0.1` keeps it off the LAN |
 | `QITS_TAIL_LINES` | `2000` | lines of the running step kept for the body |
 | `QITS_LOG_FILE` | `qits-bootstrap-cli.log` | the full log of every command |
-| `QITS_CURL_IMAGE` | `curlimages/curl:latest` | how the CLI reaches qits-idp, which publishes no host port |
+| `QITS_CURL_IMAGE` | `curlimages/curl:latest` | how the CLI reaches qits-platform-idp, which publishes no host port |
 
 `--wrapper-dir`, `--skip-build` and `--no-tui` answer the same questions for one run.
 
@@ -171,7 +171,7 @@ program whose whole job is that the platform is not up yet:
 | `GET /events` | the run as it happens: one `snapshot` on connect, then `phase`, `status`, `line` and `done` as server-sent events, with a comment every 15s so nothing in the middle calls it dead |
 | `GET /state.json` | the same state in one answer, for `curl` |
 
-Knobs: `QITS_WEB_PORT` (default `8480` — 8080 is the gateway, 8081 is qits-artifacts, and 8090 is
+Knobs: `QITS_WEB_PORT` (default `8480` — 8080 is the edge, 8081 is the artifacts service, and 8090 is
 taken often enough to be a poor default), `QITS_WEB_HOST` (default `0.0.0.0` — on WSL2 the
 Windows-side browser cannot reliably reach a WSL-loopback bind; set `127.0.0.1` to keep the view
 off the LAN), and `QITS_WEB=0`, which turns it off entirely — no server, no port.
@@ -189,52 +189,61 @@ into a page that arrives when the run is over, so that is what to verify before 
 
 ## What it does, in order
 
-Built from configuration at startup, so the count in the header is real. A cold boot is 45 phases;
-`QITS_SKIP_BUILD=1` drops phases 4–20 and keeps everything else.
+Built from configuration at startup, so the count in the header is real. A cold boot is 48 phases;
+`QITS_SKIP_BUILD=1` drops phases 4–21 and keeps the other 31.
 
 | | phase |
 | --- | --- |
-| 1–3 | preflight (docker, git, and where the wrapper is); clone or refresh the 27 platform repositories; read `.qits-bootstrap.env` |
+| 1–3 | preflight (docker, git, and where the wrapper is); clone or refresh the 28 platform repositories; read `.qits-bootstrap.env` |
 | 4 | seed `qits-auth-core` for the first artifacts build (a temporary file repository, served over HTTP, that breaks the first-boot cycle) |
-| 5–6 | seed images `qits/gateway`, `qits/artifacts` |
-| 7 | start the seed qits-artifacts alone, so there is somewhere to publish to |
-| 8–11 | publish `qits-eventstream`, `qits-auth-core`, `@qits/ui-components`, `@qits/angular` |
-| 12–14 | seed images `qits/ci`, `qits/platform-deployments`, `qits/idp` |
-| 15–19 | the five step images from qits-oci |
-| 20 | the ci-daemon musl static binary, and its digest |
-| 21 | resolve the idp's client secrets (given, kept, generated) and record the run state |
-| 22–23 | generate the seed compose file; write the deployer's run-args onto its config volume |
-| 24–25 | start the seed stack (only what the deployer does not already manage); wait for idp, gateway, artifacts, ci, platform-deployments |
-| 26 | publish the ci-daemon binary, version-addressed by its digest |
-| 27–28 | create the 27 repositories on the git host; pre-seed the seeded histories with `-o qits.no-ci` |
-| 29–32 | replay the release pipeline of each publisher the wrapper builds install, and wait for each run |
-| 33 | reconcile the `dev` environment in qits-platform-deployments by PATCH — never delete, which would tear down the platform |
-| 34–43 | one phase per deployable: push both refs, wait for the CI run and the deployment |
-| 44–45 | push the seeded repositories; the closing report |
+| 5–7 | seed images `qits/gateway`, `qits/platform-edge`, `qits/platform-artifacts` |
+| 8 | start the seed qits-platform-artifacts alone, so there is somewhere to publish to |
+| 9–12 | publish `qits-eventstream`, `qits-auth-core`, `@qits/ui-components`, `@qits/angular` |
+| 13–15 | seed images `qits/ci`, `qits/deployments`, `qits/platform-idp` |
+| 16–20 | the five step images from qits-oci |
+| 21 | the ci-daemon musl static binary, and its digest |
+| 22 | resolve the idp's client secrets (given, kept, generated) and record the run state |
+| 23–24 | generate the seed compose file; write the deployer's run-args onto its config volume |
+| 25–26 | start the seed stack (only what the deployer does not already manage); wait for the idp, the edge on the host port, the gateway on qits-net, artifacts, ci and the deployer |
+| 27 | publish the ci-daemon binary, version-addressed by its digest |
+| 28–29 | create the 28 repositories on the git host; pre-seed the seeded histories with `-o qits.no-ci` |
+| 30–33 | replay the release pipeline of each publisher the wrapper builds install, and wait for each run |
+| 34 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
+| 35–46 | one phase per deployable: push `main` quietly and `environment/<name>` for real, then wait for the CI run and the deployment. qits-platform-edge is second to last: it is the host port, so its cutover takes this program's own door away for a beat |
+| 47–48 | push the seeded repositories; the closing report |
 
 Two things every deploy phase does that are easy to miss: it pushes `main` quietly
 (`-o qits.no-ci`) so a second cold native build is not queued for the same sha, and it replays the
 `build-succeeded` event once when a run is green but no deployment row appeared after a minute —
 the observed lost-event failure.
 
-## Two planes, two branches
+## Two planes, one branch
 
-`main` is the integration trunk of every repository and deploys nothing. What deploys is the
-branch of the scope an application belongs to:
+`main` is the integration trunk of every repository and deploys nothing. What deploys is
+`environment/<name>` — for BOTH planes, because both ask a green build the same question: does an
+environment listen to this ref. `platform/main` is retired.
 
-| plane | branch | applications |
-| --- | --- | --- |
-| environment | `environment/<name>` (`environment/dev`) | gateway, workspaces, stt |
-| platform | `platform/main` | platform-deployments, idp, artifacts, ci, events, projects, observability |
+| plane | applications | wire alias | container |
+| --- | --- | --- | --- |
+| environment | gateway, ci, deployments, events, projects, observability, workspaces, stt | `<env>-qits-<app>` | `qits-pd-<env>-qits-<app>-<id8>` |
+| platform | platform-edge, platform-idp, platform-artifacts, platform-docs | `qits-platform-<x>` | `qits-pd-qits-platform-<x>-<id8>` |
 
-A **platform** service is one instance for the whole platform, on every environment's networks,
-belonging to no tier — so it appears in no per-environment deployment listing, and the CLI watches
-docker for it instead: a container named `qits-pd-platform-qits-<app>-<id8>` running the image
-tagged with the sha it pushed. An environment service is watched through its deployment row.
+A **platform** service is one instance for the whole platform, joined to every environment's
+networks, belonging to no tier — so it appears in no per-environment deployment listing, and the
+CLI watches docker for it instead: a container under the prefix above running the image tagged with
+the sha it pushed. An environment service is watched through its deployment row.
 
-**qits-platform-deployments owns both halves**: the topology (environments, services, links) and
-the execution (deployment rows, the health-gated cutover, the rollback pins). It is the merge-back
-of qits-cd and qits-serviceregistry, and both are superseded — the bootstrap still creates their
+The **wire alias** is the address peers dial and the name a cutover finds its predecessor by. The
+seed containers are named after it, which is what makes the generated compose file's own addresses
+right from the first second rather than from the first cutover.
+
+**qits-platform-edge binds the host's only published port** and hands each request to the gateway
+of the environment its Host name names. qits-gateway publishes nothing: it was on the platform
+plane only because it used to bind that port.
+
+**qits-deployments owns both halves**: the topology (environments, services, links) and the
+execution (deployment rows, the health-gated cutover, the rollback pins). It is the merge-back of
+qits-cd and qits-serviceregistry, and both are superseded — the bootstrap still creates their
 repositories and pushes their histories, and deploys neither.
 
 ## How it differs from the shell port
@@ -247,22 +256,36 @@ host rather than as a container on `qits-net`:
 
 - **No `/out` mount and no worktree gitdir contortions.** The wrapper's checkouts are read where
   they are, and the compose file and `.qits-bootstrap.env` are written back beside them.
-- **The platform is reached through its published doors**: qits-artifacts on
-  `127.0.0.1:8081`, qits-ci and qits-platform-deployments through the gateway's route table on
-  `127.0.0.1:8080`. Calls made while the gateway or artifacts is mid-cutover are expected and
-  retried rather than fatal.
-- **qits-idp publishes no host port on purpose**, so the CLI borrows a network position for it: one
+- **The platform is reached through its published doors**: qits-platform-artifacts on
+  `127.0.0.1:8081`, qits-ci and qits-deployments through the one port qits-platform-edge binds on
+  `127.0.0.1:8080` and the gateway behind it. Calls made while the edge, the gateway or artifacts
+  is mid-cutover are expected and retried rather than fatal.
+- **qits-platform-idp publishes no host port on purpose**, so the CLI borrows a network position: one
   throwaway `curlimages/curl` container on `qits-net` per call. The platform's exposure is
   unchanged, which is the property worth keeping.
 
-One addition: a platform service is only counted live when its container is not `unhealthy`. The
-shell port's docker-based check once counted a `running/unhealthy` idp as live, and the rollback
-that followed looked like a success.
+Two additions:
+
+- A platform service is only counted live when its container is not `unhealthy`. The shell port's
+  docker-based check once counted a `running/unhealthy` idp as live, and the rollback that followed
+  looked like a success.
+- **A source that cannot be trusted stops the boot.** The script, and this CLI until 2026-08-08,
+  answered a wrapper path that was not a checkout by cloning from GitHub instead, and a refresh
+  that would not fast-forward by building what was already on disk. Both produced a working-looking
+  run of the wrong commit. Now: an ABSENT wrapper directory still falls back to the org URL — not
+  every repository in the model has to be a submodule of this wrapper — but a directory that exists
+  and is not a checkout, or a refresh that fails, ends the run and names the fix.
 
 ## Status
 
-**Proven, and the only bring-up path there is.** The shell port is retired; `qits-local-up.sh` is
-the shim in front of this CLI.
+**The only bring-up path there is.** The shell port is retired; `qits-local-up.sh` is the shim in
+front of this CLI.
+
+**The 2026-08-08 platform re-model is NOT yet proven by a real bootstrap.** One environment named
+`prod`, one deploy ref, six renamed repositories, a platform plane of four, and qits-platform-edge
+in front of the gateway — every list, address, container name and client id in this program moved
+with it, and `./mvnw clean verify` is green, but a green test suite is not the gate this repository
+holds itself to. The runs below are the pre-re-model ones.
 
 - 2026-08-06: green cold bootstrap of the real platform in 22m29s, ten applications healthy, after
   15 fixes found by the proving runs. Warm cycle the same evening: `unwrap` 11s, `bootstrap` 3m29s.

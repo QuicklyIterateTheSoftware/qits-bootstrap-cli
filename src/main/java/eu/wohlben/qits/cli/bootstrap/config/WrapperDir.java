@@ -24,9 +24,15 @@ public final class WrapperDir {
      * <p>
      * The services directory is the second half of the same question, and it is what tells a
      * wrapper apart from any other repository that happens to use submodules.
+     * <p>
+     * The directory is named for the repository the registry and the git host live in, which is
+     * qits-platform-artifacts since the 2026-08-08 rename. A wrapper checked out before it carries
+     * the old {@code services/qits-artifacts} instead — and is still recognised, because the
+     * {@code .gitmodules} test below only asks for {@code services/qits-} and every wrapper that
+     * ever existed matches it.
      */
     private static final String MARKER_FILE = ".gitmodules";
-    private static final String MARKER_DIR = "services/qits-artifacts";
+    private static final String MARKER_DIR = "services/qits-platform-artifacts";
 
     private WrapperDir() {
     }

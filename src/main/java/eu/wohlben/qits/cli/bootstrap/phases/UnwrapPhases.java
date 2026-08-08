@@ -23,10 +23,17 @@ import java.util.Set;
  * inventing one here would only be true of the containers this program removed.
  * <p>
  * <b>Two label namespaces, both forever.</b> {@code qits.platform.deployments.*} is what
- * qits-platform-deployments writes; {@code qits.cd.*} is what the retired qits-cd wrote. Unwrap is how a pre-v3 platform is
- * taken off a machine, and a machine that has not been bootstrapped since the merge-back carries
- * only the old labels — so the old patterns stay, and dropping them would leave containers running
- * that this command reported as removed.
+ * qits-deployments writes; {@code qits.cd.*} is what the retired qits-cd wrote. Unwrap is how a
+ * pre-v3 platform is taken off a machine, and a machine that has not been bootstrapped since the
+ * merge-back carries only the old labels — so the old patterns stay, and dropping them would leave
+ * containers running that this command reported as removed.
+ * <p>
+ * <b>Two container-name shapes too, for the same reason.</b> Every container the platform ever
+ * started used to begin {@code qits-}. Since 2026-08-08 an environment service is named after its
+ * wire alias — {@code prod-qits-ci}, {@code prod-qits-gateway} — which begins with the environment
+ * name instead. So the sweep asks for {@code qits-} at the START or {@code -qits-} ANYWHERE, which
+ * covers both shapes and every environment name, not only the one this run is configured with. A
+ * name is added here; none is ever taken away.
  * <p>
  * Volumes are the one guarded decision: they hold the platform's databases, the registry's blobs
  * and the git host's repositories. They stay unless {@code --with-volumes} says otherwise.
@@ -129,6 +136,9 @@ public class UnwrapPhases {
             for (String line : boot.docker.run(Cmd.of(
                     "docker", "network", "ls", "--format", "{{.Name}}"), null).captured()) {
                 String name = line.trim();
+                // qits-net is the shared legacy network; qits-platform is where platform services
+                // run; qits-env-<env> is an environment's bundle and qits-env-<env>-<app> one
+                // service's own network; qits_* is what a compose project would have named.
                 if (name.equals("qits-net") || name.equals("qits-platform")
                         || name.startsWith("qits-env-") || name.startsWith("qits_")) {
                     names.add(name);
@@ -180,8 +190,18 @@ public class UnwrapPhases {
                 .captured().stream().map(String::trim).filter(name -> !name.isBlank()).toList();
     }
 
+    /**
+     * Containers the platform named, in both shapes: {@code qits-…} (the seed's platform services,
+     * every {@code qits-pd-…} deployment, the retired {@code qits-cd-…} ones, the bootstrap's own
+     * scratch containers) and {@code <env>-qits-…} (a seed environment service, whatever the
+     * environment is called). The second test is deliberately not tied to the configured
+     * environment name: unwrap cleans a machine, and the machine may carry tiers this run has
+     * never heard of.
+     */
     private List<String> namedQits() {
-        return boot.docker.allNames().stream().filter(name -> name.startsWith("qits-")).toList();
+        return boot.docker.allNames().stream()
+                .filter(name -> name.startsWith("qits-") || name.contains("-qits-"))
+                .toList();
     }
 
     private String done(int count) {

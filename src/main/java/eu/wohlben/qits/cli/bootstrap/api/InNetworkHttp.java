@@ -10,7 +10,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * qits-idp publishes no host port and sits on no gateway route on purpose: {@code /idp/token}
+ * qits-platform-idp publishes no host port and sits on no gateway route on purpose: {@code
+ * /idp/token}
  * behind an unauthenticated gateway is a token vending machine.
  * <p>
  * The script reached it by joining qits-net — it was a container. This CLI runs on the host, so it

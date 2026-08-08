@@ -45,22 +45,27 @@ public class PipelinePhases {
             // The artifacts instance used while building seed images has no machine credentials:
             // the idp did not exist yet. Replace it so compose starts the real service with the
             // generated client secret; otherwise post-receive notifications reach CI bare.
-            if (boot.docker.allNames().contains("qits-artifacts")) {
+            String artifacts = PlatformModel.wireAlias("platform-artifacts", boot.config.envName());
+            if (boot.docker.allNames().contains(artifacts)) {
                 ctx.log("  replacing the bootstrap artifact registry with the authenticated seed service");
-                boot.docker.removeContainer("qits-artifacts", ctx::log);
+                boot.docker.removeContainer(artifacts, ctx::log);
             }
             // Only what the deployer does not already manage: a compose service whose application
             // has a live deployed container must NOT be resurrected next to it — the deployer's own
             // container included, once a self-update handoff has made it one of its own
             // deployments.
+            //
+            // A compose service is keyed by its wire alias, so that is what is named on the command
+            // line — the same string the deployed container answers to.
             List<String> running = boot.docker.runningNames();
             List<String> up = new ArrayList<>();
             for (String name : PlatformModel.CORE) {
                 String prefix = PlatformModel.pdNamePrefix(name, boot.config.envName());
+                String alias = PlatformModel.wireAlias(name, boot.config.envName());
                 if (running.stream().anyMatch(container -> container.startsWith(prefix))) {
-                    ctx.log("  qits-" + name + " is deployer-managed — compose leaves it alone");
+                    ctx.log("  " + alias + " is deployer-managed — compose leaves it alone");
                 } else {
-                    up.add("qits-" + name);
+                    up.add(alias);
                 }
             }
             if (up.isEmpty()) {
@@ -79,31 +84,41 @@ public class PipelinePhases {
 
     /**
      * idp first: with the gate on, the first push's post-receive needs a token, and the replayed
-     * build-succeeded needs one too. qits-platform-deployments before anything asks it for an
-     * environment operation — it owns the topology and the socket both, so nothing else can answer
-     * for it.
+     * build-succeeded needs one too. qits-deployments before anything asks it for an environment
+     * operation — it owns the topology and the socket both, so nothing else can answer for it.
+     * <p>
+     * The EDGE is what the host port answers now, so it is the second thing asked and the first
+     * thing asked over the wire this program uses for the rest of the run. A gateway that is up
+     * behind an edge that is not is unreachable, so the two are probed separately: the edge on
+     * 127.0.0.1, the gateway by its alias on qits-net.
      */
     public Phase seedHealth() {
         return new Phase("seed-health", "wait for the seed services", ctx -> {
-            boot.awaitHealth(ctx, "qits-idp (on qits-net, no host port)",
-                    () -> boot.inNetwork.get("http://qits-idp:8080/idp/q/health/ready"));
-            boot.awaitHealth(ctx, "qits-gateway on port " + boot.config.port(),
+            String env = boot.config.envName();
+            boot.awaitHealth(ctx, "qits-platform-idp (on qits-net, no host port)",
+                    () -> boot.inNetwork.get("http://qits-platform-idp:8080/idp/q/health/ready"));
+            // /q is the edge's own prefix, the one thing it never proxies. An answer here is this
+            // process, not something behind it.
+            boot.awaitHealth(ctx, "qits-platform-edge on port " + boot.config.port(),
                     () -> boot.http.get("http://127.0.0.1:" + boot.config.port() + "/q/health/ready",
                             Map.of()));
-            boot.awaitHealth(ctx, "qits-artifacts on port " + boot.config.registryPort(),
+            boot.awaitHealth(ctx, env + "-qits-gateway (on qits-net, behind the edge)",
+                    () -> boot.inNetwork.get(
+                            "http://" + env + "-qits-gateway:8080/q/health/ready"));
+            boot.awaitHealth(ctx, "qits-platform-artifacts on port " + boot.config.registryPort(),
                     boot.artifacts::health);
-            // Through the gateway's route table, and on qits-net if that route is not up yet.
-            // Either answer means the service is ready; the gateway one also proves the route the
-            // rest of this run calls ci and the deployer through.
-            boot.awaitHealth(ctx, "qits-ci (gateway route, else qits-net)", () -> {
+            // Through the edge and the gateway's route table, and on qits-net if that route is not
+            // up yet. Either answer means the service is ready; the first also proves the whole
+            // path the rest of this run calls ci and the deployer through.
+            boot.awaitHealth(ctx, env + "-qits-ci (host port, else qits-net)", () -> {
                 Http.Response viaGateway = boot.ci.health();
                 return viaGateway.ok() ? viaGateway
-                        : boot.inNetwork.get("http://qits-ci:8080/ci/q/health/ready");
+                        : boot.inNetwork.get("http://" + env + "-qits-ci:8080/ci/q/health/ready");
             });
-            boot.awaitHealth(ctx, "qits-platform-deployments (gateway route, else qits-net)", () -> {
+            boot.awaitHealth(ctx, env + "-qits-deployments (host port, else qits-net)", () -> {
                 Http.Response viaGateway = boot.pd.health();
-                return viaGateway.ok() ? viaGateway : boot.inNetwork.get(
-                        "http://qits-platform-deployments:8080/platform-deployments/q/health/ready");
+                return viaGateway.ok() ? viaGateway : boot.inNetwork.get("http://" + env
+                        + "-qits-deployments:8080/platform-deployments/q/health/ready");
             });
             // Health is not enough with the machine gate on: a freshly (re)created service
             // initializes its OIDC tenant lazily on the FIRST request, and if that races idp's own
@@ -120,10 +135,10 @@ public class PipelinePhases {
             // still stone cold, and the probe passes having proved nothing. A junk bearer answers
             // 401 once the tenant is warm and 5xx before it. Measured, not assumed: `{}` with no
             // header answers 400 on both services, `{}` with one answers 401.
-            boot.awaitHealth(ctx, "qits-ci auth plane (junk bearer -> 401)",
+            boot.awaitHealth(ctx, env + "-qits-ci auth plane (junk bearer -> 401)",
                     () -> warmWhenGuardRefused(boot.http.postJson(
                             boot.config.ciUrl() + "/api/events/trigger", "{}", PROBE_BEARER)));
-            boot.awaitHealth(ctx, "qits-platform-deployments auth plane (junk bearer -> 401)",
+            boot.awaitHealth(ctx, env + "-qits-deployments auth plane (junk bearer -> 401)",
                     () -> warmWhenGuardRefused(boot.http.postJson(
                             boot.config.platformDeploymentsUrl() + "/api/events/build-succeeded",
                             "{}", PROBE_BEARER)));
@@ -159,7 +174,8 @@ public class PipelinePhases {
 
     /**
      * Creating a repository is a wire call: the git host keeps every repository as blobs in
-     * qits-artifacts' own store, so there is no volume to seed and nothing on disk to initialise.
+     * qits-platform-artifacts' own store, so there is no volume to seed and nothing on disk to
+     * initialise.
      * The PUT is idempotent — 201 when this call created it, 200 when one was already there.
      */
     public Phase gitRepositories() {
@@ -231,7 +247,9 @@ public class PipelinePhases {
             // The manual trigger demands the one project=* client — the same identity the git host
             // uses to announce pushes, because this stands in for the announcement a real release
             // would have made.
-            String token = boot.tokenOrNull("qits-artifacts", "qits-ci");
+            String token = boot.tokenOrNull(
+                    PlatformModel.wireAlias("platform-artifacts", boot.config.envName()),
+                    PlatformModel.wireAlias("ci", boot.config.envName()));
             String event = "{\"name\":\"SCMRelease\",\"payload\":{"
                     + "\"repository\":" + Json.quote(repo) + ","
                     + "\"branch\":\"main\","
@@ -271,7 +289,7 @@ public class PipelinePhases {
      */
     public Phase environment() {
         return new Phase("environment", "reconcile the '" + boot.config.envName()
-                + "' environment in qits-platform-deployments", ctx -> {
+                + "' environment in qits-deployments", ctx -> {
             // The seed restart can recreate the deployer moments before this call, and its OIDC
             // tenant needs a not-yet-recovered idp — a seconds-wide window where even reads 500.
             // Cutovers blip; callers retry. Bounded and visible, like every other wait here.
@@ -300,16 +318,27 @@ public class PipelinePhases {
                 boot.state.environmentId = existing.get();
                 ctx.log("  reconciled the existing '" + name + "' environment onto " + branch);
             } else {
-                Optional<String> preRename = boot.pd.environmentId("qits");
+                // A row this platform's own earlier lives created under a name that has since
+                // moved: 'qits' before environments were named after tiers, 'dev' before the one
+                // environment became the one it serves from. Renaming in place keeps its
+                // applications, its deployments and its containers; creating a second row beside
+                // it would leave every one of them owned by an environment nothing deploys.
+                //
+                // Only the FIRST of these that exists is taken, and only when the wanted name has
+                // no row of its own. A clean bootstrap finds neither and simply creates.
+                Optional<String> preRename = List.of("qits", "dev").stream()
+                        .filter(old -> !old.equals(name))
+                        .map(boot.pd::environmentId)
+                        .flatMap(Optional::stream)
+                        .findFirst();
                 if (preRename.isPresent()) {
-                    // The pre-rename row. Renaming it in place keeps its applications, deployments
-                    // and containers.
                     patch(preRename.get(), Json.object("name", name, "branch", branch));
                     boot.state.environmentId = preRename.get();
-                    ctx.log("  renamed the 'qits' environment to '" + name + "' on " + branch);
+                    ctx.log("  renamed a pre-rename environment row to '" + name + "' on " + branch);
                 } else {
                     Http.Response created = boot.pd.createEnvironment(name, branch, Boot.NETWORK,
-                            boot.tokenOrNull("qits-ci", "qits-platform-deployments"));
+                            boot.tokenOrNull(PlatformModel.wireAlias("ci", boot.config.envName()),
+                        PlatformModel.wireAlias("deployments", boot.config.envName())));
                     if (created.status() == 201) {
                         boot.state.environmentId = Json.text(
                                 Json.parse(created.body()).path("environment"), "id");
@@ -334,7 +363,8 @@ public class PipelinePhases {
 
     private void patch(String id, String json) {
         Http.Response response = boot.pd.patchEnvironment(id, json,
-                boot.tokenOrNull("qits-ci", "qits-platform-deployments"));
+                boot.tokenOrNull(PlatformModel.wireAlias("ci", boot.config.envName()),
+                        PlatformModel.wireAlias("deployments", boot.config.envName())));
         if (!response.ok()) {
             throw new IllegalStateException("environment " + id + " reconcile failed: "
                     + response.describe());
@@ -355,10 +385,12 @@ public class PipelinePhases {
             Path src = boot.state.repoDir(name);
             overlayPipelineConfig(ctx, name, src);
 
-            String ref = PlatformModel.deployRef(name, boot.config.envBranch());
-            // main is the trunk for every repository and deploys nothing, whichever plane the
-            // application is on: an environment service deploys from environment/<name>, a platform
-            // service from platform/main. So the quiet ref is always main.
+            // ONE deploy ref, on both planes. A platform service used to have its own
+            // branch; both planes now ask a green build the same question — does an environment
+            // listen to this ref — so environment/<name> is the whole set and platform/main is
+            // retired. main stays the trunk for every repository and deploys nothing, so the quiet
+            // ref is main.
+            String ref = boot.config.envBranch();
             //
             // BOTH refs, one sha, and only one of them deploys. The ref that does not deploy still
             // has to exist and point here, so it goes up with -o qits.no-ci: a second post-receive
@@ -449,8 +481,8 @@ public class PipelinePhases {
      * "Is it live at this sha?" has two answers, because the model has two shapes. An environment
      * service has a deployment row. A platform service belongs to no tier and so appears in no
      * per-environment listing, and docker is the record instead: the deployer names its container
-     * qits-pd-platform-qits-&lt;app&gt;-&lt;id8&gt; and runs the image tagged with the sha it
-     * deployed.
+     * qits-pd-&lt;app&gt;-&lt;id8&gt; — the tier segment is dropped rather than filled — and
+     * runs the image tagged with the sha it deployed.
      */
     private boolean alreadyLive(PhaseContext ctx, String name, String repo, String sha) {
         if (PlatformModel.isPlatformService(name)) {
@@ -631,16 +663,20 @@ public class PipelinePhases {
                 : response;
     }
 
-    /** Retried: the gateway this call travels through is itself one of the applications deployed. */
+    /**
+     * Retried: the edge AND the gateway this call travels through are both applications this run
+     * deploys, so a call can meet either one mid-cutover.
+     */
     private void postBuildEvent(PhaseContext ctx, String repo, String sha, String ref) {
         Http.Response last = null;
         for (int attempt = 1; attempt <= 3; attempt++) {
             try {
-                // The qits-ci client, addressed to qits-platform-deployments: this event stands in
-                // for the announcement qits-ci never sent, and a token that says qits-ci is exactly
-                // that. The audience is the deployer's own id, which is why the idp's qits-ci
-                // client is granted it in the seed.
-                String token = boot.tokenOrNull("qits-ci", "qits-platform-deployments");
+                // The ci client, addressed to the deployer: this event stands in for the
+                // announcement qits-ci never sent, and a token that says qits-ci is exactly that.
+                // Both are wire aliases — the audience is the deployer's own id, which is why the
+                // idp's ci client is granted it in the seed.
+                String token = boot.tokenOrNull(PlatformModel.wireAlias("ci", boot.config.envName()),
+                        PlatformModel.wireAlias("deployments", boot.config.envName()));
                 last = boot.pd.buildSucceeded(repo, ref, sha, token);
                 if (last.ok()) {
                     ctx.log("  build-succeeded posted for " + repo + " on " + ref);
@@ -668,7 +704,7 @@ public class PipelinePhases {
      * host. Their own post-receive pipelines may publish packages; none of them is an application
      * of the deployer, so there is deliberately no deployment lookup, image replay or health wait.
      * qits-cd and qits-serviceregistry are here for their histories alone — both are superseded by
-     * qits-platform-deployments and neither is deployed any more.
+     * qits-deployments and neither is deployed any more.
      */
     public Phase releaseTrainPush() {
         return new Phase("release-train-push", "push the seeded repositories to the git host", ctx -> {
@@ -699,34 +735,45 @@ public class PipelinePhases {
                     report.add(line);
                 }
             }
+            String env = boot.config.envName();
             report.add("");
-            report.add("gateway:   http://localhost:" + boot.config.port()
-                    + "/            (variant: local, UNAUTHENTICATED)");
+            report.add("edge:      http://localhost:" + boot.config.port()
+                    + "/            the host's one port, in front of every environment");
+            report.add("gateway:   " + env + "-qits-gateway on qits-net "
+                    + "(variant: local, UNAUTHENTICATED) — no host port of its own");
             report.add("registry:  localhost:" + boot.config.registryPort() + " (host daemon only)");
             report.add("git host:  http://localhost:" + boot.config.port() + "/artifacts/git/<repoId>");
             report.add("dev loop:  commit in a repo, rerun with QITS_SKIP_BUILD=1 — the push redeploys it");
             report.add("deploy:    push " + boot.config.envBranch()
-                    + " — pushing main builds but deploys nothing;");
-            report.add("           the platform services (" + String.join(", ",
-                    PlatformModel.PLATFORM_SERVICES) + ")");
-            report.add("           deploy from " + boot.config.platformBranch() + " instead");
-            report.add("topology:  qits-platform-deployments owns the environments, the services,");
+                    + " — the ONE deploy ref; pushing main builds but deploys nothing.");
+            report.add("           The platform services (" + String.join(", ",
+                    PlatformModel.PLATFORM_SERVICES) + ") deploy");
+            report.add("           from that same ref: one instance each, joined to every "
+                    + "environment's networks.");
+            report.add("topology:  qits-deployments owns the environments, the services,");
             report.add("           the links AND the deployments — one component, at "
                     + boot.config.platformDeploymentsUrl());
+            report.add("names:     an environment service answers to " + env
+                    + "-qits-<app>, a platform service to its bare");
+            report.add("           repository name. Deployed containers are qits-pd-" + env
+                    + "-qits-<app>-<id8>");
+            report.add("           and qits-pd-qits-<app>-<id8>.");
             report.add("main:      written by /workspaces/{id}/release, which then fast-forwards "
                     + boot.config.envBranch() + ";");
             report.add("           a direct push needs -o qits.token=" + boot.config.pushToken());
             if (boot.config.machineAuth()) {
-                report.add("machines:  ENFORCED on ci, platform-deployments, artifacts — issuer "
+                report.add("machines:  ENFORCED on ci, deployments, artifacts — issuer "
                         + boot.config.idpIssuer());
+                report.add("           clients: " + String.join(", ",
+                        PlatformModel.idpClients(env)));
                 report.add("           secrets are in " + boot.state.wrapperDir
                         .resolve(".qits-bootstrap.env"));
             } else {
-                report.add("machines:  gate OFF (QITS_MACHINE_AUTH=0) — ci, platform-deployments "
+                report.add("machines:  gate OFF (QITS_MACHINE_AUTH=0) — ci, deployments "
                         + "and artifacts trust the network");
             }
             report.add("state:     seed compose + .qits-bootstrap.env in " + boot.state.wrapperDir);
-            report.add("!! not part of either set (no image exists): qits-dns, qits-spa-home");
+            report.add("!! not part of either set (no image exists): qits-platform-dns");
             report.add("!! workspace containers need a qits/workspace:latest base image supplied separately");
             report.forEach(ctx::log);
         });

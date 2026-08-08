@@ -30,7 +30,7 @@ class PlainUiTest {
         PhaseEngine engine = new PhaseEngine(new PlainUi(out), nanos::get);
 
         RunResult result = engine.run(List.of(
-                new Phase("a", "build qits-artifacts", ctx -> {
+                new Phase("a", "build qits-platform-artifacts", ctx -> {
                     ctx.log("[INFO] building");
                     nanos.addAndGet(130_000_000_000L);
                 }),
@@ -38,9 +38,9 @@ class PlainUiTest {
 
         String text = printed();
         assertThat(text).contains("qits bootstrap: 2 phases");
-        assertThat(text).contains("==> 1/2 build qits-artifacts");
+        assertThat(text).contains("==> 1/2 build qits-platform-artifacts");
         assertThat(text).contains("    [INFO] building");
-        assertThat(text).contains("  ok 1/2 build qits-artifacts (2m10s)");
+        assertThat(text).contains("  ok 1/2 build qits-platform-artifacts (2m10s)");
         assertThat(text).contains("skip 2/2 publish qits-eventstream (0s) — already published");
         assertThat(text).contains("done: 1 phases, 1 skipped");
         assertThat(result.exitCode()).isZero();

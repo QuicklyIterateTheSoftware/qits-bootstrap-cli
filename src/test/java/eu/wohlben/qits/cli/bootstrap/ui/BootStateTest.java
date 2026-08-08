@@ -26,12 +26,12 @@ class BootStateTest {
         WebUi ui = webUi();
 
         new PhaseEngine(ui).run(List.of(
-                new Phase("a", "build qits-artifacts", ctx -> ctx.log("[INFO] building")),
+                new Phase("a", "build qits-platform-artifacts", ctx -> ctx.log("[INFO] building")),
                 new Phase("b", "publish qits-eventstream", ctx -> ctx.skip("already published"))));
 
         String json = ui.state().snapshotJson();
         assertThat(json).contains("\"total\":2");
-        assertThat(json).contains("\"id\":\"a\",\"title\":\"build qits-artifacts\",\"state\":\"DONE\"");
+        assertThat(json).contains("\"id\":\"a\",\"title\":\"build qits-platform-artifacts\",\"state\":\"DONE\"");
         assertThat(json).contains("\"state\":\"SKIPPED\",\"tookMs\":0,\"note\":\"already published\"");
         // Nothing is running any more, and the verdict is on the page.
         assertThat(json).contains("\"currentIndex\":-1");

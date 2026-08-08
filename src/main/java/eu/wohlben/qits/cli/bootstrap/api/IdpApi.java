@@ -36,12 +36,12 @@ public class IdpApi {
         Http.Response response = http.postForm(issuer + "/token", clientId, secret,
                 Map.of("grant_type", "client_credentials", "audience", audience));
         if (!response.ok()) {
-            throw new IllegalStateException("qits-idp issued no token for " + clientId
+            throw new IllegalStateException("the idp issued no token for " + clientId
                     + " (audience " + audience + "): " + response.describe());
         }
         String token = Json.text(Json.parse(response.body()), "access_token");
         if (token.isBlank()) {
-            throw new IllegalStateException("qits-idp answered without an access_token: "
+            throw new IllegalStateException("the idp answered without an access_token: "
                     + response.describe());
         }
         return token;

@@ -5,7 +5,8 @@ import java.time.Duration;
 import java.util.Map;
 
 /**
- * qits-artifacts: the maven repository, the npm registry, the OCI registry, the daemon store and
+ * qits-platform-artifacts: the maven repository, the npm registry, the OCI registry, the daemon
+ * store and
  * the git host, all on one published port.
  */
 public class ArtifactsApi {

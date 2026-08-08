@@ -25,9 +25,9 @@ class WrapperDirTest {
     private Path wrapper(String name) throws IOException {
         Path root = Files.createDirectories(temp.resolve(name));
         Files.writeString(root.resolve(".gitmodules"), """
-                [submodule "qits-artifacts"]
-                	path = services/qits-artifacts
-                	url = https://example.invalid/qits-artifacts.git
+                [submodule "qits-platform-artifacts"]
+                	path = services/qits-platform-artifacts
+                	url = https://example.invalid/qits-platform-artifacts.git
                 """, StandardCharsets.UTF_8);
         return root;
     }
@@ -45,9 +45,10 @@ class WrapperDirTest {
         // A checkout whose .gitmodules is missing or unreadable is still a wrapper if the
         // submodule is on disk — which is what a `git submodule update --init` leaves behind.
         Path root = Files.createDirectories(temp.resolve("no-gitmodules"));
-        Files.createDirectories(root.resolve("services/qits-artifacts"));
+        Files.createDirectories(root.resolve("services/qits-platform-artifacts"));
 
-        assertThat(WrapperDir.detect(root.resolve("services/qits-artifacts"))).contains(root);
+        assertThat(WrapperDir.detect(root.resolve("services/qits-platform-artifacts")))
+                .contains(root);
     }
 
     @Test
@@ -68,7 +69,8 @@ class WrapperDirTest {
         Path outer = wrapper("outer");
         Path inner = Files.createDirectories(outer.resolve("nested/inner"));
         Files.writeString(inner.resolve(".gitmodules"),
-                "[submodule \"a\"]\n\tpath = services/qits-artifacts\n", StandardCharsets.UTF_8);
+                "[submodule \"a\"]\n\tpath = services/qits-platform-artifacts\n",
+                StandardCharsets.UTF_8);
 
         assertThat(WrapperDir.detect(inner.resolve("cli"))).contains(inner);
     }

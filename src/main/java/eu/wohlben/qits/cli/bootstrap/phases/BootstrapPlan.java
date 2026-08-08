@@ -34,7 +34,11 @@ public final class BootstrapPlan {
             // state, so artifacts is brought up alone and the dependencies are published before
             // the CI image builds.
             phases.add(seed.seedImage("gateway"));
-            phases.add(seed.seedImage("artifacts"));
+            // The edge is in the first half because it needs nothing from the platform: it has no
+            // client to place a bundle for and no qits dependency to resolve, so its image builds
+            // from Maven Central alone. Beside the gateway because that is what it fronts.
+            phases.add(seed.seedImage("platform-edge"));
+            phases.add(seed.seedImage("platform-artifacts"));
             phases.add(seed.seedArtifactsStart());
             phases.add(seed.mavenPublish("eventstream", "qits-eventstream",
                     "publish qits-eventstream into seed artifacts"));
@@ -43,8 +47,8 @@ public final class BootstrapPlan {
             phases.add(seed.uiComponentsPublish());
             phases.add(seed.angularPublish());
             phases.add(seed.seedImage("ci"));
-            phases.add(seed.seedImage("platform-deployments"));
-            phases.add(seed.seedImage("idp"));
+            phases.add(seed.seedImage("deployments"));
+            phases.add(seed.seedImage("platform-idp"));
             for (String image : List.of("ci-base", "maven-base", "userflows-base", "node-base",
                     "node-docker-base")) {
                 phases.add(seed.stepImage(image));

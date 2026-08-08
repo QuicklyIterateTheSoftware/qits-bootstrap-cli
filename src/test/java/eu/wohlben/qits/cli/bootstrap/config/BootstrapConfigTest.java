@@ -29,7 +29,7 @@ class BootstrapConfigTest {
         assertThat(config.machineAuth()).isTrue();
         assertThat(config.skipBuild()).isFalse();
         assertThat(config.deployTimeout()).isEqualTo(Duration.ofHours(1));
-        assertThat(config.envName()).isEqualTo("dev");
+        assertThat(config.envName()).isEqualTo("prod");
         assertThat(config.orgUrl()).isEqualTo("https://github.com/QuicklyIterateTheSoftware");
         // No default: unset means "find it by walking up from here" (WrapperDir), not ".".
         assertThat(config.wrapperDir()).isEmpty();
@@ -71,11 +71,10 @@ class BootstrapConfigTest {
         assertThat(config.ciUrl()).isEqualTo("http://127.0.0.1:9090/ci");
         assertThat(config.platformDeploymentsUrl())
                 .isEqualTo("http://127.0.0.1:9090/platform-deployments");
+        // The ONE deploy ref, on both planes: platform/main is retired.
         assertThat(config.envBranch()).isEqualTo("environment/preprod");
-        // One scope on the platform plane, so one branch, and it is not the tier's.
-        assertThat(config.platformBranch()).isEqualTo("platform/main");
         // The issuer is a value consumers validate, not an address this program dials.
-        assertThat(config.idpIssuer()).isEqualTo("http://qits-idp:8080/idp");
+        assertThat(config.idpIssuer()).isEqualTo("http://qits-platform-idp:8080/idp");
     }
 
     @Test

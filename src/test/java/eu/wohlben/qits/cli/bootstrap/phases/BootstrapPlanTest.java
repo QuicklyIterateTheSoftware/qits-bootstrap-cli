@@ -44,10 +44,14 @@ class BootstrapPlanTest {
 
         // artifacts is built and started before anything can be published into it, and both maven
         // publishes land before the ci image that consumes them is built.
-        assertThat(ids).containsSubsequence("seed-image-artifacts", "seed-artifacts",
+        assertThat(ids).containsSubsequence("seed-image-platform-artifacts", "seed-artifacts",
                 "publish-qits-eventstream", "publish-qits-auth-core", "publish-ui-components",
-                "publish-angular", "seed-image-ci", "seed-image-platform-deployments",
-                "seed-image-idp", "ci-daemon");
+                "publish-angular", "seed-image-ci", "seed-image-deployments",
+                "seed-image-platform-idp", "ci-daemon");
+        // The edge needs nothing from the platform — no client bundle, no qits dependency — so its
+        // image is built in the first half, beside the gateway it fronts.
+        assertThat(ids).containsSubsequence("seed-image-gateway", "seed-image-platform-edge",
+                "seed-image-platform-artifacts");
         // The daemon digest is written into the compose file and the deployer's run-args, so it is
         // measured before either is generated.
         assertThat(ids).containsSubsequence("ci-daemon", "idp-secrets", "compose-file",
@@ -60,11 +64,15 @@ class BootstrapPlanTest {
     void everyDeployableIsItsOwnPhaseInTheOrderTheTrainRunsIn() {
         List<String> ids = ids(plan(Map.of()));
 
-        assertThat(ids).containsSubsequence("environment", "deploy-observability", "deploy-idp",
-                "deploy-stt", "deploy-projects", "deploy-workspaces", "deploy-events",
-                "deploy-gateway", "deploy-artifacts", "deploy-ci",
-                "deploy-platform-deployments");
+        assertThat(ids).containsSubsequence("environment", "deploy-observability",
+                "deploy-platform-idp", "deploy-stt", "deploy-projects", "deploy-workspaces",
+                "deploy-events", "deploy-platform-docs", "deploy-gateway",
+                "deploy-platform-artifacts", "deploy-ci", "deploy-platform-edge",
+                "deploy-deployments");
         assertThat(ids).doesNotContain("deploy-cd", "deploy-serviceregistry");
+        // Pre-rename spellings deploy nothing and would push to repositories nobody reads.
+        assertThat(ids).doesNotContain("deploy-artifacts", "deploy-idp",
+                "deploy-platform-deployments");
     }
 
     @Test
@@ -82,9 +90,10 @@ class BootstrapPlanTest {
         List<String> warm = ids(plan(Map.of("QITS_SKIP_BUILD", "1")));
 
         assertThat(warm).contains("seed-skipped")
-                .doesNotContain("ci-daemon", "seed-image-ci", "auth-core-seed");
+                .doesNotContain("ci-daemon", "seed-image-ci", "seed-image-platform-edge",
+                        "auth-core-seed");
         assertThat(warm.size()).isLessThan(cold.size());
         // The pipeline half is untouched: a warm rerun still pushes and still waits.
-        assertThat(warm).contains("deploy-platform-deployments", "release-train-push", "summary");
+        assertThat(warm).contains("deploy-deployments", "release-train-push", "summary");
     }
 }

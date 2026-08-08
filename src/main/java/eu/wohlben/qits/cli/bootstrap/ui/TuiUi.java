@@ -31,7 +31,7 @@ import java.util.concurrent.TimeUnit;
  *   ▸  9/45 build the seed image qits/idp:latest       ⠹ 2m10s
  *      waiting for the native build — 2m10s elapsed
  *   ─────────────────────────────────────────────────────────
- *   [INFO] Building qits-idp 2026.802.191319
+ *   [INFO] Building qits-platform-idp 2026.802.191319
  *   ... the last N lines of the running command ...
  * </pre>
  *

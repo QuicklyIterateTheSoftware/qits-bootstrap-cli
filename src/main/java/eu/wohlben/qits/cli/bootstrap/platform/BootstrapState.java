@@ -77,10 +77,13 @@ public class BootstrapState {
         text.append("# Written by qits-cli-bootstrap. Keep it: a rotated client secret locks every\n")
                 .append("# already-deployed service out until it too is redeployed.\n");
         text.append("DAEMON_SHA=").append(daemonSha == null ? "" : daemonSha).append('\n');
-        for (String client : PlatformModel.IDP_CLIENTS) {
-            String value = secrets.getOrDefault(client, "");
-            text.append("IDP_SECRET_").append(PlatformModel.clientKey(client)).append('=')
-                    .append(value).append('\n');
+        // Whatever the caller resolved, not a list this class holds its own copy of: a client id
+        // is a wire alias now, so the set follows the environment name and only the caller knows
+        // it. A key that was written by an earlier run under another environment is left in the
+        // file rather than dropped — it costs a line and it is the only record of that secret.
+        for (Map.Entry<String, String> secret : secrets.entrySet()) {
+            text.append("IDP_SECRET_").append(PlatformModel.clientKey(secret.getKey())).append('=')
+                    .append(secret.getValue()).append('\n');
         }
         try {
             Files.writeString(file, text.toString(), StandardCharsets.UTF_8);

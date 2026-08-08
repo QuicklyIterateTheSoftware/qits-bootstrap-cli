@@ -7,7 +7,8 @@ import java.nio.file.Path;
 
 /**
  * The committed Dockerfiles FROM the platform's own pull-through image mirror
- * ({@code localhost:8081/{quay,redhat,hub}/…}), which IS qits-artifacts — one of the services the
+ * ({@code localhost:8081/{quay,redhat,hub}/…}), which IS qits-platform-artifacts — one of the
+ * services the
  * seed phase hand-builds. A cold start cannot pull through the registry it is starting, so a seed
  * build gets the same Dockerfile with the mirror prefixes rewritten back to the direct upstreams,
  * fed on stdin.

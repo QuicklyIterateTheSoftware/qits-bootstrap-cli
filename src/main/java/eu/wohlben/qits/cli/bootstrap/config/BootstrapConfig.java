@@ -1,6 +1,5 @@
 package eu.wohlben.qits.cli.bootstrap.config;
 
-import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithDefault;
 
@@ -42,14 +41,18 @@ public interface BootstrapConfig {
     @WithDefault(".qits-bootstrap-src")
     String src();
 
-    /** Host port the gateway publishes. */
+    /**
+     * The host's one published port, bound by qits-platform-edge. Everything this CLI reads
+     * through it — qits-ci, qits-deployments, and the edge's own health — arrives edge -> the
+     * environment's gateway -> the service. qits-gateway publishes nothing itself any more.
+     */
     @WithDefault("8080")
     int port();
 
     /**
-     * Host port qits-artifacts publishes for the DOCKER DAEMON's pulls and pushes. localhost
-     * registries are HTTP-allowed by docker without daemon config, which is the whole trick — and
-     * it is the CLI's own door to the git host and the registry API too.
+     * Host port qits-platform-artifacts publishes for the DOCKER DAEMON's pulls and pushes.
+     * localhost registries are HTTP-allowed by docker without daemon config, which is the whole
+     * trick — and it is the CLI's own door to the git host and the registry API too.
      */
     @WithDefault("8081")
     int registryPort();
@@ -82,15 +85,22 @@ public interface BootstrapConfig {
     @WithDefault("local-dev")
     String pushToken();
 
-    /** 1 = machine-token enforcement ON for ci, platform-deployments, artifacts and idp. */
+    /** 1 = machine-token enforcement ON for ci, deployments, platform-artifacts and the idp. */
     @WithDefault("true")
     boolean machineAuth();
 
-    /** The standing environment's name. */
-    @WithDefault("dev")
+    /**
+     * The standing environment's name. It is not only a label: the wire alias of every environment
+     * service is {@code <this>-qits-<app>}, so it is inside every address the generated files
+     * carry, inside every deployed container's name, and inside every idp client id.
+     * <p>
+     * {@code prod} because the one environment a platform has is the one it serves from. It was
+     * {@code dev} while the platform ran beside a real one; it does not.
+     */
+    @WithDefault("prod")
     String envName();
 
-    /** The image used to reach a service that publishes no host port (qits-idp). */
+    /** The image used to reach a service that publishes no host port (qits-platform-idp). */
     @WithDefault("curlimages/curl:latest")
     String curlImage();
 
@@ -115,7 +125,7 @@ public interface BootstrapConfig {
     @WithDefault("true")
     boolean web();
 
-    /** The browser view's port. Away from 8080 (gateway) and 8081 (artifacts) on purpose. */
+    /** The browser view's port. Away from 8080 (the edge) and 8081 (artifacts) on purpose. */
     @WithDefault("8480")
     int webPort();
 
@@ -128,38 +138,36 @@ public interface BootstrapConfig {
     @WithDefault("0.0.0.0")
     String webHost();
 
-    /** The branch the environment deploys from. main stays the integration trunk. */
+    /**
+     * The branch that deploys, and the ONLY one. main stays the integration trunk on every
+     * repository and whichever plane it is on: a platform service is deployed by a green build of
+     * this same ref, because both planes ask one question of a build — does an environment listen
+     * to it. {@code platform/main} is retired.
+     */
     default String envBranch() {
         return "environment/" + envName();
     }
 
-    /**
-     * The branch the platform plane deploys from — the {@code platform/*} convention mirroring
-     * {@code environment/*}. One scope, so one branch.
-     */
-    default String platformBranch() {
-        return PlatformModel.PLATFORM_BRANCH;
-    }
-
     /** The issuer string, and the address consumers dial. One value, on qits-net. */
     default String idpIssuer() {
-        return "http://qits-idp:8080/idp";
+        return "http://qits-platform-idp:8080/idp";
     }
 
-    /** qits-artifacts, as seen from the host: the registry, the git host and the artifacts API. */
+    /** qits-platform-artifacts from the host: the registry, the git host and the artifacts API. */
     default String artifactsUrl() {
         return "http://127.0.0.1:" + registryPort() + "/artifacts";
     }
 
-    /** qits-ci, as seen from the host: through the gateway's route table. */
+    /** qits-ci, as seen from the host: through the edge and the gateway's route table. */
     default String ciUrl() {
         return "http://127.0.0.1:" + port() + "/ci";
     }
 
     /**
-     * qits-platform-deployments, as seen from the host: through the gateway's route table. The
-     * segment is the service name without the {@code qits-} prefix, and every route of the service
-     * — its API, its health, its client — hangs off it.
+     * qits-deployments, as seen from the host: through the edge and the gateway's route table.
+     * The route segment stayed {@code /platform-deployments} when the repository was renamed —
+     * it names the component, not the repository, and every route of the service (its API, its
+     * health, its client) hangs off it. Only the hostname moved.
      */
     default String platformDeploymentsUrl() {
         return "http://127.0.0.1:" + port() + "/platform-deployments";

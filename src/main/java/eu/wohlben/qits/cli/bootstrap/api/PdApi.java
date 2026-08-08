@@ -7,7 +7,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * qits-platform-deployments: the environments it owns and the deployment rows it records. One
+ * qits-deployments: the environments it owns and the deployment rows it records. One
  * component now — the merge-back of qits-cd and qits-serviceregistry — so an environment write is
  * a row here rather than a proxied call to a second service.
  * <p>
