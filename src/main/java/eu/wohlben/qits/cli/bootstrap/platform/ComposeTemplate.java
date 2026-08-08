@@ -439,7 +439,13 @@ public final class ComposeTemplate {
             # start fails at the runtime rather than at a config check. The mount hands this container
             # control of the host daemon, which is root-equivalent — the service's own docs call supplying
             # it a deliberate deployment act rather than an image default, and this line IS that act.
-            qits.platform.deployments.run-args.qits-projects=-v qits-projects-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QUARKUS_DATASOURCE_PROJECTS_JDBC_URL=jdbc:h2:file:/data/projects/h2/projects -e QUARKUS_DATASOURCE_EPICS_JDBC_URL=jdbc:h2:file:/data/epics/h2/epics -e QITS_PROJECTS_DATA_DIR=/data/mirrors -e QITS_ARTIFACTS_URL=http://qits-platform-artifacts:8080 -e QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN} -e QITS_PROJECTS_AGENT_IMAGE=qits/project-agent:native -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            #
+            # QITS_PROJECTS_OWN_HOST and QITS_PROJECTS_AGENT_GIT_BASE are the two addresses an agent
+            # container is handed at creation: this service's own wire name, and the git host it clones
+            # from. The image ships pre-rename defaults (qits-projects, qits-artifacts), which resolve to
+            # nothing on this platform, so a container created from them never dials back and its boot
+            # clone fails. Both are spelled here, the first with the environment's own prefix.
+            qits.platform.deployments.run-args.qits-projects=-v qits-projects-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QUARKUS_DATASOURCE_PROJECTS_JDBC_URL=jdbc:h2:file:/data/projects/h2/projects -e QUARKUS_DATASOURCE_EPICS_JDBC_URL=jdbc:h2:file:/data/epics/h2/epics -e QITS_PROJECTS_DATA_DIR=/data/mirrors -e QITS_ARTIFACTS_URL=http://qits-platform-artifacts:8080 -e QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN} -e QITS_PROJECTS_AGENT_IMAGE=qits/project-agent:native -e QITS_PROJECTS_OWN_HOST=${ENV_NAME}-qits-projects -e QITS_PROJECTS_AGENT_GIT_BASE=http://qits-platform-artifacts:8080/artifacts/git -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # QITS_ARTIFACTS_URL is where release PUSHES the release commit — the git host, over HTTP, so
             # the ordinary post-receive fires and the ordinary pipeline builds it.
             # The eventstream twin (same pair qits-ci carries above): a release publishes SoftwareRelease
