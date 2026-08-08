@@ -429,7 +429,11 @@ public final class ComposeTemplate {
             # line above. projects advances refs on the git host by pushing now, and the default branch is
             # protected here, so without the token every pull that fast-forwards main is refused. A branch
             # delete deliberately sends no token.
-            qits.platform.deployments.run-args.qits-projects=-v qits-projects-data:/data -e QUARKUS_DATASOURCE_PROJECTS_JDBC_URL=jdbc:h2:file:/data/projects/h2/projects -e QUARKUS_DATASOURCE_EPICS_JDBC_URL=jdbc:h2:file:/data/epics/h2/epics -e QITS_PROJECTS_DATA_DIR=/data/mirrors -e QITS_ARTIFACTS_URL=http://qits-platform-artifacts:8080 -e QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            #
+            # QITS_PROJECTS_AGENT_IMAGE names the image a project agent container runs. The shipped
+            # default is qits/project-agent:latest; this platform builds the tag :native, so the name
+            # is spelled here rather than left to drift from what exists on the host.
+            qits.platform.deployments.run-args.qits-projects=-v qits-projects-data:/data -e QUARKUS_DATASOURCE_PROJECTS_JDBC_URL=jdbc:h2:file:/data/projects/h2/projects -e QUARKUS_DATASOURCE_EPICS_JDBC_URL=jdbc:h2:file:/data/epics/h2/epics -e QITS_PROJECTS_DATA_DIR=/data/mirrors -e QITS_ARTIFACTS_URL=http://qits-platform-artifacts:8080 -e QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN} -e QITS_PROJECTS_AGENT_IMAGE=qits/project-agent:native -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # QITS_ARTIFACTS_URL is where release PUSHES the release commit — the git host, over HTTP, so
             # the ordinary post-receive fires and the ordinary pipeline builds it.
             # The eventstream twin (same pair qits-ci carries above): a release publishes SoftwareRelease
