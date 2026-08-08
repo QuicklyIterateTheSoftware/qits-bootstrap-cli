@@ -20,6 +20,7 @@ public class RunLog implements AutoCloseable {
 
     private final Path path;
     private final Writer writer;
+    private boolean closed;
 
     public RunLog(Path path) {
         this.path = path;
@@ -50,6 +51,11 @@ public class RunLog implements AutoCloseable {
     }
 
     private void write(String text) {
+        // The shutdown hooks still run commands after the log is closed. Dropping their lines is
+        // better than an exception that kills the cleanup they exist for.
+        if (closed) {
+            return;
+        }
         try {
             writer.write(text);
             writer.write(System.lineSeparator());
@@ -61,6 +67,7 @@ public class RunLog implements AutoCloseable {
 
     @Override
     public synchronized void close() {
+        closed = true;
         try {
             writer.close();
         } catch (IOException e) {

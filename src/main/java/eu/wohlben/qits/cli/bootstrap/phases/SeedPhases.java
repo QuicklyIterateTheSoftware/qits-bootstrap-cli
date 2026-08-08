@@ -32,6 +32,9 @@ import java.util.Optional;
  */
 public class SeedPhases {
 
+    /** The temporary maven registry's container name — known here, not only in the run state. */
+    static final String AUTH_SEED_HTTP = "qits-maven-seed-http";
+
     private final Boot boot;
 
     public SeedPhases(Boot boot) {
@@ -174,7 +177,7 @@ public class SeedPhases {
                     copyIn(ctx, boot.state.repoDir("integrations-quarkus"), cid);
                     startAndReap(ctx, cid, "qits-auth-core seed failed");
 
-                    String container = "qits-maven-seed-http";
+                    String container = AUTH_SEED_HTTP;
                     boot.docker.removeContainer(container, null);
                     Boot.must(boot.docker.exec(ctx::log, "run", "-d", "--name", container,
                                     "-p", "127.0.0.1:" + boot.config.registryPort() + ":80",
@@ -248,12 +251,12 @@ public class SeedPhases {
      */
     public Phase seedArtifactsStart() {
         return new Phase("seed-artifacts", "start the seed qits-artifacts for the Maven bootstrap", ctx -> {
-            if (boot.state.authSeedContainer != null) {
-                ctx.log("  removing the temporary maven registry, freeing port "
-                        + boot.config.registryPort());
-                boot.docker.removeContainer(boot.state.authSeedContainer, ctx::log);
-                boot.state.authSeedContainer = null;
-            }
+            // By name and unconditionally: a crashed earlier run leaves the registry running, and
+            // this run then skips the seed phase without ever learning the container's name.
+            ctx.log("  removing the temporary maven registry, freeing port "
+                    + boot.config.registryPort());
+            boot.docker.removeContainer(AUTH_SEED_HTTP, ctx::log);
+            boot.state.authSeedContainer = null;
             boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
             boot.docker.ensureVolume("qits-artifacts-data", ctx::log);
             if (!boot.docker.runningNames().contains("qits-artifacts")) {
