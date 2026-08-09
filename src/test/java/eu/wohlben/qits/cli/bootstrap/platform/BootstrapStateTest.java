@@ -65,6 +65,60 @@ class BootstrapStateTest {
     }
 
     @Test
+    void aKeyThisClassKnowsNothingAboutSurvivesARewrite() throws Exception {
+        // The file is the run's whole memory and several phases write it. A write that rebuilt it
+        // from its own caller's keys would delete the others'.
+        Path file = temp.resolve(BootstrapState.FILE_NAME);
+        Files.writeString(file, "SOMETHING_AN_OLDER_RUN_WROTE=keep-me\n");
+
+        BootstrapState state = new BootstrapState(file);
+        state.read();
+        state.put("PG_SUPERUSER_PASSWORD", "0123456789abcdef");
+        state.write();
+
+        BootstrapState reread = new BootstrapState(file);
+        reread.read();
+        assertThat(reread.value("SOMETHING_AN_OLDER_RUN_WROTE")).contains("keep-me");
+        assertThat(reread.value("PG_SUPERUSER_PASSWORD")).contains("0123456789abcdef");
+        assertThat(reread.value("NEVER_WRITTEN")).isEmpty();
+    }
+
+    @Test
+    void thePostgresPasswordsSurviveTheIdpSecretsWriteAndTheOtherWayRound() throws Exception {
+        // seed-postgres records its passwords minutes before idp-secrets writes the client
+        // secrets, and idp-secrets writes through a state object that never read the file. A
+        // password on the data volume but not in this file locks the next rerun out.
+        Path file = temp.resolve(BootstrapState.FILE_NAME);
+        BootstrapState postgres = new BootstrapState(file);
+        postgres.read();
+        postgres.put("PG_SUPERUSER_PASSWORD", "aaaa1111bbbb2222");
+        postgres.put("PG_DEPLOYMENTS_PASSWORD", "cccc3333dddd4444");
+        postgres.write();
+
+        Map<String, String> secrets = new LinkedHashMap<>();
+        secrets.put("prod-qits-ci", "one");
+        new BootstrapState(file).write("digest", secrets);
+
+        BootstrapState afterSecrets = new BootstrapState(file);
+        afterSecrets.read();
+        assertThat(afterSecrets.value("PG_SUPERUSER_PASSWORD")).contains("aaaa1111bbbb2222");
+        assertThat(afterSecrets.value("PG_DEPLOYMENTS_PASSWORD")).contains("cccc3333dddd4444");
+        assertThat(afterSecrets.secret("prod-qits-ci")).contains("one");
+
+        // And the other way: a later postgres write keeps the digest and the secrets.
+        BootstrapState again = new BootstrapState(file);
+        again.read();
+        again.put("PG_SUPERUSER_PASSWORD", "eeee5555ffff6666");
+        again.write();
+
+        BootstrapState last = new BootstrapState(file);
+        last.read();
+        assertThat(last.daemonSha()).contains("digest");
+        assertThat(last.secret("prod-qits-ci")).contains("one");
+        assertThat(last.value("PG_SUPERUSER_PASSWORD")).contains("eeee5555ffff6666");
+    }
+
+    @Test
     void aWrittenFileReadsBackTheSame() throws Exception {
         Path file = temp.resolve(BootstrapState.FILE_NAME);
         Map<String, String> secrets = new LinkedHashMap<>();

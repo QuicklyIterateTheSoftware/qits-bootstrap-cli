@@ -11,11 +11,18 @@ import java.util.Optional;
 
 /**
  * {@code .qits-bootstrap.env}: what a previous bootstrap generated and this one must not change —
- * the ci-daemon digest and the idp's client secrets.
+ * the ci-daemon digest, the idp's client secrets, the postgres passwords.
  * <p>
  * It is read before anything needs it, so a full rerun keeps the secrets it issued last time.
  * Regenerating them would leave every already-deployed service holding a credential the idp no
  * longer knows.
+ * <p>
+ * <b>Every write MERGES.</b> The file is one run's whole memory and several phases write it at
+ * different points, so a write that rebuilt the file from the keys its own caller happened to hold
+ * would delete the ones the other phases recorded. That is not theoretical: {@code seed-postgres}
+ * records the postgres passwords minutes before {@code idp-secrets} writes the client secrets, and
+ * a postgres password that is on the data volume but not in this file locks the next rerun out of
+ * a database nothing can reset.
  */
 public class BootstrapState {
 
@@ -38,8 +45,14 @@ public class BootstrapState {
 
     public void read() throws IOException {
         values.clear();
+        values.putAll(onDisk());
+    }
+
+    /** What the file holds right now, in the order it holds it. */
+    private Map<String, String> onDisk() throws IOException {
+        Map<String, String> parsed = new LinkedHashMap<>();
         if (!exists()) {
-            return;
+            return parsed;
         }
         for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
             String text = line.trim();
@@ -48,9 +61,10 @@ public class BootstrapState {
             }
             int eq = text.indexOf('=');
             if (eq > 0) {
-                values.put(text.substring(0, eq).trim(), unquote(text.substring(eq + 1).trim()));
+                parsed.put(text.substring(0, eq).trim(), unquote(text.substring(eq + 1).trim()));
             }
         }
+        return parsed;
     }
 
     private static String unquote(String value) {
@@ -71,20 +85,45 @@ public class BootstrapState {
                 .filter(s -> !s.isBlank());
     }
 
-    /** Rewrites the file with the digest and the whole secret set. */
+    /** Records one key for the next {@link #write()}. */
+    public void put(String key, String value) {
+        values.put(key, value == null ? "" : value);
+    }
+
+    /** What this state holds for a key, if anything. */
+    public Optional<String> value(String key) {
+        return Optional.ofNullable(values.get(key)).filter(s -> !s.isBlank());
+    }
+
+    /** Writes the digest and the whole secret set, keeping every other key the file holds. */
     public void write(String daemonSha, Map<String, String> secrets) throws IOException {
-        StringBuilder text = new StringBuilder();
-        text.append("# Written by qits-cli-bootstrap. Keep it: a rotated client secret locks every\n")
-                .append("# already-deployed service out until it too is redeployed.\n");
-        text.append("DAEMON_SHA=").append(daemonSha == null ? "" : daemonSha).append('\n');
+        values.put("DAEMON_SHA", daemonSha == null ? "" : daemonSha);
         // Whatever the caller resolved, not a list this class holds its own copy of: a client id
         // is a wire alias now, so the set follows the environment name and only the caller knows
         // it. A key that was written by an earlier run under another environment is left in the
         // file rather than dropped — it costs a line and it is the only record of that secret.
-        for (Map.Entry<String, String> secret : secrets.entrySet()) {
-            text.append("IDP_SECRET_").append(PlatformModel.clientKey(secret.getKey())).append('=')
-                    .append(secret.getValue()).append('\n');
-        }
+        secrets.forEach((client, value) ->
+                values.put("IDP_SECRET_" + PlatformModel.clientKey(client), value));
+        write();
+    }
+
+    /**
+     * Writes what this state holds over what the file holds.
+     * <p>
+     * The file is re-read here rather than trusted from an earlier {@link #read()}: a phase asks
+     * for this class when it has something to record, and the run that recorded the other keys is
+     * this same run a few minutes earlier. Reading at write time is what makes a caller that never
+     * read the file unable to erase it.
+     */
+    public void write() throws IOException {
+        Map<String, String> merged = new LinkedHashMap<>(onDisk());
+        merged.putAll(values);
+
+        StringBuilder text = new StringBuilder();
+        text.append("# Written by qits-cli-bootstrap. Keep it: a rotated client secret locks every\n")
+                .append("# already-deployed service out until it too is redeployed, and a postgres\n")
+                .append("# password that lives only on the data volume locks the next rerun out.\n");
+        merged.forEach((key, value) -> text.append(key).append('=').append(value).append('\n'));
         try {
             Files.writeString(file, text.toString(), StandardCharsets.UTF_8);
         } catch (java.nio.file.AccessDeniedException e) {
@@ -93,9 +132,8 @@ public class BootstrapState {
             Files.deleteIfExists(file);
             Files.writeString(file, text.toString(), StandardCharsets.UTF_8);
         }
-        values.put("DAEMON_SHA", daemonSha == null ? "" : daemonSha);
-        secrets.forEach((client, value) ->
-                values.put("IDP_SECRET_" + PlatformModel.clientKey(client), value));
+        values.clear();
+        values.putAll(merged);
     }
 
     public List<String> keys() {
