@@ -3,6 +3,7 @@ package eu.wohlben.qits.cli.bootstrap.platform;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -21,6 +22,9 @@ class ComposeTemplateTest {
         values.put("PG_PORT", "5433");
         values.put("PG_SUPERUSER_PASSWORD", "0123456789abcdef");
         values.put("PG_DEPLOYMENTS_PASSWORD", "fedcba9876543210");
+        values.put("PG_CI_PASSWORD", "aaaabbbbccccdddd");
+        values.put("PG_CI_EVENTSTREAM_PASSWORD", "eeeeffff00001111");
+        values.put("PG_PLATFORM_IDP_PASSWORD", "2222333344445555");
         values.put("IDP", "http://qits-platform-idp:8080/idp");
         values.put("PUSH_TOKEN", "local-dev");
         values.put("MACHINE_REQUIRED", "true");
@@ -65,7 +69,10 @@ class ComposeTemplateTest {
         assertThat(compose).doesNotContain("${PORT}");
         assertThat(compose).doesNotContain("${PG_PORT}");
         assertThat(compose).doesNotContain("${PG_SUPERUSER_PASSWORD}")
-                .doesNotContain("${PG_DEPLOYMENTS_PASSWORD}");
+                .doesNotContain("${PG_DEPLOYMENTS_PASSWORD}")
+                .doesNotContain("${PG_CI_PASSWORD}")
+                .doesNotContain("${PG_CI_EVENTSTREAM_PASSWORD}")
+                .doesNotContain("${PG_PLATFORM_IDP_PASSWORD}");
         assertThat(compose).doesNotContain("${ENV_NAME}");
         assertThat(compose).doesNotContain("${ENV_KEY}");
         assertThat(compose).doesNotContain("${IDP_SECRET_");
@@ -316,10 +323,15 @@ class ComposeTemplateTest {
     }
 
     @Test
-    void theIdpsDeploymentCarriesItsVolumeEverySecretAndTheClientListItself() {
+    void theIdpsDeploymentCarriesEverySecretAndTheClientListItself() {
         String idp = runArgsLine("qits-platform-idp");
 
-        assertThat(idp).contains("-v qits-platform-idp-data:/data");
+        // No volume and no datasource: the store is a database the deployer provisions from
+        // `resources: postgresql:db` and injects. The signing key is in it, so pinning the triple
+        // here would outlive a rotation and take every token in flight down with it.
+        assertThat(idp).doesNotContain("-v qits-platform-idp-data:/data")
+                .doesNotContain("QUARKUS_DATASOURCE_IDP_JDBC_URL")
+                .doesNotContain("QITS_RESOURCE_");
         for (String app : PlatformModel.IDP_CLIENT_APPS) {
             assertThat(idp).contains("secret-" + PlatformModel.wireAlias(app, ENV));
         }
@@ -332,6 +344,90 @@ class ComposeTemplateTest {
                 .contains("prod-qits-deployments");
         // The git host's wildcard project claim, under the id the git host now holds.
         assertThat(idp).contains("QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_CLAIMS_PROJECT=*");
+    }
+
+    /**
+     * The two CORE SEED SERVICES' stores. Both containers are started by compose before any deployer
+     * exists, so the seed file is the only place their credentials can come from — and the bootstrap
+     * created the roles and the databases over JDBC minutes earlier.
+     */
+    @Test
+    void theSeedsTwoDatabaseConsumersAreHandedTheirTriples() {
+        String compose = ComposeTemplate.compose(tokens());
+        String ci = serviceBlock(compose, ENV + "-qits-ci");
+        String idp = serviceBlock(compose, "qits-platform-idp");
+
+        // Two stores, two Flyway lineages, two databases: ci's own and the eventstream outbox's.
+        assertThat(ci).contains("QITS_RESOURCE_DB_URL: "
+                        + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_ci")
+                .contains("QITS_RESOURCE_DB_USERNAME: qits_ci")
+                .contains("QITS_RESOURCE_DB_PASSWORD: \"aaaabbbbccccdddd\"")
+                .contains("QITS_RESOURCE_EVENTSTREAM_URL: "
+                        + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_ci_eventstream")
+                .contains("QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_ci_eventstream")
+                .contains("QITS_RESOURCE_EVENTSTREAM_PASSWORD: \"eeeeffff00001111\"");
+        // ci's /data held the H2 files and, before that, a git mirror per repository. The image has
+        // no /data at all now; the socket is what it still needs.
+        assertThat(ci).doesNotContain("QUARKUS_DATASOURCE_CI_JDBC_URL")
+                .doesNotContain("QUARKUS_DATASOURCE_EVENTSTREAM_JDBC_URL")
+                .doesNotContain("- qits-ci-data:/data")
+                .contains("- /var/run/docker.sock:/var/run/docker.sock");
+
+        assertThat(idp).contains("QITS_RESOURCE_DB_URL: "
+                        + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_platform_idp")
+                .contains("QITS_RESOURCE_DB_USERNAME: qits_platform_idp")
+                .contains("QITS_RESOURCE_DB_PASSWORD: \"2222333344445555\"");
+        assertThat(idp).doesNotContain("QUARKUS_DATASOURCE_IDP_JDBC_URL")
+                .doesNotContain("- qits-platform-idp-data:/data");
+
+        // A volume declaration with no mount is a volume nothing ever fills, and the next reader
+        // has to work out which. Exactly the three that lost their only mount are gone.
+        assertThat(compose).doesNotContain("qits-ci-data:")
+                .doesNotContain("qits-platform-idp-data:")
+                .doesNotContain("qits-events-data:")
+                .doesNotContain("qits-deployments-data:");
+        assertThat(compose).contains("qits-projects-data:")
+                .contains("qits-workspaces-data:")
+                .contains("qits-stt-data:")
+                .contains("qits-platform-artifacts-data:")
+                .contains("qits-oci-postgresql-data:");
+    }
+
+    /**
+     * THE GUARD ON THE WHOLE MOVE. Every service that flipped to postgres declares its store in its
+     * own deployments.yml, so the deployer injects the triple and a datasource line here would be an
+     * operator pin that outlives the next password rotation.
+     * <p>
+     * qits-platform-artifacts is the one service still on a file H2, and its line must keep saying
+     * so: it is what proves the sweep took the services it was aimed at and not one more.
+     */
+    @Test
+    void onlyArtifactsStillCarriesAFileDatabase() {
+        List<String> h2 = ComposeTemplate.runArgs(tokens()).lines()
+                .filter(line -> line.startsWith("qits.platform.deployments.run-args."))
+                .filter(line -> line.contains("jdbc:h2"))
+                .toList();
+
+        assertThat(h2).singleElement().asString()
+                .startsWith("qits.platform.deployments.run-args.qits-platform-artifacts=")
+                .contains("-e QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL=jdbc:h2:file:/data/artifacts"
+                        + "/h2/artifacts")
+                .contains("-v qits-platform-artifacts-data:/data");
+
+        // No run-args line pins a resource triple either: the deployer's injection comes first and
+        // docker keeps the last -e, so a line here would win and never be rotated.
+        assertThat(ComposeTemplate.runArgs(tokens())).doesNotContain("-e QITS_RESOURCE_DB_URL=jdbc:"
+                + "postgresql://prod-qits-oci-postgresql:5432/qits_ci");
+        assertThat(runArgsLine("qits-ci")).doesNotContain("QITS_RESOURCE_")
+                .doesNotContain("-v qits-ci-data:/data");
+        assertThat(runArgsLine("qits-events")).doesNotContain("QITS_RESOURCE_")
+                .doesNotContain("-v qits-events-data:/data");
+        // The two that keep a volume: /data is their own tree of files, not a database.
+        assertThat(runArgsLine("qits-projects")).contains("-v qits-projects-data:/data")
+                .contains("-e QITS_PROJECTS_DATA_DIR=/data/mirrors")
+                .doesNotContain("QITS_RESOURCE_");
+        assertThat(runArgsLine("qits-workspaces")).contains("-v qits-workspaces-data:/data")
+                .doesNotContain("QITS_RESOURCE_");
     }
 
     @Test

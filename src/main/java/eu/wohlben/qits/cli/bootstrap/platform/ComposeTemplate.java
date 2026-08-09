@@ -57,17 +57,24 @@ public final class ComposeTemplate {
               # Every volume is keyed by the APPLICATION it belongs to, because the deployer's run-args
               # reference them by name and an application's run-args are looked up by that same name.
               #
+              # THERE IS NO VOLUME PER DATABASE ANY MORE. Six services kept a file H2 under /data and
+              # moved to the postgres below: the deployer, qits-ci (twice), qits-platform-idp,
+              # qits-projects, qits-workspaces and qits-events. Where /data held the H2 and nothing else
+              # — ci, the idp, events, the deployer — the volume is gone with it and the images have no
+              # mount point left to give it. Where /data holds files as well, the volume stays and only
+              # the datasource left it.
+              #
               # qits-platform-artifacts' store: blobs, packages and the git host's repositories — which are
-              # blobs too now, so the git host needs no volume of its own.
+              # blobs too now, so the git host needs no volume of its own. It is the one service still on
+              # a file H2, and its /data carries both.
               qits-platform-artifacts-data:
                 name: qits-platform-artifacts-data
-              qits-ci-data:
-                name: qits-ci-data
-              # THE PLATFORM'S TOPOLOGY AND ITS DEPLOYMENT HISTORY LIVE HERE — every environment, every
-              # service, every link, every deployment row and the rollback pins read off them, and the
-              # credentials of every database this platform provisions. qits-deployments moved off its file
-              # H2 onto this server, so there is no qits-deployments-data volume any more: its /data held
-              # the H2 files and nothing else.
+              # THE PLATFORM'S TOPOLOGY, ITS DEPLOYMENT HISTORY AND EVERY DATABASE THIS PLATFORM RUNS
+              # LIVE HERE — every environment, every service, every link, every deployment row and the
+              # rollback pins read off them, the credentials of every database the deployer provisions,
+              # and the idp's signing key. An idp on ephemeral storage comes up healthy and mints a new
+              # keypair on every recreate, invalidating every token in flight with nothing in any log to
+              # say why; that is now this volume's problem to prevent rather than one of its own.
               #
               # THE MOUNT PATH IS /var/lib/postgresql AND NOT /var/lib/postgresql/data. postgres 18 puts
               # PGDATA at /var/lib/postgresql/18/docker, so a volume mounted at the old data path is
@@ -75,21 +82,15 @@ public final class ComposeTemplate {
               # every byte is written into the container's own layer and lost on the next recreate.
               qits-oci-postgresql-data:
                 name: qits-oci-postgresql-data
-              # THE SIGNING KEY LIVES HERE. An idp on ephemeral storage comes up healthy and mints a new
-              # keypair on every recreate, invalidating every token in flight with nothing in any log to say
-              # why — which is why its image refuses to boot without the url that points at this volume.
-              qits-platform-idp-data:
-                name: qits-platform-idp-data
               # Mounted by DEPLOYED containers via qits.platform.deployments.run-args, not by any service
-              # below.
+              # below. Each one holds FILES that no database replaced: qits-projects' git mirrors and the
+              # credentials beside them, qits-workspaces' per-repository trees, qits-stt's models.
               qits-projects-data:
                 name: qits-projects-data
               qits-workspaces-data:
                 name: qits-workspaces-data
               qits-stt-data:
                 name: qits-stt-data
-              qits-events-data:
-                name: qits-events-data
               # The deployer's run-args config (config/application.properties, written by the bootstrap). A
               # volume rather than env so a self-update's successor inherits it — env cannot nest these
               # values.
@@ -112,9 +113,19 @@ public final class ComposeTemplate {
                 image: qits/platform-idp:latest
                 container_name: qits-platform-idp
                 environment:
-                  # Not a default the image could ship: the signing key lands in this database, and the image
-                  # refuses to boot rather than write it into a container layer.
-                  QUARKUS_DATASOURCE_IDP_JDBC_URL: jdbc:h2:file:/data/idp/h2/idp
+                  # THE STORE, and the signing key is in it: an idp that comes up on an empty database
+                  # mints a new keypair and invalidates every token in flight, with nothing in any log to
+                  # say why. The image ships no default for these three and refuses to boot without them.
+                  #
+                  # SPELLED HERE, AND ONLY HERE. This container is started by compose before any deployer
+                  # exists, so the bootstrap creates the role and the database over JDBC and hands the
+                  # credential over itself. Every deployment after this one gets the same three variables
+                  # from qits-platform-deployments, which reads `resources: postgresql:db` in this
+                  # repository's deployments.yml — which is why the run-args line beside this file carries
+                  # no datasource env at all.
+                  QITS_RESOURCE_DB_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_platform_idp
+                  QITS_RESOURCE_DB_USERNAME: qits_platform_idp
+                  QITS_RESOURCE_DB_PASSWORD: "${PG_PLATFORM_IDP_PASSWORD}"
                   # The 'iss' of every token and the base of every endpoint the discovery document advertises.
                   # Spelled here although it equals the shipped default, for the reason every other address in
                   # this file is spelled: an address a deployment inherits silently is one nobody knows to
@@ -154,8 +165,8 @@ public final class ComposeTemplate {
                   # each container fills its own log with the attempts — which is how it was found
                   # on the first prod bootstrap.
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
-                volumes:
-                  - qits-platform-idp-data:/data
+                # No volume: /data held the H2 and nothing else, and the image has no mount point for it
+                # any more.
                 networks: [qits-net]
                 restart: unless-stopped
 
@@ -372,11 +383,23 @@ public final class ComposeTemplate {
                 # Unprivileged uid stays; the socket group is all it needs.
                 group_add: ["${DOCKER_GID}"]
                 environment:
-                  QUARKUS_DATASOURCE_CI_JDBC_URL: "jdbc:h2:file:/data/ci/h2/ci;DB_CLOSE_DELAY=-1"
-                  # The eventstream library (the outbox) owns its own datasource, whose shipped default sits
-                  # under ${user.home} — which a container has not got, so H2 refuses the url at Flyway and the
-                  # binary dies at boot. Every deployment of ci must spell this twin; so must the seed.
-                  QUARKUS_DATASOURCE_EVENTSTREAM_JDBC_URL: jdbc:h2:file:/data/eventstream/h2/eventstream
+                  # TWO STORES, TWO TRIPLES. ci's own database and the outbox of the eventstream library
+                  # it joins are two Flyway lineages and cannot share one. The library reads the
+                  # `eventstream` name in its own shipped defaults, so the second triple's spelling is
+                  # not a choice made here. Its file-H2 predecessor sat under ${user.home}, which a
+                  # container has not got — that is gone with the H2.
+                  #
+                  # SPELLED HERE, AND ONLY HERE, for the same reason as the idp's above: compose starts
+                  # this container before any deployer exists. Later deployments are handed the same six
+                  # variables by qits-platform-deployments, from
+                  # `resources: postgresql:db, postgresql:eventstream:qits_ci_eventstream` in this
+                  # repository's deployments.yml.
+                  QITS_RESOURCE_DB_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_ci
+                  QITS_RESOURCE_DB_USERNAME: qits_ci
+                  QITS_RESOURCE_DB_PASSWORD: "${PG_CI_PASSWORD}"
+                  QITS_RESOURCE_EVENTSTREAM_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_ci_eventstream
+                  QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_ci_eventstream
+                  QITS_RESOURCE_EVENTSTREAM_PASSWORD: "${PG_CI_EVENTSTREAM_PASSWORD}"
                   # ci's own fetch of the pushed ref, and the same base as seen from inside a step
                   # container — steps join qits-net, so both resolve the git host directly.
                   QITS_CI_GIT_HOST_URL: http://qits-platform-artifacts:8080/artifacts
@@ -426,7 +449,10 @@ public final class ComposeTemplate {
                   QUARKUS_OIDC_CLIENT_CREDENTIALS_SECRET: "${IDP_SECRET_CI}"
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
                 volumes:
-                  - qits-ci-data:/data
+                  # The socket and nothing else. ci's /data held the H2 files, and before that a bare git
+                  # mirror per repository — it reads pipeline config off the git host's content routes
+                  # now, so the image has no /data at all and this container writes nothing that outlives
+                  # it. The socket stays: starting a step container is what this service does.
                   - /var/run/docker.sock:/var/run/docker.sock
                 networks: [qits-net]
                 restart: unless-stopped
@@ -444,6 +470,19 @@ public final class ComposeTemplate {
             #
             # Every hostname in every value below is a WIRE ALIAS: ${ENV_NAME}-qits-<app> for a service of
             # this environment, the bare repository name for one of the four platform services.
+            #
+            # NO LINE BELOW CARRIES A DATASOURCE, with two exceptions that say why on themselves:
+            # qits-platform-artifacts, the one service still on a file H2, and qits-deployments, whose
+            # own store is the one credential the bootstrap issues and the deployer then registers as
+            # its own. Every other store is DECLARED rather than configured: a
+            # repository writes `resources: postgresql:<name>` in its .config/qits/deployments.yml, and
+            # qits-platform-deployments creates the role and the database on this tier's postgres and
+            # injects QITS_RESOURCE_<NAME>_URL / _USERNAME / _PASSWORD before the container starts. Those
+            # variables are injected BEFORE the arguments here, and docker keeps the last -e — so a
+            # datasource line here is an operator PIN that outlives a password rotation and breaks the
+            # deployment it looks like it is configuring. The seed compose file spells the triples for
+            # qits-ci and qits-platform-idp for the one reason that does not apply here: it starts them
+            # before any deployer exists.
             #
             # EVERY LINE OF A QITS APPLICATION CARRIES QITS_OBSERVABILITY_URL, for the same reason the seed
             # compose spells it on every service: the images ship the bare qits-observability, and that
@@ -480,7 +519,18 @@ public final class ComposeTemplate {
             # fire-and-forget and swallowed at debug, so a wrong value deploys nothing and reports nothing.
             # QITS_AUTH_MACHINE_AUDIENCE and QUARKUS_OIDC_CLIENT_CLIENT_ID are both this tier's alias: ci
             # ships the unqualified qits-ci for each, and the idp knows neither name.
-            qits.platform.deployments.run-args.qits-ci=-v qits-ci-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QUARKUS_DATASOURCE_CI_JDBC_URL=jdbc:h2:file:/data/ci/h2/ci;DB_CLOSE_DELAY=-1 -e QUARKUS_DATASOURCE_EVENTSTREAM_JDBC_URL=jdbc:h2:file:/data/eventstream/h2/eventstream -e QITS_CI_GIT_HOST_URL=http://qits-platform-artifacts:8080/artifacts -e QITS_CI_CONTAINER_GIT_URL=http://qits-platform-artifacts:8080/artifacts -e QITS_CI_NETWORK=qits-net -e QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL=http://${ENV_NAME}-qits-deployments:8080/platform-deployments/api/events/build-succeeded -e QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT} -e QITS_CI_DAEMON_VERSION=${DAEMON_SHA} -e QITS_CI_CONTAINER_DAEMON_URL=ws://${ENV_NAME}-qits-ci:8080/ci/daemon -e QITS_CI_WORKSPACES_URL=http://${ENV_NAME}-qits-workspaces:8080 -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-ci -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT} -e QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ID=${ENV_NAME}-qits-ci -e QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-deployments -e QUARKUS_OIDC_CLIENT_CREDENTIALS_SECRET=${IDP_SECRET_CI} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            #
+            # NO DATASOURCE ENV, AND NO DATA VOLUME — and the asymmetry with the seed compose block is
+            # deliberate. ci's deployments.yml declares
+            # `resources: postgresql:db, postgresql:eventstream:qits_ci_eventstream`, so the deployer
+            # creates both databases before the successor container starts and injects the six
+            # QITS_RESOURCE_* variables itself, from the registry row that holds the current password.
+            # A line here would be an operator PIN — run-args are appended after the injected env and
+            # docker keeps the last -e — so it would survive the deployer rotating that password and
+            # break the deployment it looks like it is configuring. The seed block spells the same
+            # variables because at that moment no deployer exists to inject anything. The /data volume
+            # went with the H2: the image has no mount point for it any more.
+            qits.platform.deployments.run-args.qits-ci=-v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QITS_CI_GIT_HOST_URL=http://qits-platform-artifacts:8080/artifacts -e QITS_CI_CONTAINER_GIT_URL=http://qits-platform-artifacts:8080/artifacts -e QITS_CI_NETWORK=qits-net -e QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL=http://${ENV_NAME}-qits-deployments:8080/platform-deployments/api/events/build-succeeded -e QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT} -e QITS_CI_DAEMON_VERSION=${DAEMON_SHA} -e QITS_CI_CONTAINER_DAEMON_URL=ws://${ENV_NAME}-qits-ci:8080/ci/daemon -e QITS_CI_WORKSPACES_URL=http://${ENV_NAME}-qits-workspaces:8080 -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-ci -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT} -e QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ID=${ENV_NAME}-qits-ci -e QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-deployments -e QUARKUS_OIDC_CLIENT_CREDENTIALS_SECRET=${IDP_SECRET_CI} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The platform's PostgreSQL, deployed like everything else. The host publish is kept so this
             # CLI can reconnect to the same server after the deployer replaces the seed container with its
             # own — the seed's port would otherwise go with the seed. The mount path is
@@ -503,19 +553,32 @@ public final class ComposeTemplate {
             # no oidc-client and no secret — but the audience it validates AGAINST is this tier's alias, and
             # the image still ships the pre-rename repository name.
             qits.platform.deployments.run-args.qits-deployments=-v qits-deployments-config:/work/config -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QITS_RESOURCE_DB_URL=jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_deployments -e QITS_RESOURCE_DB_USERNAME=qits_deployments -e QITS_RESOURCE_DB_PASSWORD=${PG_DEPLOYMENTS_PASSWORD} -e QITS_ENVIRONMENT=${ENV_NAME} -e QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD=${PG_SUPERUSER_PASSWORD} -e QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT} -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-deployments -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
-            # The idp's own deployment. The volume is the whole point: the signing key is in that database, and
-            # a redeploy that lands on a fresh one invalidates every token in flight. The claims grant is the
-            # git host's wildcard — it announces pushes for every repo, so its project claim covers every value.
+            # The idp's own deployment. NO DATASOURCE ENV AND NO VOLUME: `resources: postgresql:db` in its
+            # deployments.yml is what gets it a store, and the deployer injects the triple from the
+            # registry row before the successor starts. That row is what keeps the SIGNING KEY across
+            # deployments — a redeploy landing on a fresh database mints a new keypair and invalidates
+            # every token in flight — and pinning the triple here would outlive a rotation and break it.
+            # The seed compose block spells the same three variables because it starts the idp before any
+            # deployer exists. /data held the H2 and nothing else, so the volume went with it.
+            # The claims grant is the git host's wildcard — it announces pushes for every repo, so its
+            # project claim covers every value.
             # QITS_IDP_CLIENTS and both audience lists are restated in full, because each key REPLACES the
             # shipped list rather than extending it — and every id in them is a wire alias, so they move with
             # the environment name while the image's defaults cannot.
-            qits.platform.deployments.run-args.qits-platform-idp=-v qits-platform-idp-data:/data -e QUARKUS_DATASOURCE_IDP_JDBC_URL=jdbc:h2:file:/data/idp/h2/idp -e QITS_IDP_ISSUER=${IDP} -e QITS_IDP_CLIENTS=${IDP_CLIENTS} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_SECRET=${IDP_SECRET_CI} -e QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_SECRET=${IDP_SECRET_PLATFORM_ARTIFACTS} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_SECRET=${IDP_SECRET_WORKSPACES} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_GATEWAY_SECRET=${IDP_SECRET_GATEWAY} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_AUDIENCES=${IDP_AUDIENCES} -e QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_AUDIENCES=${IDP_AUDIENCES} -e QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_CLAIMS_PROJECT=* -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.platform.deployments.run-args.qits-platform-idp=-e QITS_IDP_ISSUER=${IDP} -e QITS_IDP_CLIENTS=${IDP_CLIENTS} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_SECRET=${IDP_SECRET_CI} -e QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_SECRET=${IDP_SECRET_PLATFORM_ARTIFACTS} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_SECRET=${IDP_SECRET_WORKSPACES} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_GATEWAY_SECRET=${IDP_SECRET_GATEWAY} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_AUDIENCES=${IDP_AUDIENCES} -e QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_AUDIENCES=${IDP_AUDIENCES} -e QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_CLAIMS_PROJECT=* -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             qits.platform.deployments.run-args.qits-stt=-v qits-stt-data:/data -e QITS_SPEECH_HOME=/data/speech -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # THE VOLUME STAYS AND THE DATASOURCE ENV IS GONE, which is the whole shape of this service's
+            # move to postgres. /data is not the database's — it is QITS_PROJECTS_DATA_DIR below, the git
+            # mirrors this service clones and the credentials beside them, files that no database
+            # replaced. Both stores are declared instead: `resources: postgresql:db, postgresql:epics:
+            # qits_epics` in projects' deployments.yml, and the deployer injects QITS_RESOURCE_DB_* and
+            # QITS_RESOURCE_EPICS_* from its registry. Pinning either triple here would outlive a
+            # rotation and break the deployment it looks like it is configuring.
+            #
             # projects no longer mounts the shared repositories volume at all — it clones its own git mirrors
             # over the wire, through qits.artifacts.url, into its own data dir. QITS_PROJECTS_DATA_DIR is
             # spelled here rather than left to the image default (${user.home}/...), which resolves to the
-            # literal "?" under this image's passwd-less UID 1001 — the same reason the datasource URLs are
-            # spelled.
+            # literal "?" under this image's passwd-less UID 1001.
             #
             # QITS_REPOSITORIES_GIT_PUSH_TOKEN is the SAME token qits-platform-artifacts' hook checks, one
             # line above. projects advances refs on the git host by pushing now, and the default branch is
@@ -537,11 +600,13 @@ public final class ComposeTemplate {
             # from. The image ships pre-rename defaults (qits-projects, qits-artifacts), which resolve to
             # nothing on this platform, so a container created from them never dials back and its boot
             # clone fails. Both are spelled here, the first with the environment's own prefix.
-            qits.platform.deployments.run-args.qits-projects=-v qits-projects-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QUARKUS_DATASOURCE_PROJECTS_JDBC_URL=jdbc:h2:file:/data/projects/h2/projects -e QUARKUS_DATASOURCE_EPICS_JDBC_URL=jdbc:h2:file:/data/epics/h2/epics -e QITS_PROJECTS_DATA_DIR=/data/mirrors -e QITS_ARTIFACTS_URL=http://qits-platform-artifacts:8080 -e QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN} -e QITS_PROJECTS_AGENT_IMAGE=qits/project-agent:native -e QITS_PROJECTS_OWN_HOST=${ENV_NAME}-qits-projects -e QITS_PROJECTS_AGENT_GIT_BASE=http://qits-platform-artifacts:8080/artifacts/git -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.platform.deployments.run-args.qits-projects=-v qits-projects-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QITS_PROJECTS_DATA_DIR=/data/mirrors -e QITS_ARTIFACTS_URL=http://qits-platform-artifacts:8080 -e QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN} -e QITS_PROJECTS_AGENT_IMAGE=qits/project-agent:native -e QITS_PROJECTS_OWN_HOST=${ENV_NAME}-qits-projects -e QITS_PROJECTS_AGENT_GIT_BASE=http://qits-platform-artifacts:8080/artifacts/git -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # The volume stays for the same reason qits-projects' does: /data is this service's own tree of
+            # per-repository files, not a database. Both its stores — its own and the eventstream outbox —
+            # are declared in its deployments.yml and injected by the deployer, so no datasource env is
+            # here either.
             # QITS_ARTIFACTS_URL is where release PUSHES the release commit — the git host, over HTTP, so
-            # the ordinary post-receive fires and the ordinary pipeline builds it.
-            # The eventstream twin (same pair qits-ci carries above): a release publishes SoftwareRelease
-            # through the shared bus client, whose outbox owns its own datasource. QITS_EVENTS_URL is where
+            # the ordinary post-receive fires and the ordinary pipeline builds it. QITS_EVENTS_URL is where
             # the outbox drains to.
             # QITS_WORKSPACE_GIT_HOST (qits.workspace.git-host) is the address a WORKSPACE container uses to
             # reach this platform — git clone/push, OTLP, the agent's MCP servers and the daemon control
@@ -553,7 +618,7 @@ public final class ComposeTemplate {
             # the one name on qits-net that fronts a WHOLE environment. Not the edge either — a workspace
             # belongs to a tier, and the gateway is the tier's own front door, while the edge exists to pick
             # between tiers for traffic that arrived from outside.
-            qits.platform.deployments.run-args.qits-workspaces=-v qits-workspaces-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QUARKUS_DATASOURCE_WORKSPACES_JDBC_URL=jdbc:h2:file:/data/workspaces/h2/workspaces -e QUARKUS_DATASOURCE_EVENTSTREAM_JDBC_URL=jdbc:h2:file:/data/eventstream/h2/eventstream -e QITS_PROJECTS_URL=http://${ENV_NAME}-qits-projects:8080 -e QITS_ARTIFACTS_URL=http://qits-platform-artifacts:8080 -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_WORKSPACE_GIT_HOST=${ENV_NAME}-qits-gateway -e QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/${ENV_NAME} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.platform.deployments.run-args.qits-workspaces=-v qits-workspaces-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QITS_PROJECTS_URL=http://${ENV_NAME}-qits-projects:8080 -e QITS_ARTIFACTS_URL=http://qits-platform-artifacts:8080 -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_WORKSPACE_GIT_HOST=${ENV_NAME}-qits-gateway -e QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/${ENV_NAME} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The reading surface over qits-platform-artifacts' docs repository. ONE line and no volume,
             # because this service stores nothing — `latest` is a query over the store's rows rather
             # than a pointer it holds, so a redeploy loses nothing and there is no datasource URL to
@@ -563,7 +628,10 @@ public final class ComposeTemplate {
             # into a publishing step as $QITS_DOCS_URL, so the publisher and the reader cannot
             # disagree about where documentation lives.
             qits.platform.deployments.run-args.qits-platform-docs=-e QITS_PLATFORM_DOCS_ARTIFACTS_URL=http://qits-platform-artifacts:8080/artifacts/docs/docs -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
-            qits.platform.deployments.run-args.qits-events=-v qits-events-data:/data -e QUARKUS_DATASOURCE_EVENTS_JDBC_URL=jdbc:h2:file:/data/events/h2/events -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # One line and no volume: this service's log is a database it declares
+            # (`resources: postgresql:db`) and is handed by the deployer, and its image dropped the /data
+            # mount point with the H2 — it writes nothing that outlives the container.
+            qits.platform.deployments.run-args.qits-events=-e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The receiver's own telemetry, addressed to itself. That is the consistent answer rather than
             # the clever one: qits-observability is an ordinary OTLP client like every application above,
             # and leaving it on the dead default would keep exactly one container spamming retries. This
