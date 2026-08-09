@@ -91,6 +91,14 @@ first `.gitmodules` naming the qits submodules. `QITS_WRAPPER_DIR` (or `--wrappe
 and preflight prints which of the two happened. The container is told the answer rather than
 walking for it again.
 
+And when there is no wrapper at all, it **clones one**. A bare machine has no checkout to run from
+and no platform git host to clone one from — this run is what creates that host — so the wrapper
+comes from the GitHub org, anonymously, into the working directory: `<cwd>/qits-qits`, made by the
+`wrapper` phase, owned by whoever typed the command, and there to rerun from afterwards. Its
+submodules are deliberately left uninitialised; the `sources` phase clones every platform
+repository from the org anyway, so initialising them would clone the platform twice. A wrapper
+that IS there is skipped, never refreshed: the sha it stands on is the operator's decision.
+
 What it needs to run: a reachable docker daemon, roughly 4 GB of RAM free per native build it
 starts, and reach to quay.io, registry.access.redhat.com, docker.io and npm — a cold start cannot
 pull through the mirror it is starting. **Nothing else**: git, the compose plugin, `stty` and a JRE
@@ -109,9 +117,9 @@ the same names `qits-local-up.sh` read:
 
 | knob | default | what it is |
 | --- | --- | --- |
-| `QITS_WRAPPER_DIR` | detected | the wrapper repository whose checkouts are the sources, and where the compose file and `.qits-bootstrap.env` land — found by walking up when unset |
+| `QITS_WRAPPER_DIR` | detected | the wrapper repository whose checkouts are the sources, and where the compose file and `.qits-bootstrap.env` land — found by walking up when unset, and cloned into `<cwd>/qits-qits` when this machine has none |
 | `QITS_SRC` | `.qits-bootstrap-src` | where those checkouts are cloned to |
-| `QITS_ORG_URL` | the GitHub org | fallback for a repository with no local checkout |
+| `QITS_ORG_URL` | the GitHub org | where a repository with no local checkout is cloned from — the wrapper included, on a cold start. Read anonymously |
 | `QITS_PORT` | `8080` | the host's ONE published port, bound by qits-platform-edge. It is the door for a person's browser; the CLI dials the edge's alias instead |
 | `QITS_REGISTRY_PORT` | `8081` | qits-platform-artifacts' host port, for the DOCKER DAEMON: seed builds run with `--network host` and resolve Maven through `localhost:<this>`. The CLI reads the registry API and the git host by alias |
 | `QITS_PG_PORT` | `5433` | what the platform's postgres publishes on 127.0.0.1, for a person with a `psql`. The CLI connects to the wire alias on 5432 like every other consumer. 5433 so a postgres already on the workstation is not a bind conflict |
@@ -157,8 +165,14 @@ the marker — which is what the launcher sets — it is the **payload**, and it
     docker daemon: reachable
     swarm: active
     wrapper: /home/dev/qits-qits  (detected from /home/dev/qits-qits/cli/qits-cli-bootstrap)
+    payload built from: /home/dev/qits-qits/cli/qits-cli-bootstrap
     payload image: qits-bootstrap:23105f76262d (built already)
     $ docker run --rm --name qits-bootstrap-cli …
+
+On a bare machine the third line reads `wrapper: /home/dev/qits-qits  (not on this machine yet)`
+and the fourth names the clone of this CLI the run was started from — the wrapper's own submodule
+is where the image is built from when there is a wrapper, and a checkout of this repository at or
+above the working directory (or beside it) is what answers on a cold one.
 
 **Swarm is reported, not repaired.** `docker swarm init` rewrites the networking of every container
 on the machine, which is a migration and not a preflight's business.
@@ -180,7 +194,7 @@ The run itself, flag by flag:
 | `-it`, only with a terminal | the live display needs a tty; against a pipe it is docker's "the input device is not a TTY", and `UiFactory` falls back to plain lines by itself |
 | `-v /var/run/docker.sock:…` | every phase is a docker command against the HOST's daemon |
 | `--user <uid>:<gid>` and `--group-add <socket group>` | the clones and the generated files stay the user's own rather than arriving root-owned in their checkout, and git reads those checkouts without "dubious ownership". A plain uid is in no groups inside a container, so the socket's group has to be added |
-| `-v <path>:<path>` per state directory | the wrapper (checkouts, `.qits-bootstrap.env`, the compose file), the working directory (`.env`), `QITS_SRC` (the clones) and the log. Mounted at their own path, so a `QITS_*` value means the same file on both sides — and mounted at all because the payload's build contexts and `docker cp` sources are read by the CLIENT, inside |
+| `-v <path>:<path>` per state directory | the wrapper (checkouts, `.qits-bootstrap.env`, the compose file), the working directory (`.env`), `QITS_SRC` (the clones) and the log. Mounted at their own path, so a `QITS_*` value means the same file on both sides — and mounted at all because the payload's build contexts and `docker cp` sources are read by the CLIENT, inside. **Only paths that already exist**: docker creates a missing bind source as a root-owned directory, and this run is a plain uid. A wrapper that is not there yet is therefore not mounted — it is cloned inside the container, into the working directory, which is |
 | `-w <the launcher's directory>` | `.env` is the same file, and a relative `QITS_SRC` or `QITS_LOG_FILE` lands where it would have on the host |
 | `-e QITS_…` by NAME | docker copies each value across, so the postgres passwords and client secrets never reach a command line, the screen or the log |
 | `-e HOME=/tmp`, `-e TZ=…` | a uid with no `/etc/passwd` entry has no home, and a container with no `/etc/localtime` logs in UTC while the launcher logs local |
@@ -259,29 +273,29 @@ into a page that arrives when the run is over, so that is what to verify before 
 
 ## What it does, in order
 
-Built from configuration at startup, so the count in the header is real. A cold boot is 52 phases;
-`QITS_SKIP_BUILD=1` drops phases 5–23 and keeps the other 34.
+Built from configuration at startup, so the count in the header is real. A cold boot is 53 phases;
+`QITS_SKIP_BUILD=1` drops phases 6–24 and keeps the other 35.
 
 | | phase |
 | --- | --- |
-| 1–4 | preflight (docker, git, and where the wrapper is); join `qits-net`, which every address after it needs; clone or refresh the 29 platform repositories; read `.qits-bootstrap.env` |
-| 5 | seed `qits-auth-core` for the first artifacts build (a temporary file repository, served over HTTP, that breaks the first-boot cycle) |
-| 6–9 | seed images `qits/gateway`, `qits/platform-edge`, `qits/platform-artifacts`, `qits/oci-postgresql` |
-| 10 | have qits-platform-artifacts serving the registry port, so there is somewhere to publish to |
-| 11–14 | publish `qits-eventstream`, `qits-auth-core`, `@qits/ui-components`, `@qits/angular` |
-| 15–17 | seed images `qits/ci`, `qits/deployments`, `qits/platform-idp` |
-| 18–22 | the five step images from qits-oci |
-| 23 | the ci-daemon musl static binary, and its digest |
-| 24 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC the four databases the seed stack needs: the deployer's, qits-ci's own and its outbox's, and qits-platform-idp's. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |
-| 25 | resolve the idp's client secrets (given, kept, generated) and record the run state |
-| 26–27 | generate the seed compose file; write the deployer's run-args onto its config volume |
-| 28–29 | start the seed stack (only what the deployer does not already manage); wait for the idp, the edge, the gateway, artifacts, ci and the deployer — all on qits-net |
-| 30 | publish the ci-daemon binary, version-addressed by its digest |
-| 31–32 | create the 29 repositories on the git host; pre-seed the seeded histories with `-o qits.no-ci` |
-| 33–36 | replay the release pipeline of each publisher the wrapper builds install, and wait for each run |
-| 37 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
-| 38–50 | one phase per deployable: push `main` quietly and `environment/<name>` for real, then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-platform-edge is second to last: it is the host port, so its cutover takes this program's own door away for a beat |
-| 51–52 | push the seeded repositories; the closing report |
+| 1–5 | preflight (docker, git, and where the wrapper is); join `qits-net`, which every address after it needs; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 29 platform repositories; read `.qits-bootstrap.env` |
+| 6 | seed `qits-auth-core` for the first artifacts build (a temporary file repository, served over HTTP, that breaks the first-boot cycle) |
+| 7–10 | seed images `qits/gateway`, `qits/platform-edge`, `qits/platform-artifacts`, `qits/oci-postgresql` |
+| 11 | have qits-platform-artifacts serving the registry port, so there is somewhere to publish to |
+| 12–15 | publish `qits-eventstream`, `qits-auth-core`, `@qits/ui-components`, `@qits/angular` |
+| 16–18 | seed images `qits/ci`, `qits/deployments`, `qits/platform-idp` |
+| 19–23 | the five step images from qits-oci |
+| 24 | the ci-daemon musl static binary, and its digest |
+| 25 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC the four databases the seed stack needs: the deployer's, qits-ci's own and its outbox's, and qits-platform-idp's. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |
+| 26 | resolve the idp's client secrets (given, kept, generated) and record the run state |
+| 27–28 | generate the seed compose file; write the deployer's run-args onto its config volume |
+| 29–30 | start the seed stack (only what the deployer does not already manage); wait for the idp, the edge, the gateway, artifacts, ci and the deployer — all on qits-net |
+| 31 | publish the ci-daemon binary, version-addressed by its digest |
+| 32–33 | create the 29 repositories on the git host; pre-seed the seeded histories with `-o qits.no-ci` |
+| 34–37 | replay the release pipeline of each publisher the wrapper builds install, and wait for each run |
+| 38 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
+| 39–51 | one phase per deployable: push `main` quietly and `environment/<name>` for real, then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-platform-edge is second to last: it is the host port, so its cutover takes this program's own door away for a beat |
+| 52–53 | push the seeded repositories; the closing report |
 
 Three things every deploy phase does that are easy to miss: it pushes `main` quietly
 (`-o qits.no-ci`) so a second cold native build is not queued for the same sha; it replays the
@@ -291,18 +305,18 @@ RED, it re-announces the push to qits-ci once and waits for a run newer than the
 means there is no image, so replaying the build event would only buy an `IMAGE_MISSING` row — a
 rerun has to ask for the BUILD.
 
-Phase 27 restarts the seed deployer when the run-args it just wrote differ from what the volume
+Phase 28 restarts the seed deployer when the run-args it just wrote differ from what the volume
 held. The deployer reads that file once, at its own boot, so a rerun that changes it changes
 nothing for a container that is already running.
 
-Phases 5 and 10 are the two that bind the registry port, and both ask first whether
+Phases 6 and 11 are the two that bind the registry port, and both ask first whether
 qits-platform-artifacts is already serving it — by GET on the artifacts API's own health at the
 store's wire alias, which the temporary nginx does not answer to. On a platform whose store is
 deployed, the answer is yes: the deployed container publishes the same port from the same volume, so
-phase 5 skips and phase 10 waits for that store instead of starting a seed beside it. Binding it
+phase 6 skips and phase 11 waits for that store instead of starting a seed beside it. Binding it
 anyway is `port is already allocated`, exit 125, and a stopped boot.
 
-The temporary registry of phase 5 has **two consumers and two addresses**, which is the shape every
+The temporary registry of phase 6 has **two consumers and two addresses**, which is the shape every
 container the bootstrap starts for the daemon's benefit has: the CLI dials it on `qits-net` by its
 container name, and the seed image builds resolve Maven through `localhost:<registry port>` on the
 host, because a build runs with `--network host` against the host's daemon.
@@ -362,7 +376,7 @@ Two things about the addressing are worth stating plainly:
   by a throwaway `curlimages/curl` container per call, borrowing the network position this CLI now
   holds. The platform's exposure is unchanged, which is the property worth keeping.
 
-Three additions:
+Four additions:
 
 - **The container is the program's own doing.** The script was started as a `docker:cli` container
   by the shim around it; this binary is started on the host and puts itself inside an image it
@@ -374,9 +388,16 @@ Three additions:
 - **A source that cannot be trusted stops the boot.** The script, and this CLI until 2026-08-08,
   answered a wrapper path that was not a checkout by cloning from GitHub instead, and a refresh
   that would not fast-forward by building what was already on disk. Both produced a working-looking
-  run of the wrong commit. Now: an ABSENT wrapper directory still falls back to the org URL — not
-  every repository in the model has to be a submodule of this wrapper — but a directory that exists
-  and is not a checkout, or a refresh that fails, ends the run and names the fix.
+  run of the wrong commit. Now: an ABSENT directory still falls back to the org URL — not every
+  repository in the model has to be a submodule of this wrapper — and so does an EMPTY one, which
+  is what git leaves at a gitlink whose submodule was never checked out. A directory that holds
+  something and is not a checkout, or a refresh that fails, ends the run and names the fix.
+- **A machine with nothing on it is enough.** The script had to be run from a wrapper checkout,
+  and so did this CLI until now: no checkout was "no wrapper directory at …" and a stopped boot.
+  A cold machine cannot have one — the git host that would serve it is what the bootstrap creates —
+  so the `wrapper` phase clones qits-qits from the org into the working directory and the run
+  carries on with it. Without its submodules, on purpose: `sources` clones each repository from the
+  org anyway. `curl … | bash` now ends with a platform and with a checkout to rerun from.
 
 ## Status
 

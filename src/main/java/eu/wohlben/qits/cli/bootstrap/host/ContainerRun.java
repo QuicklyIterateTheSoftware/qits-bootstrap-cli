@@ -55,21 +55,25 @@ public final class ContainerRun {
     /**
      * What the launcher runs.
      *
-     * @param image     the content-tagged payload image
-     * @param wrapper   the wrapper repository, resolved on the host
-     * @param workDir   the directory the launcher was started in, which is where {@code .env} is
-     *                  and what every relative {@code QITS_*} path resolves against
-     * @param sources   {@code QITS_SRC}, resolved against {@code workDir} the way the payload will
-     *                  resolve it
-     * @param logFile   {@code QITS_LOG_FILE}, resolved the same way
-     * @param user      {@code <uid>:<gid>} of whoever started the launcher
-     * @param dockerGid the docker socket's group
-     * @param tty       whether the launcher has a terminal to hand on
-     * @param args      this program's own arguments, relayed verbatim
+     * @param image         the content-tagged payload image
+     * @param wrapper       the wrapper repository, resolved on the host — a path that may not exist
+     *                      yet
+     * @param wrapperOnHost whether that path is already there. A cold start's wrapper is cloned by
+     *                      the run itself, inside the container, and an absent path is NOT mounted:
+     *                      see {@link #mounts}
+     * @param workDir       the directory the launcher was started in, which is where {@code .env}
+     *                      is and what every relative {@code QITS_*} path resolves against
+     * @param sources       {@code QITS_SRC}, resolved against {@code workDir} the way the payload
+     *                      will resolve it
+     * @param logFile       {@code QITS_LOG_FILE}, resolved the same way
+     * @param user          {@code <uid>:<gid>} of whoever started the launcher
+     * @param dockerGid     the docker socket's group
+     * @param tty           whether the launcher has a terminal to hand on
+     * @param args          this program's own arguments, relayed verbatim
      */
-    public record Plan(String image, Path wrapper, Path workDir, Path sources, Path logFile,
-                       String user, String dockerGid, boolean tty, BootstrapConfig config,
-                       Map<String, String> environment, List<String> args) {
+    public record Plan(String image, Path wrapper, boolean wrapperOnHost, Path workDir, Path sources,
+                       Path logFile, String user, String dockerGid, boolean tty,
+                       BootstrapConfig config, Map<String, String> environment, List<String> args) {
     }
 
     public static List<String> command(Plan plan) {
@@ -147,14 +151,25 @@ public final class ContainerRun {
      * Bind-mounting host paths is right here and nowhere else in this program: the launcher runs on
      * the host, so its paths are the daemon's. The payload's own {@code docker build} contexts and
      * {@code docker cp} sources are read by the CLIENT and therefore resolve INSIDE the container —
-     * which is exactly why the four below have to be mounted rather than assumed.
+     * which is exactly why the ones below have to be mounted rather than assumed.
+     * <p>
+     * <b>Every path here exists before the run starts, and that is a rule rather than a
+     * coincidence.</b> Docker creates a missing bind source itself, as a ROOT-owned directory — and
+     * this run is {@code --user <uid>:<gid>}, so what it would get is a mount it cannot write.
      */
     static List<Path> mounts(Plan plan) {
         List<Path> mounts = new ArrayList<>();
         // The checkouts the platform is built from, .qits-bootstrap.env — the generated secrets and
         // the postgres passwords, without which a re-bootstrap is locked out of its own platform —
         // and docker-compose.qits.yml, which the run WRITES here and unwrap reads back.
-        add(mounts, plan.wrapper());
+        //
+        // ONLY WHEN IT IS ALREADY THERE. A cold start has no wrapper: the run clones it, in the
+        // container, into the working directory — which is mounted just below, so the checkout
+        // lands on the host and belongs to the user the run is. Mounting the absent path instead
+        // would have docker create it as root, and the clone would fail on its own mount point.
+        if (plan.wrapperOnHost()) {
+            add(mounts, plan.wrapper());
+        }
         // .env, and whatever a relative QITS_* path hangs off.
         add(mounts, plan.workDir());
         // The clones. A platform's worth of source: re-cloning it every run is not an option.
@@ -194,9 +209,10 @@ public final class ContainerRun {
         explicit.put("TZ", ZoneId.systemDefault().getId());
         // "You are the payload": run the phases instead of launching a container to run them in.
         explicit.put("QITS_IN_CONTAINER", "1");
-        // WrapperDir.resolve walks up from the working directory when nothing says otherwise, and
-        // that walk must not be what decides this inside a container. The launcher already resolved
-        // it on the host; this is that answer, told rather than re-derived.
+        // WrapperDir walks up from the working directory when nothing says otherwise, and that walk
+        // must not be what decides this inside a container. The launcher already resolved it on the
+        // host; this is that answer, told rather than re-derived. On a cold start it is where the
+        // wrapper WILL be — the run clones it there, and both halves have to mean the same path.
         explicit.put("QITS_WRAPPER_DIR", plan.wrapper().toString());
         // Only the payload binds the browser view. The launcher is the same binary and would
         // otherwise hold the port the publish below needs, so the server defaults to not binding

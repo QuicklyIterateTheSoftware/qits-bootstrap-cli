@@ -27,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * The hand-built part: everything the pipeline cannot make for itself on the first boot, plus the
@@ -82,16 +83,28 @@ public class SeedPhases {
             // against the wrong checkout is otherwise indistinguishable from a run against the
             // right one until the sources phase clones something surprising.
             WrapperDir.Resolved resolved =
-                    WrapperDir.resolve(boot.config.wrapperDir(), Path.of("").toAbsolutePath());
+                    WrapperDir.resolveOrClone(boot.config.wrapperDir(), Path.of("").toAbsolutePath());
             Path wrapper = resolved.path();
-            if (!Files.isDirectory(wrapper)) {
-                throw new IllegalStateException("no wrapper directory at " + wrapper);
+            // ABSENT is a cold start, and the `wrapper` phase clones it — a bare machine has no
+            // checkout and no platform git host to get one from. An EMPTY directory is the same
+            // thing: a script that made the path, or a mount point, holds no answer either. A path
+            // that exists with ANYTHING in it and is not a checkout still stops the boot: this run
+            // decides which sha the whole platform is built from, and a directory nobody cloned
+            // answers that question with whatever is standing there.
+            if (Files.exists(wrapper) && !boot.git.isCheckout(wrapper)
+                    && !isEmptyDirectory(wrapper)) {
+                throw new IllegalStateException(wrapper + " exists, is not empty and is not a git "
+                        + "checkout, so it is not the wrapper repository. Move it aside, or point "
+                        + "QITS_WRAPPER_DIR (--wrapper-dir) at a " + WrapperDir.REPO + " checkout");
             }
             boot.state.wrapperDir = wrapper;
             boot.state.srcDir = Path.of(boot.config.src()).toAbsolutePath().normalize();
             boot.state.composeFile = wrapper.resolve("docker-compose.qits.yml");
             Files.createDirectories(boot.state.srcDir);
             ctx.log("  wrapper: " + wrapper + "  (" + resolved.how() + ")");
+            if (!boot.git.isCheckout(wrapper)) {
+                ctx.log("  cold start: the wrapper phase clones it from " + boot.config.orgUrl());
+            }
             ctx.log("  sources: " + boot.state.srcDir);
 
             long local = PlatformModel.platformRepos().stream()
@@ -144,6 +157,49 @@ public class SeedPhases {
     }
 
     /**
+     * <b>The wrapper repository itself, when this machine has none.</b>
+     * <p>
+     * {@code curl … | bash} on a bare box is the case this exists for: there is no checkout to run
+     * from, and no platform git host to clone one from either, because this run is what creates
+     * that host. So the wrapper comes from the org anonymously — the same place {@link #sources}
+     * gets a component whose checkout is missing — into the working directory, which leaves the
+     * operator holding a real checkout they can rerun from.
+     * <p>
+     * <b>The submodules are deliberately NOT initialised, and adding {@code --recurse-submodules}
+     * here would be a mistake.</b> {@link #sources} clones every platform repository from the org
+     * whenever the wrapper has no checkout of it, so a BARE wrapper is already a complete answer;
+     * initialising the submodules would clone the whole platform a second time, into a tree no
+     * phase reads, and a cold start pays for it in the tens of minutes. What the run needs from the
+     * wrapper is the DIRECTORY: the generated compose file, {@code .qits-bootstrap.env} and the
+     * {@code .qits-bootstrap} workspace all live in it.
+     * <p>
+     * A wrapper that IS a checkout is left exactly as it is — not refreshed, not fast-forwarded. In
+     * the ordinary case it is the operator's own working copy, and the sha it stands on is their
+     * decision rather than this program's.
+     */
+    public Phase wrapper() {
+        return new Phase("wrapper", "the wrapper repository", ctx -> {
+            Path wrapper = boot.state.wrapperDir;
+            if (boot.git.isCheckout(wrapper)) {
+                ctx.skip("already checked out at " + wrapper);
+            }
+            // Preflight refused anything standing in this path, so what is left is an absent
+            // directory or an empty one — and `git clone` takes both.
+            String from = boot.config.orgUrl() + "/" + WrapperDir.REPO + ".git";
+            ctx.status("cloning " + WrapperDir.REPO + " from " + from);
+            Boot.must(boot.git.clone(from, wrapper, ctx::log),
+                    "clone of " + WrapperDir.REPO + " from " + from + " failed — a cold start has "
+                            + "nowhere else to get the wrapper from. Clone it by hand and rerun, or "
+                            + "point QITS_WRAPPER_DIR (--wrapper-dir) at a checkout");
+            ctx.log(String.format("  %-26s %s  (%s)", WrapperDir.REPO, boot.git.shortHead(wrapper),
+                    from));
+            ctx.log("  submodules left uninitialised: the sources phase clones each repository "
+                    + "from " + boot.config.orgUrl() + " anyway");
+            ctx.note("cloned " + boot.git.shortHead(wrapper));
+        });
+    }
+
+    /**
      * <b>Both silences here are gone.</b> This phase decides which sha the whole platform is built
      * from, and both of its old fallbacks answered a broken input with a working-looking run:
      * <ul>
@@ -152,6 +208,13 @@ public class SeedPhases {
      *       the checkout — and said so in one line among thousands. Now: an ABSENT directory is
      *       still answered by the org URL (not every model repository has to be a submodule of this
      *       wrapper), but a directory that exists and is not a checkout stops the boot.
+     *       <p>
+     *       <b>An EMPTY directory counts as absent</b>, and that is not a softening of the rule:
+     *       git puts one at every gitlink whose submodule is not checked out, so the wrapper the
+     *       cold start clones has one per repository. It holds no commits, no local work and no
+     *       answer about which sha to build — there is nothing there for the org URL to ignore.
+     *       A directory with anything at all in it is the case the rule was written for and still
+     *       stops the boot.
      *   <li>A refresh that failed logged "using what is checked out" and built the stale copy. A
      *       non-fast-forward is the ordinary cause and the ordinary cause is a rebase, so the stale
      *       copy is a commit that no longer exists anywhere.
@@ -162,11 +225,13 @@ public class SeedPhases {
             for (String name : PlatformModel.platformRepos()) {
                 String repo = PlatformModel.repo(name);
                 Path localSrc = boot.state.wrapperCheckout(name);
-                if (Files.exists(localSrc) && !boot.git.isCheckout(localSrc)) {
-                    throw new IllegalStateException(localSrc + " is not a git checkout, so "
-                            + repo + " has no source. Either the submodule is not initialised "
-                            + "(git submodule update --init) or PlatformModel.repoPath names the "
-                            + "wrong directory for '" + name + "'.");
+                if (Files.exists(localSrc) && !boot.git.isCheckout(localSrc)
+                        && !isEmptyDirectory(localSrc)) {
+                    throw new IllegalStateException(localSrc + " is not a git checkout and is not "
+                            + "empty, so " + repo + " has no source and something else is standing "
+                            + "in its place. Either the submodule is half-initialised or "
+                            + "PlatformModel.repoPath names the wrong directory for '" + name
+                            + "'.");
                 }
                 String from = boot.git.isCheckout(localSrc)
                         ? localSrc.toString()
@@ -973,6 +1038,20 @@ public class SeedPhases {
 
     static String shortSha(String sha) {
         return sha == null ? "" : sha.substring(0, Math.min(12, sha.length()));
+    }
+
+    /**
+     * What git leaves at a gitlink whose submodule is not checked out: the path, with nothing in
+     * it. Every submodule of a freshly cloned wrapper looks like this, which is what a cold start
+     * hands {@link #sources}.
+     */
+    static boolean isEmptyDirectory(Path dir) throws IOException {
+        if (!Files.isDirectory(dir)) {
+            return false;
+        }
+        try (Stream<Path> entries = Files.list(dir)) {
+            return entries.findAny().isEmpty();
+        }
     }
 
     private static String sha256(Path file) throws Exception {

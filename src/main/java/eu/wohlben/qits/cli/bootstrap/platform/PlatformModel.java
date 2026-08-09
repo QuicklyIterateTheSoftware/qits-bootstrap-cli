@@ -143,7 +143,9 @@ public final class PlatformModel {
      * <b>A wrong path here used to be silent.</b> The sources phase fell back to GitHub whenever
      * the wrapper path was not a checkout, so a misspelling ignored local commits and cloned last
      * week's platform instead. It is loud now: {@code SeedPhases.sources} fails when the directory
-     * EXISTS and is not a checkout, and only an absent directory is answered by the org URL. The
+     * EXISTS, holds something and is not a checkout. An absent directory is answered by the org
+     * URL, and so is an EMPTY one — git leaves one of those at every gitlink of a wrapper cloned
+     * without its submodules, which is what a cold start has, and it hides no local work. The
      * rule below was walked against the wrapper on 2026-08-08 and every name in this file resolves
      * to a real checkout, so there is nothing left to special-case — but a rename that outruns
      * this method now stops the boot in the first minute rather than deploying the wrong sha.

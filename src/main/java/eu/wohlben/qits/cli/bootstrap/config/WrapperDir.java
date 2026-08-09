@@ -14,6 +14,10 @@ import java.util.Optional;
  * wrapper root — from anywhere else it resolved to a directory with no submodules in it and the
  * preflight failed on a path nobody had chosen. An explicit {@code QITS_WRAPPER_DIR} still wins;
  * this is what happens when nobody set one.
+ * <p>
+ * On a machine with no checkout at all there is still an answer: {@link #resolveOrClone} names the
+ * directory the wrapper will be CLONED into. That is the cold start, and it is supported rather
+ * than refused.
  */
 public final class WrapperDir {
 
@@ -33,6 +37,13 @@ public final class WrapperDir {
      */
     private static final String MARKER_FILE = ".gitmodules";
     private static final String MARKER_DIR = "services/qits-platform-artifacts";
+
+    /**
+     * The wrapper's repository name, which is also the directory a cold start clones it into. It is
+     * a constant here rather than in {@code PlatformModel} because the wrapper is not one of the
+     * platform's repositories: nothing deploys it, and no phase but the cold clone names it.
+     */
+    public static final String REPO = "qits-qits";
 
     private WrapperDir() {
     }
@@ -86,14 +97,39 @@ public final class WrapperDir {
      * preflight's own "no wrapper directory at …" is the better message when it is wrong.
      */
     public static Resolved resolve(Optional<String> configured, Path from) {
+        Path start = from.toAbsolutePath().normalize();
+        return found(configured, start)
+                .orElseThrow(() -> new IllegalStateException(notFound(start)));
+    }
+
+    /**
+     * The same answer, plus the one a COLD START needs: {@code <working directory>/qits-qits}, a
+     * path that does not exist yet.
+     * <p>
+     * {@code curl … | bash} on a bare machine has no checkout to run from, and there is no platform
+     * git host to clone one from either — the bootstrap is what creates that host. So "nothing
+     * found" is an answer rather than a failure here: the boot's {@code wrapper} phase clones the
+     * repository from the org into this path, and the operator is left holding a real checkout they
+     * can rerun from. The working directory is deliberate — it is the directory the person typed
+     * the command in, and the one place a container's clone reaches the host.
+     * <p>
+     * {@link #resolve} still refuses, and {@code unwrap} still uses it: a machine with no wrapper
+     * has nothing to tear down, and nothing to clone one for.
+     */
+    public static Resolved resolveOrClone(Optional<String> configured, Path from) {
+        Path start = from.toAbsolutePath().normalize();
+        return found(configured, start)
+                .orElseGet(() -> new Resolved(start.resolve(REPO), "not on this machine yet"));
+    }
+
+    /** The wrapper someone named, else the one the walk finds, else nothing. */
+    private static Optional<Resolved> found(Optional<String> configured, Path start) {
         Optional<String> given = configured.map(String::trim).filter(value -> !value.isEmpty());
         if (given.isPresent()) {
-            return new Resolved(Path.of(given.get()).toAbsolutePath().normalize(), "configured");
+            return Optional.of(
+                    new Resolved(Path.of(given.get()).toAbsolutePath().normalize(), "configured"));
         }
-        Path start = from.toAbsolutePath().normalize();
-        return detect(start)
-                .map(path -> new Resolved(path, "detected from " + start))
-                .orElseThrow(() -> new IllegalStateException(notFound(start)));
+        return detect(start).map(path -> new Resolved(path, "detected from " + start));
     }
 
     /** What to say when neither the configuration nor the walk found one. */

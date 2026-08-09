@@ -25,7 +25,13 @@ class ContainerRunTest {
     private static ContainerRun.Plan plan(BootstrapConfig config, Map<String, String> environment,
                                           Path workDir, Path sources, boolean tty,
                                           List<String> args) {
-        return new ContainerRun.Plan(IMAGE, WRAPPER, workDir, sources,
+        return plan(config, environment, WRAPPER, true, workDir, sources, tty, args);
+    }
+
+    private static ContainerRun.Plan plan(BootstrapConfig config, Map<String, String> environment,
+                                          Path wrapper, boolean wrapperOnHost, Path workDir,
+                                          Path sources, boolean tty, List<String> args) {
+        return new ContainerRun.Plan(IMAGE, wrapper, wrapperOnHost, workDir, sources,
                 workDir.resolve("qits-bootstrap-cli.log"), "1000:1000", "988", tty,
                 config, environment, args);
     }
@@ -154,6 +160,33 @@ class ContainerRunTest {
         assertThat(ContainerRun.mounts(plan(TestConfig.from(Map.of()), Map.of(), WRAPPER, sources,
                 true, List.of("bootstrap"))))
                 .containsExactly(Path.of("/data/qits-src"), WRAPPER);
+    }
+
+    /** The cold start: a bare machine, a working directory, and no checkout anywhere. */
+    private static ContainerRun.Plan cold() {
+        Path workDir = Path.of("/home/dev");
+        return plan(TestConfig.from(Map.of()), Map.of(), workDir.resolve("qits-qits"), false,
+                workDir, workDir.resolve(".qits-bootstrap-src"), true, List.of("bootstrap"));
+    }
+
+    @Test
+    void aWrapperThatIsNotThereYetIsNotMounted() {
+        // Docker creates a missing bind source as a ROOT-owned directory, and the run is
+        // --user <uid>:<gid> — so mounting it would hand the clone a mount point it cannot write.
+        // The working directory covers it: the wrapper is cloned inside it, in the container, and
+        // the checkout lands on the host as the user who typed the command.
+        assertThat(ContainerRun.mounts(cold())).containsExactly(Path.of("/home/dev"));
+        assertThat(ContainerRun.command(cold()))
+                .doesNotContain("/home/dev/qits-qits:/home/dev/qits-qits");
+    }
+
+    @Test
+    void aColdStartIsStillToldWhereTheWrapperGoes() {
+        // The path is not mounted, but it is still the agreed one: the payload clones it there and
+        // the walk up from the working directory must not be what decides it.
+        assertThat(ContainerRun.command(cold()))
+                .contains("QITS_WRAPPER_DIR=/home/dev/qits-qits");
+        assertThat(ContainerRun.command(cold())).containsSequence("-w", "/home/dev");
     }
 
     @Test

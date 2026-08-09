@@ -103,7 +103,19 @@ forced. Add to that list rather than deviating quietly.
   (`prod-qits-ci`) — never the other way round.
 - **A source this program cannot trust stops the boot.** It decides which sha the whole platform is
   built from, so a wrapper path that is not a checkout and a refresh that will not fast-forward are
-  both failures, not log lines.
+  both failures, not log lines. What is ABSENT is a different question and has a different answer:
+  a missing wrapper is cloned from the org by the `wrapper` phase, and a missing component checkout
+  is cloned by `sources`. An EMPTY directory counts as absent — git leaves one at every gitlink of
+  a wrapper cloned without its submodules, and it hides no local work — while a directory with
+  anything in it still stops the boot.
+- **A cold start is a supported start, and the wrapper is not special.** `curl … | bash` on a bare
+  box has no checkout and no platform git host to clone one from, so the wrapper comes from the org
+  like any other repository, into the working directory. Its submodules are deliberately NOT
+  initialised: `sources` clones every platform repository from the org anyway, so
+  `--recurse-submodules` there would clone the platform twice and put tens of minutes in front of
+  the first phase. The launcher mounts **only paths that already exist** for the same family of
+  reason — docker creates a missing bind source as root, and the run is a plain uid — so an absent
+  wrapper is not mounted and is cloned inside the working directory, which is.
 - **Failure stops the boot** (exit 2). A deployment that never landed is a warning (`ctx.warn`,
   exit 1) — the script's `overall=1` — because the applications behind it still deserve their turn.
 - **Secrets never reach the screen or the log.** Put them through `Cmd.mask`. The browser view

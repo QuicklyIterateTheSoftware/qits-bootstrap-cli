@@ -118,4 +118,28 @@ class WrapperDirTest {
                 .hasMessageContaining("run this from inside the qits-qits checkout")
                 .hasMessageContaining("QITS_WRAPPER_DIR");
     }
+
+    @Test
+    void aBareMachineIsAnsweredWithWhereTheWrapperWillBeCloned() throws IOException {
+        // The cold start. Nothing to walk to and nothing configured, so the answer is the working
+        // directory's own qits-qits — a path that does not exist yet, which the boot's `wrapper`
+        // phase clones into.
+        Path bare = Files.createDirectories(temp.resolve("bare"));
+
+        WrapperDir.Resolved resolved = WrapperDir.resolveOrClone(Optional.empty(), bare);
+
+        assertThat(resolved.path()).isEqualTo(bare.resolve("qits-qits"));
+        assertThat(resolved.path()).doesNotExist();
+        assertThat(resolved.how()).isEqualTo("not on this machine yet");
+    }
+
+    @Test
+    void aCheckoutThatIsThereBeatsTheColdAnswer() throws IOException {
+        Path root = wrapper("qits-qits");
+        Path here = Files.createDirectories(root.resolve("cli/qits-cli-bootstrap"));
+
+        assertThat(WrapperDir.resolveOrClone(Optional.empty(), here).path()).isEqualTo(root);
+        assertThat(WrapperDir.resolveOrClone(Optional.of(root.toString()), temp).path())
+                .isEqualTo(root);
+    }
 }

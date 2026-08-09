@@ -14,6 +14,7 @@ import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * The host half: the same program, started outside a container, putting itself inside one.
@@ -36,6 +37,9 @@ public final class HostLauncher {
 
     /** Where this CLI sits inside the wrapper, and therefore where the image is built from. */
     static final String CLI_PATH = "cli/qits-cli-bootstrap";
+
+    /** This CLI's own repository name, which is what a clone of it is called. */
+    static final String CLI_CHECKOUT = "qits-cli-bootstrap";
 
     private HostLauncher() {
     }
@@ -71,20 +75,33 @@ public final class HostLauncher {
             // one's starting point a fact.
             out.println("swarm: " + docker.swarmState());
 
-            WrapperDir.Resolved wrapper = WrapperDir.resolve(config.wrapperDir(), workDir);
+            // A wrapper that is not here yet is a COLD START, not a failure: the run clones it,
+            // inside the container, into the working directory. This half only has to agree with
+            // the payload about where that is, and to keep the mount set honest about it.
+            WrapperDir.Resolved wrapper = WrapperDir.resolveOrClone(config.wrapperDir(), workDir);
+            boolean wrapperOnHost = Files.isDirectory(wrapper.path());
             out.println("wrapper: " + wrapper.path() + "  (" + wrapper.how() + ")");
-            if (!Files.isDirectory(wrapper.path())) {
-                out.println(WrapperDir.notFound(workDir));
+            if (!wrapperOnHost && !wrapper.path().startsWith(workDir)) {
+                // Only the working directory and the paths below it are mounted, so a clone
+                // anywhere else would live in the container and die with it — a bootstrap that
+                // "worked" and left nothing to rerun from.
+                out.println("the wrapper " + wrapper.path() + " does not exist and is outside "
+                        + workDir + ", which is the only place a run can create it. Clone "
+                        + WrapperDir.REPO + " there by hand, or unset QITS_WRAPPER_DIR "
+                        + "(--wrapper-dir) and let the run clone it into the working directory");
                 return 2;
             }
 
-            Path context = wrapper.path().resolve(CLI_PATH);
-            if (!Files.isDirectory(context)) {
-                out.println("no " + CLI_PATH + " in " + wrapper.path() + " — the payload image is "
-                        + "built from this CLI's own checkout, so it has to be one of the wrapper's "
-                        + "submodules. Run: git submodule update --init");
+            Path context = imageContext(wrapper.path(), workDir).orElse(null);
+            if (context == null) {
+                out.println("no qits-cli-bootstrap checkout to build the payload image from — "
+                        + "looked in " + wrapper.path().resolve(CLI_PATH) + ", at and above "
+                        + workDir + ", and in " + workDir.resolve(CLI_CHECKOUT) + ". Run this from "
+                        + "inside a checkout of this CLI, or from a wrapper whose submodules are "
+                        + "initialised (git submodule update --init)");
                 return 2;
             }
+            out.println("payload built from: " + context);
 
             String image = PayloadImage.reference(context);
             if (!buildIfMissing(docker, image, context, out)) {
@@ -99,7 +116,7 @@ public final class HostLauncher {
             Path logFile = workDir.resolve(config.logFile()).normalize();
 
             argv = ContainerRun.command(new ContainerRun.Plan(
-                    image, wrapper.path(), workDir, sources, logFile,
+                    image, wrapper.path(), wrapperOnHost, workDir, sources, logFile,
                     user(runner), docker.socketGroupId(),
                     // The same test UiFactory uses to pick a display, asked on this side: the two
                     // must not disagree about whether there is a terminal.
@@ -113,6 +130,42 @@ public final class HostLauncher {
         // JLine has a real tty to repaint, and so the exit code arrives unaltered.
         Process payload = new ProcessBuilder(argv).inheritIO().start();
         return payload.waitFor();
+    }
+
+    /**
+     * The build context for the payload image, which is <b>a checkout of this CLI</b> — the one
+     * thing the image is made of.
+     * <p>
+     * Three places, in order, and each is a machine the bootstrap is actually started on:
+     * <ol>
+     *   <li>the wrapper's own {@code cli/qits-cli-bootstrap} submodule — the ordinary run, from
+     *       inside the checkout;
+     *   <li>at or above the working directory — a clone of this CLI alone, which is all a COLD
+     *       machine has: {@code curl … | bash} clones this repository, builds it and runs it, and
+     *       there is no wrapper until the run itself clones one;
+     *   <li>{@code <working directory>/qits-cli-bootstrap} — the same cold clone, from a script
+     *       that stepped back out of it so the wrapper lands beside it rather than inside it.
+     * </ol>
+     * The marker is the Dockerfile, not the directory name: a checkout is what has one, whatever
+     * anyone called the directory.
+     */
+    static Optional<Path> imageContext(Path wrapper, Path from) {
+        Path start = from.toAbsolutePath().normalize();
+        Path inWrapper = wrapper.resolve(CLI_PATH);
+        if (isCliCheckout(inWrapper)) {
+            return Optional.of(inWrapper);
+        }
+        for (Path candidate = start; candidate != null; candidate = candidate.getParent()) {
+            if (isCliCheckout(candidate)) {
+                return Optional.of(candidate);
+            }
+        }
+        Path beside = start.resolve(CLI_CHECKOUT);
+        return isCliCheckout(beside) ? Optional.of(beside) : Optional.empty();
+    }
+
+    private static boolean isCliCheckout(Path dir) {
+        return Files.isRegularFile(dir.resolve(PayloadImage.DOCKERFILE));
     }
 
     /**

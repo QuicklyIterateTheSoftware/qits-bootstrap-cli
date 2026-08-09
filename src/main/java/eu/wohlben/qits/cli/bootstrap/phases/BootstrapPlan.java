@@ -25,6 +25,9 @@ public final class BootstrapPlan {
         // Before the first address is dialled, and after preflight, which is where the daemon is
         // proved reachable at all.
         phases.add(seed.joinNetwork());
+        // Before the sources, because the sources are read out of it — and on a cold machine there
+        // is no wrapper to read. Skipped whenever there is one, which is every rerun.
+        phases.add(seed.wrapper());
         phases.add(seed.sources());
         phases.add(seed.recordedState());
 
