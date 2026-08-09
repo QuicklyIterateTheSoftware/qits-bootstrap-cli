@@ -37,16 +37,36 @@ import java.util.Set;
  * <p>
  * Volumes are the one guarded decision: they hold the platform's databases, the registry's blobs
  * and the git host's repositories. They stay unless {@code --with-volumes} says otherwise.
+ * <p>
+ * <b>{@code --with-data-volumes} is the middle answer, and it exists for the re-bootstrap.</b>
+ * Moving a service onto another database is a cold boot of that service's data and nothing else,
+ * so the data volumes go and the CONFIG volumes stay: {@code qits-deployments-config} holds the
+ * push token, the client secrets and every run-arg the deployer boots from, and losing it turns a
+ * migration into a re-issue of every credential on the machine. Keep-patterns are therefore
+ * checked FIRST and win, and a volume matching neither set is kept — a sweep that guesses about a
+ * volume it has never heard of is how someone's data goes.
  */
 public class UnwrapPhases {
 
+    /** Kept whatever else matches, and checked before anything is deleted. */
+    private static final List<String> KEEP = List.of("qits-*-config");
+
+    /**
+     * Deleted by {@code --with-data-volumes}. {@code qits-maven-seed} is the temporary Maven
+     * repository the first-boot dependency cycle is broken with — rebuilt by the next bootstrap,
+     * so it is data in every sense that matters here.
+     */
+    private static final List<String> DATA = List.of("qits-*-data", "qits-maven-seed");
+
     private final Boot boot;
     private final boolean withVolumes;
+    private final boolean withDataVolumes;
     private final boolean dryRun;
 
-    public UnwrapPhases(Boot boot, boolean withVolumes, boolean dryRun) {
+    public UnwrapPhases(Boot boot, boolean withVolumes, boolean withDataVolumes, boolean dryRun) {
         this.boot = boot;
         this.withVolumes = withVolumes;
+        this.withDataVolumes = withDataVolumes;
         this.dryRun = dryRun;
     }
 
@@ -56,6 +76,8 @@ public class UnwrapPhases {
         phases.add(containers());
         if (withVolumes) {
             phases.add(volumes());
+        } else if (withDataVolumes) {
+            phases.add(dataVolumes());
         } else {
             phases.add(volumesKept());
         }
@@ -105,10 +127,7 @@ public class UnwrapPhases {
 
     private Phase volumes() {
         return new Phase("volumes", "remove the qits-* volumes (ALL local state)", ctx -> {
-            List<String> names = boot.docker
-                    .run(Cmd.of("docker", "volume", "ls", "-q"), null)
-                    .captured().stream().map(String::trim)
-                    .filter(name -> name.startsWith("qits-")).toList();
+            List<String> names = volumeNames();
             if (names.isEmpty()) {
                 ctx.skip("no qits-* volumes");
             }
@@ -118,13 +137,65 @@ public class UnwrapPhases {
         });
     }
 
+    /**
+     * The re-bootstrap's sweep: a service's data goes, its configuration stays.
+     * <p>
+     * Both name lists are printed in full. This is the toggle a person reaches for when they are
+     * about to lose data on purpose, and the only way to check the sweep agreed with them is to
+     * read what it kept beside what it removed.
+     */
+    private Phase dataVolumes() {
+        return new Phase("volumes-data",
+                "remove the qits-*-data volumes, keep the config ones", ctx -> {
+            List<String> all = volumeNames();
+            List<String> kept = all.stream().filter(name -> !isData(name)).toList();
+            List<String> going = all.stream().filter(UnwrapPhases::isData).toList();
+            ctx.log("  keeping " + kept.size() + ": "
+                    + (kept.isEmpty() ? "nothing" : String.join(", ", kept)));
+            if (going.isEmpty()) {
+                ctx.skip("no data volumes; " + kept.size() + " kept");
+            }
+            ctx.log("  removing " + going.size() + ": " + String.join(", ", going));
+            remove(ctx, going, "volume", "rm");
+            ctx.note(done(going.size()) + ", " + kept.size() + " kept");
+        });
+    }
+
+    /**
+     * Data, and therefore removable — but only after the keep list has had its say. A volume that
+     * matches neither list is kept: this program did not create it and does not know what it is.
+     */
+    static boolean isData(String name) {
+        if (KEEP.stream().anyMatch(pattern -> matches(pattern, name))) {
+            return false;
+        }
+        return DATA.stream().anyMatch(pattern -> matches(pattern, name));
+    }
+
+    /** A pattern is a literal with one optional {@code *}, which is all these names need. */
+    private static boolean matches(String pattern, String name) {
+        int star = pattern.indexOf('*');
+        if (star < 0) {
+            return name.equals(pattern);
+        }
+        String head = pattern.substring(0, star);
+        String tail = pattern.substring(star + 1);
+        return name.length() >= head.length() + tail.length()
+                && name.startsWith(head) && name.endsWith(tail);
+    }
+
+    private List<String> volumeNames() {
+        return boot.docker
+                .run(Cmd.of("docker", "volume", "ls", "-q"), null)
+                .captured().stream().map(String::trim)
+                .filter(name -> name.startsWith("qits-")).toList();
+    }
+
     private Phase volumesKept() {
         return new Phase("volumes-kept", "keep the qits-* volumes", ctx -> {
-            List<String> names = boot.docker
-                    .run(Cmd.of("docker", "volume", "ls", "-q"), null)
-                    .captured().stream().map(String::trim)
-                    .filter(name -> name.startsWith("qits-")).toList();
+            List<String> names = volumeNames();
             ctx.log("  " + names.size() + " volume(s) kept: databases, registry blobs and the git host");
+            ctx.log("  add --with-data-volumes to reset the databases and keep the config volumes");
             ctx.log("  add --with-volumes for the full clean slate");
             ctx.note(names.size() + " kept");
         });
