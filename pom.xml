@@ -79,6 +79,23 @@
             <artifactId>quarkus-vertx-http</artifactId>
         </dependency>
         <dependency>
+            <!-- PostgreSQL over plain JDBC: the seed-postgres phase creates the deployer's role
+                 and database with a handful of idempotent statements.
+
+                 The EXTENSION rather than the bare org.postgresql:postgresql driver, because the
+                 native-image metadata the driver needs (reflection on the driver class, the
+                 SPI file, the SASL/SCRAM classes) is maintained by Quarkus rather than by hand
+                 here. NO datasource is configured and no DataSource is injected — this CLI opens
+                 its own connections with DriverManager, so nothing in the extension's runtime is
+                 used beyond the driver itself.
+
+                 Dev services are off in application.properties for the same reason: an extension
+                 with no datasource would otherwise start a postgres container in test mode, and
+                 `./mvnw clean verify` must need no docker. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-postgresql</artifactId>
+        </dependency>
+        <dependency>
             <!-- Only the terminal module, and only its `exec` provider.
 
                  The aggregate `jline` artifact carries every provider: jni, ffm, jansi and jna.
