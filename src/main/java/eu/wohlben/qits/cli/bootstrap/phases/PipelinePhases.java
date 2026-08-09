@@ -586,12 +586,27 @@ public class PipelinePhases {
     }
 
     /**
-     * The container name of a platform service running this sha, if there is one and it is not
-     * unhealthy. The health check is this port's one addition to the script: a running/unhealthy
-     * container counted as live once, and the rollback that followed looked like a success.
+     * The container name of a platform service running this sha, once docker says it is serving.
+     * The health check is this port's one addition to the script: a running/unhealthy container
+     * counted as live once, and the rollback that followed looked like a success.
      */
     private Optional<String> platformContainer(String name, String sha) {
+        return platformContainerAtSha(name, sha).filter(container -> serving(container[1]))
+                .map(container -> container[0]);
+    }
+
+    /**
+     * The container of a platform service at this sha as {name, docker's status text} — serving or
+     * not, and preferring one that is.
+     * <p>
+     * The status travels with the name because whether the wait is over is one question and what to
+     * SAY while it is not is another. "no healthy container at this sha" never mentioned that the
+     * container was there and restarting, so the operator could not tell a build that had not
+     * finished from one that had crash-looped.
+     */
+    private Optional<String[]> platformContainerAtSha(String name, String sha) {
         String prefix = PlatformModel.pdNamePrefix(name, boot.config.envName());
+        String[] notServing = null;
         // A pipe separator, deliberately: the process pipeline strips control characters — tabs
         // become spaces before a line reaches this loop (Ansi.clean), so a tab-separated format
         // parses as one field and no container ever matches. Found by the v3 proving run.
@@ -603,12 +618,41 @@ public class PipelinePhases {
             if (!parts[1].endsWith(":" + sha)) {
                 continue;
             }
-            if (parts[2].contains("unhealthy")) {
-                continue;
+            String[] container = {parts[0], parts[2]};
+            if (serving(container[1])) {
+                return Optional.of(container);
             }
-            return Optional.of(parts[0]);
+            // A cutover has two containers at one sha for a moment; keep looking past the one that
+            // is not serving, and remember it in case none of them is.
+            notServing = notServing == null ? container : notServing;
         }
-        return Optional.empty();
+        return Optional.ofNullable(notServing);
+    }
+
+    /**
+     * Does docker's status text say this container is SERVING?
+     * <p>
+     * Where there is a healthcheck its verdict is the only one worth reading: {@code (healthy)} ends
+     * the wait, {@code (health: starting)} and {@code (unhealthy)} are both "not yet". Neither is a
+     * failure decided here — the phase's own timeout bounds this wait, and a container still
+     * starting is precisely what a wait is for.
+     * <p>
+     * Where there is no healthcheck there is no verdict, so being Up is the whole test. That also
+     * settles {@code Restarting (1) 4 seconds ago}, which carries no health suffix and is not Up.
+     * A crash-looping container used to pass this test: on the first PG-era bootstrap, phase 39
+     * reported qits-platform-idp "ACTIVE qits-pd-qits-platform-idp-f325ef80" while the deployer's
+     * own gate was marking that same deployment FAILED. The boot marched on and stalled two phases
+     * later.
+     */
+    static boolean serving(String status) {
+        String text = status.toLowerCase(Locale.ROOT);
+        if (text.contains("(healthy)")) {
+            return true;
+        }
+        if (text.contains("health: starting") || text.contains("unhealthy")) {
+            return false;
+        }
+        return text.startsWith("up");
     }
 
     private void awaitDeployment(PhaseContext ctx, String name, String repo, String sha,
@@ -619,7 +663,7 @@ public class PipelinePhases {
         long interval = boot.config.pollInterval().toMillis();
         String target = platformService
                 ? "a container named " + PlatformModel.pdNamePrefix(name, boot.config.envName())
-                + "* running :" + sha.substring(0, 7)
+                + "* running :" + sha.substring(0, 7) + " and serving"
                 : "a deployment row for " + repo + " at " + sha.substring(0, 7) + " in "
                 + boot.config.platformDeploymentsUrl() + "/api/deployments";
         try {
@@ -627,11 +671,13 @@ public class PipelinePhases {
                     boot.config.pollInterval(), () -> {
                         String deploymentState = "no row yet";
                         if (platformService) {
-                            Optional<String> live = platformContainer(name, sha);
-                            if (live.isPresent()) {
-                                return Waiter.Poll.done("ACTIVE " + live.get(), "live");
+                            Optional<String[]> container = platformContainerAtSha(name, sha);
+                            if (container.isPresent() && serving(container.get()[1])) {
+                                return Waiter.Poll.done("ACTIVE " + container.get()[0], "live");
                             }
-                            deploymentState = "no healthy container at this sha";
+                            deploymentState = container
+                                    .map(found -> found[0] + " is " + found[1])
+                                    .orElse("no container at this sha");
                         } else {
                             Optional<JsonNode> row = boot.pd.newestDeployment(
                                     boot.state.environmentId, repo);
