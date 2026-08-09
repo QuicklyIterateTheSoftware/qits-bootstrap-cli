@@ -285,9 +285,16 @@ public class PipelinePhases {
             }
             ctx.log("  SCMRelease triggered, waiting for the release run");
 
+            // The same relay the deploy wait uses. A release run is a build too, and it was as
+            // silent as the other one.
+            CiLogStream ciLog = new CiLogStream(boot.ci, ctx);
             String status = Waiter.await(ctx, repo + "'s release run at " + boot.config.ciUrl()
                             + "/api/runs/finished", boot.config.releaseTimeout(),
                     boot.config.pollInterval(), () -> {
+                        boot.ci.newestRun(repo)
+                                .map(run -> Json.text(run, "id"))
+                                .filter(id -> !id.equals(baselineRun))
+                                .ifPresent(ciLog::follow);
                         Optional<String[]> finished = boot.ci.finishedEventRun(repo);
                         return finished
                                 .filter(r -> !r[0].equals(baselineRun))
@@ -658,6 +665,7 @@ public class PipelinePhases {
     private void awaitDeployment(PhaseContext ctx, String name, String repo, String sha,
             String ref, String baselineRowId, String baselineRunId) {
         boolean platformService = PlatformModel.isPlatformService(name);
+        CiLogStream ciLog = new CiLogStream(boot.ci, ctx);
         long[] greenForMillis = {0};
         boolean[] replayed = {false};
         long interval = boot.config.pollInterval().toMillis();
@@ -709,6 +717,14 @@ public class PipelinePhases {
                                 .map(r -> Json.text(r, "status")).orElse("");
                         boolean staleRun = newestRun
                                 .map(r -> Json.text(r, "id").equals(baselineRunId)).orElse(false);
+                        // Read the build out loud while it runs. Only THIS phase's run: an earlier
+                        // one's log says nothing about what is being waited for. The relay reads
+                        // the run on this same interval and turns itself off rather than failing.
+                        if (!staleRun) {
+                            ciLog.follow(newestRun
+                                    .filter(r -> sha.equals(Json.text(r, "commitSha")))
+                                    .map(r -> Json.text(r, "id")).orElse(null));
+                        }
                         // A red row this phase did not cause is not this phase's outcome. A green
                         // one is still worth reading even when stale: it says no new run is coming,
                         // which is exactly what the replay below acts on.

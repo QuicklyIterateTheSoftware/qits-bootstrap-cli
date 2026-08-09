@@ -48,6 +48,11 @@ forced. Add to that list rather than deviating quietly.
 - **Every phase is visible and every wait is observable.** A phase that polls something remote must
   go through `Waiter.await`, which prints what is being polled, what was last seen, the elapsed
   time and the deadline. A silent wait is a bug in this repository, whatever it is waiting for.
+  A wait on a ci build says more than that: `CiLogStream` relays the run's own output under a
+  `  ci| ` prefix, so a stalled build looks different from a slow one. qits-ci serves no SSE and no
+  websocket for run logs — following along is polling `GET /ci/api/runs/{runId}`, which answers with
+  each step's output whole and bounded, so the relay subtracts by overlap rather than by length. It
+  is a courtesy and never a dependency: reads that stop answering turn it off with one line.
 - **Phases are rerun-safe**, the same way the script's were: 409s tolerated, existing networks
   adopted, up-to-date pushes no-ops, publishes probed before they are made.
 - **Rerun-safe is not rename-safe, and the `environment` phase is where that line is drawn.**

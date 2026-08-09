@@ -78,17 +78,27 @@ public class CiApi {
     }
 
     /**
+     * One run with its steps, their output and — while it runs — the step in flight, as
+     * {@code live}. This is qits-ci's whole log surface: it serves no SSE and no websocket for run
+     * output, so following a build along is polling here, which is what its own client does.
+     */
+    public Optional<JsonNode> run(String runId) {
+        Http.Response response = http.get(base + "/api/runs/" + runId, Map.of());
+        return response.ok() ? Optional.of(Json.parse(response.body())) : Optional.empty();
+    }
+
+    /**
      * Why a run failed, in the words of the step that failed it. A red run otherwise reports only
      * its status, and the reason is three API calls away — which is three calls made by hand, at
      * the point where a bootstrap has just stopped and the operator has the least context. The tail
      * is bounded because a build log is not a thing to print in full.
      */
     public Optional<String> failedStepOutput(String runId) {
-        Http.Response response = http.get(base + "/api/runs/" + runId, Map.of());
-        if (!response.ok()) {
+        Optional<JsonNode> run = run(runId);
+        if (run.isEmpty()) {
             return Optional.empty();
         }
-        for (JsonNode step : Json.parse(response.body()).path("steps")) {
+        for (JsonNode step : run.get().path("steps")) {
             if (!"FAILED".equals(Json.text(step, "status"))) {
                 continue;
             }
