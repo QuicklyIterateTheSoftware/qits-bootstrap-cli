@@ -137,6 +137,18 @@ nobody exports it by hand. Without sdkman, name it on the command line instead:
 The native profile carries every flag the native build needs, so that command takes no others. Run
 `clean verify` BEFORE a native package, never after: clean wipes the runner.
 
+**The payload image builds a third form: the same binary, fully static against musl.** Its builder
+stage is GraalVM CE plus a musl toolchain it installs itself, and the flags reach the build through
+one seam — `-Dnative.extra-build-args`, which the native profile appends to the flag it already
+carries. Adding a flag for the host build goes in the profile; adding one for the image goes on the
+Dockerfile's mvn line. Naming `quarkus.native.additional-build-args` whole on a command line breaks
+this: Quarkus reads it from one config source, so the profile's flag would vanish without a word.
+
+Both halves of "static musl" are forced, and neither is a preference. A binary linked against a
+host glibc starts on no alpine image, and a *statically* linked glibc binary resolves no names —
+glibc reaches the name services through `dlopen` — while every address this CLI dials is a wire
+alias on `qits-net`. A glibc-static payload would build clean and fail its first lookup.
+
 ## Tests
 
 `./mvnw clean verify` must be green on a clone, with **no docker**. What is tested is what can be:

@@ -1,7 +1,7 @@
 # What NOT to send to the daemon when this repository is a build context.
 #
-# There is one such build: docker/Dockerfile.bootstrap, which reads pom.xml, .mvn/, src/main/ and
-# docker/. Everything named here is either large, private to a run, or host-built and unusable in
+# There is one such build: docker/Dockerfile.bootstrap, which reads pom.xml, mvnw, .mvn/ and
+# src/main/. Everything named here is either large, private to a run, or host-built and unusable in
 # the image — and the context is packed and sent on every rebuild, so a directory left in it is
 # paid for every time.
 #

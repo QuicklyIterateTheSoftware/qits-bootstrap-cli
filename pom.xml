@@ -182,11 +182,20 @@
                 <quarkus.native.enabled>true</quarkus.native.enabled>
                 <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
 
+                <!-- Empty for the binary people run on this host. The payload image's build
+                     (docker/Dockerfile.bootstrap) sets it to the musl-static flags, which that
+                     image needs and this host's binary must not have. Quarkus reads
+                     additional-build-args from ONE config source, so an image command line naming
+                     its flags whole would silently drop the jline flag below. Appending keeps that
+                     flag in this file alone. An XML comment cannot hold two dashes, which is why
+                     the flags are not spelled out here. -->
+                <native.extra-build-args></native.extra-build-args>
+
                 <!-- org.jline.nativ is jline-terminal's unused half: a JNI loader whose class
                      initializer unpacks libjlinenative.so into /tmp. Run at build time it fails
                      outright ("Content differs"), and this CLI's exec provider never calls it.
                      Deferring the initializer to run time is enough to keep it out of the way. -->
-                <quarkus.native.additional-build-args>--initialize-at-run-time=org.jline.nativ</quarkus.native.additional-build-args>
+                <quarkus.native.additional-build-args>--initialize-at-run-time=org.jline.nativ${native.extra-build-args}</quarkus.native.additional-build-args>
             </properties>
         </profile>
     </profiles>

@@ -170,8 +170,8 @@ public final class HostLauncher {
 
     /**
      * The image is addressed by its content, so "already built" is the ordinary answer and the
-     * whole point: a bootstrap that rebuilt a JRE, three docker CLIs and a Quarkus jar every run
-     * would spend minutes before its first phase.
+     * whole point: the image's first stage is a cold GraalVM native build, and a bootstrap that
+     * ran one every time would spend many minutes before its first phase.
      */
     private static boolean buildIfMissing(Docker docker, String image, Path context, PrintStream out)
             throws IOException {

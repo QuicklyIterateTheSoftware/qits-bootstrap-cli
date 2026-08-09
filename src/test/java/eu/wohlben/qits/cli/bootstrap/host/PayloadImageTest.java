@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -23,6 +25,7 @@ class PayloadImageTest {
         Files.createDirectories(root.resolve("src/main/java"));
         Files.writeString(root.resolve("docker/Dockerfile.bootstrap"), "FROM scratch\n");
         Files.writeString(root.resolve("pom.xml"), "<project/>\n");
+        Files.writeString(root.resolve("mvnw"), "#!/bin/sh\n");
         Files.writeString(root.resolve(".mvn/wrapper/maven-wrapper.properties"), "wrapper=3\n");
         Files.writeString(root.resolve("src/main/java/Boot.java"), "class Boot {}\n");
         return root;
@@ -77,6 +80,29 @@ class PayloadImageTest {
         Files.createDirectories(root.resolve("target"));
         Files.writeString(root.resolve("target/qits-cli-bootstrap-1-runner.jar"), "not a jar\n");
         assertThat(PayloadImage.tag(root)).isEqualTo(before);
+    }
+
+    @Test
+    void everythingTheDockerfileCopiesIsHashed() throws IOException {
+        // The two lists drift silently and both directions are wrong: a path copied but not hashed
+        // is a source change that reuses a stale image, and a path hashed but not copied is a
+        // rebuild that changes nothing. The real Dockerfile is read, so this catches the drift on
+        // the commit that causes it.
+        List<String> copied = Files.readAllLines(Path.of(PayloadImage.DOCKERFILE)).stream()
+                .map(String::strip)
+                .filter(line -> line.startsWith("COPY "))
+                // COPY --from=<stage> moves the built binary between stages; its source is target/,
+                // which the context does not even hold.
+                .filter(line -> !line.contains("--from="))
+                .map(line -> line.split("\\s+")[1])
+                .map(source -> source.endsWith("/") ? source.substring(0, source.length() - 1)
+                        : source)
+                .toList();
+
+        assertThat(copied).isNotEmpty()
+                .allSatisfy(source -> assertThat(PayloadImage.CONTENT).contains(source));
+        assertThat(PayloadImage.CONTENT).containsExactlyInAnyOrderElementsOf(
+                Stream.concat(copied.stream(), Stream.of(PayloadImage.DOCKERFILE)).toList());
     }
 
     @Test

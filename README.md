@@ -101,9 +101,9 @@ that IS there is skipped, never refreshed: the sha it stands on is the operator'
 
 What it needs to run: a reachable docker daemon, roughly 4 GB of RAM free per native build it
 starts, and reach to quay.io, registry.access.redhat.com, docker.io and npm — a cold start cannot
-pull through the mirror it is starting. **Nothing else**: git, the compose plugin, `stty` and a JRE
-are in the payload image, which the run builds for itself. What it needs to build: the GraalVM
-`.sdkmanrc` names for the binary, any JDK 25 for the jar and the tests.
+pull through the mirror it is starting. **Nothing else**: git, the compose plugin, `stty` and the
+CLI's own binary are in the payload image, which the run builds for itself. What it needs to build:
+the GraalVM `.sdkmanrc` names for the binary, any JDK 25 for the jar and the tests.
 
 Cost, honestly: every seed image and every pipeline run is a cold GraalVM native build with no
 maven cache. The first run is measured in hours. Reruns skip what exists —
@@ -177,14 +177,23 @@ above the working directory (or beside it) is what answers on a cold one.
 **Swarm is reported, not repaired.** `docker swarm init` rewrites the networking of every container
 on the machine, which is a migration and not a preflight's business.
 
-**The image is addressed by its content** — a digest of `pom.xml`, `.mvn/`, `src/main/` and the
-Dockerfile — so a rerun with an unchanged checkout finds it built and starts in a second, and a
+**The image is addressed by its content** — a digest of `pom.xml`, `mvnw`, `.mvn/`, `src/main/` and
+the Dockerfile — so a rerun with an unchanged checkout finds it built and starts in a second, and a
 changed source is a different image that cannot be run stale by mistake. It is a two-stage build: a
-maven stage makes the uber-jar from the checkout, the runtime stage is a JRE with the docker CLI
-trio and git. Nothing is copied out of `target/`, so the image builds on a machine that has never
-run maven — which is the machine this program is for. Its repository is `qits-bootstrap`,
+GraalVM stage makes the native binary from the checkout, the runtime stage is plain alpine with the
+docker CLI trio and git. Nothing is copied out of `target/`, so the image builds on a machine that
+has never run maven — which is the machine this program is for. Its repository is `qits-bootstrap`,
 deliberately outside `unwrap`'s `qits/` image sweep: it is the image a running `unwrap` is executing
 from, and keeping it is what makes the next bootstrap start in seconds.
+
+**The binary in it is fully static against musl**, and both halves of that are forced. A binary
+linked against this host's glibc starts on no alpine image at all, and a *statically* linked glibc
+binary resolves no names — glibc reaches the name services through `dlopen`, which a static binary
+has no loader for, while every address this CLI dials is a wire alias on `qits-net`. musl compiles
+its resolver in. The Dockerfile's header says the rest, including why the builder stage is GraalVM
+CE and adds its own musl toolchain; `daemons/qits-ci-daemon/docker/Dockerfile.musl-builder` in the
+wrapper is where that reasoning was first written down. This repository copies it rather than
+sharing it, because the image has to build from a git URL on a machine that has seen no platform.
 
 The run itself, flag by flag:
 
