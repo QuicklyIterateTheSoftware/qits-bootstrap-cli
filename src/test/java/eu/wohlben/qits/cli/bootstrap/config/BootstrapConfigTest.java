@@ -67,18 +67,25 @@ class BootstrapConfigTest {
         assertThat(config.envName()).isEqualTo("preprod");
     }
 
+    /**
+     * <b>The derived addresses are wire aliases and no longer follow the ports.</b> This CLI runs
+     * as a container on qits-net, so it dials what every other member dials; the published ports
+     * stay configurable because the generated files and a person's browser still use them.
+     */
     @Test
-    void theDerivedAddressesFollowThePorts() {
+    void theDerivedAddressesAreWireAliasesWhateverThePortsAre() {
         BootstrapConfig config = from(Map.of("QITS_PORT", "9090", "QITS_REGISTRY_PORT", "9091",
                 "QITS_ENV_NAME", "preprod"));
 
-        assertThat(config.artifactsUrl()).isEqualTo("http://127.0.0.1:9091/artifacts");
-        assertThat(config.ciUrl()).isEqualTo("http://127.0.0.1:9090/ci");
+        assertThat(config.artifactsUrl()).isEqualTo("http://qits-platform-artifacts:8080/artifacts");
+        // Through the EDGE, not straight at prod-qits-ci: the edge and the gateway's route table
+        // are the path this run has to keep exercising.
+        assertThat(config.ciUrl()).isEqualTo("http://qits-platform-edge:8080/ci");
         assertThat(config.platformDeploymentsUrl())
-                .isEqualTo("http://127.0.0.1:9090/platform-deployments");
+                .isEqualTo("http://qits-platform-edge:8080/platform-deployments");
         // The ONE deploy ref, on both planes: platform/main is retired.
         assertThat(config.envBranch()).isEqualTo("environment/preprod");
-        // The issuer is a value consumers validate, not an address this program dials.
+        // The issuer is a value consumers validate as well as an address this program dials.
         assertThat(config.idpIssuer()).isEqualTo("http://qits-platform-idp:8080/idp");
     }
 

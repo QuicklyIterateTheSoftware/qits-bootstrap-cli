@@ -2,18 +2,27 @@ package eu.wohlben.qits.cli.bootstrap.api;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.Map;
 
 /**
- * The platform's HTTP, spoken directly with java.net.http. Everything the bootstrap calls is
- * reachable from the host: qits-platform-artifacts on its published registry port (the registry,
- * the git host and the artifacts API), qits-ci and qits-deployments through the one port
- * qits-platform-edge binds and the gateway behind it.
+ * The platform's HTTP, spoken directly with java.net.http. <b>Everything the bootstrap calls is a
+ * wire alias on qits-net</b>, which the run joins before it dials anything: qits-platform-artifacts
+ * (the registry, the git host and the artifacts API), qits-ci and qits-deployments through
+ * qits-platform-edge and the gateway behind it, and qits-platform-idp, which publishes no host port
+ * at all.
+ * <p>
+ * That last one is why this class is now the only HTTP there is. The idp used to be reached by
+ * running a throwaway curl container on qits-net — a network position borrowed per call, because
+ * the CLI was on the host. The CLI holds that position itself now, so the borrowing is gone and
+ * with it {@code InNetworkHttp}.
  * <p>
  * Failures are answers, not exceptions: a call made while the edge, the gateway or the artifacts
  * service is mid cutover is expected, and a poll that treats it as fatal would fail a boot that is
@@ -60,6 +69,34 @@ public class Http {
 
     public Response head(String url) {
         return send(request(url, Map.of()).method("HEAD", HttpRequest.BodyPublishers.noBody()).build());
+    }
+
+    /**
+     * A form POST with basic auth — the shape of an OAuth2 client-credentials token request, and
+     * the one call that carries a secret.
+     * <p>
+     * <b>The secret needs no {@code Cmd.mask} here, and that is the difference from the curl
+     * container this replaced.</b> A shelled curl put the client secret on a command line that the
+     * run log and the screen both show, so it had to be masked out of them. This request is made
+     * in-process: neither the header nor the body is ever printed.
+     */
+    public Response postForm(String url, String user, String password, Map<String, String> form) {
+        String credentials = Base64.getEncoder().encodeToString(
+                (user + ":" + password).getBytes(StandardCharsets.UTF_8));
+        StringBuilder body = new StringBuilder();
+        form.forEach((key, value) -> {
+            if (!body.isEmpty()) {
+                body.append('&');
+            }
+            body.append(encode(key)).append('=').append(encode(value));
+        });
+        return send(request(url, Map.of("Authorization", "Basic " + credentials))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString())).build());
+    }
+
+    private static String encode(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     public Response postJson(String url, String json, Map<String, String> headers) {

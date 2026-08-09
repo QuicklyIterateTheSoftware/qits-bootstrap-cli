@@ -6,19 +6,24 @@ import java.util.Map;
  * The issuer. The bootstrap presents the platform's own credentials because it IS the platform,
  * before there is anything to go through: the replayed build-succeeded event and the manual
  * release trigger are the two calls that need a token.
+ * <p>
+ * qits-platform-idp publishes no host port and sits on no gateway route on purpose:
+ * {@code /idp/token} behind an unauthenticated gateway is a token vending machine. That is why it
+ * used to be reached by a throwaway curl container on qits-net and is now dialled like everything
+ * else — the exposure is unchanged, and the caller moved onto the network instead.
  */
 public class IdpApi {
 
-    private final InNetworkHttp http;
+    private final Http http;
     private final String issuer;
 
-    public IdpApi(InNetworkHttp http, String issuer) {
+    public IdpApi(Http http, String issuer) {
         this.http = http;
         this.issuer = issuer;
     }
 
     public Http.Response health() {
-        return http.get(issuer + "/q/health/ready");
+        return http.get(issuer + "/q/health/ready", Map.of());
     }
 
     public boolean ready() {

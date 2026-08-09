@@ -4,15 +4,18 @@ import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
 import eu.wohlben.qits.cli.bootstrap.config.OverridableConfig;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseEngine;
 import eu.wohlben.qits.cli.bootstrap.engine.RunResult;
+import eu.wohlben.qits.cli.bootstrap.host.HostLauncher;
 import eu.wohlben.qits.cli.bootstrap.phases.Boot;
 import eu.wohlben.qits.cli.bootstrap.phases.UnwrapPhases;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
 import eu.wohlben.qits.cli.bootstrap.ui.Ui;
 import eu.wohlben.qits.cli.bootstrap.ui.UiFactory;
+import io.quarkus.runtime.annotations.CommandLineArguments;
 import jakarta.inject.Inject;
 import picocli.CommandLine;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.Callable;
 
 /**
@@ -33,6 +36,11 @@ public class UnwrapCommand implements Callable<Integer> {
 
     @Inject
     BootstrapConfig config;
+
+    /** This run's arguments, relayed verbatim into the container by the host half. */
+    @Inject
+    @CommandLineArguments
+    String[] args;
 
     @CommandLine.Option(names = "--with-volumes",
             description = "Also delete the qits-* volumes: databases, registry blobs, git host. "
@@ -67,6 +75,13 @@ public class UnwrapCommand implements Callable<Integer> {
         BootstrapConfig effective = new OverridableConfig(config)
                 .wrapperDir(wrapperDir)
                 .tui(noTui ? Boolean.FALSE : null);
+
+        // The host half, after the refusal above so a mistyped sweep is answered without building
+        // anything. unwrap runs in the container for the same reason bootstrap does: it disconnects
+        // itself from the platform's networks before it removes them, which only a member can do.
+        if (!effective.inContainer()) {
+            return HostLauncher.run(effective, List.of(args), System.out);
+        }
 
         try (RunLog log = new RunLog(Path.of(effective.logFile()))) {
             log.section("unwrap" + (withVolumes ? " --with-volumes" : "")

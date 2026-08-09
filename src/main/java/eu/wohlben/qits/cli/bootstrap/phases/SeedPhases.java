@@ -27,6 +27,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * The hand-built part: everything the pipeline cannot make for itself on the first boot, plus the
@@ -34,8 +35,23 @@ import java.util.Optional;
  */
 public class SeedPhases {
 
-    /** The temporary maven registry's container name — known here, not only in the run state. */
+    /**
+     * The temporary maven registry's container name — known here, not only in the run state. On
+     * qits-net it is also the name this CLI dials it by, because docker's embedded DNS answers a
+     * container's own name.
+     */
     static final String AUTH_SEED_HTTP = "qits-maven-seed-http";
+
+    /**
+     * The temporary registry as THIS CLI reaches it. The mount puts the repository under
+     * {@code /artifacts/maven/maven}, so it answers the same paths the real store does — which is
+     * what lets the seed builds resolve against either one without knowing which is up.
+     */
+    private static final String AUTH_SEED_URL = "http://" + AUTH_SEED_HTTP + "/artifacts";
+
+    /** Where the metadata of a Maven artifact lives under an artifacts base url. */
+    private static final String AUTH_CORE_METADATA =
+            "/maven/maven/eu/wohlben/qits/qits-auth-core/maven-metadata.xml";
 
     private final Boot boot;
 
@@ -67,16 +83,28 @@ public class SeedPhases {
             // against the wrong checkout is otherwise indistinguishable from a run against the
             // right one until the sources phase clones something surprising.
             WrapperDir.Resolved resolved =
-                    WrapperDir.resolve(boot.config.wrapperDir(), Path.of("").toAbsolutePath());
+                    WrapperDir.resolveOrClone(boot.config.wrapperDir(), Path.of("").toAbsolutePath());
             Path wrapper = resolved.path();
-            if (!Files.isDirectory(wrapper)) {
-                throw new IllegalStateException("no wrapper directory at " + wrapper);
+            // ABSENT is a cold start, and the `wrapper` phase clones it — a bare machine has no
+            // checkout and no platform git host to get one from. An EMPTY directory is the same
+            // thing: a script that made the path, or a mount point, holds no answer either. A path
+            // that exists with ANYTHING in it and is not a checkout still stops the boot: this run
+            // decides which sha the whole platform is built from, and a directory nobody cloned
+            // answers that question with whatever is standing there.
+            if (Files.exists(wrapper) && !boot.git.isCheckout(wrapper)
+                    && !isEmptyDirectory(wrapper)) {
+                throw new IllegalStateException(wrapper + " exists, is not empty and is not a git "
+                        + "checkout, so it is not the wrapper repository. Move it aside, or point "
+                        + "QITS_WRAPPER_DIR (--wrapper-dir) at a " + WrapperDir.REPO + " checkout");
             }
             boot.state.wrapperDir = wrapper;
             boot.state.srcDir = Path.of(boot.config.src()).toAbsolutePath().normalize();
             boot.state.composeFile = wrapper.resolve("docker-compose.qits.yml");
             Files.createDirectories(boot.state.srcDir);
             ctx.log("  wrapper: " + wrapper + "  (" + resolved.how() + ")");
+            if (!boot.git.isCheckout(wrapper)) {
+                ctx.log("  cold start: the wrapper phase clones it from " + boot.config.orgUrl());
+            }
             ctx.log("  sources: " + boot.state.srcDir);
 
             long local = PlatformModel.platformRepos().stream()
@@ -90,6 +118,88 @@ public class SeedPhases {
     }
 
     /**
+     * <b>The run joins qits-net, and every address after this line depends on it.</b> This CLI is a
+     * container now, and every address it dials — the artifacts store, the edge, the idp, postgres
+     * — is a wire alias that resolves for members of that network and for nobody else. A run that
+     * skipped this would not fail here; it would fail in the first phase that polls something, as a
+     * timeout with a name that does not resolve.
+     * <p>
+     * FIRST, so nothing is dialled before it, and it ensures the network exists rather than
+     * assuming a platform stands: on a cold boot this is what creates qits-net. Attaching is
+     * measured to take effect at once — the embedded DNS answers on the next lookup, with no
+     * restart of this process.
+     * <p>
+     * Already attached is success, the same way an existing network is adopted rather than
+     * refused: the launcher may have started this container with {@code --network qits-net}, and a
+     * second connect would be an error about a state this phase wanted anyway.
+     */
+    public Phase joinNetwork() {
+        return new Phase("network", "join " + Boot.NETWORK, ctx -> {
+            boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
+            String self = boot.docker.selfName();
+            if (self == null || !boot.docker.containerExists(self)) {
+                throw new IllegalStateException("this run cannot find its own container: "
+                        + "/etc/hostname says '" + self + "' and the daemon knows no container by "
+                        + "that name, so it cannot join " + Boot.NETWORK + " and cannot reach one "
+                        + "single address of the platform. It runs as a container — the image is "
+                        + "docker/Dockerfile.bootstrap — with the host's docker socket mounted. A "
+                        + "custom --hostname breaks this lookup; let docker set it");
+            }
+            if (boot.docker.networksOf(self).contains(Boot.NETWORK)) {
+                ctx.log("  " + self + " is already on " + Boot.NETWORK);
+            } else {
+                Boot.must(boot.docker.exec(ctx::log, "network", "connect", Boot.NETWORK, self),
+                        "joining " + Boot.NETWORK + " failed");
+                ctx.log("  " + self + " joined " + Boot.NETWORK);
+            }
+            ctx.note("on " + Boot.NETWORK);
+        });
+    }
+
+    /**
+     * <b>The wrapper repository itself, when this machine has none.</b>
+     * <p>
+     * {@code curl … | bash} on a bare box is the case this exists for: there is no checkout to run
+     * from, and no platform git host to clone one from either, because this run is what creates
+     * that host. So the wrapper comes from the org anonymously — the same place {@link #sources}
+     * gets a component whose checkout is missing — into the working directory, which leaves the
+     * operator holding a real checkout they can rerun from.
+     * <p>
+     * <b>The submodules are deliberately NOT initialised, and adding {@code --recurse-submodules}
+     * here would be a mistake.</b> {@link #sources} clones every platform repository from the org
+     * whenever the wrapper has no checkout of it, so a BARE wrapper is already a complete answer;
+     * initialising the submodules would clone the whole platform a second time, into a tree no
+     * phase reads, and a cold start pays for it in the tens of minutes. What the run needs from the
+     * wrapper is the DIRECTORY: the generated compose file, {@code .qits-bootstrap.env} and the
+     * {@code .qits-bootstrap} workspace all live in it.
+     * <p>
+     * A wrapper that IS a checkout is left exactly as it is — not refreshed, not fast-forwarded. In
+     * the ordinary case it is the operator's own working copy, and the sha it stands on is their
+     * decision rather than this program's.
+     */
+    public Phase wrapper() {
+        return new Phase("wrapper", "the wrapper repository", ctx -> {
+            Path wrapper = boot.state.wrapperDir;
+            if (boot.git.isCheckout(wrapper)) {
+                ctx.skip("already checked out at " + wrapper);
+            }
+            // Preflight refused anything standing in this path, so what is left is an absent
+            // directory or an empty one — and `git clone` takes both.
+            String from = boot.config.orgUrl() + "/" + WrapperDir.REPO + ".git";
+            ctx.status("cloning " + WrapperDir.REPO + " from " + from);
+            Boot.must(boot.git.clone(from, wrapper, ctx::log),
+                    "clone of " + WrapperDir.REPO + " from " + from + " failed — a cold start has "
+                            + "nowhere else to get the wrapper from. Clone it by hand and rerun, or "
+                            + "point QITS_WRAPPER_DIR (--wrapper-dir) at a checkout");
+            ctx.log(String.format("  %-26s %s  (%s)", WrapperDir.REPO, boot.git.shortHead(wrapper),
+                    from));
+            ctx.log("  submodules left uninitialised: the sources phase clones each repository "
+                    + "from " + boot.config.orgUrl() + " anyway");
+            ctx.note("cloned " + boot.git.shortHead(wrapper));
+        });
+    }
+
+    /**
      * <b>Both silences here are gone.</b> This phase decides which sha the whole platform is built
      * from, and both of its old fallbacks answered a broken input with a working-looking run:
      * <ul>
@@ -98,6 +208,13 @@ public class SeedPhases {
      *       the checkout — and said so in one line among thousands. Now: an ABSENT directory is
      *       still answered by the org URL (not every model repository has to be a submodule of this
      *       wrapper), but a directory that exists and is not a checkout stops the boot.
+     *       <p>
+     *       <b>An EMPTY directory counts as absent</b>, and that is not a softening of the rule:
+     *       git puts one at every gitlink whose submodule is not checked out, so the wrapper the
+     *       cold start clones has one per repository. It holds no commits, no local work and no
+     *       answer about which sha to build — there is nothing there for the org URL to ignore.
+     *       A directory with anything at all in it is the case the rule was written for and still
+     *       stops the boot.
      *   <li>A refresh that failed logged "using what is checked out" and built the stale copy. A
      *       non-fast-forward is the ordinary cause and the ordinary cause is a rebase, so the stale
      *       copy is a commit that no longer exists anywhere.
@@ -108,11 +225,13 @@ public class SeedPhases {
             for (String name : PlatformModel.platformRepos()) {
                 String repo = PlatformModel.repo(name);
                 Path localSrc = boot.state.wrapperCheckout(name);
-                if (Files.exists(localSrc) && !boot.git.isCheckout(localSrc)) {
-                    throw new IllegalStateException(localSrc + " is not a git checkout, so "
-                            + repo + " has no source. Either the submodule is not initialised "
-                            + "(git submodule update --init) or PlatformModel.repoPath names the "
-                            + "wrong directory for '" + name + "'.");
+                if (Files.exists(localSrc) && !boot.git.isCheckout(localSrc)
+                        && !isEmptyDirectory(localSrc)) {
+                    throw new IllegalStateException(localSrc + " is not a git checkout and is not "
+                            + "empty, so " + repo + " has no source and something else is standing "
+                            + "in its place. Either the submodule is half-initialised or "
+                            + "PlatformModel.repoPath names the wrong directory for '" + name
+                            + "'.");
                 }
                 String from = boot.git.isCheckout(localSrc)
                         ? localSrc.toString()
@@ -187,10 +306,15 @@ public class SeedPhases {
                     // Version-agnostic on purpose: the checkouts publish their real calver, so a
                     // pinned-version probe never matches and a rerun collides with whoever holds
                     // the registry port. Metadata present = auth-core is served, whatever version.
-                    String metadata = boot.config.artifactsUrl()
-                            + "/maven/maven/eu/wohlben/qits/qits-auth-core/maven-metadata.xml";
-                    if (boot.http.get(metadata, Map.of()).ok()) {
-                        ctx.skip("already served on port " + boot.config.registryPort());
+                    //
+                    // TWO ADDRESSES, because in-network there are two servers rather than one
+                    // port. On the host both answered 127.0.0.1:REGISTRY_PORT, so one probe found
+                    // whoever held it. Here the platform's own store answers under its wire alias
+                    // and a previous run's temporary registry under its container name, and either
+                    // one means this phase has nothing left to do.
+                    if (boot.http.get(boot.config.artifactsUrl() + AUTH_CORE_METADATA, Map.of()).ok()
+                            || boot.http.get(AUTH_SEED_URL + AUTH_CORE_METADATA, Map.of()).ok()) {
+                        ctx.skip("qits-auth-core is already served");
                     }
                     // The platform's own store may already hold the registry port, and then the
                     // temporary one cannot have it — the bind fails with "port is already
@@ -213,7 +337,21 @@ public class SeedPhases {
 
                     String container = AUTH_SEED_HTTP;
                     boot.docker.removeContainer(container, null);
+                    // TWO CONSUMERS, TWO ADDRESSES, and both are needed:
+                    //
+                    //   --network qits-net  is for THIS CLI, which is on that network and can
+                    //                       reach nothing that is not. The container name is the
+                    //                       alias; AUTH_SEED_URL is what gets dialled.
+                    //   -p 127.0.0.1:PORT   is for the HOST'S DOCKER DAEMON. The seed image builds
+                    //                       run with --network host and resolve Maven through
+                    //                       localhost:REGISTRY_PORT, and that consumer did not
+                    //                       move onto the network with the CLI.
+                    //
+                    // Dropping either one hangs a phase rather than failing it: without the
+                    // network the probe above never answers, without the publish the first seed
+                    // build resolves nothing.
                     Boot.must(boot.docker.exec(ctx::log, "run", "-d", "--name", container,
+                                    "--network", Boot.NETWORK,
                                     "-p", "127.0.0.1:" + boot.config.registryPort() + ":80",
                                     "-v", "qits-maven-seed:/usr/share/nginx/html/artifacts/maven/maven:ro",
                                     "nginx:alpine"),
@@ -334,11 +472,11 @@ public class SeedPhases {
                                 "qits/platform-artifacts:latest"),
                         "the seed " + artifacts + " did not start");
             }
-            // Always waited for, whoever is behind the port: every publish after this phase — the
+            // Always waited for, whoever is behind the alias: every publish after this phase — the
             // two Maven ones, both npm ones, the daemon upload — needs the store answering, and a
             // phase that skipped the start still owes them that.
-            boot.awaitHealth(ctx, serving.orElse(artifacts) + " on port "
-                    + boot.config.registryPort(), boot.artifacts::health);
+            boot.awaitHealth(ctx, serving.orElse(artifacts) + " on qits-net",
+                    boot.artifacts::health);
         });
     }
 
@@ -349,10 +487,11 @@ public class SeedPhases {
      * <b>The answer comes from the API, not from the container list.</b> A deployed store is named
      * {@code qits-pd-qits-platform-artifacts-<id8>}, and matching that shape alone would still miss
      * anything else the port could be behind. The artifacts API's own health is the honest
-     * question: the temporary Maven registry is an nginx serving one mounted directory, so it
-     * answers 404 there, while qits-platform-artifacts answers 200 whether it was started by this
-     * bootstrap, by compose or by the deployer. The container list is then read only to name who it
-     * is, which is what makes the phase log readable.
+     * question: it is asked at the store's WIRE ALIAS, which the temporary Maven registry does not
+     * answer to at all — it is an nginx under its own name — while qits-platform-artifacts answers
+     * 200 there whether it was started by this bootstrap, by compose or by the deployer. The
+     * container list is then read only to name who it is, which is what makes the phase log
+     * readable.
      * <p>
      * Both phases that bind the registry port ask this before they bind it. Neither can win that
      * bind, and neither needs to: the store on the other end has the same volume.
@@ -582,20 +721,20 @@ public class SeedPhases {
             state.write();
             ctx.log("  recorded in " + state.file() + " before the server starts");
 
-            // On a warm rerun (QITS_SKIP_BUILD) nothing before this phase has touched the network,
-            // and this is the first container of the run.
+            // The `network` phase already created it and put this run on it; the call stays so the
+            // phase says what it needs, and it is a no-op on an existing network.
             boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
             boot.docker.ensureVolume("qits-oci-postgresql-data", ctx::log);
             String pg = PlatformModel.wireAlias("oci-postgresql", boot.config.envName());
             // Whoever already serves, serves — the same posture as the seed artifacts store. A
-            // deployed postgres publishes this very port from this very volume, and a second bind
-            // is "port is already allocated" and the end of the run.
+            // deployed postgres answers the same alias and publishes the same host port from this
+            // very volume, and a second bind is "port is already allocated" and the end of the run.
             String prefix = PlatformModel.pdNamePrefix("oci-postgresql", boot.config.envName());
             Optional<String> serving = boot.docker.runningNames().stream()
                     .filter(name -> name.equals(pg) || name.startsWith(prefix))
                     .findFirst();
             if (serving.isPresent()) {
-                ctx.log("  " + serving.get() + " already serves port " + boot.config.pgPort()
+                ctx.log("  " + serving.get() + " already serves " + pg
                         + " from the same volume — no seed server to start");
             } else {
                 boot.docker.removeContainer(pg, null);
@@ -613,11 +752,16 @@ public class SeedPhases {
                         .mask(superuser), ctx::log), "the seed " + pg + " did not start");
             }
 
-            // Always waited for, whoever is behind the port: the statements below need a server,
-            // and a first boot spends its first seconds in initdb rather than listening.
-            String url = "jdbc:postgresql://127.0.0.1:" + boot.config.pgPort() + "/postgres";
+            // Always waited for, whoever is behind it: the statements below need a server, and a
+            // first boot spends its first seconds in initdb rather than listening.
+            //
+            // The WIRE ALIAS on 5432, like every other consumer of this database — the published
+            // host port is for a person with a psql, not for this program. It is also the address
+            // that survives the deployer's own cutover of qits-oci-postgresql, because the alias is
+            // what the successor answers to.
+            String url = "jdbc:postgresql://" + pg + ":5432/postgres";
             PgAdmin.awaitReady(url, "postgres", superuser, boot.config.healthTimeout(), ctx);
-            ctx.log("  postgres answering on 127.0.0.1:" + boot.config.pgPort());
+            ctx.log("  postgres answering on " + pg + ":5432");
 
             // Role, database and username are one name throughout, and every database is owned by
             // its own role and closed to public.
@@ -634,7 +778,7 @@ public class SeedPhases {
                 provision(ctx, admin, "qits_ci_eventstream", ciEventstream, false);
                 provision(ctx, admin, "qits_platform_idp", platformIdp, false);
             }
-            ctx.note("4 databases ready on :" + boot.config.pgPort());
+            ctx.note("4 databases ready on " + pg);
         });
     }
 
@@ -894,6 +1038,20 @@ public class SeedPhases {
 
     static String shortSha(String sha) {
         return sha == null ? "" : sha.substring(0, Math.min(12, sha.length()));
+    }
+
+    /**
+     * What git leaves at a gitlink whose submodule is not checked out: the path, with nothing in
+     * it. Every submodule of a freshly cloned wrapper looks like this, which is what a cold start
+     * hands {@link #sources}.
+     */
+    static boolean isEmptyDirectory(Path dir) throws IOException {
+        if (!Files.isDirectory(dir)) {
+            return false;
+        }
+        try (Stream<Path> entries = Files.list(dir)) {
+            return entries.findAny().isEmpty();
+        }
     }
 
     private static String sha256(Path file) throws Exception {

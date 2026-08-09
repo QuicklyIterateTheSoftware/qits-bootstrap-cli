@@ -33,7 +33,12 @@ class BootstrapPlanTest {
         List<Phase> phases = plan(Map.of());
 
         assertThat(ids(phases)).doesNotHaveDuplicates();
-        assertThat(ids(phases)).startsWith("preflight", "sources", "recorded-state", "auth-core-seed");
+        // The network is joined second, right after the daemon is proved reachable and before the
+        // first address is dialled: every address this CLI uses is a wire alias on qits-net.
+        // The wrapper comes before the sources because the sources are read out of it, and a cold
+        // machine has none: that phase clones it from the org.
+        assertThat(ids(phases)).startsWith("preflight", "network", "wrapper", "sources",
+                "recorded-state", "auth-core-seed");
         assertThat(ids(phases)).endsWith("release-train-push", "summary");
         assertThat(phases).allSatisfy(phase -> assertThat(phase.title()).isNotBlank());
     }
@@ -103,5 +108,8 @@ class BootstrapPlanTest {
         // postgres is NOT a build, so a warm rerun still runs it: it resolves the passwords both
         // generated files carry, and the server has to answer before the deployer starts.
         assertThat(warm).contains("seed-postgres");
+        // The wrapper phase is in every plan. An existing checkout is skipped when it RUNS, which
+        // is what keeps the skip visible on the header line instead of silent in the plan.
+        assertThat(warm).contains("wrapper");
     }
 }

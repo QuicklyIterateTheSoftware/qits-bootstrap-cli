@@ -12,8 +12,10 @@
          with no monorepo and no parent to inherit from. Versions that must stay in step with the
          platform (Quarkus, the JDK release) are duplicated here deliberately.
 
-         Two build forms. `./mvnw package -Dnative -DskipTests` makes the binary people run;
-         `./mvnw clean verify` makes the uber-jar and is the loop while working on the CLI. -->
+         ONE form. `./mvnw package -Dnative -DskipTests` makes the native binary, which is what
+         this program is — there is no jar, in development or anywhere else. Three lines below
+         keep it that way; the comment on the first says how they fit together. `./mvnw clean
+         verify` runs the tests and packages nothing. -->
     <groupId>eu.wohlben.qits</groupId>
     <artifactId>qits-cli-bootstrap</artifactId>
     <version>2026.807.193132</version>
@@ -42,6 +44,21 @@
 
         <!-- Surefire's @{argLine} has no value unless something (jacoco/quarkus) sets it. -->
         <argLine/>
+
+        <!-- No runnable jar, ever, and here rather than in the native profile so an ordinary
+             `./mvnw package` cannot make one either. A jar would be a second form of this program
+             that nothing runs: the payload image builds the binary from source, the wrapper's shim
+             runs the binary, and a workstation is handed that one file.
+
+             The two lines here go together, and the third is maven-jar-plugin's `default-jar`
+             below. Quarkus' build goal fails outright when it is asked for
+             neither a jar nor a binary — "No artifact results were produced" — so a JVM build has
+             to skip the goal rather than run it empty. The native profile turns it back on, and
+             that is the only build that produces anything. Nothing is lost by skipping it here:
+             the augmentation the goal performs is performed again by every @QuarkusTest, so a
+             build-time break still fails `./mvnw clean verify`. -->
+        <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
+        <quarkus.build.skip>true</quarkus.build.skip>
     </properties>
 
     <dependencyManagement>
@@ -152,6 +169,26 @@
                 </configuration>
             </plugin>
             <plugin>
+                <!-- Maven's own classes jar, off. It is not a form of this program — it holds no
+                     dependency and starts nothing — but it sat in target/ beside the binary, and
+                     "which jar do I run" has to have no answer to find. The native build does not
+                     need it: `clean package -Dnative` leaves the binary alone in target/.
+
+                     The one jar left anywhere is native-image's own input, staged under
+                     target/*-native-image-source-jar/ and read by the build that makes the
+                     binary. That is a compiler's scratch space, not a form of this program.
+
+                     Nothing installs or deploys this artifact — it is a CLI, in no repository's
+                     dependencies — so having no attached artifact costs nothing. -->
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-jar</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>${surefire-plugin.version}</version>
                 <configuration>
@@ -180,13 +217,25 @@
             </activation>
             <properties>
                 <quarkus.native.enabled>true</quarkus.native.enabled>
-                <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
+
+                <!-- The one build that produces something, so the goal the JVM build skips runs
+                     here. -->
+                <quarkus.build.skip>false</quarkus.build.skip>
+
+                <!-- Empty for the binary people run on this host. The payload image's build
+                     (docker/Dockerfile.bootstrap) sets it to the musl-static flags, which that
+                     image needs and this host's binary must not have. Quarkus reads
+                     additional-build-args from ONE config source, so an image command line naming
+                     its flags whole would silently drop the jline flag below. Appending keeps that
+                     flag in this file alone. An XML comment cannot hold two dashes, which is why
+                     the flags are not spelled out here. -->
+                <native.extra-build-args></native.extra-build-args>
 
                 <!-- org.jline.nativ is jline-terminal's unused half: a JNI loader whose class
                      initializer unpacks libjlinenative.so into /tmp. Run at build time it fails
                      outright ("Content differs"), and this CLI's exec provider never calls it.
                      Deferring the initializer to run time is enough to keep it out of the way. -->
-                <quarkus.native.additional-build-args>--initialize-at-run-time=org.jline.nativ</quarkus.native.additional-build-args>
+                <quarkus.native.additional-build-args>--initialize-at-run-time=org.jline.nativ${native.extra-build-args}</quarkus.native.additional-build-args>
             </properties>
         </profile>
     </profiles>

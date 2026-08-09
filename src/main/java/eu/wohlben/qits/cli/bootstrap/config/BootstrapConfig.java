@@ -24,8 +24,10 @@ public interface BootstrapConfig {
 
     /**
      * The wrapper repository (qits-qits or a worktree of it) whose submodule checkouts are the
-     * sources. This is what replaces the script's {@code /out} mount: the CLI runs on the host and
-     * reads the checkouts where they are.
+     * sources. This is what replaces the script's {@code /out} mount: the checkouts are read where
+     * this run sees them, and every path it puts on a docker command line — a build context, a
+     * {@code docker cp} source, the compose file — is read by the client rather than by the daemon,
+     * so nothing has to mean the same thing on both sides.
      * <p>
      * Optional, and the absence is the ordinary case: this CLI lives at
      * {@code cli/qits-cli-bootstrap} inside the wrapper, so {@link WrapperDir} finds it by walking
@@ -42,9 +44,9 @@ public interface BootstrapConfig {
     String src();
 
     /**
-     * The host's one published port, bound by qits-platform-edge. Everything this CLI reads
-     * through it — qits-ci, qits-deployments, and the edge's own health — arrives edge -> the
-     * environment's gateway -> the service. qits-gateway publishes nothing itself any more.
+     * The host's one published port, bound by qits-platform-edge. It is what a PERSON types into a
+     * browser and what the generated compose file publishes; this CLI dials the edge's wire alias
+     * instead, because it runs on qits-net. qits-gateway publishes nothing itself any more.
      */
     @WithDefault("8080")
     int port();
@@ -52,17 +54,22 @@ public interface BootstrapConfig {
     /**
      * Host port qits-platform-artifacts publishes for the DOCKER DAEMON's pulls and pushes.
      * localhost registries are HTTP-allowed by docker without daemon config, which is the whole
-     * trick — and it is the CLI's own door to the git host and the registry API too.
+     * trick — and the daemon is the host's, so this is the number a seed build resolves through.
+     * This CLI reads the registry API and the git host by wire alias, not through here.
      */
     @WithDefault("8081")
     int registryPort();
 
     /**
-     * Host port the platform's postgres publishes, for this CLI's own connection.
+     * Host port the platform's postgres publishes.
      * <p>
-     * Bound to 127.0.0.1 like the registry port, and 5433 rather than 5432 so a postgres already
-     * installed on the workstation is not a bind conflict this program has to explain. Consumers
-     * inside qits-net dial the wire alias on 5432 and never see this number.
+     * Nothing in this CLI dials it any more — the JDBC connection goes to the wire alias on 5432
+     * like every other consumer — and the knob stays because the GENERATED FILES carry it: the seed
+     * compose file publishes it and so does the deployer's run-arg for qits-oci-postgresql, which
+     * is what keeps a psql on the workstation working across the deployer's own cutover.
+     * <p>
+     * 5433 rather than 5432 so a postgres already installed on the workstation is not a bind
+     * conflict this program has to explain.
      */
     @WithDefault("5433")
     int pgPort();
@@ -119,13 +126,21 @@ public interface BootstrapConfig {
     @WithDefault("prod")
     String envName();
 
-    /** The image used to reach a service that publishes no host port (qits-platform-idp). */
-    @WithDefault("curlimages/curl:latest")
-    String curlImage();
-
     /** The full log of every command this run shells out to. */
     @WithDefault("qits-bootstrap-cli.log")
     String logFile();
+
+    /**
+     * <b>Set by the launcher and by nothing else</b>: 1 means "you are the payload — run the
+     * phases". Unset means "you are on the host — build the payload image and run yourself in it".
+     * <p>
+     * It is the one knob that is not a person's to answer, and it lives here rather than in a
+     * schema of the host half's own, because there is one program and one configuration contract.
+     * Setting it by hand runs the phases on the host, where the first address they dial does not
+     * resolve.
+     */
+    @WithDefault("false")
+    boolean inContainer();
 
     /** Lines of the running step's output kept for the body region. */
     @WithDefault("2000")
@@ -172,23 +187,37 @@ public interface BootstrapConfig {
         return "http://qits-platform-idp:8080/idp";
     }
 
-    /** qits-platform-artifacts from the host: the registry, the git host and the artifacts API. */
+    /**
+     * qits-platform-artifacts on qits-net: the registry, the git host and the artifacts API.
+     * <p>
+     * <b>Every address below is a wire alias, because this CLI runs on qits-net.</b> They were
+     * {@code 127.0.0.1:<published port>} while it ran on the host. There is no switch between the
+     * two: the run joins the network before it dials anything, so the in-network address is the
+     * only one there is and nothing has to decide which shape to use.
+     */
     default String artifactsUrl() {
-        return "http://127.0.0.1:" + registryPort() + "/artifacts";
-    }
-
-    /** qits-ci, as seen from the host: through the edge and the gateway's route table. */
-    default String ciUrl() {
-        return "http://127.0.0.1:" + port() + "/ci";
+        return "http://qits-platform-artifacts:8080/artifacts";
     }
 
     /**
-     * qits-deployments, as seen from the host: through the edge and the gateway's route table.
+     * qits-ci, <b>through qits-platform-edge</b> and the gateway's route table behind it.
+     * <p>
+     * Not {@code <env>-qits-ci:8080} directly, which the network would resolve just as well: the
+     * edge and the gateway's route table are the path every other client takes, and a bootstrap
+     * that stopped exercising it would stop noticing when it breaks. Only the first hop's address
+     * moved off the host port.
+     */
+    default String ciUrl() {
+        return "http://qits-platform-edge:8080/ci";
+    }
+
+    /**
+     * qits-deployments, through the edge and the gateway's route table, for the reason above.
      * The route segment stayed {@code /platform-deployments} when the repository was renamed —
      * it names the component, not the repository, and every route of the service (its API, its
      * health, its client) hangs off it. Only the hostname moved.
      */
     default String platformDeploymentsUrl() {
-        return "http://127.0.0.1:" + port() + "/platform-deployments";
+        return "http://qits-platform-edge:8080/platform-deployments";
     }
 }
