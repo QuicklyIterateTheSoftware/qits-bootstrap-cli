@@ -28,6 +28,12 @@ class BootstrapConfigTest {
         // 5433, not 5432: a postgres already installed on the workstation must not be a bind
         // conflict this program has to explain.
         assertThat(config.pgPort()).isEqualTo(5433);
+        // 53, because a registrar's delegation reaches that port and no other. Both transports are
+        // published from it; the service binds 8053 inside the container.
+        assertThat(config.dnsPort()).isEqualTo(53);
+        // No default, and unset is a supported platform: dns serves no zones and the edge stays on
+        // plain HTTP.
+        assertThat(config.domain()).isEmpty();
         assertThat(config.pushToken()).isEqualTo("local-dev");
         assertThat(config.machineAuth()).isTrue();
         assertThat(config.skipBuild()).isFalse();
@@ -44,6 +50,8 @@ class BootstrapConfigTest {
         env.put("QITS_PORT", "9090");
         env.put("QITS_REGISTRY_PORT", "9091");
         env.put("QITS_PG_PORT", "5555");
+        env.put("QITS_DNS_PORT", "5353");
+        env.put("QITS_DOMAIN", "qits-dev.eu");
         env.put("QITS_PUSH_TOKEN", "not-local-dev");
         env.put("QITS_SKIP_BUILD", "1");
         env.put("QITS_MACHINE_AUTH", "0");
@@ -57,6 +65,8 @@ class BootstrapConfigTest {
         assertThat(config.port()).isEqualTo(9090);
         assertThat(config.registryPort()).isEqualTo(9091);
         assertThat(config.pgPort()).isEqualTo(5555);
+        assertThat(config.dnsPort()).isEqualTo(5353);
+        assertThat(config.domain()).contains("qits-dev.eu");
         assertThat(config.pushToken()).isEqualTo("not-local-dev");
         // The script's knobs are 1 and 0, not true and false.
         assertThat(config.skipBuild()).isTrue();
@@ -87,6 +97,22 @@ class BootstrapConfigTest {
         assertThat(config.envBranch()).isEqualTo("environment/preprod");
         // The issuer is a value consumers validate as well as an address this program dials.
         assertThat(config.idpIssuer()).isEqualTo("http://qits-platform-idp:8080/idp");
+        // The one address NOT behind the edge: there is no gateway route to the nameserver's API and
+        // there must not be one, so it is dialled at its own alias. /dns is the service's own
+        // non-application root path, which is where health and the zones both hang.
+        assertThat(config.dnsUrl()).isEqualTo("http://qits-platform-dns:8080/dns");
+    }
+
+    @Test
+    void domainIsAnsweredOnTheCommandLineAndABlankOneIsNotAnAnswer() {
+        BootstrapConfig base = from(Map.of("QITS_DOMAIN", "from-env.eu"));
+
+        assertThat(new OverridableConfig(base).domain("from-argv.eu").domain())
+                .contains("from-argv.eu");
+        assertThat(new OverridableConfig(base).domain(null).domain()).contains("from-env.eu");
+        assertThat(new OverridableConfig(base).domain("  ").domain()).contains("from-env.eu");
+        // Unset stays unset: there is no default domain to fall back on.
+        assertThat(new OverridableConfig(from(Map.of())).domain(null).domain()).isEmpty();
     }
 
     @Test

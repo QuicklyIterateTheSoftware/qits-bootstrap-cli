@@ -1,6 +1,7 @@
 package eu.wohlben.qits.cli.bootstrap;
 
 import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
+import eu.wohlben.qits.cli.bootstrap.config.DomainName;
 import eu.wohlben.qits.cli.bootstrap.config.OverridableConfig;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseEngine;
@@ -74,13 +75,35 @@ public class BootstrapCommand implements Callable<Integer> {
                     + "platform plane and names every wire alias. Default: prod (QITS_ENV_NAME).")
     String platformEnv;
 
+    /**
+     * The domain this platform serves. Unset — the default — is a platform with no public names:
+     * qits-platform-dns runs with no zones and the edge stays on plain HTTP.
+     */
+    @CommandLine.Option(names = "--domain", paramLabel = "<domain>",
+            description = "The domain to serve: the dns zone, its ns1/hostmaster identity and the "
+                    + "name the edge's certificate is issued for. Unset = no public names "
+                    + "(QITS_DOMAIN).")
+    String domain;
+
     @Override
     public Integer call() throws Exception {
         BootstrapConfig effective = new OverridableConfig(config)
                 .wrapperDir(wrapperDir)
                 .skipBuild(skipBuild)
                 .platformEnv(platformEnv)
+                .domain(domain)
                 .tui(noTui ? Boolean.FALSE : null);
+
+        // BEFORE either half does anything, and on the host half too: a misspelled domain becomes a
+        // zone row and a certificate request for a name nobody owns, and neither is undone by
+        // rerunning with the spelling fixed. The message is the whole output — no stack trace, since
+        // there is no bug here to report.
+        try {
+            DomainName.of(effective);
+        } catch (IllegalArgumentException e) {
+            System.err.println(e.getMessage());
+            return 2;
+        }
 
         // The host half. Every address the phases dial is a wire alias on qits-net, so they only
         // ever run inside the payload image — this builds it and runs this same program in it, and

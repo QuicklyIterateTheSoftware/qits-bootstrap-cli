@@ -5,12 +5,14 @@ import org.junit.jupiter.api.Test;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class ComposeTemplateTest {
 
     private static final String ENV = "prod";
+    private static final String DOMAIN = "qits-dev.eu";
 
     private static Map<String, String> tokens() {
         Map<String, String> values = new LinkedHashMap<>();
@@ -20,11 +22,13 @@ class ComposeTemplateTest {
         values.put("PORT", "8080");
         values.put("REGISTRY_PORT", "8081");
         values.put("PG_PORT", "5433");
+        values.put("DNS_PORT", "53");
         values.put("PG_SUPERUSER_PASSWORD", "0123456789abcdef");
         values.put("PG_DEPLOYMENTS_PASSWORD", "fedcba9876543210");
         values.put("PG_CI_PASSWORD", "aaaabbbbccccdddd");
         values.put("PG_CI_EVENTSTREAM_PASSWORD", "eeeeffff00001111");
         values.put("PG_PLATFORM_IDP_PASSWORD", "2222333344445555");
+        values.put("PG_PLATFORM_DNS_PASSWORD", "66667777888899aa");
         values.put("IDP", "http://qits-platform-idp:8080/idp");
         values.put("PUSH_TOKEN", "local-dev");
         values.put("MACHINE_REQUIRED", "true");
@@ -37,6 +41,15 @@ class ComposeTemplateTest {
             values.put("IDP_SECRET_" + PlatformModel.clientKey(app),
                     "secret-" + PlatformModel.wireAlias(app, ENV));
         }
+        // No domain: every fragment is empty, which is the ordinary platform.
+        values.putAll(DomainTokens.of(Optional.empty()));
+        return values;
+    }
+
+    /** The same values with a domain configured. */
+    private static Map<String, String> tokens(String domain) {
+        Map<String, String> values = tokens();
+        values.putAll(DomainTokens.of(Optional.of(domain)));
         return values;
     }
 
@@ -49,7 +62,11 @@ class ComposeTemplateTest {
     }
 
     private static String runArgsLine(String application) {
-        return ComposeTemplate.runArgs(tokens()).lines()
+        return runArgsLine(application, tokens());
+    }
+
+    private static String runArgsLine(String application, Map<String, String> values) {
+        return ComposeTemplate.runArgs(values).lines()
                 .filter(line -> line.startsWith(
                         "qits.platform.deployments.run-args." + application + "="))
                 .findFirst().orElseThrow();
@@ -68,11 +85,19 @@ class ComposeTemplateTest {
         assertThat(compose).contains("QITS_CI_DAEMON_VERSION: \"abc123\"");
         assertThat(compose).doesNotContain("${PORT}");
         assertThat(compose).doesNotContain("${PG_PORT}");
+        assertThat(compose).doesNotContain("${DNS_PORT}");
         assertThat(compose).doesNotContain("${PG_SUPERUSER_PASSWORD}")
                 .doesNotContain("${PG_DEPLOYMENTS_PASSWORD}")
                 .doesNotContain("${PG_CI_PASSWORD}")
                 .doesNotContain("${PG_CI_EVENTSTREAM_PASSWORD}")
-                .doesNotContain("${PG_PLATFORM_IDP_PASSWORD}");
+                .doesNotContain("${PG_PLATFORM_IDP_PASSWORD}")
+                .doesNotContain("${PG_PLATFORM_DNS_PASSWORD}");
+        // The domain fragments are filled even when they are empty: a leftover placeholder would
+        // reach the file as literal text and compose would refuse it.
+        assertThat(compose).doesNotContain("${DNS_IDENTITY}")
+                .doesNotContain("${LETSENCRYPT_VOLUME}")
+                .doesNotContain("${EDGE_TLS_PORTS}")
+                .doesNotContain("${EDGE_TLS}");
         assertThat(compose).doesNotContain("${ENV_NAME}");
         assertThat(compose).doesNotContain("${ENV_KEY}");
         assertThat(compose).doesNotContain("${IDP_SECRET_");
@@ -232,7 +257,7 @@ class ComposeTemplateTest {
 
         for (String application : new String[]{"qits-platform-edge", "qits-gateway",
                 "qits-platform-artifacts", "qits-ci", "qits-deployments", "qits-platform-idp",
-                "qits-stt", "qits-projects", "qits-workspaces", "qits-events",
+                "qits-platform-dns", "qits-stt", "qits-projects", "qits-workspaces", "qits-events",
                 "qits-platform-docs", "qits-observability", "qits-oci-postgresql"}) {
             assertThat(properties).contains("qits.platform.deployments.run-args." + application + "=");
         }
@@ -463,6 +488,125 @@ class ComposeTemplateTest {
         assertThat(runArgsLine("qits-observability"))
                 .isEqualTo("qits.platform.deployments.run-args.qits-observability="
                         + "-e QITS_OBSERVABILITY_URL=" + url);
+    }
+
+    /**
+     * The nameserver, in both files: two publishes because both transports are mandatory, and the
+     * database triple because compose starts it before any deployer exists to inject one.
+     */
+    @Test
+    void theNameserverPublishesBothTransportsAndIsHandedItsDatabase() {
+        String compose = ComposeTemplate.compose(tokens());
+        String block = serviceBlock(compose, "qits-platform-dns");
+        String runArgs = runArgsLine("qits-platform-dns");
+
+        assertThat(compose).contains("image: qits/platform-dns:latest");
+        // TCP is not the optional half: a truncated UDP answer carries ZERO records, so the client's
+        // TCP retry is the only way it ever gets one.
+        assertThat(block).contains("- \"53:8053/udp\"").contains("- \"53:8053/tcp\"");
+        assertThat(block).contains("QITS_RESOURCE_DB_URL: "
+                        + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_platform_dns")
+                .contains("QITS_RESOURCE_DB_USERNAME: qits_platform_dns")
+                .contains("QITS_RESOURCE_DB_PASSWORD: \"66667777888899aa\"");
+        // No volume: the store is postgres and this service writes nothing that outlives it.
+        assertThat(block).doesNotContain("volumes:");
+
+        assertThat(runArgs).contains("-p 53:8053/udp").contains("-p 53:8053/tcp");
+        // The deployer injects the triple from `resources: postgresql:db`; a pin here would outlive
+        // a rotation and break the deployment it looks like it is configuring.
+        assertThat(runArgs).doesNotContain("QITS_RESOURCE_");
+    }
+
+    /**
+     * <b>THE INVARIANT OF THE WHOLE DOMAIN FEATURE.</b> Every fragment a domain adds is appended to a
+     * line the template already had, so taking the fragments back out of the rendered files leaves
+     * exactly what a platform with no domain renders — no blank line, no orphan comment about a
+     * feature that is off, nothing for the next reader to wonder about.
+     */
+    @Test
+    void aDomainAddsItsFragmentsAndChangesNothingElse() {
+        String compose = ComposeTemplate.compose(tokens(DOMAIN));
+        String runArgs = ComposeTemplate.runArgs(tokens(DOMAIN));
+        for (String fragment : DomainTokens.of(Optional.of(DOMAIN)).values()) {
+            assertThat(fragment).isNotEmpty();
+            compose = compose.replace(fragment, "");
+            runArgs = runArgs.replace(fragment, "");
+        }
+
+        assertThat(compose).isEqualTo(ComposeTemplate.compose(tokens()));
+        assertThat(runArgs).isEqualTo(ComposeTemplate.runArgs(tokens()));
+    }
+
+    /** With no domain, not one trace of the zone, the TLS ports or the certificate volume. */
+    @Test
+    void withNoDomainThereIsNoTlsAndNoNameserverIdentity() {
+        String compose = ComposeTemplate.compose(tokens());
+        String runArgs = ComposeTemplate.runArgs(tokens());
+
+        assertThat(compose).doesNotContain("letsencrypt")
+                .doesNotContain("QITS_DNS_NS_NAMES")
+                .doesNotContain("QITS_DNS_HOSTMASTER")
+                .doesNotContain("QUARKUS_TLS_")
+                .doesNotContain("443:8443")
+                .doesNotContain("127.0.0.1:9000");
+        assertThat(runArgs).doesNotContain("letsencrypt")
+                .doesNotContain("QITS_DNS_NS_NAMES")
+                .doesNotContain("QUARKUS_TLS_");
+        // The edge keeps the one port it always published.
+        assertThat(runArgsLine("qits-platform-edge")).contains("-p 8080:8080");
+    }
+
+    /**
+     * A configured domain, in both files, on both services. <b>Both dns variables or neither</b>: the
+     * service turns SOA and NS synthesis off unless it holds the pair, and a half-configured zone
+     * answers records while resolvers cannot negative-cache — load and latency, never an alarm.
+     */
+    @Test
+    void aDomainGivesTheNameserverItsIdentityInBothFiles() {
+        String block = serviceBlock(ComposeTemplate.compose(tokens(DOMAIN)), "qits-platform-dns");
+        String runArgs = runArgsLine("qits-platform-dns", tokens(DOMAIN));
+
+        assertThat(block).contains("QITS_DNS_NS_NAMES: ns1.qits-dev.eu")
+                .contains("QITS_DNS_HOSTMASTER: hostmaster.qits-dev.eu");
+        assertThat(runArgs).contains("-e QITS_DNS_NS_NAMES=ns1.qits-dev.eu")
+                .contains("-e QITS_DNS_HOSTMASTER=hostmaster.qits-dev.eu");
+    }
+
+    /**
+     * The edge's TLS wiring, in both files. The run-args half is the one that is easy to forget and
+     * expensive to: it is what the deployer starts the successor with, so a piece missing there is a
+     * cutover that takes 443 and the certificate away while health goes on passing on 8080.
+     */
+    @Test
+    void aDomainGivesTheEdgeItsCertificateSlotInBothFiles() {
+        String compose = ComposeTemplate.compose(tokens(DOMAIN));
+        String edge = serviceBlock(compose, "qits-platform-edge");
+        String runArgs = runArgsLine("qits-platform-edge", tokens(DOMAIN));
+
+        // The host's own port stays; 80 is the ACME challenge, 443 the TLS listener, and 9000 the
+        // management interface on LOOPBACK — the challenge-management endpoint is unauthenticated.
+        assertThat(edge).contains("- \"8080:8080\"")
+                .contains("- \"80:8080\"")
+                .contains("- \"443:8443\"")
+                .contains("- \"127.0.0.1:9000:9000\"");
+        assertThat(edge).contains(
+                        "QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT: /work/.letsencrypt/lets-encrypt.crt")
+                .contains("QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY: /work/.letsencrypt/lets-encrypt.key")
+                .contains("QUARKUS_TLS_RELOAD_PERIOD: 1h")
+                .contains("- qits-edge-letsencrypt:/work/.letsencrypt");
+        // A mounted volume has to be declared, or compose refuses the file.
+        assertThat(compose).contains("qits-edge-letsencrypt:\n    name: qits-edge-letsencrypt");
+        // insecure-requests stays at its default: every health poll in the boot speaks plain HTTP.
+        assertThat(compose).doesNotContain("INSECURE_REQUESTS");
+
+        assertThat(runArgs).contains("-p 8080:8080")
+                .contains("-p 80:8080")
+                .contains("-p 443:8443")
+                .contains("-p 127.0.0.1:9000:9000")
+                .contains("-v qits-edge-letsencrypt:/work/.letsencrypt")
+                .contains("-e QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT=/work/.letsencrypt/lets-encrypt.crt")
+                .contains("-e QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY=/work/.letsencrypt/lets-encrypt.key")
+                .contains("-e QUARKUS_TLS_RELOAD_PERIOD=1h");
     }
 
     @Test

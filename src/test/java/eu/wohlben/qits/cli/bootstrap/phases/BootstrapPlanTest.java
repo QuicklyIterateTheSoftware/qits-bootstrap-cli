@@ -54,9 +54,11 @@ class BootstrapPlanTest {
                 "publish-angular", "seed-image-ci", "seed-image-deployments",
                 "seed-image-platform-idp", "ci-daemon");
         // The edge needs nothing from the platform — no client bundle, no qits dependency — so its
-        // image is built in the first half, beside the gateway it fronts.
+        // image is built in the first half, beside the gateway it fronts. The nameserver is there
+        // for the same reason: a clone of that repository builds green on its own.
         assertThat(ids).containsSubsequence("seed-image-gateway", "seed-image-platform-edge",
                 "seed-image-platform-artifacts");
+        assertThat(ids).containsSubsequence("seed-image-platform-dns", "seed-artifacts");
         // The daemon digest is written into the compose file and the deployer's run-args, so it is
         // measured before either is generated.
         assertThat(ids).containsSubsequence("ci-daemon", "idp-secrets", "compose-file",
@@ -76,7 +78,7 @@ class BootstrapPlanTest {
         assertThat(ids).containsSubsequence("environment", "deploy-observability",
                 "deploy-oci-postgresql",
                 "deploy-platform-idp", "deploy-stt", "deploy-projects", "deploy-workspaces",
-                "deploy-events", "deploy-platform-docs", "deploy-gateway",
+                "deploy-events", "deploy-platform-docs", "deploy-platform-dns", "deploy-gateway",
                 "deploy-platform-artifacts", "deploy-ci", "deploy-platform-edge",
                 "deploy-deployments");
         assertThat(ids).doesNotContain("deploy-cd", "deploy-serviceregistry");
@@ -92,6 +94,28 @@ class BootstrapPlanTest {
         assertThat(ids).containsSubsequence("preseed", "release-spa-ui-components",
                 "release-integrations-angular", "release-eventstream",
                 "release-integrations-quarkus", "environment", "deploy-observability");
+    }
+
+    /**
+     * The two phases a domain adds, and where they have to sit. The certificate goes BEFORE the seed
+     * stack, because the edge is started there with a keystore and a keystore whose files are missing
+     * fails startup. The zone goes AFTER the health wait, because it is written over the nameserver's
+     * own API.
+     */
+    @Test
+    void aDomainAddsTheCertificateBeforeTheStackAndTheZoneAfterIt() {
+        List<String> ids = ids(plan(Map.of("QITS_DOMAIN", "qits-dev.eu")));
+
+        assertThat(ids).containsSubsequence("pd-run-args", "edge-cert", "seed-stack", "seed-health",
+                "dns-zone");
+    }
+
+    /** No domain is the default, and then neither phase exists at all — nothing to skip at runtime. */
+    @Test
+    void withNoDomainNeitherTheCertificateNorTheZoneIsInThePlan() {
+        assertThat(ids(plan(Map.of()))).doesNotContain("edge-cert", "dns-zone");
+        // The nameserver itself is unconditional: it is seeded, deployed and polled either way.
+        assertThat(ids(plan(Map.of()))).contains("seed-image-platform-dns", "deploy-platform-dns");
     }
 
     @Test

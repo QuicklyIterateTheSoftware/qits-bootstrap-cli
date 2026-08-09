@@ -95,7 +95,7 @@ public final class ComposeTemplate {
               # volume rather than env so a self-update's successor inherits it — env cannot nest these
               # values.
               qits-deployments-config:
-                name: qits-deployments-config
+                name: qits-deployments-config${LETSENCRYPT_VOLUME}
 
             # Each key below is the service's WIRE ALIAS, and so is its container_name: a container's own
             # name resolves on this network exactly as an alias does, so the seed answers to the address
@@ -183,7 +183,7 @@ public final class ComposeTemplate {
                 image: qits/platform-edge:latest
                 container_name: qits-platform-edge
                 ports:
-                  - "${PORT}:8080"
+                  - "${PORT}:8080"${EDGE_TLS_PORTS}
                 environment:
                   # The whole routing surface: which environments exist, and which one an unlabelled host
                   # (localhost, an IP) resolves to. The default MUST be a member of the list — the process
@@ -196,7 +196,53 @@ public final class ComposeTemplate {
                   # to the wire aliases the rest of this file hands out.
                   QITS_EDGE_UPSTREAM_HOST_PATTERN: "{env}-qits-gateway"
                   QITS_EDGE_UPSTREAM_PORT: "8080"
-                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${EDGE_TLS}
+                networks: [qits-net]
+                restart: unless-stopped
+
+              # THE HOST'S SECOND DOOR, and the only one that is not HTTP: the authoritative
+              # nameserver for the platform's own names. A registrar delegates a domain to it and the
+              # internet reaches it on 53; the record API on 8080 is service-to-service and has no
+              # gateway route, deliberately — the gateway proxies HTTP and DNS is not HTTP, so this
+              # is a SIBLING of the edge behind the same public IP rather than something behind it.
+              #
+              # A PLATFORM SERVICE: one delegated nameserver answers for every environment, because a
+              # zone is a row. Two of them would be two servers claiming one IP's port 53 and
+              # disagreeing about what exists.
+              #
+              # In the seed because this bootstrap writes to it: with QITS_DOMAIN set the zone row is
+              # created over the API in this same run, hours before the pipeline could deploy it.
+              # With no domain it runs with no zones at all, which its own README calls a legal state
+              # — a server answering REFUSED for everything is what a platform with no public names
+              # should have.
+              qits-platform-dns:
+                image: qits/platform-dns:latest
+                container_name: qits-platform-dns
+                ports:
+                  # BOTH PROTOCOLS. dnsjava drops a whole RRset that will not fit a UDP answer, so a
+                  # name with several records answers TC=1 and ZERO records and the client's TCP
+                  # retry is the only way it ever gets one. Resolvers also probe TCP outright. The
+                  # listener binds 8053 because below 1024 needs privileges this process should not
+                  # hold, so the publish is what makes it 53.
+                  - "${DNS_PORT}:8053/udp"
+                  - "${DNS_PORT}:8053/tcp"
+                environment:
+                  # SPELLED HERE, AND ONLY HERE, exactly as the idp's and ci's are: compose starts
+                  # this container before any deployer exists, so the bootstrap created the role and
+                  # the database over JDBC and hands the credential over itself. Every deployment
+                  # after this one is handed the same three by qits-platform-deployments, from
+                  # `resources: postgresql:db` in this repository's deployments.yml — which is why
+                  # the run-args line beside this file carries no datasource env either.
+                  #
+                  # It REFUSES TO BOOT without them, and for this service that is the failure worth
+                  # having: a nameserver that came up on an empty store would answer NXDOMAIN for
+                  # every deployed hostname, with nothing anywhere reporting an outage.
+                  QITS_RESOURCE_DB_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_platform_dns
+                  QITS_RESOURCE_DB_USERNAME: qits_platform_dns
+                  QITS_RESOURCE_DB_PASSWORD: "${PG_PLATFORM_DNS_PASSWORD}"
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${DNS_IDENTITY}
+                # No volume: the store is the postgres below and this service writes nothing that
+                # outlives the container.
                 networks: [qits-net]
                 restart: unless-stopped
 
@@ -493,7 +539,7 @@ public final class ComposeTemplate {
             #
             # THE HOST PORT IS THE EDGE'S. qits-gateway carries no -p at all any more; publishing it from two
             # applications is a bind conflict that only shows up on the second cutover.
-            qits.platform.deployments.run-args.qits-platform-edge=-p ${PORT}:8080 -e QITS_EDGE_ENVIRONMENTS=${ENV_NAME} -e QITS_EDGE_DEFAULT_ENVIRONMENT=${ENV_NAME} -e QITS_EDGE_UPSTREAM_HOST_PATTERN={env}-qits-gateway -e QITS_EDGE_UPSTREAM_PORT=8080 -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            ${EDGE_TLS_NOTE}qits.platform.deployments.run-args.qits-platform-edge=-p ${PORT}:8080${EDGE_TLS_ARGS} -e QITS_EDGE_ENVIRONMENTS=${ENV_NAME} -e QITS_EDGE_DEFAULT_ENVIRONMENT=${ENV_NAME} -e QITS_EDGE_UPSTREAM_HOST_PATTERN={env}-qits-gateway -e QITS_EDGE_UPSTREAM_PORT=8080 -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             qits.platform.deployments.run-args.qits-gateway=-e QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=qits-platform-artifacts -e QITS_GATEWAY_PROXY_HOSTS_CI=${ENV_NAME}-qits-ci -e QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS=${ENV_NAME}-qits-deployments -e QITS_GATEWAY_PROXY_HOSTS_OBSERVABILITY=${ENV_NAME}-qits-observability -e QITS_GATEWAY_PROXY_HOSTS_PROJECTS=${ENV_NAME}-qits-projects -e QITS_GATEWAY_PROXY_HOSTS_WORKSPACES=${ENV_NAME}-qits-workspaces -e QITS_GATEWAY_PROXY_HOSTS_STT=${ENV_NAME}-qits-stt -e QITS_GATEWAY_PROXY_HOSTS_EVENTS=${ENV_NAME}-qits-events -e QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DOCS=qits-platform-docs -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The push token rides here so it is already in place when the default branch's protection is
             # switched on: turning protection on is then one property on the artifacts side, not a two-part
@@ -566,6 +612,21 @@ public final class ComposeTemplate {
             # shipped list rather than extending it — and every id in them is a wire alias, so they move with
             # the environment name while the image's defaults cannot.
             qits.platform.deployments.run-args.qits-platform-idp=-e QITS_IDP_ISSUER=${IDP} -e QITS_IDP_CLIENTS=${IDP_CLIENTS} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_SECRET=${IDP_SECRET_CI} -e QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_SECRET=${IDP_SECRET_PLATFORM_ARTIFACTS} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_SECRET=${IDP_SECRET_WORKSPACES} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_GATEWAY_SECRET=${IDP_SECRET_GATEWAY} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_AUDIENCES=${IDP_AUDIENCES} -e QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_AUDIENCES=${IDP_AUDIENCES} -e QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_CLAIMS_PROJECT=* -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # The nameserver's own deployment. TWO PUBLISHES, BOTH PROTOCOLS: the deployed container
+            # is what answers a registrar's delegation, so a -p missing here is a domain that stops
+            # resolving at the first cutover, and a missing /tcp loses every answer too big for a UDP
+            # packet. The port is the same knob the seed publishes (QITS_DNS_PORT), because a
+            # delegation cannot follow a port that moved.
+            #
+            # NO DATASOURCE ENV AND NO VOLUME: `resources: postgresql:db` in its deployments.yml is
+            # what gets it a store, and the deployer injects the triple from its registry row before
+            # the successor starts — pinning it here would outlive a rotation and break the
+            # deployment it looks like it is configuring. The seed compose block spells the same three
+            # variables because it starts this container before any deployer exists.
+            #
+            # No machine auth: the record API's write guard is qits.dns.token, which this platform
+            # leaves blank, and there is no gateway route to reach it from outside qits-net.
+            qits.platform.deployments.run-args.qits-platform-dns=-p ${DNS_PORT}:8053/udp -p ${DNS_PORT}:8053/tcp -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080${DNS_IDENTITY_ARGS}
             qits.platform.deployments.run-args.qits-stt=-v qits-stt-data:/data -e QITS_SPEECH_HOME=/data/speech -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE VOLUME STAYS AND THE DATASOURCE ENV IS GONE, which is the whole shape of this service's
             # move to postgres. /data is not the database's — it is QITS_PROJECTS_DATA_DIR below, the git

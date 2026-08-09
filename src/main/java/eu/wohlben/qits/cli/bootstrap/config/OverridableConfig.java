@@ -15,6 +15,7 @@ public class OverridableConfig implements BootstrapConfig {
     private Boolean skipBuild;
     private Boolean tui;
     private String platformEnv;
+    private String domain;
 
     public OverridableConfig(BootstrapConfig base) {
         this.base = base;
@@ -38,6 +39,12 @@ public class OverridableConfig implements BootstrapConfig {
     /** {@code --platform-env}; blank is no answer, so {@code .env} keeps it. */
     public OverridableConfig platformEnv(String value) {
         this.platformEnv = value == null || value.isBlank() ? null : value.strip();
+        return this;
+    }
+
+    /** {@code --domain}; blank is no answer, so {@code .env} keeps it. */
+    public OverridableConfig domain(String value) {
+        this.domain = value == null || value.isBlank() ? null : value.strip();
         return this;
     }
 
@@ -79,6 +86,16 @@ public class OverridableConfig implements BootstrapConfig {
     @Override
     public int pgPort() {
         return base.pgPort();
+    }
+
+    @Override
+    public int dnsPort() {
+        return base.dnsPort();
+    }
+
+    @Override
+    public Optional<String> domain() {
+        return domain != null ? Optional.of(domain) : base.domain();
     }
 
     @Override

@@ -26,6 +26,10 @@ class UnwrapPhasesTest {
     @Test
     void theConfigVolumesStay() {
         assertThat(UnwrapPhases.isData("qits-deployments-config")).isFalse();
+        // And so does the edge's certificate. A re-bootstrap is a cold boot of the DATABASES; a
+        // Let's Encrypt certificate is neither data nor config but it is rate-limited to re-issue,
+        // and the "matches neither list" rule is what keeps it. --with-volumes still takes it.
+        assertThat(UnwrapPhases.isData("qits-edge-letsencrypt")).isFalse();
     }
 
     @Test

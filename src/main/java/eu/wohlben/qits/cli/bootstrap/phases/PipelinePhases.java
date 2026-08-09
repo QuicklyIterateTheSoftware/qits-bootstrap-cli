@@ -3,6 +3,7 @@ package eu.wohlben.qits.cli.bootstrap.phases;
 import com.fasterxml.jackson.databind.JsonNode;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.Json;
+import eu.wohlben.qits.cli.bootstrap.config.DomainName;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.engine.Waiter;
@@ -128,6 +129,13 @@ public class PipelinePhases {
                     () -> boot.http.get("http://" + env + "-qits-gateway:8080/q/health/ready",
                             Map.of()));
             boot.awaitHealth(ctx, "qits-platform-artifacts (on qits-net)", boot.artifacts::health);
+            // At its OWN alias, which is the one exception to "everything through the edge": there
+            // is no gateway route to this service and there must not be one, so its record API is
+            // addressed directly. Health lives under /dns/q because that is the service's own
+            // non-application root path, and readiness includes the database it refuses to boot
+            // without — which is exactly what the zone write two phases from now needs.
+            boot.awaitHealth(ctx, "qits-platform-dns (on qits-net, no gateway route)",
+                    () -> boot.http.get(boot.config.dnsUrl() + "/q/health/ready", Map.of()));
             // Through the edge and the gateway's route table, and at the service's own alias if
             // that route is not up yet. Either answer means the service is ready; the first also
             // proves the whole path the rest of this run calls ci and the deployer through, which
@@ -929,6 +937,10 @@ public class PipelinePhases {
             report.add("gateway:   " + env + "-qits-gateway on qits-net "
                     + "(variant: local, UNAUTHENTICATED) — no host port of its own");
             report.add("registry:  localhost:" + boot.config.registryPort() + " (host daemon only)");
+            report.add("dns:       qits-platform-dns, published on " + boot.config.dnsPort()
+                    + " udp AND tcp — a sibling of the edge, never a route behind it.");
+            report.add("           Zones and records are ROWS: " + boot.config.dnsUrl()
+                    + "/api/zones");
             report.add("git host:  http://localhost:" + boot.config.port() + "/artifacts/git/<repoId>");
             report.add("dev loop:  commit in a repo, rerun with QITS_SKIP_BUILD=1 — the push redeploys it");
             report.add("deploy:    push " + boot.config.envBranch()
@@ -960,7 +972,36 @@ public class PipelinePhases {
                         + "and artifacts trust the network");
             }
             report.add("state:     seed compose + .qits-bootstrap.env in " + boot.state.wrapperDir);
-            report.add("!! not part of either set (no image exists): qits-platform-dns");
+            // Only with a domain, and every line of it is a step this program cannot take itself:
+            // the ACME order is made from the host by a CLI, and the delegation and the records need
+            // this machine's public address, which a container behind a NAT cannot learn.
+            DomainName.of(boot.config).ifPresent(domain -> {
+                report.add("domain:    " + domain + " — the zone row exists and answers; it has no "
+                        + "records yet.");
+                report.add("           1. At the registrar: NS " + DomainName.nsName(domain)
+                        + " for " + domain + ", plus a GLUE A record");
+                report.add("              " + DomainName.nsName(domain)
+                        + " -> this host's public IP. An NS holds a hostname, so");
+                report.add("              without the glue nothing can find the server it names.");
+                report.add("           2. Write the records: POST " + boot.config.dnsUrl()
+                        + "/api/zones/{id}/records");
+                report.add("              (their values are that same public IP, which this run "
+                        + "cannot know).");
+                report.add("tls:       the edge holds a PLACEHOLDER certificate — browsers reject "
+                        + "it. Issue the real one");
+                report.add("           from this host, staging while we trial it:");
+                report.add("             quarkus tls lets-encrypt issue-certificate --staging "
+                        + "--domain=" + domain + " \\");
+                report.add("               --email=<operator> "
+                        + "--management-url=http://localhost:9000");
+                report.add("           Renewal is renew-certificate with the same management URL. "
+                        + "The PEMs land in the");
+                report.add("           qits-edge-letsencrypt volume under the same two filenames "
+                        + "and the TLS registry");
+                report.add("           reloads within the hour, so neither is a redeploy. HTTP-01 "
+                        + "needs port 80 reachable");
+                report.add("           from the internet and the delegation above in place.");
+            });
             report.add("!! workspace containers need a qits/workspace:latest base image supplied separately");
             report.forEach(ctx::log);
         });

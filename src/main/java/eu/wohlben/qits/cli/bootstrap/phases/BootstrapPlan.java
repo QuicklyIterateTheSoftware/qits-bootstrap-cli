@@ -1,10 +1,12 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
+import eu.wohlben.qits.cli.bootstrap.config.DomainName;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * The boot, as an ordered list built from configuration. The order is the script's, and the
@@ -48,6 +50,10 @@ public final class BootstrapPlan {
             // Beside artifacts because it needs nothing either: the image is upstream postgres,
             // built from one FROM line, so it costs seconds rather than a native build.
             phases.add(seed.seedImage("oci-postgresql"));
+            // The nameserver is in the first half for the same reason as the edge: a clone of that
+            // repository builds green on its own — no qits Maven dependency, no client bundle — so
+            // its image needs nothing this run has not got yet.
+            phases.add(seed.seedImage("platform-dns"));
             phases.add(seed.seedArtifactsStart());
             phases.add(seed.mavenPublish("eventstream", "qits-eventstream",
                     "publish qits-eventstream into seed artifacts"));
@@ -73,8 +79,16 @@ public final class BootstrapPlan {
         phases.add(seed.idpSecrets());
         phases.add(seed.composeFile());
         phases.add(seed.pdRunArgs());
+        // BEFORE the edge is started with a keystore, which is what the next phase does: a keystore
+        // naming files that do not exist fails startup, so the volume has to hold a certificate
+        // first. Only with a domain — without one the edge has no keystore at all.
+        Optional<String> domain = DomainName.of(boot.config);
+        domain.ifPresent(name -> phases.add(seed.placeholderCertificate(name)));
         phases.add(pipeline.seedStackUp());
         phases.add(pipeline.seedHealth());
+        // After the nameserver has answered, because this writes to it. A zone is what makes it
+        // answer for the domain at all; the records need a public address this run cannot know.
+        domain.ifPresent(name -> phases.add(seed.dnsZone(name)));
         phases.add(pipeline.daemonPublish());
         phases.add(pipeline.gitRepositories());
         phases.add(pipeline.releaseTrainPreseed());

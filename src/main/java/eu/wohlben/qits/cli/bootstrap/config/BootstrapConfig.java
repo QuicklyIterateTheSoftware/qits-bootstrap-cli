@@ -74,6 +74,46 @@ public interface BootstrapConfig {
     @WithDefault("5433")
     int pgPort();
 
+    /**
+     * Host port qits-platform-dns publishes — <b>on UDP and on TCP</b>.
+     * <p>
+     * 53, because this is the port a registrar's delegation ultimately reaches and a nameserver on
+     * any other one is a nameserver nobody can find. The service binds 8053 inside the container
+     * (below 1024 needs privileges it should not hold), so the publish is what makes it 53.
+     * <p>
+     * <b>Both protocols, and TCP is not the optional half.</b> dnsjava drops a whole RRset that will
+     * not fit a UDP answer, so a name with several records answers TC=1 and <i>zero</i> records and
+     * the client's TCP retry is the only way it ever gets an answer. Resolvers also probe TCP
+     * outright.
+     * <p>
+     * Move it when something on the host already holds 53 — systemd-resolved is the usual one. A
+     * delegation cannot name a port, so any other value is a local-testing answer rather than a
+     * public one.
+     */
+    @WithDefault("53")
+    int dnsPort();
+
+    /**
+     * <b>The domain this platform serves</b>, and the one knob the whole public-name path hangs off:
+     * the dns service's zone row and its SOA/NS identity ({@code ns1.<domain>},
+     * {@code hostmaster.<domain>}), and the name the edge's Let's Encrypt certificate is issued for.
+     * <p>
+     * <b>Unset is the default and a supported state</b>, not a half-configured one: qits-platform-dns
+     * runs with no zones and no SOA synthesis — which its own README documents as legal — and the
+     * edge publishes the one plain-HTTP port it always did. Everything the domain adds is absent
+     * rather than broken.
+     * <p>
+     * Set, four things follow in this run: the dns container is given its NS identity, the zone is
+     * created over its API, the edge gets 80, 443 and a loopback management port with a certificate
+     * slot on a volume, and the closing report prints the issuance command. What it does NOT do is
+     * write A records or touch a registrar: both need this host's public IP, which the bootstrap has
+     * no way to know.
+     * <p>
+     * Validated by {@link DomainName}, on the host half, before the payload image is built: a typo
+     * here would otherwise become a zone row and a certificate request for a name nobody owns.
+     */
+    Optional<String> domain();
+
     /** 1 = the seed images and the daemon binary exist; skip to compose and the pushes. */
     @WithDefault("false")
     boolean skipBuild();
@@ -219,5 +259,20 @@ public interface BootstrapConfig {
      */
     default String platformDeploymentsUrl() {
         return "http://qits-platform-edge:8080/platform-deployments";
+    }
+
+    /**
+     * qits-platform-dns' HTTP surface — its health and the zone API — <b>at its own alias, not
+     * through the edge</b>, which is the one exception to the rule the two addresses above follow.
+     * There is no gateway route to this service and there must not be one: the gateway proxies HTTP
+     * and the record API is a service-to-service door, so every caller addresses it directly.
+     * <p>
+     * The path is {@code /dns} because that is the service's own
+     * {@code quarkus.http.non-application-root-path} — health is {@code /dns/q/health/ready} and the
+     * zones are {@code /dns/api/zones}. The wire protocol is a different door entirely: UDP and TCP
+     * on 8053, published by {@link #dnsPort()}, and nothing here speaks it.
+     */
+    default String dnsUrl() {
+        return "http://qits-platform-dns:8080/dns";
     }
 }

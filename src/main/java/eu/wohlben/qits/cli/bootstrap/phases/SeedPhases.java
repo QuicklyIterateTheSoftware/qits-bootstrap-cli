@@ -1,12 +1,15 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
 import eu.wohlben.qits.cli.bootstrap.api.Http;
+import eu.wohlben.qits.cli.bootstrap.api.Json;
+import eu.wohlben.qits.cli.bootstrap.config.DomainName;
 import eu.wohlben.qits.cli.bootstrap.config.WrapperDir;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.platform.BootstrapState;
 import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
+import eu.wohlben.qits.cli.bootstrap.platform.DomainTokens;
 import eu.wohlben.qits.cli.bootstrap.platform.PgAdmin;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.platform.SeedDockerfile;
@@ -106,6 +109,15 @@ public class SeedPhases {
                 ctx.log("  cold start: the wrapper phase clones it from " + boot.config.orgUrl());
             }
             ctx.log("  sources: " + boot.state.srcDir);
+            // Printed rather than assumed: everything the domain switches on — the dns zone, the
+            // nameserver's SOA identity, the edge's TLS ports and its certificate — is invisible in
+            // a log that never says which of the two runs this is. The value was checked before the
+            // payload image was built, so this line cannot be the first place a typo shows.
+            DomainName.of(boot.config).ifPresentOrElse(
+                    domain -> ctx.log("  domain: " + domain + "  (ns " + DomainName.nsName(domain)
+                            + ", hostmaster " + DomainName.hostmaster(domain) + ")"),
+                    () -> ctx.log("  domain: none — dns serves no zones and the edge stays on "
+                            + "plain HTTP"));
 
             long local = PlatformModel.platformRepos().stream()
                     .filter(name -> boot.git.isCheckout(boot.state.wrapperCheckout(name)))
@@ -675,10 +687,12 @@ public class SeedPhases {
      * value below is generated on the first boot and recorded, and initdb takes it instead.
      * <p>
      * <b>Which databases are here, and which are deliberately not.</b> This phase provisions what
-     * the SEED STACK needs: the deployer's own store, and the stores of the two core services that
-     * come up beside it — qits-ci (its database and its outbox) and qits-platform-idp. All three
-     * run Flyway at boot against a database that has to exist already, and at that point in a cold
-     * boot no deployer exists to make one. Everything else — projects, workspaces, events — is
+     * the SEED STACK needs: the deployer's own store, and the stores of the core services that
+     * come up beside it — qits-ci (its database and its outbox), qits-platform-idp and
+     * qits-platform-dns. Every one of them runs Flyway at boot against a database that has to exist
+     * already, and at that point in a cold boot no deployer exists to make one. The nameserver is
+     * the loudest about it on purpose: it refuses to start rather than answer NXDOMAIN for every
+     * hostname the platform hands out. Everything else — projects, workspaces, events — is
      * pipeline-deployed only, so the deployer creates their roles and databases during their own
      * deployments from the {@code resources:} line in each repository's deployments.yml. Adding
      * them here would put a second authority on a credential that has exactly one.
@@ -698,11 +712,14 @@ public class SeedPhases {
                     "qits.pg.ci-eventstream-password");
             String platformIdp = pgPassword(ctx, state, "PG_PLATFORM_IDP_PASSWORD",
                     "qits.pg.platform-idp-password");
+            String platformDns = pgPassword(ctx, state, "PG_PLATFORM_DNS_PASSWORD",
+                    "qits.pg.platform-dns-password");
             boot.state.pgSuperuserPassword = superuser;
             boot.state.pgDeploymentsPassword = deployments;
             boot.state.pgCiPassword = ci;
             boot.state.pgCiEventstreamPassword = ciEventstream;
             boot.state.pgPlatformIdpPassword = platformIdp;
+            boot.state.pgPlatformDnsPassword = platformDns;
 
             // RECORDED BEFORE THE SERVER IS STARTED, and the order is the whole point.
             // POSTGRES_PASSWORD applies at initdb only: once the data volume holds a cluster, the
@@ -718,6 +735,7 @@ public class SeedPhases {
             state.put("PG_CI_PASSWORD", ci);
             state.put("PG_CI_EVENTSTREAM_PASSWORD", ciEventstream);
             state.put("PG_PLATFORM_IDP_PASSWORD", platformIdp);
+            state.put("PG_PLATFORM_DNS_PASSWORD", platformDns);
             state.write();
             ctx.log("  recorded in " + state.file() + " before the server starts");
 
@@ -777,8 +795,14 @@ public class SeedPhases {
                 provision(ctx, admin, "qits_ci", ci, false);
                 provision(ctx, admin, "qits_ci_eventstream", ciEventstream, false);
                 provision(ctx, admin, "qits_platform_idp", platformIdp, false);
+                // The nameserver, on the same terms: it is in the seed, so it boots from the compose
+                // file before any deployer could have created it a database, and it refuses to boot
+                // without one. The name is the deployer's own default for this application —
+                // qits-platform-dns with the prefix dropped and dashes underscored — so the row the
+                // deployer registers later is the row this creates.
+                provision(ctx, admin, "qits_platform_dns", platformDns, false);
             }
-            ctx.note("4 databases ready on " + pg);
+            ctx.note("5 databases ready on " + pg);
         });
     }
 
@@ -909,7 +933,8 @@ public class SeedPhases {
                     // day one of them is pinned here by hand.
                     .mask(orEmpty(boot.state.pgCiPassword))
                     .mask(orEmpty(boot.state.pgCiEventstreamPassword))
-                    .mask(orEmpty(boot.state.pgPlatformIdpPassword)), ctx::log);
+                    .mask(orEmpty(boot.state.pgPlatformIdpPassword))
+                    .mask(orEmpty(boot.state.pgPlatformDnsPassword)), ctx::log);
             Boot.must(result, "writing the deployer's run-args failed");
             ctx.log("  " + properties.lines().filter(l -> l.startsWith("qits.platform.deployments.run-args")).count()
                     + " applications configured on the qits-deployments-config volume");
@@ -967,6 +992,96 @@ public class SeedPhases {
         ctx.note("run-args changed, " + name + " restarted");
     }
 
+    // --- what a domain adds -----------------------------------------------------------------------
+
+    /**
+     * <b>A self-signed certificate for the domain, so the edge can start at all.</b>
+     * <p>
+     * The edge's keystore names two files on the qits-edge-letsencrypt volume, and a keystore whose
+     * files are missing fails startup — so on a cold boot the volume has to hold something before
+     * compose starts the edge with that configuration. This writes it. It is a placeholder in the
+     * only sense that matters: browsers reject it, and the real PEMs land in the same two filenames
+     * when {@code quarkus tls lets-encrypt issue-certificate} runs, after which the TLS registry
+     * reloads within the reload period.
+     * <p>
+     * <b>Skipped whenever a certificate is already there</b>, and that check is not an optimisation:
+     * overwriting would replace a REAL certificate with a self-signed one, on a running public
+     * platform, every time somebody reran the boot. The existence test and the write are one
+     * container so nothing can happen between them.
+     * <p>
+     * <b>The image is alpine/git with openssl added</b> — the same image the run-args write uses one
+     * phase earlier, so the boot pulls nothing new. It carries git and not openssl (measured, on
+     * 2026-08-09), and the platform's other already-present images carry neither: nginx:alpine and
+     * the qits service images have no openssl binary either. {@code apk add} is what the two npm
+     * publish phases already do, so it adds no dependency the boot did not have.
+     * <p>
+     * {@code chown 1001:0} for the same reason the run-args write has it: the edge runs as that
+     * unprivileged uid and cannot read a root-owned key.
+     */
+    public Phase placeholderCertificate(String domain) {
+        return new Phase("edge-cert", "seed a placeholder certificate for " + domain
+                + " on the edge's volume", ctx -> {
+            boot.docker.ensureVolume("qits-edge-letsencrypt", ctx::log);
+            String script = """
+                    set -eu
+                    if [ -f /cert/lets-encrypt.crt ]; then
+                      echo "a certificate is already there — leaving it alone"
+                      exit 0
+                    fi
+                    apk add --no-cache openssl >/dev/null
+                    openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \\
+                      -subj "/CN=%1$s" -addext "subjectAltName=DNS:%1$s,DNS:*.%1$s" \\
+                      -keyout /cert/lets-encrypt.key -out /cert/lets-encrypt.crt 2>/dev/null
+                    chown 1001:0 /cert/lets-encrypt.crt /cert/lets-encrypt.key
+                    chmod 644 /cert/lets-encrypt.crt
+                    chmod 640 /cert/lets-encrypt.key
+                    echo "placeholder certificate written for %1$s"
+                    """.formatted(domain);
+            ProcessResult result = boot.docker.run(Cmd.of(List.of(
+                    "docker", "run", "--rm",
+                    "-v", "qits-edge-letsencrypt:/cert",
+                    "--entrypoint", "sh", "alpine/git", "-c", script)), ctx::log);
+            Boot.must(result, "writing the placeholder certificate for " + domain + " failed");
+            boolean kept = result.captured().stream().anyMatch(line -> line.contains("already"));
+            ctx.note(kept ? "certificate kept" : "placeholder written");
+        });
+    }
+
+    /**
+     * <b>The zone row, and nothing else.</b> A zone is what makes the nameserver answer for a name at
+     * all: without one every query for the domain is REFUSED, whatever records exist.
+     * <p>
+     * <b>No records are created, and that is not an omission.</b> An A record's value is this host's
+     * PUBLIC address, which this program has no way to learn — it runs in a container behind a NAT it
+     * cannot see past, and guessing would publish a name that resolves to a private address. So the
+     * records and the registrar's delegation are the operator's two steps, and the closing report
+     * says so.
+     * <p>
+     * Idempotent: 201 is this call creating it, 409 is the service saying it or an overlapping zone is
+     * already there — which is a rerun, and the message names the zone it overlapped. No token: the
+     * write guard is {@code qits.dns.token}, blank on this platform, and the service is reachable only
+     * from qits-net.
+     */
+    public Phase dnsZone(String domain) {
+        return new Phase("dns-zone", "create the zone " + domain + " in qits-platform-dns", ctx -> {
+            String url = boot.config.dnsUrl() + "/api/zones";
+            ctx.status("POST " + url + " " + domain);
+            Http.Response response =
+                    boot.http.postJson(url, Json.object("fqdn", domain), Map.of());
+            if (response.status() == 201) {
+                ctx.log("  zone " + domain + " created");
+            } else if (response.status() == 409) {
+                ctx.log("  zone " + domain + " is already there: " + response.body());
+            } else {
+                throw new IllegalStateException("creating the zone " + domain + " answered "
+                        + response.describe());
+            }
+            ctx.log("  no records seeded: their values are this host's PUBLIC address, which this "
+                    + "run cannot know");
+            ctx.note(domain);
+        });
+    }
+
     /** The values both generated files are filled with. */
     Map<String, String> tokens() {
         String env = boot.config.envName();
@@ -981,12 +1096,14 @@ public class SeedPhases {
         values.put("PORT", String.valueOf(boot.config.port()));
         values.put("REGISTRY_PORT", String.valueOf(boot.config.registryPort()));
         values.put("PG_PORT", String.valueOf(boot.config.pgPort()));
+        values.put("DNS_PORT", String.valueOf(boot.config.dnsPort()));
         // Resolved by seed-postgres, which runs before both generated files are written.
         values.put("PG_SUPERUSER_PASSWORD", orEmpty(boot.state.pgSuperuserPassword));
         values.put("PG_DEPLOYMENTS_PASSWORD", orEmpty(boot.state.pgDeploymentsPassword));
         values.put("PG_CI_PASSWORD", orEmpty(boot.state.pgCiPassword));
         values.put("PG_CI_EVENTSTREAM_PASSWORD", orEmpty(boot.state.pgCiEventstreamPassword));
         values.put("PG_PLATFORM_IDP_PASSWORD", orEmpty(boot.state.pgPlatformIdpPassword));
+        values.put("PG_PLATFORM_DNS_PASSWORD", orEmpty(boot.state.pgPlatformDnsPassword));
         values.put("IDP", boot.config.idpIssuer());
         values.put("PUSH_TOKEN", boot.config.pushToken());
         values.put("MACHINE_REQUIRED", String.valueOf(boot.config.machineAuth()));
@@ -1003,6 +1120,9 @@ public class SeedPhases {
             values.put("IDP_SECRET_" + PlatformModel.clientKey(app),
                     boot.state.secrets.getOrDefault(PlatformModel.wireAlias(app, env), ""));
         }
+        // What QITS_DOMAIN adds, and nothing when there is none: every one of these is empty then,
+        // so both files render exactly as a platform with no public names always rendered them.
+        values.putAll(DomainTokens.of(DomainName.of(boot.config)));
         return values;
     }
 

@@ -81,9 +81,20 @@ class PlatformModelTest {
     }
 
     @Test
-    void thePlatformPlaneIsTheFourThingsThatCannotBePerTier() {
+    void thePlatformPlaneIsWhatCannotBePerTier() {
+        // Five since 2026-08-09: the nameserver is of exactly this kind, because a zone is a row and
+        // one delegation answers for every environment. Two of them would be two servers claiming
+        // one public IP's port 53 and disagreeing about what exists.
         assertThat(PlatformModel.PLATFORM_SERVICES).containsExactlyInAnyOrder(
-                "platform-edge", "platform-idp", "platform-artifacts", "platform-docs");
+                "platform-edge", "platform-idp", "platform-artifacts", "platform-docs",
+                "platform-dns");
+        assertThat(PlatformModel.wireAlias("platform-dns", "prod")).isEqualTo("qits-platform-dns");
+        assertThat(PlatformModel.pdNamePrefix("platform-dns", "prod"))
+                .isEqualTo("qits-pd-qits-platform-dns-");
+        assertThat(PlatformModel.repoPath("platform-dns")).isEqualTo("services/qits-platform-dns");
+        // A service, so its Dockerfile is in docker/ and it has no client bundle to place.
+        assertThat(PlatformModel.dockerfilePath("platform-dns")).isEqualTo("docker/Dockerfile");
+        assertThat(PlatformModel.seedUiPath("platform-dns")).isEmpty();
         // Everything else is a service of the one environment — the gateway included, since
         // qits-platform-edge took the host port that was its only reason to be up here.
         assertThat(PlatformModel.DEPLOYABLES)
@@ -97,9 +108,11 @@ class PlatformModelTest {
 
     @Test
     void theSeedIsEveryServiceTheRestIsBuiltAndReachedThrough() {
+        // The nameserver is in the seed because the boot itself writes to it: with a domain set, the
+        // zone row is created over its API hours before the pipeline could have deployed it.
         assertThat(PlatformModel.CORE).containsExactlyInAnyOrder(
                 "gateway", "platform-edge", "platform-artifacts", "ci", "deployments",
-                "platform-idp", "oci-postgresql");
+                "platform-idp", "platform-dns", "oci-postgresql");
         // Every seed service is also deployed through the pipeline afterwards; nothing stays
         // hand-built.
         assertThat(PlatformModel.DEPLOYABLES).containsAll(PlatformModel.CORE);
@@ -167,6 +180,10 @@ class PlatformModelTest {
         // goes as late as it can — after the gateway it forwards to, before the self-update.
         assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
                 "gateway", "platform-edge", "deployments");
+        // The nameserver goes with the other platform service nothing in this train dials, and its
+        // window must not fall inside the edge's.
+        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
+                "platform-docs", "platform-dns", "platform-edge");
     }
 
     @Test
