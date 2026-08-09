@@ -90,12 +90,21 @@ public interface BootstrapConfig {
     boolean machineAuth();
 
     /**
-     * The standing environment's name. It is not only a label: the wire alias of every environment
-     * service is {@code <this>-qits-<app>}, so it is inside every address the generated files
-     * carry, inside every deployed container's name, and inside every idp client id.
+     * The standing environment's name, and <b>the platform environment</b>: the tier whose branch
+     * deploys the platform plane. {@code --platform-env} on the command line, {@code QITS_ENV_NAME}
+     * in {@code .env}.
      * <p>
-     * {@code prod} because the one environment a platform has is the one it serves from. It was
-     * {@code dev} while the platform ran beside a real one; it does not.
+     * It is not only a label: the wire alias of every environment service is
+     * {@code <this>-qits-<app>}, so it is inside every address the generated files carry, inside
+     * every deployed container's name, and inside every idp client id.
+     * <p>
+     * {@code prod} by default, because the one environment a platform has is the one it serves
+     * from. It was {@code dev} while the platform ran beside a real one; it does not.
+     * <p>
+     * <b>Changing it after a bootstrap is a new platform, not a rename</b>, and the {@code
+     * environment} phase refuses rather than pretending otherwise. Moving the platform plane
+     * between tiers on a live platform is a PATCH on the deployer's {@code pd_environment.platform},
+     * and nothing here does it.
      */
     @WithDefault("prod")
     String envName();

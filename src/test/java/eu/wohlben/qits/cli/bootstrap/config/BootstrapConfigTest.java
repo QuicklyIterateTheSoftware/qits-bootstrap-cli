@@ -103,4 +103,32 @@ class BootstrapConfigTest {
         assertThat(effective.skipBuild()).isFalse();
         assertThat(effective.tui()).isTrue();
     }
+
+    /**
+     * {@code --platform-env} names the standing environment, and with it the deploy ref every
+     * push in the boot goes to. The two move together by construction — {@code envBranch()} is
+     * derived rather than configured — and this is what pins that they still do through an
+     * override.
+     */
+    @Test
+    void platformEnvNamesTheEnvironmentAndItsDeployRef() {
+        BootstrapConfig base = from(Map.of());
+
+        BootstrapConfig effective = new OverridableConfig(base).platformEnv("staging");
+
+        assertThat(effective.envName()).isEqualTo("staging");
+        assertThat(effective.envBranch()).isEqualTo("environment/staging");
+    }
+
+    @Test
+    void platformEnvOutranksTheEnvFileAndABlankOneDoesNot() {
+        BootstrapConfig base = from(Map.of("QITS_ENV_NAME", "from-env"));
+
+        assertThat(new OverridableConfig(base).platformEnv("from-argv").envName())
+                .isEqualTo("from-argv");
+        // picocli hands an absent option through as null, and a shell wrapper can pass "" for one
+        // it did not receive. Neither is an answer.
+        assertThat(new OverridableConfig(base).platformEnv(null).envName()).isEqualTo("from-env");
+        assertThat(new OverridableConfig(base).platformEnv("  ").envName()).isEqualTo("from-env");
+    }
 }

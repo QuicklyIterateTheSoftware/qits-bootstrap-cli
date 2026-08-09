@@ -50,6 +50,18 @@ forced. Add to that list rather than deviating quietly.
   time and the deadline. A silent wait is a bug in this repository, whatever it is waiting for.
 - **Phases are rerun-safe**, the same way the script's were: 409s tolerated, existing networks
   adopted, up-to-date pushes no-ops, publishes probed before they are made.
+- **Rerun-safe is not rename-safe, and the `environment` phase is where that line is drawn.**
+  `--platform-env` names the standing environment, which is also the PLATFORM environment: the one
+  tier whose branch deploys the platform plane. Bootstrapping over a platform whose environment
+  carries another name is **refused**, and the refusal is the feature. The name is inside every wire
+  alias, every deployed container name and every recorded idp secret key, so a PATCH would leave the
+  platform running as `<old>-qits-*` while every generated file addresses `<new>-qits-*` and the idp
+  is handed clients nothing holds credentials for. This phase repairs none of that, and half of it
+  is only repaired by redeploying everything. It stops instead, names what stands there, and points
+  at `unwrap`. The old `List.of("qits", "dev")` rename was right for a migration with two known
+  names and one destination; it is wrong for a knob that makes every name reachable.
+  Moving the plane on a live platform is a PATCH on the deployer's `pd_environment.platform` — with
+  the undeploy and redeploy that implies — and is deliberately not here.
 - **`unwrap` keeps the retired platform's patterns forever.** Cleaning a pre-merge-back machine is
   in scope, so the qits-cd labels and the pre-rename name prefixes stay beside the current ones.
   Adding a pattern is how this changes; removing one is not.

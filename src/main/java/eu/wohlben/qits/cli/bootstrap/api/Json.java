@@ -25,14 +25,32 @@ public final class Json {
         return value == null || value.isNull() ? "" : value.asText();
     }
 
-    /** A JSON object from alternating key and value strings. */
+    /**
+     * Marks a value in {@link #object} as written verbatim rather than quoted — a boolean, a
+     * number, a nested object.
+     * <p>
+     * A marker rather than "quote it unless it looks like a boolean", because a value that looks
+     * like one and is not is exactly the bug that guess would ship, and it would ship it silently.
+     * The marker is a NUL, which no name, branch or network this program sends can contain.
+     */
+    public static String verbatim(String value) {
+        return VERBATIM + value;
+    }
+
+    private static final char VERBATIM = '\0';
+
+    /** A JSON object from alternating key and value strings. See {@link #verbatim}. */
     public static String object(String... keysAndValues) {
         StringBuilder json = new StringBuilder("{");
         for (int i = 0; i + 1 < keysAndValues.length; i += 2) {
             if (i > 0) {
                 json.append(',');
             }
-            json.append(quote(keysAndValues[i])).append(':').append(quote(keysAndValues[i + 1]));
+            String value = keysAndValues[i + 1];
+            json.append(quote(keysAndValues[i])).append(':')
+                    .append(value != null && !value.isEmpty() && value.charAt(0) == VERBATIM
+                            ? value.substring(1)
+                            : quote(value));
         }
         return json.append('}').toString();
     }

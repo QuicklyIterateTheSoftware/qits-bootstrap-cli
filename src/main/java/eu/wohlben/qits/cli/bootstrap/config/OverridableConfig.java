@@ -14,6 +14,7 @@ public class OverridableConfig implements BootstrapConfig {
     private String wrapperDir;
     private Boolean skipBuild;
     private Boolean tui;
+    private String platformEnv;
 
     public OverridableConfig(BootstrapConfig base) {
         this.base = base;
@@ -31,6 +32,12 @@ public class OverridableConfig implements BootstrapConfig {
 
     public OverridableConfig tui(Boolean value) {
         this.tui = value;
+        return this;
+    }
+
+    /** {@code --platform-env}; blank is no answer, so {@code .env} keeps it. */
+    public OverridableConfig platformEnv(String value) {
+        this.platformEnv = value == null || value.isBlank() ? null : value.strip();
         return this;
     }
 
@@ -101,7 +108,7 @@ public class OverridableConfig implements BootstrapConfig {
 
     @Override
     public String envName() {
-        return base.envName();
+        return platformEnv != null ? platformEnv : base.envName();
     }
 
     @Override

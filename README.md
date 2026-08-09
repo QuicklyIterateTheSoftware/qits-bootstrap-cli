@@ -108,7 +108,7 @@ the same names `qits-local-up.sh` read:
 | `QITS_RELEASE_TIMEOUT` | `1800` | seconds to wait per replayed release run |
 | `QITS_HEALTH_TIMEOUT` | `120` | seconds to wait per seed service |
 | `QITS_POLL_INTERVAL` | `10` | seconds between polls |
-| `QITS_ENV_NAME` | `prod` | the environment, and the ONE deploy ref is its `environment/<name>`. It is also inside every wire alias, every deployed container name and every idp client id |
+| `QITS_ENV_NAME` | `prod` | the environment, and the ONE deploy ref is its `environment/<name>`. It is the **platform environment** — the tier whose branch deploys the platform plane — and it is inside every wire alias, every deployed container name and every idp client id. `--platform-env` is the same knob for one run |
 | `QITS_IDP_CLIENT_<ID>_SECRET` | generated | pin one idp client's secret instead of generating it |
 | `QITS_TUI` | `1` | 0 = plain output even on a terminal |
 | `QITS_WEB` | `1` | 0 = no browser view; the HTTP server never binds |
@@ -118,7 +118,15 @@ the same names `qits-local-up.sh` read:
 | `QITS_LOG_FILE` | `qits-bootstrap-cli.log` | the full log of every command |
 | `QITS_CURL_IMAGE` | `curlimages/curl:latest` | how the CLI reaches qits-platform-idp, which publishes no host port |
 
-`--wrapper-dir`, `--skip-build` and `--no-tui` answer the same questions for one run.
+`--wrapper-dir`, `--skip-build`, `--no-tui` and `--platform-env` answer the same questions for one
+run.
+
+`--platform-env <name>` is for a FIRST boot. Bootstrapping over a platform whose environment has
+another name is **refused**, not honoured as a rename: the name is inside every wire alias, every
+deployed container name and every recorded idp secret, so a PATCH would leave the platform running
+as `<old>-qits-*` while every generated file addresses `<new>-qits-*`. The phase names what stands
+there and points at `unwrap`. Moving the plane on a live platform is a PATCH on the deployer's
+`pd_environment.platform`, with the undeploy and redeploy that implies, and nothing here does it.
 
 ## The display
 

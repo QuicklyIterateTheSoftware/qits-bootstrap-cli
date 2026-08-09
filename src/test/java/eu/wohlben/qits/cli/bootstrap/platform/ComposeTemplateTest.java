@@ -182,6 +182,26 @@ class ComposeTemplateTest {
                         + "/platform-deployments/api/events/build-succeeded");
     }
 
+    /**
+     * qits-workspaces is told where a release lands, and it is this environment's deploy ref.
+     * <p>
+     * It ships a default of {@code environment/prod}, so a platform bootstrapped under any other
+     * name would silently promote every release onto a branch no environment listens to — the
+     * release lands, CI never fires, nothing deploys, and no component reports an error. The
+     * run-arg is what stops that, and it is why the key belongs beside the env name rather than in
+     * the image.
+     */
+    @Test
+    void workspacesIsToldWhereAReleaseLands() {
+        assertThat(runArgsLine("qits-workspaces"))
+                .contains("-e QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/prod");
+
+        Map<String, String> staging = tokens();
+        staging.put("ENV_NAME", "staging");
+        assertThat(ComposeTemplate.runArgs(staging))
+                .contains("-e QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/staging");
+    }
+
     @Test
     void runArgsCoverEveryApplicationThatNeedsMoreThanItsImage() {
         String properties = ComposeTemplate.runArgs(tokens());

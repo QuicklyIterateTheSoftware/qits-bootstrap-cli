@@ -34,16 +34,35 @@ public class PdApi {
 
     /** The id of the environment with this name, if there is one. */
     public Optional<String> environmentId(String name) {
+        return environments().stream()
+                .filter(environment -> name.equals(Json.text(environment, "name")))
+                .map(environment -> Json.text(environment, "id"))
+                .findFirst();
+    }
+
+    /**
+     * The environment the platform plane deploys from, if one is designated. Exactly one row
+     * carries the flag — the deployer holds that, by moving it rather than setting it.
+     * <p>
+     * The bootstrap asks so it can REFUSE rather than rename. A platform whose environment is
+     * called something else is not this one under a new name: every running container holds
+     * {@code <old>-qits-*} aliases and the recorded idp secrets are keyed by the old name, so a
+     * rename would leave the platform answering to two at once.
+     */
+    public Optional<JsonNode> platformEnvironment() {
+        return environments().stream()
+                .filter(environment -> environment.path("platform").asBoolean(false))
+                .findFirst();
+    }
+
+    private java.util.List<JsonNode> environments() {
         Http.Response response = http.get(base + "/api/environments", Map.of());
         if (!response.ok()) {
-            return Optional.empty();
+            return java.util.List.of();
         }
-        for (JsonNode environment : Json.parse(response.body()).path("environments")) {
-            if (name.equals(Json.text(environment, "name"))) {
-                return Optional.of(Json.text(environment, "id"));
-            }
-        }
-        return Optional.empty();
+        java.util.List<JsonNode> environments = new java.util.ArrayList<>();
+        Json.parse(response.body()).path("environments").forEach(environments::add);
+        return environments;
     }
 
 
@@ -52,10 +71,16 @@ public class PdApi {
         return token == null || token.isBlank() ? Map.of()
                 : Map.of("Authorization", "Bearer " + token);
     }
+    /**
+     * The standing environment, created as THE PLATFORM ENVIRONMENT. That flag is what lets a green
+     * build of a platform service deploy at all: the deployer ships the platform plane only from
+     * the branch this environment listens to, and from no other tier's.
+     */
     public Http.Response createEnvironment(String name, String branch, String network,
             String token) {
         return http.postJson(base + "/api/environments",
-                Json.object("name", name, "branch", branch, "network", network),
+                Json.object("name", name, "branch", branch, "network", network,
+                        "platform", Json.verbatim("true")),
                 bearer(token));
     }
 

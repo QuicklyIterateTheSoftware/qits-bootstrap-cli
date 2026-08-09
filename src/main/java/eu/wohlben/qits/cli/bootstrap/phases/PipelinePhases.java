@@ -293,9 +293,16 @@ public class PipelinePhases {
     // --- the environment --------------------------------------------------------------------------
 
     /**
-     * One standing environment: name dev, branch environment/dev, the shared network. NO
-     * applications array — registration is derived from the repo's deployments.yml on the first
-     * green build of the branch that deploys it.
+     * One standing environment — the one {@code --platform-env} names: its branch
+     * {@code environment/<name>}, the shared network, and the PLATFORM flag. NO applications array;
+     * registration is derived from the repo's deployments.yml on the first green build of the
+     * branch that deploys it.
+     * <p>
+     * The flag is not decoration. The deployer ships a platform service only from the branch the
+     * platform environment listens to, so an environment created without it leaves
+     * qits-platform-idp, qits-platform-artifacts, qits-platform-docs and the edge registering
+     * nothing and deploying nowhere — silently, because "no tier is the platform one" and "this
+     * branch is not the platform tier's" are one answer.
      * <p>
      * RECONCILE, NEVER RECREATE. A DELETE tears down every container of the environment, which here
      * is the whole platform, the deployer included.
@@ -327,51 +334,73 @@ public class PipelinePhases {
             String branch = boot.config.envBranch();
             Optional<String> existing = boot.pd.environmentId(name);
             if (existing.isPresent()) {
-                patch(existing.get(), Json.object("branch", branch));
+                // Also re-asserts the platform flag, which is what carries a platform bootstrapped
+                // before the flag existed onto it. Designating is a move on the deployer's side, so
+                // asserting it on the row that already holds it changes nothing.
+                patch(existing.get(),
+                        Json.object("branch", branch, "platform", Json.verbatim("true")));
                 boot.state.environmentId = existing.get();
                 ctx.log("  reconciled the existing '" + name + "' environment onto " + branch);
             } else {
-                // A row this platform's own earlier lives created under a name that has since
-                // moved: 'qits' before environments were named after tiers, 'dev' before the one
-                // environment became the one it serves from. Renaming in place keeps its
-                // applications, its deployments and its containers; creating a second row beside
-                // it would leave every one of them owned by an environment nothing deploys.
-                //
-                // Only the FIRST of these that exists is taken, and only when the wanted name has
-                // no row of its own. A clean bootstrap finds neither and simply creates.
-                Optional<String> preRename = List.of("qits", "dev").stream()
-                        .filter(old -> !old.equals(name))
-                        .map(boot.pd::environmentId)
-                        .flatMap(Optional::stream)
-                        .findFirst();
-                if (preRename.isPresent()) {
-                    patch(preRename.get(), Json.object("name", name, "branch", branch));
-                    boot.state.environmentId = preRename.get();
-                    ctx.log("  renamed a pre-rename environment row to '" + name + "' on " + branch);
+                refuseIfAnotherEnvironmentIsThePlatformOne(name);
+                Http.Response created = boot.pd.createEnvironment(name, branch, Boot.NETWORK,
+                        boot.tokenOrNull(PlatformModel.wireAlias("ci", boot.config.envName()),
+                    PlatformModel.wireAlias("deployments", boot.config.envName())));
+                if (created.status() == 201) {
+                    boot.state.environmentId = Json.text(
+                            Json.parse(created.body()).path("environment"), "id");
+                } else if (created.status() == 409) {
+                    // Created between the listing above and this POST. Take the row and
+                    // reconcile it.
+                    String id = boot.pd.environmentId(name).orElseThrow(() ->
+                            new IllegalStateException("environment create answered 409 but '"
+                                    + name + "' is not listed"));
+                    patch(id, Json.object("branch", branch, "platform", Json.verbatim("true")));
+                    boot.state.environmentId = id;
                 } else {
-                    Http.Response created = boot.pd.createEnvironment(name, branch, Boot.NETWORK,
-                            boot.tokenOrNull(PlatformModel.wireAlias("ci", boot.config.envName()),
-                        PlatformModel.wireAlias("deployments", boot.config.envName())));
-                    if (created.status() == 201) {
-                        boot.state.environmentId = Json.text(
-                                Json.parse(created.body()).path("environment"), "id");
-                    } else if (created.status() == 409) {
-                        // Created between the listing above and this POST. Take the row and
-                        // reconcile it.
-                        String id = boot.pd.environmentId(name).orElseThrow(() ->
-                                new IllegalStateException("environment create answered 409 but '"
-                                        + name + "' is not listed"));
-                        patch(id, Json.object("branch", branch));
-                        boot.state.environmentId = id;
-                    } else {
-                        throw new IllegalStateException("environment create answered "
-                                + created.describe());
-                    }
+                    throw new IllegalStateException("environment create answered "
+                            + created.describe());
                 }
             }
             ctx.log("  environment " + name + " (" + boot.state.environmentId + ") — branch "
-                    + branch + ", network " + Boot.NETWORK);
+                    + branch + ", network " + Boot.NETWORK + ", the platform environment");
             ctx.note(name + " on " + branch);
+    }
+
+    /**
+     * A platform already stands here under another name: STOP.
+     * <p>
+     * This used to rename. A row called {@code qits} or {@code dev} — the names environments had
+     * before they were named after tiers — was PATCHed onto the wanted name, which kept its
+     * applications, its deployments and its containers rather than stranding them behind a second
+     * row nothing deploys. That was right for a migration with two known names and one destination.
+     * It is wrong for a knob: {@code --platform-env} makes any name reachable, so the rename would
+     * fire on a re-bootstrap that simply mistyped, or on one deliberately naming a second tier.
+     * <p>
+     * And a rename is not what it looks like. The name is inside every wire alias, every deployed
+     * container's name and every idp client id, so PATCHing the row leaves the platform running as
+     * {@code <old>-qits-*} while every generated file addresses {@code <new>-qits-*}; the recorded
+     * secrets are keyed by the old name too, so the idp would be handed clients nothing holds
+     * credentials for. Not one of those is repaired by this phase, and half of them are only
+     * repaired by redeploying everything.
+     * <p>
+     * So the boot stops with the two facts a person needs: what is standing here, and that
+     * {@code unwrap} is the way out. Moving the plane on a LIVE platform is a different operation —
+     * a PATCH on the deployer designating another tier, with the undeploy and redeploy that implies
+     * — and it is deliberately not this.
+     */
+    private void refuseIfAnotherEnvironmentIsThePlatformOne(String wanted) {
+        boot.pd.platformEnvironment().ifPresent(environment -> {
+            String standing = Json.text(environment, "name");
+            throw new IllegalArgumentException(
+                    "The platform environment here is '" + standing + "' (branch "
+                            + Json.text(environment, "branch") + "), and this boot asks for '"
+                            + wanted + "'. Renaming it would leave every running container on "
+                            + standing + "-qits-* aliases and orphan the recorded IDP_SECRET_"
+                            + PlatformModel.clientKey(standing)
+                            + "_* entries in .qits-bootstrap.env. Run `qits unwrap` first, or "
+                            + "bootstrap with --platform-env " + standing + ".");
+        });
     }
 
     private void patch(String id, String json) {
