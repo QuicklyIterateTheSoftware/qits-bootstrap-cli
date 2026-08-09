@@ -77,6 +77,11 @@ public class OverridableConfig implements BootstrapConfig {
     }
 
     @Override
+    public int pgPort() {
+        return base.pgPort();
+    }
+
+    @Override
     public Duration deployTimeout() {
         return base.deployTimeout();
     }

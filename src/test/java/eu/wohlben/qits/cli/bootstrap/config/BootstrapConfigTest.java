@@ -25,6 +25,9 @@ class BootstrapConfigTest {
 
         assertThat(config.port()).isEqualTo(8080);
         assertThat(config.registryPort()).isEqualTo(8081);
+        // 5433, not 5432: a postgres already installed on the workstation must not be a bind
+        // conflict this program has to explain.
+        assertThat(config.pgPort()).isEqualTo(5433);
         assertThat(config.pushToken()).isEqualTo("local-dev");
         assertThat(config.machineAuth()).isTrue();
         assertThat(config.skipBuild()).isFalse();
@@ -40,6 +43,7 @@ class BootstrapConfigTest {
         Map<String, String> env = new LinkedHashMap<>();
         env.put("QITS_PORT", "9090");
         env.put("QITS_REGISTRY_PORT", "9091");
+        env.put("QITS_PG_PORT", "5555");
         env.put("QITS_PUSH_TOKEN", "not-local-dev");
         env.put("QITS_SKIP_BUILD", "1");
         env.put("QITS_MACHINE_AUTH", "0");
@@ -52,6 +56,7 @@ class BootstrapConfigTest {
 
         assertThat(config.port()).isEqualTo(9090);
         assertThat(config.registryPort()).isEqualTo(9091);
+        assertThat(config.pgPort()).isEqualTo(5555);
         assertThat(config.pushToken()).isEqualTo("not-local-dev");
         // The script's knobs are 1 and 0, not true and false.
         assertThat(config.skipBuild()).isTrue();

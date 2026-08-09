@@ -18,6 +18,9 @@ class ComposeTemplateTest {
         values.put("COMPOSE_FILE", "docker-compose.qits.yml");
         values.put("PORT", "8080");
         values.put("REGISTRY_PORT", "8081");
+        values.put("PG_PORT", "5433");
+        values.put("PG_SUPERUSER_PASSWORD", "0123456789abcdef");
+        values.put("PG_DEPLOYMENTS_PASSWORD", "fedcba9876543210");
         values.put("IDP", "http://qits-platform-idp:8080/idp");
         values.put("PUSH_TOKEN", "local-dev");
         values.put("MACHINE_REQUIRED", "true");
@@ -60,6 +63,9 @@ class ComposeTemplateTest {
         assertThat(compose).contains("group_add: [\"988\"]");
         assertThat(compose).contains("QITS_CI_DAEMON_VERSION: \"abc123\"");
         assertThat(compose).doesNotContain("${PORT}");
+        assertThat(compose).doesNotContain("${PG_PORT}");
+        assertThat(compose).doesNotContain("${PG_SUPERUSER_PASSWORD}")
+                .doesNotContain("${PG_DEPLOYMENTS_PASSWORD}");
         assertThat(compose).doesNotContain("${ENV_NAME}");
         assertThat(compose).doesNotContain("${ENV_KEY}");
         assertThat(compose).doesNotContain("${IDP_SECRET_");
@@ -112,9 +118,20 @@ class ComposeTemplateTest {
         String block = serviceBlock(compose, ENV + "-qits-deployments");
 
         assertThat(compose).contains("image: qits/deployments:latest");
-        assertThat(block).contains("QUARKUS_DATASOURCE_PLATFORMDEPLOYMENTS_JDBC_URL: "
-                + "jdbc:h2:file:/data/platformdeployments/h2/platformdeployments");
-        assertThat(block).contains("- qits-deployments-data:/data");
+        // Adopter #1 of the generic resource contract: its own store arrives as the same triple it
+        // hands every application that declares one.
+        assertThat(block).contains("QITS_RESOURCE_DB_URL: "
+                + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_deployments");
+        assertThat(block).contains("QITS_RESOURCE_DB_USERNAME: qits_deployments");
+        assertThat(block).contains("QITS_RESOURCE_DB_PASSWORD: \"fedcba9876543210\"");
+        assertThat(block).contains("QITS_ENVIRONMENT: prod");
+        // What makes it a provisioner rather than only a consumer.
+        assertThat(block).contains("QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD: "
+                + "\"0123456789abcdef\"");
+        // The H2 file store and the volume that held it are gone together.
+        assertThat(block).doesNotContain("QUARKUS_DATASOURCE_PLATFORMDEPLOYMENTS_JDBC_URL");
+        assertThat(block).doesNotContain("- qits-deployments-data:/data");
+        assertThat(compose).doesNotContain("qits-deployments-data:\n");
         assertThat(block).contains("- qits-deployments-config:/work/config");
         assertThat(block).contains("- /var/run/docker.sock:/var/run/docker.sock");
         // Machine auth inbound only: it validates a bearer and mints none, so no oidc-client.
@@ -209,7 +226,7 @@ class ComposeTemplateTest {
         for (String application : new String[]{"qits-platform-edge", "qits-gateway",
                 "qits-platform-artifacts", "qits-ci", "qits-deployments", "qits-platform-idp",
                 "qits-stt", "qits-projects", "qits-workspaces", "qits-events",
-                "qits-platform-docs", "qits-observability"}) {
+                "qits-platform-docs", "qits-observability", "qits-oci-postgresql"}) {
             assertThat(properties).contains("qits.platform.deployments.run-args." + application + "=");
         }
         // The retired pair is deployed by nothing, so it configures nothing.
@@ -250,10 +267,52 @@ class ComposeTemplateTest {
         // all and every later deployment loses its volumes and its datasource env.
         String deployer = runArgsLine("qits-deployments");
 
-        assertThat(deployer).contains("-v qits-deployments-data:/data");
         assertThat(deployer).contains("-v qits-deployments-config:/work/config");
         assertThat(deployer).contains("-v /var/run/docker.sock:/var/run/docker.sock");
-        assertThat(deployer).contains("QUARKUS_DATASOURCE_PLATFORMDEPLOYMENTS_JDBC_URL=");
+        assertThat(deployer).contains("-e QITS_RESOURCE_DB_URL="
+                + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_deployments");
+        assertThat(deployer).contains("-e QITS_RESOURCE_DB_USERNAME=qits_deployments");
+        assertThat(deployer).contains("-e QITS_RESOURCE_DB_PASSWORD=fedcba9876543210");
+        assertThat(deployer).contains("-e QITS_ENVIRONMENT=prod");
+        assertThat(deployer).contains(
+                "-e QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD=0123456789abcdef");
+        // The store moved off the file H2, and its volume went with it: /data held nothing else.
+        assertThat(deployer).doesNotContain("QUARKUS_DATASOURCE_PLATFORMDEPLOYMENTS_JDBC_URL=")
+                .doesNotContain("-v qits-deployments-data:/data");
+    }
+
+    /**
+     * The database the deployer boots from, in both generated files. The mount path is the whole
+     * risk: postgres 18 keeps PGDATA at {@code /var/lib/postgresql/18/docker}, so a volume mounted
+     * at the pre-18 {@code /var/lib/postgresql/data} sits BESIDE the cluster — everything works and
+     * every byte is written into the container layer, until the next recreate.
+     */
+    @Test
+    void postgresIsSeededAndDeployedWithItsVolumeAtTheOnePathThatKeepsTheData() {
+        String compose = ComposeTemplate.compose(tokens());
+        String block = serviceBlock(compose, ENV + "-qits-oci-postgresql");
+        String runArgs = runArgsLine("qits-oci-postgresql");
+
+        assertThat(compose).contains("image: qits/oci-postgresql:latest");
+        // The mount, not the comment beside it, which names the wrong path on purpose.
+        assertThat(block).contains("- qits-oci-postgresql-data:/var/lib/postgresql\n")
+                .doesNotContain("- qits-oci-postgresql-data:/var/lib/postgresql/data");
+        assertThat(block).contains("- \"127.0.0.1:5433:5432\"");
+        assertThat(block).contains("POSTGRES_PASSWORD: \"0123456789abcdef\"");
+        assertThat(block).contains("pg_isready -U postgres");
+        assertThat(block).contains("restart: unless-stopped");
+        // No depends_on anywhere: a dependency would resurrect a compose sibling beside its
+        // deployed replacement. The deployer's refuse-to-boot and restart policy are the retry.
+        // The comments that say so are not one.
+        assertThat(compose.lines().map(String::strip).filter(line -> line.startsWith("depends_on"))
+                .toList()).isEmpty();
+
+        assertThat(runArgs).contains("-v qits-oci-postgresql-data:/var/lib/postgresql ")
+                .doesNotContain("-v qits-oci-postgresql-data:/var/lib/postgresql/data");
+        // The host publish survives the cutover, so this CLI can reconnect to the same server
+        // after the deployer replaces the seed container.
+        assertThat(runArgs).contains("-p 127.0.0.1:5433:5432");
+        assertThat(runArgs).contains("-e POSTGRES_PASSWORD=0123456789abcdef");
     }
 
     @Test
@@ -283,13 +342,22 @@ class ComposeTemplateTest {
         String url = "http://prod-qits-observability:8080";
         String compose = ComposeTemplate.compose(tokens());
 
+        // qits-oci-postgresql is the one exception, and it is not an omission: it is upstream
+        // postgres, which has no exporter to point anywhere.
         for (String name : PlatformModel.CORE) {
+            if (name.equals("oci-postgresql")) {
+                assertThat(serviceBlock(compose, PlatformModel.wireAlias(name, ENV)))
+                        .doesNotContain("QITS_OBSERVABILITY_URL");
+                continue;
+            }
             assertThat(serviceBlock(compose, PlatformModel.wireAlias(name, ENV)))
                     .as("seed service %s", name)
                     .contains("QITS_OBSERVABILITY_URL: " + url);
         }
         assertThat(ComposeTemplate.runArgs(tokens()).lines()
                 .filter(line -> line.startsWith("qits.platform.deployments.run-args."))
+                .filter(line -> !line.startsWith(
+                        "qits.platform.deployments.run-args.qits-oci-postgresql="))
                 .toList())
                 .isNotEmpty()
                 .allSatisfy(line -> assertThat(line)

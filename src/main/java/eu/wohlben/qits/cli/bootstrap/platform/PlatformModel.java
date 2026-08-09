@@ -31,9 +31,15 @@ public final class PlatformModel {
      * a seed edge the CLI has no door — every call it makes to qits-ci and qits-deployments goes
      * through the host port, so the edge has to be up before the first health poll, not after the
      * first deployment.
+     * <p>
+     * qits-oci-postgresql is in here because qits-deployments refuses to boot without the database
+     * it holds. It is the one member that is not a service of this platform's own making — the
+     * image adds nothing to upstream postgres — and it is still hand-built and hand-started for
+     * the same reason as the rest: nothing can deploy it until the deployer answers.
      */
     public static final List<String> CORE = List.of(
-            "gateway", "platform-edge", "platform-artifacts", "ci", "deployments", "platform-idp");
+            "gateway", "platform-edge", "platform-artifacts", "ci", "deployments", "platform-idp",
+            "oci-postgresql");
 
     /**
      * Everything the platform deploys through itself. Order matters: observability first (quiets
@@ -59,10 +65,19 @@ public final class PlatformModel {
      * </ul>
      * The edge's own deploy wait needs no host port: it is a platform service, so its liveness is
      * read from {@code docker ps} rather than from a deployment row.
+     * <p>
+     * <b>qits-oci-postgresql is second, right after observability, and its position is the same
+     * argument the idp's is.</b> It is the deployer's own database, so its cutover must never be
+     * queued beside a consumer's: it goes before everything that might one day hold a connection
+     * to it. The cutover replaces the compose-seeded postgres under the deployer's own feet —
+     * stop-before-start frees the volume and the host port, the successor mounts the same volume,
+     * {@code pg_isready} gates it, and the deployer's pool reconnects after the blip because a
+     * Plan is plain values and no deployment reads the database inside the docker window. The same
+     * self-referential class as the registry pulling its own successor before stopping itself.
      */
     public static final List<String> DEPLOYABLES = List.of(
-            "observability", "platform-idp", "stt", "projects", "workspaces", "events",
-            "platform-docs", "gateway", "platform-artifacts", "ci", "platform-edge",
+            "observability", "oci-postgresql", "platform-idp", "stt", "projects", "workspaces",
+            "events", "platform-docs", "gateway", "platform-artifacts", "ci", "platform-edge",
             "deployments");
 
     /**
@@ -134,7 +149,7 @@ public final class PlatformModel {
     public static String repoPath(String name) {
         return switch (name) {
             case "ci-daemon" -> "daemons/qits-ci-daemon";
-            case "oci" -> "images/qits-oci";
+            case "oci", "oci-postgresql" -> "images/qits-" + name;
             // Framework glue is shared code, so the integrations sit in libs/ like any other lib.
             case "eventstream", "spa-ui-components", "userflows",
                  "integrations-angular", "integrations-quarkus" -> "libs/qits-" + name;
@@ -145,6 +160,23 @@ public final class PlatformModel {
             default -> name.startsWith("spa-") || name.startsWith("platform-spa-")
                     ? "frontends/qits-" + name
                     : "services/qits-" + name;
+        };
+    }
+
+    /**
+     * Where a repository keeps the Dockerfile its seed image is built from, relative to its own
+     * root.
+     * <p>
+     * A service keeps it in {@code docker/} beside the other build files. An image repository IS
+     * the Dockerfile, so it keeps it at the root — and its own pipeline config says
+     * {@code -f Dockerfile}, which is the answer this method has to agree with. The path used to
+     * be a literal in {@code SeedPhases.seedImage}, where the first repository that spelled it
+     * differently would have failed with "no such file" minutes into a run.
+     */
+    public static String dockerfilePath(String name) {
+        return switch (name) {
+            case "oci-postgresql" -> "Dockerfile";
+            default -> "docker/Dockerfile";
         };
     }
 

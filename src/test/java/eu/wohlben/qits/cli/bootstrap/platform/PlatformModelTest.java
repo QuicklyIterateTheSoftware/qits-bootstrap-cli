@@ -23,6 +23,9 @@ class PlatformModelTest {
 
         assertThat(PlatformModel.repoPath("ci-daemon")).isEqualTo("daemons/qits-ci-daemon");
         assertThat(PlatformModel.repoPath("oci")).isEqualTo("images/qits-oci");
+        // An image repository, not a service: the default arm would clone services/ from GitHub.
+        assertThat(PlatformModel.repoPath("oci-postgresql"))
+                .isEqualTo("images/qits-oci-postgresql");
         assertThat(PlatformModel.repoPath("eventstream")).isEqualTo("libs/qits-eventstream");
         assertThat(PlatformModel.repoPath("platform-spa-docs"))
                 .isEqualTo("frontends/qits-platform-spa-docs");
@@ -85,15 +88,18 @@ class PlatformModelTest {
         // qits-platform-edge took the host port that was its only reason to be up here.
         assertThat(PlatformModel.DEPLOYABLES)
                 .filteredOn(name -> !PlatformModel.isPlatformService(name))
-                .containsExactlyInAnyOrder("observability", "stt", "projects", "workspaces",
-                        "events", "gateway", "ci", "deployments");
+                .containsExactlyInAnyOrder("observability", "oci-postgresql", "stt", "projects",
+                        "workspaces", "events", "gateway", "ci", "deployments");
+        // Every environment runs its own database, so postgres is an environment service like the
+        // rest of them — the platform plane is what genuinely cannot be per-tier.
+        assertThat(PlatformModel.isPlatformService("oci-postgresql")).isFalse();
     }
 
     @Test
     void theSeedIsEveryServiceTheRestIsBuiltAndReachedThrough() {
         assertThat(PlatformModel.CORE).containsExactlyInAnyOrder(
                 "gateway", "platform-edge", "platform-artifacts", "ci", "deployments",
-                "platform-idp");
+                "platform-idp", "oci-postgresql");
         // Every seed service is also deployed through the pipeline afterwards; nothing stays
         // hand-built.
         assertThat(PlatformModel.DEPLOYABLES).containsAll(PlatformModel.CORE);
@@ -126,6 +132,16 @@ class PlatformModelTest {
         // require a bundle that does not exist.
         assertThat(PlatformModel.seedUiPath("platform-idp")).isEmpty();
         assertThat(PlatformModel.seedUiPath("platform-edge")).isEmpty();
+        assertThat(PlatformModel.seedUiPath("oci-postgresql")).isEmpty();
+    }
+
+    @Test
+    void anImageRepositoryKeepsItsDockerfileAtItsRoot() {
+        // A service keeps it in docker/; an image repository IS the Dockerfile. The seed build has
+        // to agree with the repository's own pipeline config, which says -f Dockerfile.
+        assertThat(PlatformModel.dockerfilePath("oci-postgresql")).isEqualTo("Dockerfile");
+        assertThat(PlatformModel.dockerfilePath("ci")).isEqualTo("docker/Dockerfile");
+        assertThat(PlatformModel.dockerfilePath("platform-idp")).isEqualTo("docker/Dockerfile");
     }
 
     @Test
@@ -144,6 +160,9 @@ class PlatformModelTest {
         // deployment is the self-update handoff.
         assertThat(PlatformModel.DEPLOYABLES.getFirst()).isEqualTo("observability");
         assertThat(PlatformModel.DEPLOYABLES.getLast()).isEqualTo("deployments");
+        // The database goes before every application that might hold a connection to it, so its
+        // cutover is never queued beside a consumer's.
+        assertThat(PlatformModel.DEPLOYABLES.get(1)).isEqualTo("oci-postgresql");
         // The edge is the host port, so its cutover takes the CLI's own door away for a beat. It
         // goes as late as it can — after the gateway it forwards to, before the self-update.
         assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(

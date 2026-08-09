@@ -23,6 +23,13 @@ public class RunState {
     public String dockerGid = "0";
     /** The idp's client secrets: given, kept or generated. */
     public final Map<String, String> secrets = new LinkedHashMap<>();
+    /**
+     * postgres' superuser password: given, kept or generated. It applies at initdb only, so the
+     * recorded value is the only way into a cluster that already exists.
+     */
+    public String pgSuperuserPassword;
+    /** The password of the deployer's own role, converged on every rerun. */
+    public String pgDeploymentsPassword;
     /** The environment row the deployer reconciled. */
     public String environmentId;
     /** The temporary maven-over-HTTP container that breaks the first-boot dependency cycle. */

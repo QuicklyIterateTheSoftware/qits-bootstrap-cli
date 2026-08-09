@@ -587,7 +587,11 @@ public class SeedPhases {
                     .stdin(properties)
                     .mask(boot.config.pushToken())
                     .mask(boot.state.secrets.getOrDefault(
-                            PlatformModel.wireAlias("ci", boot.config.envName()), "")), ctx::log);
+                            PlatformModel.wireAlias("ci", boot.config.envName()), ""))
+                    // Both postgres passwords are in this file too: the deployer's own credential
+                    // and the admin one it provisions every other application's database with.
+                    .mask(orEmpty(boot.state.pgSuperuserPassword))
+                    .mask(orEmpty(boot.state.pgDeploymentsPassword)), ctx::log);
             Boot.must(result, "writing the deployer's run-args failed");
             ctx.log("  " + properties.lines().filter(l -> l.startsWith("qits.platform.deployments.run-args")).count()
                     + " applications configured on the qits-deployments-config volume");
@@ -658,6 +662,10 @@ public class SeedPhases {
                 : boot.state.composeFile.getFileName().toString());
         values.put("PORT", String.valueOf(boot.config.port()));
         values.put("REGISTRY_PORT", String.valueOf(boot.config.registryPort()));
+        values.put("PG_PORT", String.valueOf(boot.config.pgPort()));
+        // Resolved by seed-postgres, which runs before both generated files are written.
+        values.put("PG_SUPERUSER_PASSWORD", orEmpty(boot.state.pgSuperuserPassword));
+        values.put("PG_DEPLOYMENTS_PASSWORD", orEmpty(boot.state.pgDeploymentsPassword));
         values.put("IDP", boot.config.idpIssuer());
         values.put("PUSH_TOKEN", boot.config.pushToken());
         values.put("MACHINE_REQUIRED", String.valueOf(boot.config.machineAuth()));
@@ -675,6 +683,10 @@ public class SeedPhases {
                     boot.state.secrets.getOrDefault(PlatformModel.wireAlias(app, env), ""));
         }
         return values;
+    }
+
+    private static String orEmpty(String value) {
+        return value == null ? "" : value;
     }
 
     // --- small helpers ----------------------------------------------------------------------------

@@ -57,6 +57,16 @@ public interface BootstrapConfig {
     @WithDefault("8081")
     int registryPort();
 
+    /**
+     * Host port the platform's postgres publishes, for this CLI's own connection.
+     * <p>
+     * Bound to 127.0.0.1 like the registry port, and 5433 rather than 5432 so a postgres already
+     * installed on the workstation is not a bind conflict this program has to explain. Consumers
+     * inside qits-net dial the wire alias on 5432 and never see this number.
+     */
+    @WithDefault("5433")
+    int pgPort();
+
     /** 1 = the seed images and the daemon binary exist; skip to compose and the pushes. */
     @WithDefault("false")
     boolean skipBuild();
