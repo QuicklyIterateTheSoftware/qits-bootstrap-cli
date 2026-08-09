@@ -585,9 +585,13 @@ public final class ComposeTemplate {
             # protected here, so without the token every pull that fast-forwards main is refused. A branch
             # delete deliberately sends no token.
             #
-            # QITS_PROJECTS_AGENT_IMAGE names the image a project agent container runs. The shipped
-            # default is qits/project-agent:latest; this platform builds the tag :native, so the name
-            # is spelled here rather than left to drift from what exists on the host.
+            # NO QITS_PROJECTS_AGENT_IMAGE, and its absence is the fix. It used to name
+            # qits/project-agent:native — a tag built by hand on one machine, which the unwrap deleted
+            # and no pipeline rebuilt, so every refinement agent start failed on an image that did not
+            # exist. qits-projects-daemon's release pipeline publishes qits/project-agent:<version>
+            # now, and qits-projects ships the registry-qualified pin, which a release train moves. An
+            # override here would freeze that pin at whatever this file last said. Same reason
+            # qits-workspaces' run-args do not name QITS_WORKSPACE_IMAGE.
             #
             # The docker socket, on the same terms qits-ci and qits-workspaces have it: DockerAgentRuntime
             # shells `docker run` to create a project's agent container, so without the socket every agent
@@ -600,7 +604,7 @@ public final class ComposeTemplate {
             # from. The image ships pre-rename defaults (qits-projects, qits-artifacts), which resolve to
             # nothing on this platform, so a container created from them never dials back and its boot
             # clone fails. Both are spelled here, the first with the environment's own prefix.
-            qits.platform.deployments.run-args.qits-projects=-v qits-projects-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QITS_PROJECTS_DATA_DIR=/data/mirrors -e QITS_ARTIFACTS_URL=http://qits-platform-artifacts:8080 -e QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN} -e QITS_PROJECTS_AGENT_IMAGE=qits/project-agent:native -e QITS_PROJECTS_OWN_HOST=${ENV_NAME}-qits-projects -e QITS_PROJECTS_AGENT_GIT_BASE=http://qits-platform-artifacts:8080/artifacts/git -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.platform.deployments.run-args.qits-projects=-v qits-projects-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QITS_PROJECTS_DATA_DIR=/data/mirrors -e QITS_ARTIFACTS_URL=http://qits-platform-artifacts:8080 -e QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN} -e QITS_PROJECTS_OWN_HOST=${ENV_NAME}-qits-projects -e QITS_PROJECTS_AGENT_GIT_BASE=http://qits-platform-artifacts:8080/artifacts/git -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The volume stays for the same reason qits-projects' does: /data is this service's own tree of
             # per-repository files, not a database. Both its stores — its own and the eventstream outbox —
             # are declared in its deployments.yml and injected by the deployer, so no datasource env is
