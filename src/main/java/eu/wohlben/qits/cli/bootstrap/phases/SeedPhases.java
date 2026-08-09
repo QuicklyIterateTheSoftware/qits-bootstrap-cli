@@ -7,6 +7,7 @@ import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.platform.BootstrapState;
 import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
+import eu.wohlben.qits.cli.bootstrap.platform.PgAdmin;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.platform.SeedDockerfile;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
@@ -19,6 +20,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.sql.Connection;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -254,8 +256,13 @@ public class SeedPhases {
                 // unauthenticated workstation variant. Never publish that image or its port.
                 extra.addAll(List.of("--build-arg", "QITS_VARIANT=local"));
             }
-            String dockerfile = SeedDockerfile.read(repo.resolve("docker/Dockerfile"));
-            ctx.status("cold GraalVM native build of qits/" + name + " — ~4 GB RAM, no maven cache");
+            String dockerfile =
+                    SeedDockerfile.read(repo.resolve(PlatformModel.dockerfilePath(name)));
+            // An image repository is its Dockerfile and nothing else, so the warning about the
+            // four-gigabyte native build would be a lie about a thirty-second pull.
+            ctx.status("Dockerfile".equals(PlatformModel.dockerfilePath(name))
+                    ? "building qits/" + name + " from its Dockerfile"
+                    : "cold GraalVM native build of qits/" + name + " — ~4 GB RAM, no maven cache");
             ProcessResult result = boot.docker.buildFromStdin("qits/" + name + ":latest",
                     dockerfile, repo, extra, ctx::log);
             Boot.must(result, "build of qits/" + name + " failed");
@@ -511,6 +518,128 @@ public class SeedPhases {
             ctx.log("  ci-daemon digest: sha256:" + boot.state.daemonSha);
             ctx.note("digest " + shortSha(boot.state.daemonSha));
         });
+    }
+
+    // --- postgres ---------------------------------------------------------------------------------
+
+    /**
+     * The platform's postgres, running with a password of this bootstrap's choosing from its very
+     * first boot, and the deployer's role and database in it.
+     * <p>
+     * <b>Before idp-secrets, and outside the skip-build branch.</b> qits-deployments refuses to
+     * boot without this database, and the seed stack starts it minutes from now — so the server
+     * has to answer before the compose file that addresses it is even written. On
+     * {@code QITS_SKIP_BUILD} the image is expected to exist locally already, exactly like every
+     * other seed image.
+     * <p>
+     * <b>The image's own {@code POSTGRES_PASSWORD=qits-poc} never lives on this platform.</b> The
+     * value below is generated on the first boot and recorded, and initdb takes it instead.
+     */
+    public Phase seedPostgres() {
+        return new Phase("seed-postgres", "start postgres and provision the deployer's database",
+                ctx -> {
+            BootstrapState state = new BootstrapState(
+                    boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME));
+            state.read();
+            String superuser = pgPassword(ctx, state, "PG_SUPERUSER_PASSWORD",
+                    "qits.pg.superuser-password");
+            String deployments = pgPassword(ctx, state, "PG_DEPLOYMENTS_PASSWORD",
+                    "qits.pg.deployments-password");
+            boot.state.pgSuperuserPassword = superuser;
+            boot.state.pgDeploymentsPassword = deployments;
+
+            // RECORDED BEFORE THE SERVER IS STARTED, and the order is the whole point.
+            // POSTGRES_PASSWORD applies at initdb only: once the data volume holds a cluster, the
+            // value in the container's env is ignored and the password inside the cluster is the
+            // only one that works. A run that started the server and then died before writing this
+            // file would leave a database nothing on this machine can open.
+            state.put("PG_SUPERUSER_PASSWORD", superuser);
+            state.put("PG_DEPLOYMENTS_PASSWORD", deployments);
+            state.write();
+            ctx.log("  recorded in " + state.file() + " before the server starts");
+
+            // On a warm rerun (QITS_SKIP_BUILD) nothing before this phase has touched the network,
+            // and this is the first container of the run.
+            boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
+            boot.docker.ensureVolume("qits-oci-postgresql-data", ctx::log);
+            String pg = PlatformModel.wireAlias("oci-postgresql", boot.config.envName());
+            // Whoever already serves, serves — the same posture as the seed artifacts store. A
+            // deployed postgres publishes this very port from this very volume, and a second bind
+            // is "port is already allocated" and the end of the run.
+            String prefix = PlatformModel.pdNamePrefix("oci-postgresql", boot.config.envName());
+            Optional<String> serving = boot.docker.runningNames().stream()
+                    .filter(name -> name.equals(pg) || name.startsWith(prefix))
+                    .findFirst();
+            if (serving.isPresent()) {
+                ctx.log("  " + serving.get() + " already serves port " + boot.config.pgPort()
+                        + " from the same volume — no seed server to start");
+            } else {
+                boot.docker.removeContainer(pg, null);
+                Boot.must(boot.docker.run(Cmd.of(List.of(
+                                "docker", "run", "-d", "--name", pg,
+                                "--network", Boot.NETWORK,
+                                "-p", "127.0.0.1:" + boot.config.pgPort() + ":5432",
+                                // /var/lib/postgresql, NOT /var/lib/postgresql/data: postgres 18
+                                // keeps PGDATA at /var/lib/postgresql/18/docker, so the pre-18 path
+                                // mounts the volume BESIDE the cluster — every byte then goes into
+                                // the container layer and is lost on the next recreate.
+                                "-v", "qits-oci-postgresql-data:/var/lib/postgresql",
+                                "-e", "POSTGRES_PASSWORD=" + superuser,
+                                "qits/oci-postgresql:latest"))
+                        .mask(superuser), ctx::log), "the seed " + pg + " did not start");
+            }
+
+            // Always waited for, whoever is behind the port: the statements below need a server,
+            // and a first boot spends its first seconds in initdb rather than listening.
+            String url = "jdbc:postgresql://127.0.0.1:" + boot.config.pgPort() + "/postgres";
+            PgAdmin.awaitReady(url, "postgres", superuser, boot.config.healthTimeout(), ctx);
+            ctx.log("  postgres answering on 127.0.0.1:" + boot.config.pgPort());
+
+            // The deployer's own identity: role, database and username are one name. Rerun-safe —
+            // the role's password converges on the recorded value every time, so a cluster that
+            // survived while this file did not is repaired rather than left refusing connections.
+            try (Connection admin = PgAdmin.connect(url, "postgres", superuser)) {
+                ctx.log("  role qits_deployments: "
+                        + PgAdmin.ensureRole(admin, "qits_deployments", deployments));
+                ctx.log("  database qits_deployments: "
+                        + PgAdmin.ensureDatabase(admin, "qits_deployments", "qits_deployments"));
+            }
+            ctx.note("qits_deployments ready on :" + boot.config.pgPort());
+        });
+    }
+
+    /**
+     * A postgres password, given &gt; kept &gt; generated, like every other credential this
+     * bootstrap resolves. The ORIGIN reaches the screen; the value never does.
+     * <p>
+     * A given one has to be hex too. It is assembled into DDL, which cannot be parametrized, so
+     * the charset is checked here — where the failure can name the key that was set — rather than
+     * three statements later.
+     */
+    private static String pgPassword(PhaseContext ctx, BootstrapState state, String key,
+                                     String configKey) {
+        Optional<String> given = ConfigProvider.getConfig()
+                .getOptionalValue(configKey, String.class).filter(value -> !value.isBlank());
+        Optional<String> kept = state.value(key);
+        String value;
+        String origin;
+        if (given.isPresent()) {
+            value = given.get();
+            origin = "given (" + configKey + ")";
+        } else if (kept.isPresent()) {
+            value = kept.get();
+            origin = "kept";
+        } else {
+            value = randomSecret();
+            origin = "generated";
+        }
+        if (!PgAdmin.isPassword(value)) {
+            throw new IllegalStateException(key + " is not 16-64 hex characters. It is assembled "
+                    + "into SQL that cannot be parametrized, so nothing else is accepted — change "
+                    + configKey + " or the recorded value in " + BootstrapState.FILE_NAME);
+        }
+        ctx.log(String.format("  %-24s %s", key, origin));
+        return value;
     }
 
     // --- secrets, compose, run-args ---------------------------------------------------------------

@@ -64,6 +64,15 @@ class PgAdminTest {
     }
 
     @Test
+    void theSameCheckIsAvailableWhereAPasswordIsResolved() {
+        // Asked at resolution too, so a given value that cannot be assembled is refused by the
+        // phase that can name the key that was set.
+        assertThat(PgAdmin.isPassword(PASSWORD)).isTrue();
+        assertThat(PgAdmin.isPassword("hunter2")).isFalse();
+        assertThat(PgAdmin.isPassword(null)).isFalse();
+    }
+
+    @Test
     void theRefusalDoesNotRepeatThePassword() {
         // The value is what must not reach the screen, and a validation message is a screen line.
         assertThatThrownBy(() -> PgAdmin.createRole("qits_deployments", "' or 1=1 --"))

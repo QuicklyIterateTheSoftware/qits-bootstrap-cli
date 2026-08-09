@@ -39,6 +39,9 @@ public final class BootstrapPlan {
             // from Maven Central alone. Beside the gateway because that is what it fronts.
             phases.add(seed.seedImage("platform-edge"));
             phases.add(seed.seedImage("platform-artifacts"));
+            // Beside artifacts because it needs nothing either: the image is upstream postgres,
+            // built from one FROM line, so it costs seconds rather than a native build.
+            phases.add(seed.seedImage("oci-postgresql"));
             phases.add(seed.seedArtifactsStart());
             phases.add(seed.mavenPublish("eventstream", "qits-eventstream",
                     "publish qits-eventstream into seed artifacts"));
@@ -56,6 +59,11 @@ public final class BootstrapPlan {
             phases.add(seed.ciDaemon());
         }
 
+        // OUTSIDE the skip-build branch, and before idp-secrets. The deployer refuses to boot
+        // without this database and the seed stack starts it three phases from now, so the server
+        // has to answer before the compose file that addresses it is written. A warm rerun needs
+        // it just as much: the passwords it resolves fill both generated files.
+        phases.add(seed.seedPostgres());
         phases.add(seed.idpSecrets());
         phases.add(seed.composeFile());
         phases.add(seed.pdRunArgs());

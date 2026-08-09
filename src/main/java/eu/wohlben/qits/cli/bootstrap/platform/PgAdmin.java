@@ -45,6 +45,15 @@ public final class PgAdmin {
     }
 
     /**
+     * Whether a value may ever be assembled into a statement. Asked where a password is RESOLVED
+     * as well as where it is used, so the refusal can name the key that was set rather than
+     * arriving three statements later.
+     */
+    public static boolean isPassword(String value) {
+        return value != null && PASSWORD.matcher(value).matches();
+    }
+
+    /**
      * Waits until postgres answers a query, saying what the last attempt saw.
      * <p>
      * A cold boot's first start is an initdb, so the first several polls are refused connections

@@ -58,6 +58,19 @@ public class PipelinePhases {
                 ctx.log("  replacing the bootstrap artifact registry with the authenticated seed service");
                 boot.docker.removeContainer(artifacts, ctx::log);
             }
+            // The same hand-off for postgres: seed-postgres started it by hand, and compose has to
+            // own the container it is about to declare or the two fight over the host port. The
+            // recreate keeps the data — the volume is the cluster — and it is env-safe, because
+            // POSTGRES_PASSWORD applies at initdb only and this cluster is already initialised.
+            //
+            // Asking for the ALIAS is what makes this leave a deployed postgres alone: the
+            // deployer names its own containers qits-pd-…, so a name this test matches was started
+            // by hand and by this run.
+            String postgres = PlatformModel.wireAlias("oci-postgresql", boot.config.envName());
+            if (boot.docker.allNames().contains(postgres)) {
+                ctx.log("  handing the seed postgres over to compose, from the same volume");
+                boot.docker.removeContainer(postgres, ctx::log);
+            }
             // Only what the deployer does not already manage: a compose service whose application
             // has a live deployed container must NOT be resurrected next to it — the deployer's own
             // container included, once a self-update handoff has made it one of its own

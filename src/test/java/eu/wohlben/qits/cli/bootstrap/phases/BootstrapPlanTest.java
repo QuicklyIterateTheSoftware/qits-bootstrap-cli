@@ -56,6 +56,10 @@ class BootstrapPlanTest {
         // measured before either is generated.
         assertThat(ids).containsSubsequence("ci-daemon", "idp-secrets", "compose-file",
                 "pd-run-args", "seed-stack", "seed-health");
+        // postgres before every file that addresses it: the deployer refuses to boot without the
+        // database, and seed-stack is what starts the deployer.
+        assertThat(ids).containsSubsequence("seed-image-oci-postgresql", "seed-postgres",
+                "idp-secrets", "compose-file", "pd-run-args", "seed-stack");
         // The retired pair is built by nothing: one component replaced both.
         assertThat(ids).doesNotContain("seed-image-cd", "seed-image-serviceregistry");
     }
@@ -65,6 +69,7 @@ class BootstrapPlanTest {
         List<String> ids = ids(plan(Map.of()));
 
         assertThat(ids).containsSubsequence("environment", "deploy-observability",
+                "deploy-oci-postgresql",
                 "deploy-platform-idp", "deploy-stt", "deploy-projects", "deploy-workspaces",
                 "deploy-events", "deploy-platform-docs", "deploy-gateway",
                 "deploy-platform-artifacts", "deploy-ci", "deploy-platform-edge",
@@ -91,9 +96,12 @@ class BootstrapPlanTest {
 
         assertThat(warm).contains("seed-skipped")
                 .doesNotContain("ci-daemon", "seed-image-ci", "seed-image-platform-edge",
-                        "auth-core-seed");
+                        "seed-image-oci-postgresql", "auth-core-seed");
         assertThat(warm.size()).isLessThan(cold.size());
         // The pipeline half is untouched: a warm rerun still pushes and still waits.
         assertThat(warm).contains("deploy-deployments", "release-train-push", "summary");
+        // postgres is NOT a build, so a warm rerun still runs it: it resolves the passwords both
+        // generated files carry, and the server has to answer before the deployer starts.
+        assertThat(warm).contains("seed-postgres");
     }
 }
