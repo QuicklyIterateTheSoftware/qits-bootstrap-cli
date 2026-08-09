@@ -14,7 +14,12 @@ import java.util.regex.Pattern;
 
 /**
  * The platform's postgres, as much of it as the bootstrap owns: wait for it to answer, then make
- * sure the deployer's role and database are there.
+ * sure the roles and databases the seed containers boot against are there.
+ * <p>
+ * <b>Two arms, and which one a role gets is a decision about who owns its password.</b>
+ * {@link #ensureRole} converges an existing role on the recorded value; {@link #ensureRoleIfMissing}
+ * creates and then never touches. The second is for every application role, because the deployer's
+ * resource registry becomes their authority the moment they are first deployed.
  * <p>
  * <b>Plain JDBC, no Quarkus wiring.</b> There is no datasource and no injected {@code DataSource}
  * — a handful of idempotent statements run once per bootstrap does not need a pool, and a
@@ -105,6 +110,42 @@ public final class PgAdmin {
             throw e;
         }
         return exists ? "password converged" : "created";
+    }
+
+    /**
+     * The role, created with the password this run recorded — and left ALONE if it is already
+     * there.
+     * <p>
+     * <b>This is the arm for an APPLICATION's role, and the difference from {@link #ensureRole} is
+     * the whole point.</b> An application's credential belongs to the deployer's {@code pd_resource}
+     * registry from its first deploy onwards: that registry is the single authority, its reconcile
+     * arm rotates the password and records the new one, and the container is then started with what
+     * the row says. A CLI rerun that ALTERed the role back to the value in
+     * {@code .qits-bootstrap.env} would take the running application's database away from it, with
+     * nothing anywhere to say why. So the CLI only opens the door — first, before any deployer
+     * exists — and never touches it again.
+     * <p>
+     * {@code qits_deployments} is the one role that keeps {@link #ensureRole}: the deployer records
+     * its OWN credential from the environment the bootstrap handed it, so converging on the
+     * recorded value is what keeps the two in step rather than what breaks them apart.
+     *
+     * @return what happened, for the phase log. Never contains the password.
+     */
+    public static String ensureRoleIfMissing(Connection admin, String role, String password)
+            throws SQLException {
+        if (exists(admin, "select 1 from pg_catalog.pg_roles where rolname = ?", role)) {
+            return "already there, password left as it is";
+        }
+        try {
+            execute(admin, createRole(role, password), password);
+        } catch (SQLException e) {
+            if (DUPLICATE_OBJECT.equals(e.getSQLState())) {
+                // Another run created it between the check and the statement. Still not altered.
+                return "already there, password left as it is";
+            }
+            throw e;
+        }
+        return "created";
     }
 
     /**
