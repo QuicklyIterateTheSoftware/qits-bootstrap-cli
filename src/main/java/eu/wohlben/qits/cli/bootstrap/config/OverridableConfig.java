@@ -117,11 +117,6 @@ public class OverridableConfig implements BootstrapConfig {
     }
 
     @Override
-    public String curlImage() {
-        return base.curlImage();
-    }
-
-    @Override
     public String logFile() {
         return base.logFile();
     }

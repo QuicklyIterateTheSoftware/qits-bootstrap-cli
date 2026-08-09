@@ -74,18 +74,27 @@ which shells `/bin/stty` rather than calling libc, because the providers that ca
 survive being compiled into a native image. One process per terminal, on a program that already
 shells docker and git for a living.
 
-It runs **on the host**, not in a container: it reads the wrapper repository's checkouts where they
-are and shells the host's docker and git. Nothing needs the docker socket mounted anywhere.
+It runs **in a container on `qits-net`**, with the host's docker socket mounted, and
+`docker/Dockerfile.bootstrap` builds that image. Every address it dials is a wire alias —
+`qits-platform-artifacts:8080`, the postgres alias on 5432, `qits-platform-idp:8080`, and qits-ci
+and qits-deployments through `qits-platform-edge:8080` — and the run joins the network itself,
+before it dials anything. There is no host-addressed mode beside that one.
+
+It still reads the wrapper repository's checkouts where they are, so the working directory is the
+one thing to mount: build contexts, `docker cp` sources and the compose file are read by the docker
+CLIENT, so no path has to mean the same thing inside and outside. The host-side launcher that
+starts the container is separate work.
 
 It also **finds the wrapper by itself**. This CLI lives at `cli/qits-cli-bootstrap` inside it, so
 running from anywhere in the checkout is enough: the working directory is walked upwards for the
 first `.gitmodules` naming the qits submodules. `QITS_WRAPPER_DIR` (or `--wrapper-dir`) still wins,
 and preflight prints which of the two happened.
 
-What it needs to run: a reachable docker daemon with the compose plugin, `git`, `stty`, roughly
-4 GB of RAM free per native build it starts, and reach to quay.io, registry.access.redhat.com,
-docker.io and npm — a cold start cannot pull through the mirror it is starting. What it needs to
-build: the GraalVM `.sdkmanrc` names for the binary, any JDK 25 for the jar and the tests.
+What it needs to run: the host's docker socket mounted, a daemon with the compose plugin, `git`,
+`stty`, roughly 4 GB of RAM free per native build it starts, and reach to quay.io,
+registry.access.redhat.com, docker.io and npm — a cold start cannot pull through the mirror it is
+starting. What it needs to build: the GraalVM `.sdkmanrc` names for the binary, any JDK 25 for the
+jar and the tests.
 
 Cost, honestly: every seed image and every pipeline run is a cold GraalVM native build with no
 maven cache. The first run is measured in hours. Reruns skip what exists —
@@ -102,9 +111,9 @@ the same names `qits-local-up.sh` read:
 | `QITS_WRAPPER_DIR` | detected | the wrapper repository whose checkouts are the sources, and where the compose file and `.qits-bootstrap.env` land — found by walking up when unset |
 | `QITS_SRC` | `.qits-bootstrap-src` | where those checkouts are cloned to |
 | `QITS_ORG_URL` | the GitHub org | fallback for a repository with no local checkout |
-| `QITS_PORT` | `8080` | the host's ONE published port, bound by qits-platform-edge; the CLI reaches ci and the deployer through it and the gateway behind it |
-| `QITS_REGISTRY_PORT` | `8081` | qits-platform-artifacts' host port: the registry, the artifacts API and the git host |
-| `QITS_PG_PORT` | `5433` | the platform's postgres on 127.0.0.1, which is how this CLI creates roles and databases. 5433 so a postgres already on the workstation is not a bind conflict; in-network consumers dial 5432 |
+| `QITS_PORT` | `8080` | the host's ONE published port, bound by qits-platform-edge. It is the door for a person's browser; the CLI dials the edge's alias instead |
+| `QITS_REGISTRY_PORT` | `8081` | qits-platform-artifacts' host port, for the DOCKER DAEMON: seed builds run with `--network host` and resolve Maven through `localhost:<this>`. The CLI reads the registry API and the git host by alias |
+| `QITS_PG_PORT` | `5433` | what the platform's postgres publishes on 127.0.0.1, for a person with a `psql`. The CLI connects to the wire alias on 5432 like every other consumer. 5433 so a postgres already on the workstation is not a bind conflict |
 | `QITS_SKIP_BUILD` | `0` | 1 = the seed images and the daemon binary exist; skip to compose and the pushes |
 | `QITS_MACHINE_AUTH` | `1` | machine-token enforcement for ci, deployments and platform-artifacts |
 | `QITS_PUSH_TOKEN` | `local-dev` | the git host's push token — the documented escape hatch, not a secret |
@@ -123,7 +132,6 @@ the same names `qits-local-up.sh` read:
 | `QITS_WEB_HOST` | `0.0.0.0` | what it binds (WSL2 browsers need non-loopback); `127.0.0.1` keeps it off the LAN |
 | `QITS_TAIL_LINES` | `2000` | lines of the running step kept for the body |
 | `QITS_LOG_FILE` | `qits-bootstrap-cli.log` | the full log of every command |
-| `QITS_CURL_IMAGE` | `curlimages/curl:latest` | how the CLI reaches qits-platform-idp, which publishes no host port |
 
 `--wrapper-dir`, `--skip-build`, `--no-tui` and `--platform-env` answer the same questions for one
 run.
@@ -204,29 +212,29 @@ into a page that arrives when the run is over, so that is what to verify before 
 
 ## What it does, in order
 
-Built from configuration at startup, so the count in the header is real. A cold boot is 51 phases;
-`QITS_SKIP_BUILD=1` drops phases 4–22 and keeps the other 33.
+Built from configuration at startup, so the count in the header is real. A cold boot is 52 phases;
+`QITS_SKIP_BUILD=1` drops phases 5–23 and keeps the other 34.
 
 | | phase |
 | --- | --- |
-| 1–3 | preflight (docker, git, and where the wrapper is); clone or refresh the 29 platform repositories; read `.qits-bootstrap.env` |
-| 4 | seed `qits-auth-core` for the first artifacts build (a temporary file repository, served over HTTP, that breaks the first-boot cycle) |
-| 5–8 | seed images `qits/gateway`, `qits/platform-edge`, `qits/platform-artifacts`, `qits/oci-postgresql` |
-| 9 | have qits-platform-artifacts serving the registry port, so there is somewhere to publish to |
-| 10–13 | publish `qits-eventstream`, `qits-auth-core`, `@qits/ui-components`, `@qits/angular` |
-| 14–16 | seed images `qits/ci`, `qits/deployments`, `qits/platform-idp` |
-| 17–21 | the five step images from qits-oci |
-| 22 | the ci-daemon musl static binary, and its digest |
-| 23 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC the four databases the seed stack needs: the deployer's, qits-ci's own and its outbox's, and qits-platform-idp's. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |
-| 24 | resolve the idp's client secrets (given, kept, generated) and record the run state |
-| 25–26 | generate the seed compose file; write the deployer's run-args onto its config volume |
-| 27–28 | start the seed stack (only what the deployer does not already manage); wait for the idp, the edge on the host port, the gateway on qits-net, artifacts, ci and the deployer |
-| 29 | publish the ci-daemon binary, version-addressed by its digest |
-| 30–31 | create the 29 repositories on the git host; pre-seed the seeded histories with `-o qits.no-ci` |
-| 32–35 | replay the release pipeline of each publisher the wrapper builds install, and wait for each run |
-| 36 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
-| 37–49 | one phase per deployable: push `main` quietly and `environment/<name>` for real, then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-platform-edge is second to last: it is the host port, so its cutover takes this program's own door away for a beat |
-| 50–51 | push the seeded repositories; the closing report |
+| 1–4 | preflight (docker, git, and where the wrapper is); join `qits-net`, which every address after it needs; clone or refresh the 29 platform repositories; read `.qits-bootstrap.env` |
+| 5 | seed `qits-auth-core` for the first artifacts build (a temporary file repository, served over HTTP, that breaks the first-boot cycle) |
+| 6–9 | seed images `qits/gateway`, `qits/platform-edge`, `qits/platform-artifacts`, `qits/oci-postgresql` |
+| 10 | have qits-platform-artifacts serving the registry port, so there is somewhere to publish to |
+| 11–14 | publish `qits-eventstream`, `qits-auth-core`, `@qits/ui-components`, `@qits/angular` |
+| 15–17 | seed images `qits/ci`, `qits/deployments`, `qits/platform-idp` |
+| 18–22 | the five step images from qits-oci |
+| 23 | the ci-daemon musl static binary, and its digest |
+| 24 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC the four databases the seed stack needs: the deployer's, qits-ci's own and its outbox's, and qits-platform-idp's. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |
+| 25 | resolve the idp's client secrets (given, kept, generated) and record the run state |
+| 26–27 | generate the seed compose file; write the deployer's run-args onto its config volume |
+| 28–29 | start the seed stack (only what the deployer does not already manage); wait for the idp, the edge, the gateway, artifacts, ci and the deployer — all on qits-net |
+| 30 | publish the ci-daemon binary, version-addressed by its digest |
+| 31–32 | create the 29 repositories on the git host; pre-seed the seeded histories with `-o qits.no-ci` |
+| 33–36 | replay the release pipeline of each publisher the wrapper builds install, and wait for each run |
+| 37 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
+| 38–50 | one phase per deployable: push `main` quietly and `environment/<name>` for real, then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-platform-edge is second to last: it is the host port, so its cutover takes this program's own door away for a beat |
+| 51–52 | push the seeded repositories; the closing report |
 
 Three things every deploy phase does that are easy to miss: it pushes `main` quietly
 (`-o qits.no-ci`) so a second cold native build is not queued for the same sha; it replays the
@@ -236,16 +244,21 @@ RED, it re-announces the push to qits-ci once and waits for a run newer than the
 means there is no image, so replaying the build event would only buy an `IMAGE_MISSING` row — a
 rerun has to ask for the BUILD.
 
-Phase 26 restarts the seed deployer when the run-args it just wrote differ from what the volume
+Phase 27 restarts the seed deployer when the run-args it just wrote differ from what the volume
 held. The deployer reads that file once, at its own boot, so a rerun that changes it changes
 nothing for a container that is already running.
 
-Phases 4 and 9 are the two that bind the registry port, and both ask first whether
-qits-platform-artifacts is already serving it — by GET on the artifacts API's own health, which the
-temporary nginx does not answer. On a platform whose store is deployed, the answer is yes: the
-deployed container publishes the same port from the same volume, so phase 4 skips and phase 8 waits
-for that store instead of starting a seed beside it. Binding it anyway is `port is already
-allocated`, exit 125, and a stopped boot.
+Phases 5 and 10 are the two that bind the registry port, and both ask first whether
+qits-platform-artifacts is already serving it — by GET on the artifacts API's own health at the
+store's wire alias, which the temporary nginx does not answer to. On a platform whose store is
+deployed, the answer is yes: the deployed container publishes the same port from the same volume, so
+phase 5 skips and phase 10 waits for that store instead of starting a seed beside it. Binding it
+anyway is `port is already allocated`, exit 125, and a stopped boot.
+
+The temporary registry of phase 5 has **two consumers and two addresses**, which is the shape every
+container the bootstrap starts for the daemon's benefit has: the CLI dials it on `qits-net` by its
+container name, and the seed image builds resolve Maven through `localhost:<registry port>` on the
+host, because a build runs with `--network host` against the host's daemon.
 
 ## Two planes, one branch
 
@@ -281,18 +294,26 @@ repositories and pushes their histories, and deploys neither.
 `qits-local-up.sh` was a POSIX shell script run as a throwaway `docker:cli` container with the
 docker socket and the wrapper mounted. It is in the wrapper repository's git history.
 
-Same phases, same order, same idempotence. Three deliberate differences, all from running on the
-host rather than as a container on `qits-net`:
+Same phases, same order, same idempotence, and the same network position: this CLI is a container
+on `qits-net` too, so it reaches the platform at the same wire aliases the script did. One
+deliberate difference is left, and it is the one the socket coming back did not undo:
 
 - **No `/out` mount and no worktree gitdir contortions.** The wrapper's checkouts are read where
-  they are, and the compose file and `.qits-bootstrap.env` are written back beside them.
-- **The platform is reached through its published doors**: qits-platform-artifacts on
-  `127.0.0.1:8081`, qits-ci and qits-deployments through the one port qits-platform-edge binds on
-  `127.0.0.1:8080` and the gateway behind it. Calls made while the edge, the gateway or artifacts
-  is mid-cutover are expected and retried rather than fatal.
-- **qits-platform-idp publishes no host port on purpose**, so the CLI borrows a network position: one
-  throwaway `curlimages/curl` container on `qits-net` per call. The platform's exposure is
-  unchanged, which is the property worth keeping.
+  they are, and the compose file and `.qits-bootstrap.env` are written back beside them. That holds
+  because every path this program puts on a docker command line is read by the CLIENT — a build
+  context and a `-f -` Dockerfile are packed and sent, `docker cp` reads the source here, and
+  `docker compose -f` is parsed here.
+
+Two things about the addressing are worth stating plainly:
+
+- **ci and the deployer are dialled at the EDGE**, `qits-platform-edge:8080`, not at their own
+  aliases — the edge and the gateway's route table are the path every other client takes, and a
+  bootstrap that stopped exercising it would stop noticing when it breaks. Calls made while the
+  edge, the gateway or artifacts is mid-cutover are expected and retried rather than fatal.
+- **qits-platform-idp publishes no host port on purpose** and sits on no gateway route:
+  `/idp/token` behind an unauthenticated gateway is a token vending machine. It used to be reached
+  by a throwaway `curlimages/curl` container per call, borrowing the network position this CLI now
+  holds. The platform's exposure is unchanged, which is the property worth keeping.
 
 Two additions:
 

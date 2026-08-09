@@ -5,7 +5,6 @@ import eu.wohlben.qits.cli.bootstrap.api.PdApi;
 import eu.wohlben.qits.cli.bootstrap.api.CiApi;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.IdpApi;
-import eu.wohlben.qits.cli.bootstrap.api.InNetworkHttp;
 import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.engine.Waiter;
@@ -36,7 +35,6 @@ public class Boot {
     public final CiApi ci;
     public final PdApi pd;
     public final IdpApi idp;
-    public final InNetworkHttp inNetwork;
 
     public Boot(BootstrapConfig config, RunLog log) {
         this.config = config;
@@ -47,8 +45,7 @@ public class Boot {
         this.artifacts = new ArtifactsApi(http, config.artifactsUrl());
         this.ci = new CiApi(http, config.ciUrl());
         this.pd = new PdApi(http, config.platformDeploymentsUrl());
-        this.inNetwork = new InNetworkHttp(docker, config.curlImage(), NETWORK);
-        this.idp = new IdpApi(inNetwork, config.idpIssuer());
+        this.idp = new IdpApi(http, config.idpIssuer());
     }
 
     /** Fails the phase, with the command's own last words attached. */

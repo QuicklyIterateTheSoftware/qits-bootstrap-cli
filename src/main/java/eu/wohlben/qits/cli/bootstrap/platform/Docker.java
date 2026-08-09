@@ -14,14 +14,26 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * The host's docker CLI. This is the architecture's one real simplification over the script: the
- * bootstrap runs on the host, so it talks to the daemon the way a person does — no socket mount, no
- * throwaway wrapper container, no paths that mean one thing inside and another outside.
+ * The docker CLI, driving the HOST's daemon through the socket mounted into this container.
+ * <p>
+ * Every path this class puts on a command line is read by the CLIENT — a build context and a
+ * {@code -f -} Dockerfile are packed and sent, {@code docker cp} reads the source here, and
+ * {@code docker compose -f} parses the file here. So the run's own working directory is the only
+ * place paths have to be right, and the script's {@code /out} mount and gitdir contortions stay
+ * retired even though the socket came back. The paths that ARE resolved by the daemon are the ones
+ * this program hands it deliberately: named volumes, and {@code /var/run/docker.sock} for the
+ * services that need it.
  */
 public class Docker {
 
     /** Long enough for a cold GraalVM native build, which is what most of these are. */
     public static final Duration BUILD_TIMEOUT = Duration.ofHours(4);
+
+    /**
+     * Where a container learns its own id. Docker sets the hostname to the container's short id
+     * unless it is given another one, and both are names the daemon resolves.
+     */
+    private static final Path SELF = Path.of("/etc/hostname");
 
     private final ProcessRunner runner;
 
@@ -54,6 +66,40 @@ public class Docker {
         }
         ProcessResult stat = runner.run(Cmd.of("stat", "-c", "%g", socket.toString()), null);
         return stat.ok() && !stat.trimmed().isEmpty() ? stat.trimmed() : "0";
+    }
+
+    /**
+     * The name this process's own container answers to, or null when the file cannot be read. It
+     * is not proof of a container — a host's {@code /etc/hostname} is a hostname too — so the
+     * caller asks the daemon whether it knows the name before trusting it.
+     */
+    public String selfName() {
+        try {
+            String name = Files.readString(SELF).trim();
+            return name.isBlank() ? null : name;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    public boolean containerExists(String nameOrId) {
+        return runner.run(Cmd.of("docker", "inspect", "--type", "container", "-f", "{{.Id}}",
+                nameOrId), null).ok();
+    }
+
+    /** The networks a container is an endpoint on. */
+    public List<String> networksOf(String nameOrId) {
+        ProcessResult result = runner.run(Cmd.of("docker", "inspect", "-f",
+                "{{range $net, $_ := .NetworkSettings.Networks}}{{$net}} {{end}}", nameOrId), null);
+        List<String> networks = new ArrayList<>();
+        for (String line : lines(result)) {
+            for (String name : line.split("\\s+")) {
+                if (!name.isBlank()) {
+                    networks.add(name);
+                }
+            }
+        }
+        return networks;
     }
 
     public boolean networkExists(String name) {

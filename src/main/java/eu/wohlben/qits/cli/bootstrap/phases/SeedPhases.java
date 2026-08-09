@@ -34,8 +34,23 @@ import java.util.Optional;
  */
 public class SeedPhases {
 
-    /** The temporary maven registry's container name — known here, not only in the run state. */
+    /**
+     * The temporary maven registry's container name — known here, not only in the run state. On
+     * qits-net it is also the name this CLI dials it by, because docker's embedded DNS answers a
+     * container's own name.
+     */
     static final String AUTH_SEED_HTTP = "qits-maven-seed-http";
+
+    /**
+     * The temporary registry as THIS CLI reaches it. The mount puts the repository under
+     * {@code /artifacts/maven/maven}, so it answers the same paths the real store does — which is
+     * what lets the seed builds resolve against either one without knowing which is up.
+     */
+    private static final String AUTH_SEED_URL = "http://" + AUTH_SEED_HTTP + "/artifacts";
+
+    /** Where the metadata of a Maven artifact lives under an artifacts base url. */
+    private static final String AUTH_CORE_METADATA =
+            "/maven/maven/eu/wohlben/qits/qits-auth-core/maven-metadata.xml";
 
     private final Boot boot;
 
@@ -86,6 +101,45 @@ public class SeedPhases {
             ctx.log("  " + local + " of " + total + " repositories have a local checkout; the rest "
                     + "come from " + boot.config.orgUrl());
             ctx.note(local + "/" + total + " local checkouts");
+        });
+    }
+
+    /**
+     * <b>The run joins qits-net, and every address after this line depends on it.</b> This CLI is a
+     * container now, and every address it dials — the artifacts store, the edge, the idp, postgres
+     * — is a wire alias that resolves for members of that network and for nobody else. A run that
+     * skipped this would not fail here; it would fail in the first phase that polls something, as a
+     * timeout with a name that does not resolve.
+     * <p>
+     * FIRST, so nothing is dialled before it, and it ensures the network exists rather than
+     * assuming a platform stands: on a cold boot this is what creates qits-net. Attaching is
+     * measured to take effect at once — the embedded DNS answers on the next lookup, with no
+     * restart of this process.
+     * <p>
+     * Already attached is success, the same way an existing network is adopted rather than
+     * refused: the launcher may have started this container with {@code --network qits-net}, and a
+     * second connect would be an error about a state this phase wanted anyway.
+     */
+    public Phase joinNetwork() {
+        return new Phase("network", "join " + Boot.NETWORK, ctx -> {
+            boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
+            String self = boot.docker.selfName();
+            if (self == null || !boot.docker.containerExists(self)) {
+                throw new IllegalStateException("this run cannot find its own container: "
+                        + "/etc/hostname says '" + self + "' and the daemon knows no container by "
+                        + "that name, so it cannot join " + Boot.NETWORK + " and cannot reach one "
+                        + "single address of the platform. It runs as a container — the image is "
+                        + "docker/Dockerfile.bootstrap — with the host's docker socket mounted. A "
+                        + "custom --hostname breaks this lookup; let docker set it");
+            }
+            if (boot.docker.networksOf(self).contains(Boot.NETWORK)) {
+                ctx.log("  " + self + " is already on " + Boot.NETWORK);
+            } else {
+                Boot.must(boot.docker.exec(ctx::log, "network", "connect", Boot.NETWORK, self),
+                        "joining " + Boot.NETWORK + " failed");
+                ctx.log("  " + self + " joined " + Boot.NETWORK);
+            }
+            ctx.note("on " + Boot.NETWORK);
         });
     }
 
@@ -187,10 +241,15 @@ public class SeedPhases {
                     // Version-agnostic on purpose: the checkouts publish their real calver, so a
                     // pinned-version probe never matches and a rerun collides with whoever holds
                     // the registry port. Metadata present = auth-core is served, whatever version.
-                    String metadata = boot.config.artifactsUrl()
-                            + "/maven/maven/eu/wohlben/qits/qits-auth-core/maven-metadata.xml";
-                    if (boot.http.get(metadata, Map.of()).ok()) {
-                        ctx.skip("already served on port " + boot.config.registryPort());
+                    //
+                    // TWO ADDRESSES, because in-network there are two servers rather than one
+                    // port. On the host both answered 127.0.0.1:REGISTRY_PORT, so one probe found
+                    // whoever held it. Here the platform's own store answers under its wire alias
+                    // and a previous run's temporary registry under its container name, and either
+                    // one means this phase has nothing left to do.
+                    if (boot.http.get(boot.config.artifactsUrl() + AUTH_CORE_METADATA, Map.of()).ok()
+                            || boot.http.get(AUTH_SEED_URL + AUTH_CORE_METADATA, Map.of()).ok()) {
+                        ctx.skip("qits-auth-core is already served");
                     }
                     // The platform's own store may already hold the registry port, and then the
                     // temporary one cannot have it — the bind fails with "port is already
@@ -213,7 +272,21 @@ public class SeedPhases {
 
                     String container = AUTH_SEED_HTTP;
                     boot.docker.removeContainer(container, null);
+                    // TWO CONSUMERS, TWO ADDRESSES, and both are needed:
+                    //
+                    //   --network qits-net  is for THIS CLI, which is on that network and can
+                    //                       reach nothing that is not. The container name is the
+                    //                       alias; AUTH_SEED_URL is what gets dialled.
+                    //   -p 127.0.0.1:PORT   is for the HOST'S DOCKER DAEMON. The seed image builds
+                    //                       run with --network host and resolve Maven through
+                    //                       localhost:REGISTRY_PORT, and that consumer did not
+                    //                       move onto the network with the CLI.
+                    //
+                    // Dropping either one hangs a phase rather than failing it: without the
+                    // network the probe above never answers, without the publish the first seed
+                    // build resolves nothing.
                     Boot.must(boot.docker.exec(ctx::log, "run", "-d", "--name", container,
+                                    "--network", Boot.NETWORK,
                                     "-p", "127.0.0.1:" + boot.config.registryPort() + ":80",
                                     "-v", "qits-maven-seed:/usr/share/nginx/html/artifacts/maven/maven:ro",
                                     "nginx:alpine"),
@@ -334,11 +407,11 @@ public class SeedPhases {
                                 "qits/platform-artifacts:latest"),
                         "the seed " + artifacts + " did not start");
             }
-            // Always waited for, whoever is behind the port: every publish after this phase — the
+            // Always waited for, whoever is behind the alias: every publish after this phase — the
             // two Maven ones, both npm ones, the daemon upload — needs the store answering, and a
             // phase that skipped the start still owes them that.
-            boot.awaitHealth(ctx, serving.orElse(artifacts) + " on port "
-                    + boot.config.registryPort(), boot.artifacts::health);
+            boot.awaitHealth(ctx, serving.orElse(artifacts) + " on qits-net",
+                    boot.artifacts::health);
         });
     }
 
@@ -349,10 +422,11 @@ public class SeedPhases {
      * <b>The answer comes from the API, not from the container list.</b> A deployed store is named
      * {@code qits-pd-qits-platform-artifacts-<id8>}, and matching that shape alone would still miss
      * anything else the port could be behind. The artifacts API's own health is the honest
-     * question: the temporary Maven registry is an nginx serving one mounted directory, so it
-     * answers 404 there, while qits-platform-artifacts answers 200 whether it was started by this
-     * bootstrap, by compose or by the deployer. The container list is then read only to name who it
-     * is, which is what makes the phase log readable.
+     * question: it is asked at the store's WIRE ALIAS, which the temporary Maven registry does not
+     * answer to at all — it is an nginx under its own name — while qits-platform-artifacts answers
+     * 200 there whether it was started by this bootstrap, by compose or by the deployer. The
+     * container list is then read only to name who it is, which is what makes the phase log
+     * readable.
      * <p>
      * Both phases that bind the registry port ask this before they bind it. Neither can win that
      * bind, and neither needs to: the store on the other end has the same volume.
@@ -582,20 +656,20 @@ public class SeedPhases {
             state.write();
             ctx.log("  recorded in " + state.file() + " before the server starts");
 
-            // On a warm rerun (QITS_SKIP_BUILD) nothing before this phase has touched the network,
-            // and this is the first container of the run.
+            // The `network` phase already created it and put this run on it; the call stays so the
+            // phase says what it needs, and it is a no-op on an existing network.
             boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
             boot.docker.ensureVolume("qits-oci-postgresql-data", ctx::log);
             String pg = PlatformModel.wireAlias("oci-postgresql", boot.config.envName());
             // Whoever already serves, serves — the same posture as the seed artifacts store. A
-            // deployed postgres publishes this very port from this very volume, and a second bind
-            // is "port is already allocated" and the end of the run.
+            // deployed postgres answers the same alias and publishes the same host port from this
+            // very volume, and a second bind is "port is already allocated" and the end of the run.
             String prefix = PlatformModel.pdNamePrefix("oci-postgresql", boot.config.envName());
             Optional<String> serving = boot.docker.runningNames().stream()
                     .filter(name -> name.equals(pg) || name.startsWith(prefix))
                     .findFirst();
             if (serving.isPresent()) {
-                ctx.log("  " + serving.get() + " already serves port " + boot.config.pgPort()
+                ctx.log("  " + serving.get() + " already serves " + pg
                         + " from the same volume — no seed server to start");
             } else {
                 boot.docker.removeContainer(pg, null);
@@ -613,11 +687,16 @@ public class SeedPhases {
                         .mask(superuser), ctx::log), "the seed " + pg + " did not start");
             }
 
-            // Always waited for, whoever is behind the port: the statements below need a server,
-            // and a first boot spends its first seconds in initdb rather than listening.
-            String url = "jdbc:postgresql://127.0.0.1:" + boot.config.pgPort() + "/postgres";
+            // Always waited for, whoever is behind it: the statements below need a server, and a
+            // first boot spends its first seconds in initdb rather than listening.
+            //
+            // The WIRE ALIAS on 5432, like every other consumer of this database — the published
+            // host port is for a person with a psql, not for this program. It is also the address
+            // that survives the deployer's own cutover of qits-oci-postgresql, because the alias is
+            // what the successor answers to.
+            String url = "jdbc:postgresql://" + pg + ":5432/postgres";
             PgAdmin.awaitReady(url, "postgres", superuser, boot.config.healthTimeout(), ctx);
-            ctx.log("  postgres answering on 127.0.0.1:" + boot.config.pgPort());
+            ctx.log("  postgres answering on " + pg + ":5432");
 
             // Role, database and username are one name throughout, and every database is owned by
             // its own role and closed to public.
@@ -634,7 +713,7 @@ public class SeedPhases {
                 provision(ctx, admin, "qits_ci_eventstream", ciEventstream, false);
                 provision(ctx, admin, "qits_platform_idp", platformIdp, false);
             }
-            ctx.note("4 databases ready on :" + boot.config.pgPort());
+            ctx.note("4 databases ready on " + pg);
         });
     }
 

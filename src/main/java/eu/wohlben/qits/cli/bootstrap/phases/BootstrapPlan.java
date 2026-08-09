@@ -22,6 +22,9 @@ public final class BootstrapPlan {
         List<Phase> phases = new ArrayList<>();
 
         phases.add(seed.preflight());
+        // Before the first address is dialled, and after preflight, which is where the daemon is
+        // proved reachable at all.
+        phases.add(seed.joinNetwork());
         phases.add(seed.sources());
         phases.add(seed.recordedState());
 

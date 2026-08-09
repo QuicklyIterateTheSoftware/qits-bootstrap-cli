@@ -33,7 +33,10 @@ class BootstrapPlanTest {
         List<Phase> phases = plan(Map.of());
 
         assertThat(ids(phases)).doesNotHaveDuplicates();
-        assertThat(ids(phases)).startsWith("preflight", "sources", "recorded-state", "auth-core-seed");
+        // The network is joined second, right after the daemon is proved reachable and before the
+        // first address is dialled: every address this CLI uses is a wire alias on qits-net.
+        assertThat(ids(phases)).startsWith("preflight", "network", "sources", "recorded-state",
+                "auth-core-seed");
         assertThat(ids(phases)).endsWith("release-train-push", "summary");
         assertThat(phases).allSatisfy(phase -> assertThat(phase.title()).isNotBlank());
     }

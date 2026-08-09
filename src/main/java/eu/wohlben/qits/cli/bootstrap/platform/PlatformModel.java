@@ -28,9 +28,11 @@ public final class PlatformModel {
      * <p>
      * qits-platform-edge joined on 2026-08-08 and is the reason the set grew rather than moved:
      * the EDGE binds the host's only published port now, and qits-gateway publishes none. Without
-     * a seed edge the CLI has no door — every call it makes to qits-ci and qits-deployments goes
-     * through the host port, so the edge has to be up before the first health poll, not after the
-     * first deployment.
+     * a seed edge the CLI has no door — every call it makes to qits-ci and qits-deployments enters
+     * at the edge, so the edge has to be up before the first health poll, not after the first
+     * deployment. That is true whichever side of the edge the caller stands on: the CLI dials
+     * {@code qits-platform-edge:8080} from qits-net, a browser dials the published port, and both
+     * arrive at the same process.
      * <p>
      * qits-oci-postgresql is in here because qits-deployments refuses to boot without the database
      * it holds. It is the one member that is not a service of this platform's own making — the
@@ -47,10 +49,10 @@ public final class PlatformModel {
      * its own cutover must not fall inside another application's deploy window), the seed's own
      * repos last, qits-deployments at the very end — its deployment is the self-update handoff.
      * <p>
-     * <b>qits-platform-edge is second to last, immediately before the deployer.</b> It is the host
-     * port, so its cutover is the one deployment that takes THIS PROGRAM's own door away for a
-     * beat: every remaining poll of a ci run or a deployment row travels 127.0.0.1:PORT -> edge ->
-     * gateway. Three consequences decide the position:
+     * <b>qits-platform-edge is second to last, immediately before the deployer.</b> It is the door,
+     * so its cutover is the one deployment that takes THIS PROGRAM's own door away for a beat:
+     * every remaining poll of a ci run or a deployment row travels qits-platform-edge:8080 -> the
+     * gateway -> the service. Three consequences decide the position:
      * <ul>
      *   <li><b>Not early.</b> An edge deployed first would carry every later phase's traffic on a
      *       binder this run has not yet watched serve anything. Late, the applications it fronts

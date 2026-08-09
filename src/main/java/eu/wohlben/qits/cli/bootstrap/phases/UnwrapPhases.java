@@ -81,6 +81,7 @@ public class UnwrapPhases {
         } else {
             phases.add(volumesKept());
         }
+        phases.add(selfDetach());
         phases.add(networks());
         phases.add(images());
         return List.copyOf(phases);
@@ -201,17 +202,65 @@ public class UnwrapPhases {
         });
     }
 
+    /**
+     * <b>An attached container is an endpoint, and docker refuses to remove a network that has
+     * one.</b> This CLI runs as a container and joins qits-net to reach the platform's addresses at
+     * all, so without this the phase below would fail on the single endpoint this program put
+     * there itself. It is qits-deployments' own order when it deletes an environment: disconnect
+     * the services, then remove the networks.
+     * <p>
+     * Every platform network this container is on, by the same name test the removal uses — the
+     * two cannot drift apart. On none of them it skips, which is what a run started with no
+     * {@code --network} looks like.
+     */
+    private Phase selfDetach() {
+        return new Phase("self-detach", "leave the platform's networks", ctx -> {
+            String self = boot.docker.selfName();
+            List<String> attached = self == null || !boot.docker.containerExists(self)
+                    ? List.of()
+                    : boot.docker.networksOf(self).stream()
+                            .filter(UnwrapPhases::isPlatformNetwork).toList();
+            if (attached.isEmpty()) {
+                ctx.skip("this run is on none of the platform's networks");
+            }
+            ctx.log("  " + self + " is on " + String.join(", ", attached));
+            int left = 0;
+            for (String network : attached) {
+                if (dryRun) {
+                    ctx.log("  would disconnect from " + network);
+                    continue;
+                }
+                ProcessResult result = boot.docker.exec(Duration.ofMinutes(1), null,
+                        "network", "disconnect", network, self);
+                if (result.ok()) {
+                    left++;
+                    ctx.log("  left " + network);
+                } else {
+                    ctx.warn("still on " + network + ", which cannot be removed while this run is "
+                            + "an endpoint on it: " + result.tailText(1));
+                }
+            }
+            ctx.note(dryRun ? attached.size() + " would go" : left + " left");
+        });
+    }
+
+    /**
+     * qits-net is the shared legacy network; qits-platform is where platform services run;
+     * qits-env-&lt;env&gt; is an environment's bundle and qits-env-&lt;env&gt;-&lt;app&gt; one
+     * service's own network; qits_* is what a compose project would have named.
+     */
+    private static boolean isPlatformNetwork(String name) {
+        return name.equals("qits-net") || name.equals("qits-platform")
+                || name.startsWith("qits-env-") || name.startsWith("qits_");
+    }
+
     private Phase networks() {
         return new Phase("networks", "remove the platform's networks", ctx -> {
             Set<String> names = new LinkedHashSet<>();
             for (String line : boot.docker.run(Cmd.of(
                     "docker", "network", "ls", "--format", "{{.Name}}"), null).captured()) {
                 String name = line.trim();
-                // qits-net is the shared legacy network; qits-platform is where platform services
-                // run; qits-env-<env> is an environment's bundle and qits-env-<env>-<app> one
-                // service's own network; qits_* is what a compose project would have named.
-                if (name.equals("qits-net") || name.equals("qits-platform")
-                        || name.startsWith("qits-env-") || name.startsWith("qits_")) {
+                if (isPlatformNetwork(name)) {
                     names.add(name);
                 }
             }

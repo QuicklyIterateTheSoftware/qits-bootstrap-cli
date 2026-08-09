@@ -2,9 +2,9 @@
 
 ## What this repository is
 
-The qits platform's cold bootstrap, as a Quarkus command-mode CLI. It runs on the host, shells
-docker and git, calls the platform's HTTP APIs, and shows a live two-region terminal display of
-what it is doing.
+The qits platform's cold bootstrap, as a Quarkus command-mode CLI. It runs as a container on
+`qits-net` with the host's docker socket mounted, shells docker and git, calls the platform's HTTP
+APIs, and shows a live two-region terminal display of what it is doing.
 
 ## Read this first
 
@@ -36,8 +36,7 @@ forced. Add to that list rather than deviating quietly.
     config/     BootstrapConfig (@ConfigMapping, read from .env) and its command-line overrides
     platform/   what the platform is made of: PlatformModel, the generated compose and run-args,
                 the seed-Dockerfile rewrite, the recorded state, thin Docker and Git facades
-    api/        the platform's HTTP, with java.net.http; InNetworkHttp for the two services that
-                publish no host port
+    api/        the platform's HTTP, with java.net.http, at the platform's own wire aliases
     phases/     the phases themselves and the plan that orders them
 
 ## Conventions
@@ -53,8 +52,19 @@ forced. Add to that list rather than deviating quietly.
   websocket for run logs — following along is polling `GET /ci/api/runs/{runId}`, which answers with
   each step's output whole and bounded, so the relay subtracts by overlap rather than by length. It
   is a courtesy and never a dependency: reads that stop answering turn it off with one line.
+- **Every address this CLI dials is a wire alias, and there is no second set.** The run joins
+  `qits-net` in its second phase and reaches the platform the way every other member does:
+  `qits-platform-artifacts:8080`, the postgres alias on 5432, `qits-platform-idp:8080`, and ci and
+  the deployer through `qits-platform-edge:8080` — the edge rather than the service, so the run
+  keeps exercising the gateway's route table. Do NOT add a host-addressed mode beside it: one set of
+  addresses is what keeps the branching out of the code. The published ports are still configured,
+  because the GENERATED FILES and a person's browser use them, and because the host's docker daemon
+  resolves `localhost:<registry port>` during seed builds — a container the CLI starts for the
+  daemon's benefit needs both a publish and a network alias, and the temporary Maven registry is
+  exactly that case.
 - **Phases are rerun-safe**, the same way the script's were: 409s tolerated, existing networks
-  adopted, up-to-date pushes no-ops, publishes probed before they are made.
+  adopted, an already-attached container accepted, up-to-date pushes no-ops, publishes probed
+  before they are made.
 - **Rerun-safe is not rename-safe, and the `environment` phase is where that line is drawn.**
   `--platform-env` names the standing environment, which is also the PLATFORM environment: the one
   tier whose branch deploys the platform plane. Bootstrapping over a platform whose environment

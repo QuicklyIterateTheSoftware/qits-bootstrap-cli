@@ -108,38 +108,40 @@ public class PipelinePhases {
      * build-succeeded needs one too. qits-deployments before anything asks it for an environment
      * operation — it owns the topology and the socket both, so nothing else can answer for it.
      * <p>
-     * The EDGE is what the host port answers now, so it is the second thing asked and the first
-     * thing asked over the wire this program uses for the rest of the run. A gateway that is up
-     * behind an edge that is not is unreachable, so the two are probed separately: the edge on
-     * 127.0.0.1, the gateway by its alias on qits-net.
+     * The EDGE is the first hop of every call this program makes to ci and the deployer, so it is
+     * the second thing asked and the first thing asked over the path the rest of the run uses. A
+     * gateway that is up behind an edge that is not is unreachable, so the two are probed
+     * separately, each by its own alias.
      */
     public Phase seedHealth() {
         return new Phase("seed-health", "wait for the seed services", ctx -> {
             String env = boot.config.envName();
-            boot.awaitHealth(ctx, "qits-platform-idp (on qits-net, no host port)",
-                    () -> boot.inNetwork.get("http://qits-platform-idp:8080/idp/q/health/ready"));
-            // /q is the edge's own prefix, the one thing it never proxies. An answer here is this
-            // process, not something behind it.
-            boot.awaitHealth(ctx, "qits-platform-edge on port " + boot.config.port(),
-                    () -> boot.http.get("http://127.0.0.1:" + boot.config.port() + "/q/health/ready",
+            boot.awaitHealth(ctx, "qits-platform-idp (no host port, dialled on qits-net)",
+                    () -> boot.http.get("http://qits-platform-idp:8080/idp/q/health/ready",
                             Map.of()));
+            // /q is the edge's own prefix, the one thing it never proxies. An answer here is this
+            // process, not something behind it. Its alias rather than the port it publishes: this
+            // run is on qits-net, and the published port is for a person's browser.
+            boot.awaitHealth(ctx, "qits-platform-edge (the door, on qits-net)",
+                    () -> boot.http.get("http://qits-platform-edge:8080/q/health/ready", Map.of()));
             boot.awaitHealth(ctx, env + "-qits-gateway (on qits-net, behind the edge)",
-                    () -> boot.inNetwork.get(
-                            "http://" + env + "-qits-gateway:8080/q/health/ready"));
-            boot.awaitHealth(ctx, "qits-platform-artifacts on port " + boot.config.registryPort(),
-                    boot.artifacts::health);
-            // Through the edge and the gateway's route table, and on qits-net if that route is not
-            // up yet. Either answer means the service is ready; the first also proves the whole
-            // path the rest of this run calls ci and the deployer through.
-            boot.awaitHealth(ctx, env + "-qits-ci (host port, else qits-net)", () -> {
+                    () -> boot.http.get("http://" + env + "-qits-gateway:8080/q/health/ready",
+                            Map.of()));
+            boot.awaitHealth(ctx, "qits-platform-artifacts (on qits-net)", boot.artifacts::health);
+            // Through the edge and the gateway's route table, and at the service's own alias if
+            // that route is not up yet. Either answer means the service is ready; the first also
+            // proves the whole path the rest of this run calls ci and the deployer through, which
+            // is why the direct alias is the FALLBACK and never the address.
+            boot.awaitHealth(ctx, env + "-qits-ci (through the edge, else direct)", () -> {
                 Http.Response viaGateway = boot.ci.health();
                 return viaGateway.ok() ? viaGateway
-                        : boot.inNetwork.get("http://" + env + "-qits-ci:8080/ci/q/health/ready");
+                        : boot.http.get("http://" + env + "-qits-ci:8080/ci/q/health/ready",
+                                Map.of());
             });
-            boot.awaitHealth(ctx, env + "-qits-deployments (host port, else qits-net)", () -> {
+            boot.awaitHealth(ctx, env + "-qits-deployments (through the edge, else direct)", () -> {
                 Http.Response viaGateway = boot.pd.health();
-                return viaGateway.ok() ? viaGateway : boot.inNetwork.get("http://" + env
-                        + "-qits-deployments:8080/platform-deployments/q/health/ready");
+                return viaGateway.ok() ? viaGateway : boot.http.get("http://" + env
+                        + "-qits-deployments:8080/platform-deployments/q/health/ready", Map.of());
             });
             // Health is not enough with the machine gate on: a freshly (re)created service
             // initializes its OIDC tenant lazily on the FIRST request, and if that races idp's own
