@@ -114,6 +114,9 @@ the same names `qits-local-up.sh` read:
 | `QITS_POLL_INTERVAL` | `10` | seconds between polls |
 | `QITS_ENV_NAME` | `prod` | the environment, and the ONE deploy ref is its `environment/<name>`. It is the **platform environment** — the tier whose branch deploys the platform plane — and it is inside every wire alias, every deployed container name and every idp client id. `--platform-env` is the same knob for one run |
 | `QITS_IDP_CLIENT_<ID>_SECRET` | generated | pin one idp client's secret instead of generating it |
+| `QITS_PG_SUPERUSER_PASSWORD` | generated | pin postgres' superuser password. 16–64 hex, because it is assembled into SQL that cannot be parametrized. It applies at initdb only, so on an existing cluster the value in `.qits-bootstrap.env` is the only way in |
+| `QITS_PG_DEPLOYMENTS_PASSWORD` | generated | the same, for the deployer's own role. This one converges on every rerun |
+| `QITS_PG_CI_PASSWORD`, `QITS_PG_CI_EVENTSTREAM_PASSWORD`, `QITS_PG_PLATFORM_IDP_PASSWORD` | generated | the same, for the two core seed services' databases. Created once and never altered again: the deployer's resource registry owns them from the first pipeline deployment on |
 | `QITS_TUI` | `1` | 0 = plain output even on a terminal |
 | `QITS_WEB` | `1` | 0 = no browser view; the HTTP server never binds |
 | `QITS_WEB_PORT` | `8480` | the browser view's port |
@@ -214,7 +217,7 @@ Built from configuration at startup, so the count in the header is real. A cold 
 | 14–16 | seed images `qits/ci`, `qits/deployments`, `qits/platform-idp` |
 | 17–21 | the five step images from qits-oci |
 | 22 | the ci-daemon musl static binary, and its digest |
-| 23 | start postgres on a generated superuser password recorded before it first boots, and create the deployer's role and database over JDBC |
+| 23 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC the four databases the seed stack needs: the deployer's, qits-ci's own and its outbox's, and qits-platform-idp's. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |
 | 24 | resolve the idp's client secrets (given, kept, generated) and record the run state |
 | 25–26 | generate the seed compose file; write the deployer's run-args onto its config volume |
 | 27–28 | start the seed stack (only what the deployer does not already manage); wait for the idp, the edge on the host port, the gateway on qits-net, artifacts, ci and the deployer |
