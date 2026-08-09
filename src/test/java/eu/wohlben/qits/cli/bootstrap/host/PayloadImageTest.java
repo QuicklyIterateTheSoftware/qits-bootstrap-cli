@@ -77,8 +77,10 @@ class PayloadImageTest {
         Files.createDirectories(root.resolve("src/test/java"));
         Files.writeString(root.resolve("src/test/java/BootTest.java"), "class BootTest {}\n");
         Files.writeString(root.resolve("README.md"), "read me\n");
+        // target/ least of all: the image builds its own binary in the builder stage, so a host
+        // build's output is not an input here.
         Files.createDirectories(root.resolve("target"));
-        Files.writeString(root.resolve("target/qits-cli-bootstrap-1-runner.jar"), "not a jar\n");
+        Files.writeString(root.resolve("target/qits-cli-bootstrap-1-runner"), "not a binary\n");
         assertThat(PayloadImage.tag(root)).isEqualTo(before);
     }
 

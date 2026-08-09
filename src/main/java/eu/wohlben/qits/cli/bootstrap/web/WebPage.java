@@ -3,9 +3,10 @@ package eu.wohlben.qits.cli.bootstrap.web;
 /**
  * The whole browser view: one page, no assets.
  * <p>
- * It is a Java constant rather than a file under {@code resources} on purpose. This CLI ships as a
- * native binary, and a string in a class is in the image by construction — nothing to register,
- * nothing to include, nothing that can be right in the jar and missing in the binary.
+ * It is a Java constant rather than a file under {@code resources} on purpose. This CLI is a native
+ * binary and nothing else, and a string in a class is in the image by construction — nothing to
+ * register, nothing to include, nothing that can be right on the classpath under the tests and
+ * missing in the binary people run.
  */
 public final class WebPage {
 

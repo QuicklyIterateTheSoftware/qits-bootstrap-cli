@@ -6,8 +6,8 @@
 # The CLI builds and runs this itself when it is started outside a container, and tags it by the
 # content of what the build reads, so a rerun with unchanged sources rebuilds nothing.
 #
-# It ships the NATIVE BINARY, because that is the form of this CLI people run — the uber-jar is
-# the working loop and nothing else.
+# It ships the NATIVE BINARY, because that is the only form of this CLI there is. The build makes
+# no jar, here or on a workstation.
 #
 # THE BINARY IS BUILT HERE, in the first stage, and that is what makes this image cold-start
 # capable. Copying one out of target/ would mean the image could only be built on a machine that

@@ -63,16 +63,16 @@ Without sdkman, name the GraalVM by hand instead of the first line:
 Copy that one file wherever it is wanted. The build takes about half a minute and the binary is
 roughly 45 MB.
 
-While working on the CLI itself, the jar is the faster loop:
+There is **no jar**, here or anywhere else — the binary is the only form of this program, and the
+build makes no second one. While working on the CLI itself, the loop is the tests and dev mode:
 
     ./mvnw clean verify
-    java -jar target/qits-cli-bootstrap-1.0.0-SNAPSHOT-runner.jar unwrap --dry-run
     ./mvnw quarkus:dev -Dquarkus.args="unwrap --dry-run"
 
-Both forms behave the same, live display included: JLine is pinned to its `exec` terminal provider,
-which shells `/bin/stty` rather than calling libc, because the providers that call libc do not
-survive being compiled into a native image. One process per terminal, on a program that already
-shells docker and git for a living.
+Dev mode and the binary behave the same, live display included: JLine is pinned to its `exec`
+terminal provider, which shells `/bin/stty` rather than calling libc, because the providers that
+call libc do not survive being compiled into a native image. One process per terminal, on a program
+that already shells docker and git for a living.
 
 It runs **in a container on `qits-net`**, with the host's docker socket mounted. Every address it
 dials is a wire alias — `qits-platform-artifacts:8080`, the postgres alias on 5432,
@@ -103,7 +103,7 @@ What it needs to run: a reachable docker daemon, roughly 4 GB of RAM free per na
 starts, and reach to quay.io, registry.access.redhat.com, docker.io and npm — a cold start cannot
 pull through the mirror it is starting. **Nothing else**: git, the compose plugin, `stty` and the
 CLI's own binary are in the payload image, which the run builds for itself. What it needs to build:
-the GraalVM `.sdkmanrc` names for the binary, any JDK 25 for the jar and the tests.
+the GraalVM `.sdkmanrc` names for the binary, any JDK 25 for the tests.
 
 Cost, honestly: every seed image and every pipeline run is a cold GraalVM native build with no
 maven cache. The first run is measured in hours. Reruns skip what exists —

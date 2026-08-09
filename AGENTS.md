@@ -128,7 +128,18 @@ forced. Add to that list rather than deviating quietly.
 ## Build forms
 
     sdk env && ./mvnw package -Dnative -DskipTests   the binary people run
-    ./mvnw clean verify                              the uber-jar and the tests; the working loop
+    ./mvnw clean verify                              the tests; packages nothing
+    ./mvnw quarkus:dev -Dquarkus.args="…"            the working loop
+
+**There is no jar — not in production, not in the image, and not as a dev loop.** The native binary
+is the only form of this program, and three lines in the pom keep it that way, all outside the
+native profile so an ordinary build cannot make one either: `quarkus.package.jar.enabled=false`,
+`quarkus.build.skip=true`, and maven-jar-plugin's `default-jar` bound to phase `none`. The second
+is not optional — Quarkus' build goal asked for neither a jar nor a binary fails the build with
+"No artifact results were produced" — and the native profile turns it back on. Skipping the goal
+in a JVM build loses no coverage: every `@QuarkusTest` augments the application anyway.
+`clean package -Dnative` leaves the binary alone in `target/`. The loop while working on the CLI
+is the tests and dev mode, neither of which packages anything.
 
 `.sdkmanrc` names the GraalVM (25.0.2-graalce, the platform's pin), so `sdk env` sets JAVA_HOME and
 nobody exports it by hand. Without sdkman, name it on the command line instead:
@@ -137,11 +148,11 @@ nobody exports it by hand. Without sdkman, name it on the command line instead:
 The native profile carries every flag the native build needs, so that command takes no others. Run
 `clean verify` BEFORE a native package, never after: clean wipes the runner.
 
-**The payload image builds a third form: the same binary, fully static against musl.** Its builder
-stage is GraalVM CE plus a musl toolchain it installs itself, and the flags reach the build through
-one seam — `-Dnative.extra-build-args`, which the native profile appends to the flag it already
-carries. Adding a flag for the host build goes in the profile; adding one for the image goes on the
-Dockerfile's mvn line. Naming `quarkus.native.additional-build-args` whole on a command line breaks
+**The payload image builds the second flavour of that binary: the same program, fully static
+against musl.** Its builder stage is GraalVM CE plus a musl toolchain it installs itself, and the
+flags reach the build through one seam — `-Dnative.extra-build-args`, which the native profile
+appends to the flag it already carries. Adding a flag for the host build goes in the profile;
+adding one for the image goes on the Dockerfile's mvn line. Naming `quarkus.native.additional-build-args` whole on a command line breaks
 this: Quarkus reads it from one config source, so the profile's flag would vanish without a word.
 
 Both halves of "static musl" are forced, and neither is a preference. A binary linked against a
@@ -181,8 +192,8 @@ the deployables are pulled rather than rebuilt.
   Quarkus' "Port 8480 seems to be in use". `QITS_WEB_PORT` moves it, `QITS_WEB=0` stops it binding
   at all. Two runs at once need one of the two.
 - The browser view's page is a Java string constant, not a resource. A constant is in the native
-  image by construction; a resource has to be registered and can be right in the jar and missing in
-  the binary. Keep it that way.
+  image by construction; a resource has to be registered and can be right on the classpath — under
+  the tests, under dev mode — and missing in the binary. Keep it that way.
 - The SSE stream is drained by a timer on the event loop, never written from the boot thread: a
   Vert.x response belongs to the context that made it. `WebUi.close` waits up to 600 ms while
   someone is connected so the last frames leave before the process does.
