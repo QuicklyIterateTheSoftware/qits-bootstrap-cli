@@ -130,6 +130,18 @@ public interface BootstrapConfig {
     @WithDefault("qits-bootstrap-cli.log")
     String logFile();
 
+    /**
+     * <b>Set by the launcher and by nothing else</b>: 1 means "you are the payload — run the
+     * phases". Unset means "you are on the host — build the payload image and run yourself in it".
+     * <p>
+     * It is the one knob that is not a person's to answer, and it lives here rather than in a
+     * schema of the host half's own, because there is one program and one configuration contract.
+     * Setting it by hand runs the phases on the host, where the first address they dial does not
+     * resolve.
+     */
+    @WithDefault("false")
+    boolean inContainer();
+
     /** Lines of the running step's output kept for the body region. */
     @WithDefault("2000")
     int tailLines();

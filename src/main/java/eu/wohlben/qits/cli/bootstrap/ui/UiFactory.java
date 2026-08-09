@@ -59,7 +59,12 @@ public final class UiFactory {
         }
     }
 
-    private static boolean isTerminal() {
+    /**
+     * Public because the host half asks the same question before it decides whether to give the
+     * payload a {@code -it}. One test, so the launcher and the display cannot disagree about
+     * whether there is a terminal.
+     */
+    public static boolean isTerminal() {
         String term = System.getenv("TERM");
         if ("dumb".equals(term)) {
             return false;

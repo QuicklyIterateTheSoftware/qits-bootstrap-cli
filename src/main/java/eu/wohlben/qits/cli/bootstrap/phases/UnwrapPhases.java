@@ -117,6 +117,18 @@ public class UnwrapPhases {
             }
             ids.addAll(byFilter("label=com.docker.compose.project=qits"));
             ids.addAll(namedQits());
+            // NOT THIS ONE. The CLI runs as a container called qits-bootstrap-cli, which the sweep
+            // above matches like any other — and removing it is `docker rm -f` on the process doing
+            // the removing. unwrap would die here, leaving the networks, the images and every phase
+            // after this one undone, and the failure would read as the daemon going away.
+            //
+            // Excluded rather than named out of the pattern: the pattern is what a machine's qits
+            // containers look like and must keep matching, and the exclusion holds for whatever
+            // name this container was started under, including one a person chose.
+            String self = boot.docker.selfContainerName();
+            if (self != null && ids.remove(self)) {
+                ctx.log("  keeping " + self + ", which is this run");
+            }
             if (ids.isEmpty()) {
                 ctx.skip("no qits containers");
             }
@@ -281,7 +293,15 @@ public class UnwrapPhases {
         });
     }
 
-    /** The platform's own images: qits/* and everything published to the local registry host. */
+    /**
+     * The platform's own images: qits/* and everything published to the local registry host.
+     * <p>
+     * The payload image this run is executing from is {@code qits-bootstrap:<content sha>} and
+     * matches neither pattern, which is why it is spelled that way rather than {@code qits/…}.
+     * Docker refuses to remove an image a running container holds, so sweeping it in would end
+     * every unwrap with a failure it could do nothing about — and keeping it is what makes the
+     * unwrap-then-bootstrap cycle start in seconds.
+     */
     private Phase images() {
         return new Phase("images", "remove the platform's images", ctx -> {
             String registryHost = "localhost:" + boot.config.registryPort() + "/";

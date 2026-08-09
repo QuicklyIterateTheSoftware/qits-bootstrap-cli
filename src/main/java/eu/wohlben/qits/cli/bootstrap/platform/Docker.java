@@ -53,6 +53,23 @@ public class Docker {
         return runner.run(Cmd.of("docker", "compose", "version"), null).ok();
     }
 
+    /**
+     * The daemon's swarm state — {@code active}, {@code inactive}, {@code pending}. The host half
+     * reports it and changes nothing: {@code swarm init} rewrites the networking of every container
+     * on the machine, which is a migration rather than a preflight repair.
+     */
+    public String swarmState() {
+        ProcessResult state = runner.run(Cmd.of(
+                "docker", "info", "--format", "{{.Swarm.LocalNodeState}}"), null);
+        return state.ok() && !state.trimmed().isEmpty() ? state.trimmed() : "unknown";
+    }
+
+    /** Whether an image reference is already on this daemon. */
+    public boolean imageExists(String reference) {
+        return runner.run(Cmd.of("docker", "image", "inspect", "-f", "{{.Id}}", reference),
+                null).ok();
+    }
+
     /** The docker socket's group. The deployer and ci join it rather than running as root. */
     public String socketGroupId() {
         Path socket = Path.of("/var/run/docker.sock");
@@ -80,6 +97,29 @@ public class Docker {
         } catch (IOException e) {
             return null;
         }
+    }
+
+    /**
+     * The NAME the daemon knows this process's own container by, or null when this is not one.
+     * <p>
+     * {@link #selfName()} answers with the id, and every sweep in this program lists names — so a
+     * phase that must not touch the container it is running in has to compare like with like. That
+     * is {@code unwrap}'s {@code containers} phase, which would otherwise {@code docker rm -f}
+     * itself.
+     */
+    public String selfContainerName() {
+        String self = selfName();
+        if (self == null) {
+            return null;
+        }
+        ProcessResult name = runner.run(Cmd.of("docker", "inspect", "--type", "container",
+                "-f", "{{.Name}}", self), null);
+        if (!name.ok()) {
+            return null;
+        }
+        // docker reports it with a leading slash; `docker ps --format {{.Names}}` does not.
+        String text = name.trimmed();
+        return text.startsWith("/") ? text.substring(1) : text.isEmpty() ? null : text;
     }
 
     public boolean containerExists(String nameOrId) {

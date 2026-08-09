@@ -5,11 +5,13 @@ import eu.wohlben.qits.cli.bootstrap.config.OverridableConfig;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseEngine;
 import eu.wohlben.qits.cli.bootstrap.engine.RunResult;
+import eu.wohlben.qits.cli.bootstrap.host.HostLauncher;
 import eu.wohlben.qits.cli.bootstrap.phases.Boot;
 import eu.wohlben.qits.cli.bootstrap.phases.BootstrapPlan;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
 import eu.wohlben.qits.cli.bootstrap.ui.Ui;
 import eu.wohlben.qits.cli.bootstrap.ui.UiFactory;
+import io.quarkus.runtime.annotations.CommandLineArguments;
 import jakarta.inject.Inject;
 import picocli.CommandLine;
 
@@ -33,6 +35,15 @@ public class BootstrapCommand implements Callable<Integer> {
 
     @Inject
     BootstrapConfig config;
+
+    /**
+     * This run's own arguments, so the host half can relay them verbatim into the container. Taken
+     * as they were typed rather than rebuilt from the options above: a flag added later is passed
+     * on without anyone remembering to.
+     */
+    @Inject
+    @CommandLineArguments
+    String[] args;
 
     @CommandLine.Option(names = "--wrapper-dir",
             description = "The wrapper repository whose submodule checkouts are the sources.")
@@ -70,6 +81,13 @@ public class BootstrapCommand implements Callable<Integer> {
                 .skipBuild(skipBuild)
                 .platformEnv(platformEnv)
                 .tui(noTui ? Boolean.FALSE : null);
+
+        // The host half. Every address the phases dial is a wire alias on qits-net, so they only
+        // ever run inside the payload image — this builds it and runs this same program in it, and
+        // relays whatever exit code comes back.
+        if (!effective.inContainer()) {
+            return HostLauncher.run(effective, List.of(args), System.out);
+        }
 
         try (RunLog log = new RunLog(Path.of(effective.logFile()))) {
             log.section("bootstrap");

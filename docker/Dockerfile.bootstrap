@@ -1,16 +1,41 @@
 # The bootstrap, as an image, so the cold boot can run on the platform's docker network
 # instead of on the host. Build it from the repository root:
 #
-#     ./mvnw clean verify
-#     docker build -f docker/Dockerfile.bootstrap -t qits/bootstrap:<tag> .
+#     docker build -f docker/Dockerfile.bootstrap -t qits-bootstrap:<tag> .
+#
+# The CLI builds and runs this itself when it is started outside a container, and tags it by the
+# content of what the build reads, so a rerun with unchanged sources rebuilds nothing.
 #
 # It ships the UBER-JAR, not the native binary, and that is not a preference. This host is
 # glibc 2.42. A binary linked here will not start on Debian stable (2.36), on Ubuntu 24.04
 # (2.39), or on any musl image at all, so a host-built binary copied in is a broken image
 # that builds cleanly. The jar carries no libc of its own and runs on the JRE below it.
-# Building the binary INSIDE the image would also answer this, at the price of a GraalVM
-# stage and the minutes it takes; the jar is the cheap answer and the boot is not hot.
 #
+# THE JAR IS BUILT HERE, in the first stage, and that is what makes this image cold-start
+# capable. Copying a jar out of target/ would mean the image could only be built on a machine
+# that had just run maven — and the binary people run is the NATIVE one, which leaves no jar
+# beside it, so the failure would land on exactly the machine the bootstrap is for. Building it
+# in the image also removes the "did you run mvn first" question entirely: the only input is
+# the checkout.
+FROM maven:3.9-eclipse-temurin-25 AS build
+
+WORKDIR /src
+
+# Only what the build reads, and the CLI hashes the same four paths to tag the image. Copying
+# the whole context instead would make every log file and every editor scratch file a rebuild.
+COPY .mvn/ .mvn/
+COPY pom.xml ./
+COPY src/main/ src/main/
+
+# The maven repository is a BuildKit cache mount, not a layer: it survives between builds on this
+# daemon, so a source change re-resolves nothing. Without it every rebuild is a cold download of
+# the whole Quarkus platform, which is minutes, on a loop people run often.
+#
+# -DskipTests because the tests are the `./mvnw clean verify` gate on the host, not a step of the
+# image build; src/test is not even copied above.
+RUN --mount=type=cache,target=/root/.m2/repository \
+    mvn -B -ntp package -DskipTests
+
 # The base is upstream on purpose. This image has to build on a machine that has never seen
 # the platform, and every platform image — ci-base included — is built BY this bootstrap.
 # Basing it on one of those makes the cold boot need the thing it exists to create.
@@ -48,11 +73,11 @@ RUN apk add --no-cache \
         docker-cli-compose \
         git
 
-# The run writes its log and clones its sources into the working directory, so the caller has
-# one path to mount and everything the run leaves behind is under it.
+# A fallback only. The launcher sets the working directory to the one it was started in, which is
+# also a mount, so the run's log and clones land on the host where the next run can find them.
 WORKDIR /work
 
 # Copied by glob so the CalVer version in the name is not repeated here, where it would go stale.
-COPY target/qits-cli-bootstrap-*-runner.jar /opt/qits/bootstrap.jar
+COPY --from=build /src/target/qits-cli-bootstrap-*-runner.jar /opt/qits/bootstrap.jar
 
 ENTRYPOINT ["java", "-jar", "/opt/qits/bootstrap.jar"]

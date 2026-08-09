@@ -1,0 +1,20 @@
+# What NOT to send to the daemon when this repository is a build context.
+#
+# There is one such build: docker/Dockerfile.bootstrap, which reads pom.xml, .mvn/, src/main/ and
+# docker/. Everything named here is either large, private to a run, or host-built and unusable in
+# the image — and the context is packed and sent on every rebuild, so a directory left in it is
+# paid for every time.
+#
+# .claude/ is the loud one: it holds git worktrees, which are whole second checkouts of this
+# repository. Without this line the context carries the repository several times over.
+.claude/
+.git/
+target/
+target-ide/
+
+# A run's own files. .env holds this machine's answers, the clones are a platform's worth of
+# source, and the log grows to megabytes.
+.env
+.qits-bootstrap-src/
+.qits-bootstrap/
+qits-bootstrap-cli.log

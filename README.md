@@ -74,27 +74,28 @@ which shells `/bin/stty` rather than calling libc, because the providers that ca
 survive being compiled into a native image. One process per terminal, on a program that already
 shells docker and git for a living.
 
-It runs **in a container on `qits-net`**, with the host's docker socket mounted, and
-`docker/Dockerfile.bootstrap` builds that image. Every address it dials is a wire alias —
-`qits-platform-artifacts:8080`, the postgres alias on 5432, `qits-platform-idp:8080`, and qits-ci
-and qits-deployments through `qits-platform-edge:8080` — and the run joins the network itself,
-before it dials anything. There is no host-addressed mode beside that one.
+It runs **in a container on `qits-net`**, with the host's docker socket mounted. Every address it
+dials is a wire alias — `qits-platform-artifacts:8080`, the postgres alias on 5432,
+`qits-platform-idp:8080`, and qits-ci and qits-deployments through `qits-platform-edge:8080` — and
+the run joins the network itself, before it dials anything. There is no host-addressed mode beside
+that one.
 
-It still reads the wrapper repository's checkouts where they are, so the working directory is the
-one thing to mount: build contexts, `docker cp` sources and the compose file are read by the docker
-CLIENT, so no path has to mean the same thing inside and outside. The host-side launcher that
-starts the container is separate work.
+**You still run it on the host, and it puts itself in there.** See
+[Two halves, one binary](#two-halves-one-binary): started outside a container it preflights docker,
+builds `docker/Dockerfile.bootstrap` into a payload image tagged by its own content, runs itself
+inside it and relays the exit code.
 
 It also **finds the wrapper by itself**. This CLI lives at `cli/qits-cli-bootstrap` inside it, so
 running from anywhere in the checkout is enough: the working directory is walked upwards for the
 first `.gitmodules` naming the qits submodules. `QITS_WRAPPER_DIR` (or `--wrapper-dir`) still wins,
-and preflight prints which of the two happened.
+and preflight prints which of the two happened. The container is told the answer rather than
+walking for it again.
 
-What it needs to run: the host's docker socket mounted, a daemon with the compose plugin, `git`,
-`stty`, roughly 4 GB of RAM free per native build it starts, and reach to quay.io,
-registry.access.redhat.com, docker.io and npm — a cold start cannot pull through the mirror it is
-starting. What it needs to build: the GraalVM `.sdkmanrc` names for the binary, any JDK 25 for the
-jar and the tests.
+What it needs to run: a reachable docker daemon, roughly 4 GB of RAM free per native build it
+starts, and reach to quay.io, registry.access.redhat.com, docker.io and npm — a cold start cannot
+pull through the mirror it is starting. **Nothing else**: git, the compose plugin, `stty` and a JRE
+are in the payload image, which the run builds for itself. What it needs to build: the GraalVM
+`.sdkmanrc` names for the binary, any JDK 25 for the jar and the tests.
 
 Cost, honestly: every seed image and every pipeline run is a cold GraalVM native build with no
 maven cache. The first run is measured in hours. Reruns skip what exists —
@@ -129,12 +130,15 @@ the same names `qits-local-up.sh` read:
 | `QITS_TUI` | `1` | 0 = plain output even on a terminal |
 | `QITS_WEB` | `1` | 0 = no browser view; the HTTP server never binds |
 | `QITS_WEB_PORT` | `8480` | the browser view's port |
-| `QITS_WEB_HOST` | `0.0.0.0` | what it binds (WSL2 browsers need non-loopback); `127.0.0.1` keeps it off the LAN |
+| `QITS_WEB_HOST` | `0.0.0.0` | who can reach the view — the host side of the publish (WSL2 browsers need non-loopback); `127.0.0.1` keeps it off the LAN |
 | `QITS_TAIL_LINES` | `2000` | lines of the running step kept for the body |
 | `QITS_LOG_FILE` | `qits-bootstrap-cli.log` | the full log of every command |
 
 `--wrapper-dir`, `--skip-build`, `--no-tui` and `--platform-env` answer the same questions for one
 run.
+
+Two names in that spelling are **not yours to set**: `QITS_IN_CONTAINER` and `QITS_WEB_BIND`. The
+launcher sets them for the payload and nobody sets them by hand — see below.
 
 `--platform-env <name>` is for a FIRST boot. Bootstrapping over a platform whose environment has
 another name is **refused**, not honoured as a rename: the name is inside every wire alias, every
@@ -142,6 +146,49 @@ deployed container name and every recorded idp secret, so a PATCH would leave th
 as `<old>-qits-*` while every generated file addresses `<new>-qits-*`. The phase names what stands
 there and points at `unwrap`. Moving the plane on a live platform is a PATCH on the deployer's
 `pd_environment.platform`, with the undeploy and redeploy that implies, and nothing here does it.
+
+## Two halves, one binary
+
+The phases only ever run on `qits-net`, and you only ever type one command. Started with no
+`QITS_IN_CONTAINER`, the binary is the **launcher**: it preflights what only the host can answer,
+builds the payload image, runs itself inside it and returns whatever the run returned. Started with
+the marker — which is what the launcher sets — it is the **payload**, and it runs the phases.
+
+    docker daemon: reachable
+    swarm: active
+    wrapper: /home/dev/qits-qits  (detected from /home/dev/qits-qits/cli/qits-cli-bootstrap)
+    payload image: qits-bootstrap:23105f76262d (built already)
+    $ docker run --rm --name qits-bootstrap-cli …
+
+**Swarm is reported, not repaired.** `docker swarm init` rewrites the networking of every container
+on the machine, which is a migration and not a preflight's business.
+
+**The image is addressed by its content** — a digest of `pom.xml`, `.mvn/`, `src/main/` and the
+Dockerfile — so a rerun with an unchanged checkout finds it built and starts in a second, and a
+changed source is a different image that cannot be run stale by mistake. It is a two-stage build: a
+maven stage makes the uber-jar from the checkout, the runtime stage is a JRE with the docker CLI
+trio and git. Nothing is copied out of `target/`, so the image builds on a machine that has never
+run maven — which is the machine this program is for. Its repository is `qits-bootstrap`,
+deliberately outside `unwrap`'s `qits/` image sweep: it is the image a running `unwrap` is executing
+from, and keeping it is what makes the next bootstrap start in seconds.
+
+The run itself, flag by flag:
+
+| | why |
+| --- | --- |
+| `--rm --name qits-bootstrap-cli` | one bootstrap at a time, nameable while it runs (`docker logs`), gone when it ends |
+| `-it`, only with a terminal | the live display needs a tty; against a pipe it is docker's "the input device is not a TTY", and `UiFactory` falls back to plain lines by itself |
+| `-v /var/run/docker.sock:…` | every phase is a docker command against the HOST's daemon |
+| `--user <uid>:<gid>` and `--group-add <socket group>` | the clones and the generated files stay the user's own rather than arriving root-owned in their checkout, and git reads those checkouts without "dubious ownership". A plain uid is in no groups inside a container, so the socket's group has to be added |
+| `-v <path>:<path>` per state directory | the wrapper (checkouts, `.qits-bootstrap.env`, the compose file), the working directory (`.env`), `QITS_SRC` (the clones) and the log. Mounted at their own path, so a `QITS_*` value means the same file on both sides — and mounted at all because the payload's build contexts and `docker cp` sources are read by the CLIENT, inside |
+| `-w <the launcher's directory>` | `.env` is the same file, and a relative `QITS_SRC` or `QITS_LOG_FILE` lands where it would have on the host |
+| `-e QITS_…` by NAME | docker copies each value across, so the postgres passwords and client secrets never reach a command line, the screen or the log |
+| `-e HOME=/tmp`, `-e TZ=…` | a uid with no `/etc/passwd` entry has no home, and a container with no `/etc/localtime` logs in UTC while the launcher logs local |
+| `-p [<host>:]<port>:<port>` | the browser view, unless `QITS_WEB=0`. `QITS_WEB_HOST` answers who may reach it, and inside a container that boundary is the publish |
+| no `--network` | `qits-net` may not exist yet on a cold machine. The run's second phase creates it and attaches this container itself |
+
+**Exit codes are a contract and pass through untouched**: 2 a phase failed, 1 a deployment never
+landed, 0 clean.
 
 ## The display
 
@@ -315,8 +362,12 @@ Two things about the addressing are worth stating plainly:
   by a throwaway `curlimages/curl` container per call, borrowing the network position this CLI now
   holds. The platform's exposure is unchanged, which is the property worth keeping.
 
-Two additions:
+Three additions:
 
+- **The container is the program's own doing.** The script was started as a `docker:cli` container
+  by the shim around it; this binary is started on the host and puts itself inside an image it
+  builds. Nothing outside has to know the mounts, the socket group or the marker, so there is one
+  place where the run's shape is decided and it is under test.
 - A platform service is only counted live when its container is not `unhealthy`. The shell port's
   docker-based check once counted a `running/unhealthy` idp as live, and the rollback that followed
   looked like a success.

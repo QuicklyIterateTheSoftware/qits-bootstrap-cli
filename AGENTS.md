@@ -4,7 +4,8 @@
 
 The qits platform's cold bootstrap, as a Quarkus command-mode CLI. It runs as a container on
 `qits-net` with the host's docker socket mounted, shells docker and git, calls the platform's HTTP
-APIs, and shows a live two-region terminal display of what it is doing.
+APIs, and shows a live two-region terminal display of what it is doing. Started on the host it puts
+itself in that container: same binary, image built from this checkout, exit code relayed.
 
 ## Read this first
 
@@ -38,6 +39,8 @@ forced. Add to that list rather than deviating quietly.
                 the seed-Dockerfile rewrite, the recorded state, thin Docker and Git facades
     api/        the platform's HTTP, with java.net.http, at the platform's own wire aliases
     phases/     the phases themselves and the plan that orders them
+    host/       the half that runs OUTSIDE the container: the payload image's content tag, the
+                docker run it composes, and the launcher that preflights, builds and relays
 
 ## Conventions
 
@@ -62,6 +65,19 @@ forced. Add to that list rather than deviating quietly.
   resolves `localhost:<registry port>` during seed builds — a container the CLI starts for the
   daemon's benefit needs both a publish and a network alias, and the temporary Maven registry is
   exactly that case.
+- **One binary, two halves, ONE configuration contract.** Outside a container the binary launches
+  itself inside one; inside it, it runs the phases. The host half reads the same `BootstrapConfig`
+  and re-interprets no `QITS_*` value: the container's working directory is the launcher's, so
+  `.env` is the same file and a relative path is the same path, and every state directory is
+  bind-mounted at its own path so an absolute one is too. Do NOT give the launcher knobs of its own.
+  The two names it sets — `QITS_IN_CONTAINER` and `QITS_WEB_BIND` — are plumbing, not knobs: the
+  first says which half this is, the second says which half may hold the browser view's port, and a
+  person sets neither.
+- **`unwrap` must never remove what the run is standing on.** Its `containers` phase excludes the
+  container it is running in, and the payload image is `qits-bootstrap:<content sha>` rather than
+  `qits/…` so the image sweep leaves it. Both are the same bug — `docker rm -f` on yourself — and
+  both are fixed by exclusion rather than by narrowing a pattern, because the patterns are what a
+  machine's qits objects look like and must keep matching.
 - **Phases are rerun-safe**, the same way the script's were: 409s tolerated, existing networks
   adopted, an already-attached container accepted, up-to-date pushes no-ops, publishes probed
   before they are made.
@@ -115,7 +131,8 @@ The native profile carries every flag the native build needs, so that command ta
 the engine (ordering, failure, warnings, skips, timing), the process runner (streaming, bounded
 memory, exit codes, timeouts, masking), the configuration mapping from `.env` names, the plan's
 shape and order, the compose and run-args generation, the seed-Dockerfile rewrite, the recorded
-state file, and the plain renderer's output.
+state file, the plain renderer's output, and **the launcher's `docker run` argv** — asserted whole,
+because a flag dropped there is a bootstrap that gets further than it should before it breaks.
 
 The phases that shell docker are deliberately not unit-tested — a fake docker daemon would prove
 that the fake works. **A real bootstrap is their test**, and it is the gate a change to them has to

@@ -122,6 +122,11 @@ public class OverridableConfig implements BootstrapConfig {
     }
 
     @Override
+    public boolean inContainer() {
+        return base.inContainer();
+    }
+
+    @Override
     public int tailLines() {
         return base.tailLines();
     }
