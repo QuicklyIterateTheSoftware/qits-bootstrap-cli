@@ -524,7 +524,7 @@ public class SeedPhases {
 
     /**
      * The platform's postgres, running with a password of this bootstrap's choosing from its very
-     * first boot, and the deployer's role and database in it.
+     * first boot, and every database a seed container boots against.
      * <p>
      * <b>Before idp-secrets, and outside the skip-build branch.</b> qits-deployments refuses to
      * boot without this database, and the seed stack starts it minutes from now — so the server
@@ -534,9 +534,18 @@ public class SeedPhases {
      * <p>
      * <b>The image's own {@code POSTGRES_PASSWORD=qits-poc} never lives on this platform.</b> The
      * value below is generated on the first boot and recorded, and initdb takes it instead.
+     * <p>
+     * <b>Which databases are here, and which are deliberately not.</b> This phase provisions what
+     * the SEED STACK needs: the deployer's own store, and the stores of the two core services that
+     * come up beside it — qits-ci (its database and its outbox) and qits-platform-idp. All three
+     * run Flyway at boot against a database that has to exist already, and at that point in a cold
+     * boot no deployer exists to make one. Everything else — projects, workspaces, events — is
+     * pipeline-deployed only, so the deployer creates their roles and databases during their own
+     * deployments from the {@code resources:} line in each repository's deployments.yml. Adding
+     * them here would put a second authority on a credential that has exactly one.
      */
     public Phase seedPostgres() {
-        return new Phase("seed-postgres", "start postgres and provision the deployer's database",
+        return new Phase("seed-postgres", "start postgres and provision the seed's databases",
                 ctx -> {
             BootstrapState state = new BootstrapState(
                     boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME));
@@ -545,16 +554,31 @@ public class SeedPhases {
                     "qits.pg.superuser-password");
             String deployments = pgPassword(ctx, state, "PG_DEPLOYMENTS_PASSWORD",
                     "qits.pg.deployments-password");
+            String ci = pgPassword(ctx, state, "PG_CI_PASSWORD", "qits.pg.ci-password");
+            String ciEventstream = pgPassword(ctx, state, "PG_CI_EVENTSTREAM_PASSWORD",
+                    "qits.pg.ci-eventstream-password");
+            String platformIdp = pgPassword(ctx, state, "PG_PLATFORM_IDP_PASSWORD",
+                    "qits.pg.platform-idp-password");
             boot.state.pgSuperuserPassword = superuser;
             boot.state.pgDeploymentsPassword = deployments;
+            boot.state.pgCiPassword = ci;
+            boot.state.pgCiEventstreamPassword = ciEventstream;
+            boot.state.pgPlatformIdpPassword = platformIdp;
 
             // RECORDED BEFORE THE SERVER IS STARTED, and the order is the whole point.
             // POSTGRES_PASSWORD applies at initdb only: once the data volume holds a cluster, the
             // value in the container's env is ignored and the password inside the cluster is the
             // only one that works. A run that started the server and then died before writing this
             // file would leave a database nothing on this machine can open.
+            //
+            // The application passwords are written here for a second reason: their roles are
+            // created once and never altered, so a value that reached postgres and not this file
+            // would be lost with the run that generated it.
             state.put("PG_SUPERUSER_PASSWORD", superuser);
             state.put("PG_DEPLOYMENTS_PASSWORD", deployments);
+            state.put("PG_CI_PASSWORD", ci);
+            state.put("PG_CI_EVENTSTREAM_PASSWORD", ciEventstream);
+            state.put("PG_PLATFORM_IDP_PASSWORD", platformIdp);
             state.write();
             ctx.log("  recorded in " + state.file() + " before the server starts");
 
@@ -595,17 +619,32 @@ public class SeedPhases {
             PgAdmin.awaitReady(url, "postgres", superuser, boot.config.healthTimeout(), ctx);
             ctx.log("  postgres answering on 127.0.0.1:" + boot.config.pgPort());
 
-            // The deployer's own identity: role, database and username are one name. Rerun-safe —
-            // the role's password converges on the recorded value every time, so a cluster that
-            // survived while this file did not is repaired rather than left refusing connections.
+            // Role, database and username are one name throughout, and every database is owned by
+            // its own role and closed to public.
             try (Connection admin = PgAdmin.connect(url, "postgres", superuser)) {
-                ctx.log("  role qits_deployments: "
-                        + PgAdmin.ensureRole(admin, "qits_deployments", deployments));
-                ctx.log("  database qits_deployments: "
-                        + PgAdmin.ensureDatabase(admin, "qits_deployments", "qits_deployments"));
+                // The deployer's own identity, and the ONE role whose password converges on every
+                // rerun: the deployer records the credential this CLI hands it, so a cluster that
+                // survived while this file did not is repaired rather than left refusing
+                // connections.
+                provision(ctx, admin, "qits_deployments", deployments, true);
+                // The two core seed services. Created once and never altered again — from their
+                // first pipeline deployment the deployer's resource registry owns these passwords,
+                // and it rotates them when it has to. See PgAdmin.ensureRoleIfMissing.
+                provision(ctx, admin, "qits_ci", ci, false);
+                provision(ctx, admin, "qits_ci_eventstream", ciEventstream, false);
+                provision(ctx, admin, "qits_platform_idp", platformIdp, false);
             }
-            ctx.note("qits_deployments ready on :" + boot.config.pgPort());
+            ctx.note("4 databases ready on :" + boot.config.pgPort());
         });
+    }
+
+    /** One role and its database, logged by name. Which arm the role gets is the caller's call. */
+    private static void provision(PhaseContext ctx, Connection admin, String name, String password,
+                                  boolean converge) throws Exception {
+        ctx.log("  role " + name + ": " + (converge
+                ? PgAdmin.ensureRole(admin, name, password)
+                : PgAdmin.ensureRoleIfMissing(admin, name, password)));
+        ctx.log("  database " + name + ": " + PgAdmin.ensureDatabase(admin, name, name));
     }
 
     /**
@@ -720,7 +759,13 @@ public class SeedPhases {
                     // Both postgres passwords are in this file too: the deployer's own credential
                     // and the admin one it provisions every other application's database with.
                     .mask(orEmpty(boot.state.pgSuperuserPassword))
-                    .mask(orEmpty(boot.state.pgDeploymentsPassword)), ctx::log);
+                    .mask(orEmpty(boot.state.pgDeploymentsPassword))
+                    // The seed services' credentials are NOT in this file — the deployer injects
+                    // their triples from its own registry. Masked anyway: a line each, against the
+                    // day one of them is pinned here by hand.
+                    .mask(orEmpty(boot.state.pgCiPassword))
+                    .mask(orEmpty(boot.state.pgCiEventstreamPassword))
+                    .mask(orEmpty(boot.state.pgPlatformIdpPassword)), ctx::log);
             Boot.must(result, "writing the deployer's run-args failed");
             ctx.log("  " + properties.lines().filter(l -> l.startsWith("qits.platform.deployments.run-args")).count()
                     + " applications configured on the qits-deployments-config volume");
@@ -795,6 +840,9 @@ public class SeedPhases {
         // Resolved by seed-postgres, which runs before both generated files are written.
         values.put("PG_SUPERUSER_PASSWORD", orEmpty(boot.state.pgSuperuserPassword));
         values.put("PG_DEPLOYMENTS_PASSWORD", orEmpty(boot.state.pgDeploymentsPassword));
+        values.put("PG_CI_PASSWORD", orEmpty(boot.state.pgCiPassword));
+        values.put("PG_CI_EVENTSTREAM_PASSWORD", orEmpty(boot.state.pgCiEventstreamPassword));
+        values.put("PG_PLATFORM_IDP_PASSWORD", orEmpty(boot.state.pgPlatformIdpPassword));
         values.put("IDP", boot.config.idpIssuer());
         values.put("PUSH_TOKEN", boot.config.pushToken());
         values.put("MACHINE_REQUIRED", String.valueOf(boot.config.machineAuth()));
