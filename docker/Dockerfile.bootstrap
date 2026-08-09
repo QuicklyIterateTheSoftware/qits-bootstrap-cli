@@ -1,0 +1,58 @@
+# The bootstrap, as an image, so the cold boot can run on the platform's docker network
+# instead of on the host. Build it from the repository root:
+#
+#     ./mvnw clean verify
+#     docker build -f docker/Dockerfile.bootstrap -t qits/bootstrap:<tag> .
+#
+# It ships the UBER-JAR, not the native binary, and that is not a preference. This host is
+# glibc 2.42. A binary linked here will not start on Debian stable (2.36), on Ubuntu 24.04
+# (2.39), or on any musl image at all, so a host-built binary copied in is a broken image
+# that builds cleanly. The jar carries no libc of its own and runs on the JRE below it.
+# Building the binary INSIDE the image would also answer this, at the price of a GraalVM
+# stage and the minutes it takes; the jar is the cheap answer and the boot is not hot.
+#
+# The base is upstream on purpose. This image has to build on a machine that has never seen
+# the platform, and every platform image — ci-base included — is built BY this bootstrap.
+# Basing it on one of those makes the cold boot need the thing it exists to create.
+#
+# eclipse-temurin:25-jre-alpine: the jar targets release 25, and alpine keeps the layer small.
+# musl is safe here for the reason above — nothing in the image is linked against this host.
+# alpine:3.23 with its own openjdk25-jre-headless was measured against this and came out 34 MB
+# LARGER, so the obvious saving is not one. Most of the image is the docker CLI trio; the way
+# to make it small is a jlink or native stage, not another JRE package.
+FROM eclipse-temurin:25-jre-alpine
+
+# What the CLI shells, and nothing else:
+#
+#   docker-cli            eleven of its commands are `docker ...`
+#   docker-cli-buildx     the BUILDER IS CHOSEN BY THE CLIENT. A client without buildx does not
+#                         fail — it quietly falls back to the legacy builder, which reads flags
+#                         differently. qits-deployments already carries a scar from that:
+#                         `--network qits-net` on a build only worked because an old client fell
+#                         back to it. Shipping buildx is what keeps this image honest.
+#   docker-cli-compose    SeedPhases refuses to boot without it ("docker compose plugin missing"),
+#                         and the seed plane is brought up by `docker compose -p qits`
+#   git                   clones and pushes are shelled, not a Java git library
+#   ca-certificates       the platform's HTTP is called over TLS
+#
+# The versions are left to the branch: alpine drops old package versions from its index, so a
+# pinned version is a cold build that fails on the day it is aged out.
+#
+# Not listed because busybox already has them: sh, stty and tty, which JLine's exec provider
+# shells for every terminal (it is pinned to exec because the jni and ffm providers cannot be
+# native-imaged), and stat, which reads the docker socket's group.
+RUN apk add --no-cache \
+        ca-certificates \
+        docker-cli \
+        docker-cli-buildx \
+        docker-cli-compose \
+        git
+
+# The run writes its log and clones its sources into the working directory, so the caller has
+# one path to mount and everything the run leaves behind is under it.
+WORKDIR /work
+
+# Copied by glob so the CalVer version in the name is not repeated here, where it would go stale.
+COPY target/qits-cli-bootstrap-*-runner.jar /opt/qits/bootstrap.jar
+
+ENTRYPOINT ["java", "-jar", "/opt/qits/bootstrap.jar"]
