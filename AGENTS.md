@@ -61,16 +61,20 @@ forced. Add to that list rather than deviating quietly.
   --timestamps` because what it wants is the deployer's own account of one repository — a log line,
   not an event — while the docker socket is always there. Same courtesy rule: a read that fails
   relays nothing and fails nothing.
-- **An announcement the platform makes once, this program re-makes once.** The push's post-receive
-  and the run's build-succeeded are both fire-and-forget, and both have been lost for real — the
-  idp's post-receive died with the database cutover the qits-oci-postgresql deploy one phase
-  earlier had caused (ci's pool was severed as the announcement arrived; no run was ever enqueued).
-  A pushed sha with no run after a minute, and a green run with no deployment row after a minute,
-  each get their announcement re-made exactly once inside the wait. One more attempt, never a retry
-  loop: if the second announcement dies too, the phase warns at its timeout as before.
+- **An announcement the platform makes once, this program re-makes once — where one can still be
+  lost.** The run's build-succeeded is fire-and-forget and has been lost for real, so a green run
+  with no deployment row after a minute gets it re-made exactly once inside the wait. One more
+  attempt, never a retry loop.
+  **The PUSH half of that rule is retired, and its retirement is the byte-plane split's dividend.**
+  qits-githost writes `SCMPublishCommit` to the eventstream outbox inside the push's own
+  transaction and qits-ci consumes it durably, so a ci that was down, restarting or mid-cutover
+  reads the push back. `POST /ci/api/events/post-receive` is gone from that service; a pushed sha
+  with no run is now a consumer catching up, and the wait says so in one line rather than
+  re-announcing into nothing.
 - **Every address this CLI dials is a wire alias, and there is no second set.** The run joins
   `qits-net` in its second phase and reaches the platform the way every other member does:
-  `qits-platform-artifacts:8080`, the postgres alias on 5432, `qits-platform-idp:8080`, and ci and
+  `<env>-qits-artifacts:8080`, `qits-platform-mirror:8080`, `<env>-qits-githost:8080`, the postgres
+  alias on 5432, `qits-platform-idp:8080`, and ci and
   the deployer through `qits-platform-edge:8080` — the edge rather than the service, so the run
   keeps exercising the gateway's route table. Do NOT add a host-addressed mode beside it: one set of
   addresses is what keeps the branching out of the code. The published ports are still configured,
