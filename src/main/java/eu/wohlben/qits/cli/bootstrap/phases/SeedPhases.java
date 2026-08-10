@@ -56,6 +56,18 @@ public class SeedPhases {
     private static final String AUTH_CORE_METADATA =
             "/maven/maven/eu/wohlben/qits/qits-auth-core/maven-metadata.xml";
 
+    /**
+     * The qits libraries a seed image build resolves, in DEPENDENCY ORDER, and the repository each
+     * one is built from. Every one of them is published into the temporary registry below before
+     * the first seed image is built, and into the real store once it answers.
+     * <p>
+     * qits-registries is written against qits-blobstore's entities, so the blob store goes first;
+     * qits-auth-core is last because it is the one every service consumes and the probe that skips
+     * this phase asks for it.
+     */
+    private static final List<String> SEED_LIBRARIES =
+            List.of("blobstore", "registries", "eventstream", "integrations-quarkus");
+
     private final Boot boot;
 
     public SeedPhases(Boot boot) {
@@ -307,17 +319,28 @@ public class SeedPhases {
     // --- the first-boot dependency cycle ----------------------------------------------------------
 
     /**
-     * qits-platform-artifacts consumes qits-auth-core while also being the Maven registry that owns
-     * it in steady state. The cycle is broken with a temporary, bootstrap-owned file repository,
-     * served over HTTP on the registry port and removed before the real artifacts container claims
-     * it.
+     * qits-artifacts consumes qits libraries while also being the Maven registry that owns them in
+     * steady state. The cycle is broken with a temporary, bootstrap-owned file repository, served
+     * over HTTP on the registry port and removed before the real artifacts container claims it.
+     * <p>
+     * <b>The byte-plane split made this phase carry four libraries instead of one</b>, and that is
+     * not a widening for its own sake: qits-artifacts, qits-platform-mirror and qits-githost are
+     * built out of qits-blobstore and qits-registries, and all three of their seed images are built
+     * before anything of this platform can publish a jar. A seed build resolving a library the
+     * temporary registry does not hold fails minutes in, naming a version nobody ever pushed.
+     * <p>
+     * <b>One container, four deploys, in dependency order.</b> {@code mvn deploy} installs into the
+     * container's own local repository on its way out, so qits-registries resolves the qits-blobstore
+     * the line above it just built — which is the whole reason these are not four containers.
      */
-    public Phase authCoreSeed() {
-        return new Phase("auth-core-seed", "seed qits-auth-core 1.0.0 for the first artifacts build",
+    public Phase mavenSeed() {
+        return new Phase("maven-seed",
+                "seed the qits libraries for the first byte-plane image builds",
                 ctx -> {
                     // Version-agnostic on purpose: the checkouts publish their real calver, so a
                     // pinned-version probe never matches and a rerun collides with whoever holds
-                    // the registry port. Metadata present = auth-core is served, whatever version.
+                    // the registry port. Metadata present = auth-core is served, whatever version —
+                    // and auth-core is deployed LAST below, so its presence answers for all four.
                     //
                     // TWO ADDRESSES, because in-network there are two servers rather than one
                     // port. On the host both answered 127.0.0.1:REGISTRY_PORT, so one probe found
@@ -339,13 +362,23 @@ public class SeedPhases {
                             ctx.skip(who + " serves port " + boot.config.registryPort()
                                     + " — it is the registry"));
                     boot.docker.ensureVolume("qits-maven-seed", ctx::log);
+                    StringBuilder script = new StringBuilder("set -eu\n");
+                    for (String library : SEED_LIBRARIES) {
+                        script.append("cd /src-").append(library)
+                                .append(" && mvn -B -ntp deploy -DskipTests ")
+                                .append("-DaltDeploymentRepository=seed::default::file:///repo\n");
+                    }
                     String cid = create(ctx, List.of(
                             "docker", "create", "--user", "root", "--entrypoint", "sh",
                             "-v", "qits-maven-seed:/repo", "maven:3.9-eclipse-temurin-25",
-                            "-c", "cd /src && mvn -B -ntp deploy -DskipTests "
-                                    + "-DaltDeploymentRepository=seed::default::file:///repo"));
-                    copyIn(ctx, boot.state.repoDir("integrations-quarkus"), cid);
-                    startAndReap(ctx, cid, "qits-auth-core seed failed");
+                            "-c", script.toString()));
+                    for (String library : SEED_LIBRARIES) {
+                        ctx.log("  " + PlatformModel.repo(library) + " -> /src-" + library);
+                        Boot.must(boot.docker.exec(Duration.ofMinutes(30), ctx::log, "cp",
+                                        boot.state.repoDir(library) + "/.", cid + ":/src-" + library),
+                                "copying " + PlatformModel.repo(library) + " in failed");
+                    }
+                    startAndReap(ctx, cid, "the qits library seed failed");
 
                     String container = AUTH_SEED_HTTP;
                     boot.docker.removeContainer(container, null);
@@ -435,14 +468,76 @@ public class SeedPhases {
     }
 
     /**
-     * Brings up qits-platform-artifacts alone, so the Maven and npm publishes below have somewhere
-     * to land before any pipeline exists. It STARTS one only when nothing is serving the registry
-     * port yet — what this phase owes the ones after it is a store that answers, not a container it
-     * created.
+     * <b>Brings up qits-platform-mirror alone, because everything after it resolves through it.</b>
+     * The Maven publishes below fetch their plugins and their third-party dependencies through the
+     * mirror's Maven Central cache, and the npm ones fetch every package that is not {@code @qits}
+     * through its npmjs cache — so a mirror that is not answering is not a slow publish but a failed
+     * one.
+     * <p>
+     * <b>It cannot pull through itself, and nothing here has to arrange that.</b> Its own seed image
+     * was built minutes ago with the mirror prefixes rewritten to the direct upstreams, exactly like
+     * every other seed image — see {@link SeedDockerfile}. What this phase starts is a service whose
+     * layers came from quay.io.
+     * <p>
+     * Started by hand rather than by compose, under the wire alias the compose service will claim,
+     * so the two never run side by side on the published port. Whoever already serves, serves: a
+     * deployed mirror publishes the same port from the same volume and is strictly better than the
+     * seed this phase would have started.
+     */
+    public Phase seedMirrorStart() {
+        return new Phase("seed-mirror",
+                "have qits-platform-mirror serving before anything resolves through it", ctx -> {
+            boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
+            boot.docker.ensureVolume("qits-platform-mirror-data", ctx::log);
+            String mirror = PlatformModel.wireAlias("platform-mirror", boot.config.envName());
+            String prefix = PlatformModel.pdNamePrefix("platform-mirror", boot.config.envName());
+            Optional<String> serving = boot.docker.runningNames().stream()
+                    .filter(name -> name.equals(mirror) || name.startsWith(prefix))
+                    .findFirst();
+            if (serving.isPresent()) {
+                ctx.log("  " + serving.get() + " already serves port " + boot.config.mirrorPort()
+                        + " from the same volume — no seed mirror to start");
+            } else {
+                boot.docker.removeContainer(mirror, null);
+                Boot.must(boot.docker.run(Cmd.of(List.of(
+                                "docker", "run", "-d", "--name", mirror,
+                                "--network", Boot.NETWORK,
+                                "-p", "127.0.0.1:" + boot.config.mirrorPort() + ":8080",
+                                // The seed's own credential, on the same terms as the idp's and the
+                                // bus's: this container starts before any deployer exists, so the
+                                // role and the database were created by seed-postgres and handed
+                                // over here. It refuses to boot without the triple.
+                                "-e", "QITS_RESOURCE_DB_URL=jdbc:postgresql://"
+                                        + PlatformModel.wireAlias("oci-postgresql",
+                                                boot.config.envName())
+                                        + ":5432/qits_platform_mirror",
+                                "-e", "QITS_RESOURCE_DB_USERNAME=qits_platform_mirror",
+                                "-e", "QITS_RESOURCE_DB_PASSWORD="
+                                        + orEmpty(boot.state.pgPlatformMirrorPassword),
+                                // Spelled because the jar's default sits under ${user.home}, which
+                                // this image's passwd-less UID resolves to the literal "?".
+                                "-e", "QITS_ARTIFACTS_BLOBS_DIR=/data/mirror/blobs",
+                                "-v", "qits-platform-mirror-data:/data",
+                                "qits/platform-mirror:latest"))
+                        .mask(orEmpty(boot.state.pgPlatformMirrorPassword)), ctx::log),
+                        "the seed " + mirror + " did not start");
+            }
+            // Always waited for, whoever is behind the alias: the four publishes after this phase
+            // resolve through it, and a phase that skipped the start still owes them that.
+            boot.awaitHealth(ctx, serving.orElse(mirror) + " on qits-net",
+                    () -> boot.http.get(boot.config.mirrorUrl() + "/mirror/q/health/ready",
+                            Map.of()));
+        });
+    }
+
+    /**
+     * Brings up qits-artifacts alone, so the Maven and npm publishes below have somewhere to land
+     * before any pipeline exists. It STARTS one only when nothing is serving the registry port yet
+     * — what this phase owes the ones after it is a store that answers, not a container it created.
      */
     public Phase seedArtifactsStart() {
         return new Phase("seed-artifacts",
-                "have qits-platform-artifacts serving for the Maven bootstrap", ctx -> {
+                "have qits-artifacts serving for the Maven bootstrap", ctx -> {
             // By name and unconditionally: a crashed earlier run leaves the registry running, and
             // this run then skips the seed phase without ever learning the container's name.
             ctx.log("  removing the temporary maven registry, freeing port "
@@ -450,11 +545,11 @@ public class SeedPhases {
             boot.docker.removeContainer(AUTH_SEED_HTTP, ctx::log);
             boot.state.authSeedContainer = null;
             boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
-            boot.docker.ensureVolume("qits-platform-artifacts-data", ctx::log);
+            boot.docker.ensureVolume("qits-artifacts-data", ctx::log);
             // Named after its wire alias, like every other seed container: this one is started by
             // hand rather than by compose, and the name it takes has to be the same one the compose
             // service would have claimed, or the two run side by side on the registry port.
-            String artifacts = PlatformModel.wireAlias("platform-artifacts", boot.config.envName());
+            String artifacts = PlatformModel.wireAlias("artifacts", boot.config.envName());
             // Whoever already holds the port, holds it. A seed beside a store that is up is
             // impossible — the bind answers "port is already allocated", exit 125, and the boot
             // stopped exactly there on the 2026-08-08 validation rerun — and pointless: a DEPLOYED
@@ -470,18 +565,15 @@ public class SeedPhases {
                 ctx.note(serving.get() + " serves :" + boot.config.registryPort());
             } else {
                 boot.docker.removeContainer(artifacts, null);
+                // No git env any more, and no ci intake: this service hosts no repositories and
+                // announces nothing since the byte-plane split. What is left is the store.
                 Boot.must(boot.docker.exec(ctx::log, "run", "-d", "--name", artifacts,
                                 "--network", Boot.NETWORK,
                                 "-p", "127.0.0.1:" + boot.config.registryPort() + ":8080",
                                 "-e", "QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL=jdbc:h2:file:/data/artifacts/h2/artifacts",
                                 "-e", "QITS_ARTIFACTS_BLOBS_DIR=/data/artifacts/blobs",
-                                "-e", "QITS_CI_INTAKE_URL=http://"
-                                        + PlatformModel.wireAlias("ci", boot.config.envName())
-                                        + ":8080/ci/api/events/post-receive",
-                                "-e", "QITS_REPOSITORIES_GIT_PUSH_TOKEN=" + boot.config.pushToken(),
-                                "-e", "QITS_REPOSITORIES_GIT_PROTECT_DEFAULT_BRANCH=true",
-                                "-v", "qits-platform-artifacts-data:/data",
-                                "qits/platform-artifacts:latest"),
+                                "-v", "qits-artifacts-data:/data",
+                                "qits/artifacts:latest"),
                         "the seed " + artifacts + " did not start");
             }
             // Always waited for, whoever is behind the alias: every publish after this phase — the
@@ -497,13 +589,12 @@ public class SeedPhases {
      * container's name if one is running, otherwise the service's plain name.
      * <p>
      * <b>The answer comes from the API, not from the container list.</b> A deployed store is named
-     * {@code qits-pd-qits-platform-artifacts-<id8>}, and matching that shape alone would still miss
+     * {@code qits-pd-<env>-qits-artifacts-<id8>}, and matching that shape alone would still miss
      * anything else the port could be behind. The artifacts API's own health is the honest
      * question: it is asked at the store's WIRE ALIAS, which the temporary Maven registry does not
-     * answer to at all — it is an nginx under its own name — while qits-platform-artifacts answers
-     * 200 there whether it was started by this bootstrap, by compose or by the deployer. The
-     * container list is then read only to name who it is, which is what makes the phase log
-     * readable.
+     * answer to at all — it is an nginx under its own name — while qits-artifacts answers 200 there
+     * whether it was started by this bootstrap, by compose or by the deployer. The container list is
+     * then read only to name who it is, which is what makes the phase log readable.
      * <p>
      * Both phases that bind the registry port ask this before they bind it. Neither can win that
      * bind, and neither needs to: the store on the other end has the same volume.
@@ -512,11 +603,11 @@ public class SeedPhases {
         if (!boot.artifacts.ready()) {
             return Optional.empty();
         }
-        String prefix = PlatformModel.pdNamePrefix("platform-artifacts", boot.config.envName());
+        String prefix = PlatformModel.pdNamePrefix("artifacts", boot.config.envName());
         return Optional.of(boot.docker.runningNames().stream()
                 .filter(name -> name.startsWith(prefix))
                 .findFirst()
-                .orElse(PlatformModel.repo("platform-artifacts")));
+                .orElse(PlatformModel.wireAlias("artifacts", boot.config.envName())));
     }
 
     // --- the publishes the seed builds need -------------------------------------------------------
@@ -547,8 +638,9 @@ public class SeedPhases {
             String cid = create(ctx, List.of(
                     "docker", "create", "--network", Boot.NETWORK, "--user", "root",
                     "--entrypoint", "sh", "maven:3.9-eclipse-temurin-25",
-                    "-c", "cd /src && mvn -B -ntp deploy -DskipTests -DaltDeploymentRepository="
-                            + "qits::default::http://qits-platform-artifacts:8080/artifacts/maven/maven"));
+                    "-c", mavenSettings() + "cd /src && mvn -B -ntp -s /root/.m2/settings.xml "
+                            + "deploy -DskipTests -DaltDeploymentRepository=qits::default::"
+                            + boot.config.artifactsUrl() + "/maven/maven"));
             copyIn(ctx, boot.state.repoDir(repoName), cid);
             startAndReap(ctx, cid, artifactId + " publish failed");
         });
@@ -575,17 +667,13 @@ public class SeedPhases {
                             cd /src-004
                             git checkout -q 9f9648482d6fe025cc7af9bd4496afab417f33f9
                             corepack enable
-                            cat > /root/.npmrc <<EOF
-                            registry=https://registry.npmjs.org/
-                            @qits:registry=http://qits-platform-artifacts:8080/artifacts/npm/npm/
-                            //qits-platform-artifacts:8080/artifacts/npm/npm/:_authToken=qits-bootstrap
-                            EOF
+                            %s
                             pnpm install --frozen-lockfile
                             pnpm build
                             cd dist/qits-spa-ui-components
                             npm view @qits/ui-components@0.0.4 version >/dev/null 2>&1 || npm publish
 
-                            """;
+                            """.formatted(npmrc());
                     nodePublish(ctx, "spa-ui-components", script, "UI package publish failed");
                 });
     }
@@ -601,20 +689,71 @@ public class SeedPhases {
                             cd /src-001
                             git checkout -q 3f405717f14f0942399340d84db4ef0ca3769101
                             corepack enable
-                            cat > /root/.npmrc <<EOF
-                            registry=https://registry.npmjs.org/
-                            @qits:registry=http://qits-platform-artifacts:8080/artifacts/npm/npm/
-                            //qits-platform-artifacts:8080/artifacts/npm/npm/:_authToken=qits-bootstrap
-                            EOF
+                            %s
                             pnpm install --frozen-lockfile
                             pnpm build
                             version=$(node -p "require(\\"./dist/qits-integrations-angular/package.json\\").version")
                             npm view "@qits/angular@$version" version >/dev/null 2>&1 || npm publish ./dist/qits-integrations-angular
 
-                            """;
+                            """.formatted(npmrc());
                     nodePublish(ctx, "integrations-angular", script,
                             "Angular integration publish failed");
                 });
+    }
+
+    /**
+     * <b>The npm half of the two-endpoint topology, as a shell fragment.</b> Two registries, and
+     * which package goes to which is decided by its SCOPE rather than by a path:
+     * <ul>
+     *   <li>{@code @qits} → this environment's own qits-artifacts, which is where these two phases
+     *       publish and where every SPA build reads the platform's own packages from. The auth-token
+     *       line beside it is what makes {@code npm publish} attempt the write at all — the registry
+     *       takes any value, and the immutable version is what keeps it honest.
+     *   <li>everything else → qits-platform-mirror's cache of npmjs. One cache for the machine, cold
+     *       on a fresh platform and warm by the second build.
+     * </ul>
+     * <b>The default registry must not be the qits one.</b> A scoped entry is an override, so the
+     * default is what every unscoped package resolves through — and the hosted registry serves only
+     * what was published to it, which for npmjs' half of a lockfile is nothing.
+     */
+    private String npmrc() {
+        return "cat > /root/.npmrc <<'NPMRC'\n"
+                + "registry=" + boot.config.mirrorUrl() + "/artifacts/npm/npmjs/\n"
+                + "@qits:registry=" + boot.config.artifactsUrl() + "/npm/npm/\n"
+                + "//" + boot.config.artifactsUrl().replaceFirst("^https?://", "")
+                + "/npm/npm/:_authToken=qits-bootstrap\n"
+                + "NPMRC";
+    }
+
+    /**
+     * <b>The third-party half of the two-endpoint topology, as a shell fragment.</b> A publish
+     * container resolves its plugins and its dependencies from Maven Central, and since the
+     * byte-plane split that means qits-platform-mirror's cache of it rather than the internet: one
+     * cache for the machine, warmed by the first build that needs a jar and reused by every one
+     * after it.
+     * <p>
+     * <b>A {@code <mirror>} with an exact {@code mirrorOf}, not a {@code <repository>}</b>, and that
+     * is what gets it past Maven's own {@code external:http:*} blocker: a plain HTTP repository is
+     * refused since 3.8.1, while an id-matched mirror of {@code central} wins over the blocking
+     * entry. It is the same shape every service's committed {@code .qits-maven-settings.xml} uses
+     * for the qits repository.
+     * <p>
+     * The deployment target is NOT here. It is {@code -DaltDeploymentRepository} on the command
+     * line, because where a publish LANDS is the phase's decision and where it READS from is the
+     * platform's.
+     */
+    private String mavenSettings() {
+        return "mkdir -p /root/.m2 && cat > /root/.m2/settings.xml <<'SETTINGS'\n"
+                + "<settings>\n"
+                + "  <mirrors>\n"
+                + "    <mirror>\n"
+                + "      <id>qits-central-proxy</id>\n"
+                + "      <mirrorOf>central</mirrorOf>\n"
+                + "      <url>" + boot.config.mirrorUrl() + "/artifacts/maven/central</url>\n"
+                + "    </mirror>\n"
+                + "  </mirrors>\n"
+                + "</settings>\n"
+                + "SETTINGS\n";
     }
 
     private void nodePublish(PhaseContext ctx, String repoName, String script, String failure)
@@ -677,11 +816,13 @@ public class SeedPhases {
      * The platform's postgres, running with a password of this bootstrap's choosing from its very
      * first boot, and every database a seed container boots against.
      * <p>
-     * <b>Before idp-secrets, and outside the skip-build branch.</b> qits-deployments refuses to
-     * boot without this database, and the seed stack starts it minutes from now — so the server
-     * has to answer before the compose file that addresses it is even written. On
-     * {@code QITS_SKIP_BUILD} the image is expected to exist locally already, exactly like every
-     * other seed image.
+     * <b>Before the first container that refuses to boot without a database, whichever one that
+     * is.</b> It used to be enough to sit before the compose file, because everything with a store
+     * was started by compose; qits-platform-mirror is started BY HAND several phases earlier, so
+     * this phase moved up in front of it. On {@code QITS_SKIP_BUILD} there is no mirror start and
+     * no image build, and it runs where it always did — the passwords it resolves fill both
+     * generated files either way. That is why {@code BootstrapPlan} places it in each arm rather
+     * than once after both: one run, one placement, and the right one for each.
      * <p>
      * <b>The image's own {@code POSTGRES_PASSWORD=qits-poc} never lives on this platform.</b> The
      * value below is generated on the first boot and recorded, and initdb takes it instead.
@@ -689,9 +830,10 @@ public class SeedPhases {
      * <b>Which databases are here, and which are deliberately not.</b> This phase provisions what
      * the SEED STACK needs: the deployer's own store AND ITS OUTBOX, and the stores of the core
      * services that come up beside it — qits-ci (its database and its outbox), qits-platform-idp,
-     * qits-platform-dns and qits-events. Two of the seven are outboxes because the eventstream
-     * library keeps its own Flyway lineage and cannot share a database with its host; ci carried
-     * one from the start and the deployer joined the bus on 2026-08-10.
+     * qits-platform-dns, qits-events, qits-platform-mirror and qits-githost (its database and its
+     * outbox). Three of the ten are outboxes because the eventstream library keeps its own Flyway
+     * lineage and cannot share a database with its host; ci carried one from the start, the deployer
+     * joined the bus on 2026-08-10, and the git host is the newest publisher on it.
      * Every one of them runs Flyway at boot against a database that has to exist
      * already, and at that point in a cold boot no deployer exists to make one. The nameserver is
      * the loudest about it on purpose: it refuses to start rather than answer NXDOMAIN for every
@@ -721,6 +863,12 @@ public class SeedPhases {
             String platformDns = pgPassword(ctx, state, "PG_PLATFORM_DNS_PASSWORD",
                     "qits.pg.platform-dns-password");
             String events = pgPassword(ctx, state, "PG_EVENTS_PASSWORD", "qits.pg.events-password");
+            String platformMirror = pgPassword(ctx, state, "PG_PLATFORM_MIRROR_PASSWORD",
+                    "qits.pg.platform-mirror-password");
+            String githost = pgPassword(ctx, state, "PG_GITHOST_PASSWORD",
+                    "qits.pg.githost-password");
+            String githostEventstream = pgPassword(ctx, state, "PG_GITHOST_EVENTSTREAM_PASSWORD",
+                    "qits.pg.githost-eventstream-password");
             boot.state.pgSuperuserPassword = superuser;
             boot.state.pgDeploymentsPassword = deployments;
             boot.state.pgDeploymentsEventstreamPassword = deploymentsEventstream;
@@ -729,6 +877,9 @@ public class SeedPhases {
             boot.state.pgPlatformIdpPassword = platformIdp;
             boot.state.pgPlatformDnsPassword = platformDns;
             boot.state.pgEventsPassword = events;
+            boot.state.pgPlatformMirrorPassword = platformMirror;
+            boot.state.pgGithostPassword = githost;
+            boot.state.pgGithostEventstreamPassword = githostEventstream;
 
             // RECORDED BEFORE THE SERVER IS STARTED, and the order is the whole point.
             // POSTGRES_PASSWORD applies at initdb only: once the data volume holds a cluster, the
@@ -747,6 +898,9 @@ public class SeedPhases {
             state.put("PG_PLATFORM_IDP_PASSWORD", platformIdp);
             state.put("PG_PLATFORM_DNS_PASSWORD", platformDns);
             state.put("PG_EVENTS_PASSWORD", events);
+            state.put("PG_PLATFORM_MIRROR_PASSWORD", platformMirror);
+            state.put("PG_GITHOST_PASSWORD", githost);
+            state.put("PG_GITHOST_EVENTSTREAM_PASSWORD", githostEventstream);
             state.write();
             ctx.log("  recorded in " + state.file() + " before the server starts");
 
@@ -835,8 +989,23 @@ public class SeedPhases {
                 // exactly what ci, the idp and the nameserver already go through; the CLI only
                 // opens the door and never alters the role again.
                 provision(ctx, admin, "qits_events", events, false);
+                // THE BYTE PLANE'S THREE, on the same terms as everything above: all three
+                // containers boot from the seed compose file before any deployer exists, and each
+                // one dies at Flyway's first connect without its database.
+                //
+                // The mirror is the earliest consumer of any of them — it is started by hand,
+                // before the compose file is even written, because every publish after it resolves
+                // through it. The git host takes two, because the eventstream library keeps its
+                // outbox in a lineage of its own and a push that publishes no event is a push no
+                // consumer ever learns about.
+                //
+                // qits-artifacts is deliberately not here: it is the one service still on a file
+                // H2, and its store is a path on its volume rather than a role on this server.
+                provision(ctx, admin, "qits_platform_mirror", platformMirror, false);
+                provision(ctx, admin, "qits_githost", githost, false);
+                provision(ctx, admin, "qits_githost_eventstream", githostEventstream, false);
             }
-            ctx.note("7 databases ready on " + pg);
+            ctx.note("10 databases ready on " + pg);
         });
     }
 
@@ -970,7 +1139,10 @@ public class SeedPhases {
                     .mask(orEmpty(boot.state.pgCiEventstreamPassword))
                     .mask(orEmpty(boot.state.pgPlatformIdpPassword))
                     .mask(orEmpty(boot.state.pgPlatformDnsPassword))
-                    .mask(orEmpty(boot.state.pgEventsPassword)), ctx::log);
+                    .mask(orEmpty(boot.state.pgEventsPassword))
+                    .mask(orEmpty(boot.state.pgPlatformMirrorPassword))
+                    .mask(orEmpty(boot.state.pgGithostPassword))
+                    .mask(orEmpty(boot.state.pgGithostEventstreamPassword)), ctx::log);
             Boot.must(result, "writing the deployer's run-args failed");
             ctx.log("  " + properties.lines().filter(l -> l.startsWith("qits.platform.deployments.run-args")).count()
                     + " applications configured on the qits-deployments-config volume");
@@ -1131,6 +1303,10 @@ public class SeedPhases {
                 : boot.state.composeFile.getFileName().toString());
         values.put("PORT", String.valueOf(boot.config.port()));
         values.put("REGISTRY_PORT", String.valueOf(boot.config.registryPort()));
+        // The other two byte doors: the mirror's, for a docker daemon told to pull third-party
+        // images through the cache, and the git host's, for a person pushing from the workstation.
+        values.put("MIRROR_PORT", String.valueOf(boot.config.mirrorPort()));
+        values.put("GIT_HOST_PORT", String.valueOf(boot.config.gitHostPort()));
         values.put("PG_PORT", String.valueOf(boot.config.pgPort()));
         values.put("DNS_PORT", String.valueOf(boot.config.dnsPort()));
         // Resolved by seed-postgres, which runs before both generated files are written.
@@ -1143,6 +1319,10 @@ public class SeedPhases {
         values.put("PG_PLATFORM_IDP_PASSWORD", orEmpty(boot.state.pgPlatformIdpPassword));
         values.put("PG_PLATFORM_DNS_PASSWORD", orEmpty(boot.state.pgPlatformDnsPassword));
         values.put("PG_EVENTS_PASSWORD", orEmpty(boot.state.pgEventsPassword));
+        values.put("PG_PLATFORM_MIRROR_PASSWORD", orEmpty(boot.state.pgPlatformMirrorPassword));
+        values.put("PG_GITHOST_PASSWORD", orEmpty(boot.state.pgGithostPassword));
+        values.put("PG_GITHOST_EVENTSTREAM_PASSWORD",
+                orEmpty(boot.state.pgGithostEventstreamPassword));
         values.put("IDP", boot.config.idpIssuer());
         values.put("PUSH_TOKEN", boot.config.pushToken());
         values.put("MACHINE_REQUIRED", String.valueOf(boot.config.machineAuth()));
