@@ -239,12 +239,11 @@ class PlatformModelTest {
         assertThat(PlatformModel.RELEASE_PUBLISHERS)
                 .containsSubsequence("oci-workspace", "workspace-daemon")
                 .containsSubsequence("oci-workspace", "projects-daemon");
-        // The byte plane's pair is the same kind of order and the same kind of cost:
-        // qits-registries is written against qits-blobstore's entities, so a registries build that
-        // ran first would resolve a version the Maven registry has never held. Both go before
-        // everything else, because three services in the deploy train are built out of them.
+        // The byte-plane libs are deliberately absent until their first calver release exists:
+        // a replay restores a pin, and every consumer still pins 1.0.0-SNAPSHOT, which the seed
+        // publishes restore. When they join, registries follows blobstore, both before eventstream.
         assertThat(PlatformModel.RELEASE_PUBLISHERS)
-                .containsSubsequence("blobstore", "registries", "eventstream");
+                .doesNotContain("blobstore", "registries");
     }
 
     @Test

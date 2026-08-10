@@ -118,7 +118,7 @@ class BootstrapPlanTest {
     void theReleasesTheWrapperBuildsInstallAreReplayedBeforeAnythingIsDeployed() {
         List<String> ids = ids(plan(Map.of()));
 
-        assertThat(ids).containsSubsequence("preseed", "release-blobstore", "release-registries",
+        assertThat(ids).containsSubsequence("preseed",
                 "release-spa-ui-components",
                 "release-integrations-angular", "release-eventstream",
                 "release-integrations-quarkus", "environment", "deploy-observability");

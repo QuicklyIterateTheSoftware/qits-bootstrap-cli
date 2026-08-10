@@ -209,16 +209,14 @@ public final class PlatformModel {
      *       It is independent of qits-workspace-daemon; only the base has to precede it.
      * </ul>
      * <p>
-     * <b>The byte-plane libraries are first, and their pair order is as load-bearing as the images'
-     * is.</b> qits-registries depends on qits-blobstore — every format module is written against
-     * the blob store's entities — so a registries build that runs before the blob store's release
-     * resolves a version the Maven registry has never held. Both go before qits-eventstream and
-     * everything after it for one reason: three services in the deploy train consume them, and a
-     * deployable cannot be built out of jars that are not published yet.
+     * <b>The byte-plane libraries are NOT here yet, deliberately.</b> A replay restores a pin, and
+     * nothing pins a calver of qits-blobstore or qits-registries: every consumer still names
+     * {@code 1.0.0-SNAPSHOT}, which the seed publishes restore. They join this list — registries
+     * after blobstore, both before qits-eventstream — the moment their first releases are cut and
+     * the consumer poms move onto the calvers.
      */
     public static final List<String> RELEASE_PUBLISHERS =
-            List.of("blobstore", "registries",
-                    "spa-ui-components", "integrations-angular", "eventstream",
+            List.of("spa-ui-components", "integrations-angular", "eventstream",
                     "integrations-quarkus",
                     "oci-workspace", "workspace-daemon", "projects-daemon");
 
