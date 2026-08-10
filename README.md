@@ -138,7 +138,7 @@ the same names `qits-local-up.sh` read:
 | `QITS_IDP_CLIENT_<ID>_SECRET` | generated | pin one idp client's secret instead of generating it |
 | `QITS_PG_SUPERUSER_PASSWORD` | generated | pin postgres' superuser password. 16–64 hex, because it is assembled into SQL that cannot be parametrized. It applies at initdb only, so on an existing cluster the value in `.qits-bootstrap.env` is the only way in |
 | `QITS_PG_DEPLOYMENTS_PASSWORD` | generated | the same, for the deployer's own role. This one converges on every rerun |
-| `QITS_PG_CI_PASSWORD`, `QITS_PG_CI_EVENTSTREAM_PASSWORD`, `QITS_PG_PLATFORM_IDP_PASSWORD`, `QITS_PG_PLATFORM_DNS_PASSWORD` | generated | the same, for the core seed services' databases. Created once and never altered again: the deployer's resource registry owns them from the first pipeline deployment on |
+| `QITS_PG_DEPLOYMENTS_EVENTSTREAM_PASSWORD`, `QITS_PG_CI_PASSWORD`, `QITS_PG_CI_EVENTSTREAM_PASSWORD`, `QITS_PG_PLATFORM_IDP_PASSWORD`, `QITS_PG_PLATFORM_DNS_PASSWORD` | generated | the same, for the core seed services' databases — the deployer's outbox among them, because the eventstream library's Flyway lineage needs a database of its own. Created once and never altered again: the deployer's resource registry owns them from the first pipeline deployment on |
 | `QITS_TUI` | `1` | 0 = plain output even on a terminal |
 | `QITS_WEB` | `1` | 0 = no browser view; the HTTP server never binds |
 | `QITS_WEB_PORT` | `8480` | the browser view's port |
@@ -302,13 +302,13 @@ into a page that arrives when the run is over, so that is what to verify before 
 
 ## What it does, in order
 
-Built from configuration at startup, so the count in the header is real. A cold boot is 55 phases;
-`QITS_SKIP_BUILD=1` drops phases 6–25 and keeps the other 36. `QITS_DOMAIN` adds two more, marked
+Built from configuration at startup, so the count in the header is real. A cold boot is 58 phases;
+`QITS_SKIP_BUILD=1` drops phases 6–25 and keeps the other 39. `QITS_DOMAIN` adds two more, marked
 below.
 
 | | phase |
 | --- | --- |
-| 1–5 | preflight (docker, git, where the wrapper is, and which domain — if any — this platform serves); join `qits-net`, which every address after it needs; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 30 platform repositories; read `.qits-bootstrap.env` |
+| 1–5 | preflight (docker, git, where the wrapper is, and which domain — if any — this platform serves); join `qits-net`, which every address after it needs; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 33 platform repositories; read `.qits-bootstrap.env` |
 | 6 | seed `qits-auth-core` for the first artifacts build (a temporary file repository, served over HTTP, that breaks the first-boot cycle) |
 | 7–11 | seed images `qits/gateway`, `qits/platform-edge`, `qits/platform-artifacts`, `qits/oci-postgresql`, `qits/platform-dns` — the five that need nothing from the platform |
 | 12 | have qits-platform-artifacts serving the registry port, so there is somewhere to publish to |
@@ -316,18 +316,18 @@ below.
 | 17–19 | seed images `qits/ci`, `qits/deployments`, `qits/platform-idp` |
 | 20–24 | the five step images from qits-oci |
 | 25 | the ci-daemon musl static binary, and its digest |
-| 26 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC the five databases the seed stack needs: the deployer's, qits-ci's own and its outbox's, qits-platform-idp's and qits-platform-dns'. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |
+| 26 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC the six databases the seed stack needs: the deployer's own and its outbox's, qits-ci's own and its outbox's, qits-platform-idp's and qits-platform-dns'. Two are outboxes because the eventstream library keeps its own Flyway lineage and cannot share a database with its host. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |
 | 27 | resolve the idp's client secrets (given, kept, generated) and record the run state |
 | 28–29 | generate the seed compose file; write the deployer's run-args onto its config volume |
 | — | **with `QITS_DOMAIN` only**: write a self-signed placeholder certificate onto the `qits-edge-letsencrypt` volume, unless one is already there. It is before the stack starts because the edge's keystore names those files and a keystore whose files are missing fails startup |
 | 30–31 | start the seed stack (only what the deployer does not already manage); wait for the idp, the edge, the gateway, artifacts, the nameserver, ci and the deployer — all on qits-net |
 | — | **with `QITS_DOMAIN` only**: create the zone in qits-platform-dns (`POST /dns/api/zones`, 409 tolerated). No records: their values are this host's public address, which the run cannot know |
 | 32 | publish the ci-daemon binary, version-addressed by its digest |
-| 33–34 | create the 30 repositories on the git host; pre-seed the seeded histories with `-o qits.no-ci` |
-| 35–38 | replay the release pipeline of each publisher the wrapper builds install, and wait for each run |
-| 39 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
-| 40–53 | one phase per deployable: push `main` quietly and `environment/<name>` for real, then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-platform-edge is second to last: it is the host port, so its cutover takes this program's own door away for a beat |
-| 54–55 | push the seeded repositories; the closing report |
+| 33–34 | create the 33 repositories on the git host; pre-seed the seeded histories with `-o qits.no-ci` |
+| 35–41 | replay the release pipeline of each publisher the platform pins, and wait for each run. Four are the Maven and npm packages the wrapper's builds install; three are docker images — `qits/workspace-base`, then `qits/workspace` and `qits/projects-daemon` + `qits/project-agent`. **The base goes first and that order is load-bearing**: both daemon builds pull it at a pinned version, and the base's own replay is what puts it in the registry. A publisher with no release tag reachable from main STOPS the boot, which is right: a pin nobody has minted has nothing to dangle |
+| 42 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
+| 43–56 | one phase per deployable: push `main` quietly and `environment/<name>` for real, then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-platform-edge is second to last: it is the host port, so its cutover takes this program's own door away for a beat |
+| 57–58 | push the seeded repositories; the closing report |
 
 Four things every deploy phase does that are easy to miss: it pushes `main` quietly
 (`-o qits.no-ci`) so a second cold native build is not queued for the same sha; it re-announces the

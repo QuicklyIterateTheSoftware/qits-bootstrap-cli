@@ -25,6 +25,7 @@ class ComposeTemplateTest {
         values.put("DNS_PORT", "53");
         values.put("PG_SUPERUSER_PASSWORD", "0123456789abcdef");
         values.put("PG_DEPLOYMENTS_PASSWORD", "fedcba9876543210");
+        values.put("PG_DEPLOYMENTS_EVENTSTREAM_PASSWORD", "1111222233334444");
         values.put("PG_CI_PASSWORD", "aaaabbbbccccdddd");
         values.put("PG_CI_EVENTSTREAM_PASSWORD", "eeeeffff00001111");
         values.put("PG_PLATFORM_IDP_PASSWORD", "2222333344445555");
@@ -88,6 +89,7 @@ class ComposeTemplateTest {
         assertThat(compose).doesNotContain("${DNS_PORT}");
         assertThat(compose).doesNotContain("${PG_SUPERUSER_PASSWORD}")
                 .doesNotContain("${PG_DEPLOYMENTS_PASSWORD}")
+                .doesNotContain("${PG_DEPLOYMENTS_EVENTSTREAM_PASSWORD}")
                 .doesNotContain("${PG_CI_PASSWORD}")
                 .doesNotContain("${PG_CI_EVENTSTREAM_PASSWORD}")
                 .doesNotContain("${PG_PLATFORM_IDP_PASSWORD}")
@@ -156,6 +158,15 @@ class ComposeTemplateTest {
                 + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_deployments");
         assertThat(block).contains("QITS_RESOURCE_DB_USERNAME: qits_deployments");
         assertThat(block).contains("QITS_RESOURCE_DB_PASSWORD: \"fedcba9876543210\"");
+        // Two stores, two Flyway lineages: its own, and the outbox of the eventstream library it
+        // joined on 2026-08-10. Compose starts it before any deployer exists to inject either.
+        assertThat(block).contains("QITS_RESOURCE_EVENTSTREAM_URL: jdbc:postgresql://"
+                        + "prod-qits-oci-postgresql:5432/qits_deployments_eventstream")
+                .contains("QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_deployments_eventstream")
+                .contains("QITS_RESOURCE_EVENTSTREAM_PASSWORD: \"1111222233334444\"");
+        // The bus, at the name that resolves. The jar's default is the pre-rename qits-events:8080,
+        // and this service SUBSCRIBES — a BuildSuccessful never received deploys nothing.
+        assertThat(block).contains("QITS_EVENTS_URL: http://prod-qits-events:8080");
         assertThat(block).contains("QITS_ENVIRONMENT: prod");
         // What makes it a provisioner rather than only a consumer.
         assertThat(block).contains("QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD: "
@@ -308,6 +319,13 @@ class ComposeTemplateTest {
         assertThat(deployer).contains("-e QITS_ENVIRONMENT=prod");
         assertThat(deployer).contains(
                 "-e QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD=0123456789abcdef");
+        // The bus, and the ONLY thing the deployer's bus membership adds to this line: the wire
+        // name. A subscriber pointed at the pre-rename qits-events:8080 receives nothing.
+        assertThat(deployer).contains("-e QITS_EVENTS_URL=http://prod-qits-events:8080");
+        // ONE TRIPLE, NOT TWO. The outbox is declared in the deployer's own deployments.yml, so a
+        // running deployer provisions it for its successor and injects the triple from the registry
+        // row that holds the current password — pinning it here would outlive the next rotation.
+        assertThat(deployer).doesNotContain("QITS_RESOURCE_EVENTSTREAM_");
         // The store moved off the file H2, and its volume went with it: /data held nothing else.
         assertThat(deployer).doesNotContain("QUARKUS_DATASOURCE_PLATFORMDEPLOYMENTS_JDBC_URL=")
                 .doesNotContain("-v qits-deployments-data:/data");

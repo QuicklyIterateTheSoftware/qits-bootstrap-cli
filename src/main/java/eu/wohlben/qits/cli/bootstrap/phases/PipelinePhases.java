@@ -259,6 +259,13 @@ public class PipelinePhases {
      * prerelease nothing pins. A fresh platform has had no releases, so the release pipeline is
      * fired by hand — and waited for, because the deployables cannot build until the artifacts
      * exist.
+     * <p>
+     * <b>The version replayed is the last release tag reachable from main</b>, and a repository
+     * carrying none STOPS THE BOOT. That is right rather than harsh, and it is right for the image
+     * publishers too: what this phase exists to restore is a PIN, and a version nobody has minted
+     * is a pin nothing holds — there is nothing to dangle, so a replay would be a guess about which
+     * version to publish. The failure names the repository, and the fix is to cut a release
+     * through qits-workspaces rather than to soften this phase.
      */
     public Phase releaseReplay(String name) {
         String repo = PlatformModel.repo(name);
@@ -1030,7 +1037,11 @@ public class PipelinePhases {
                         + "needs port 80 reachable");
                 report.add("           from the internet and the delegation above in place.");
             });
-            report.add("!! workspace containers need a qits/workspace:latest base image supplied separately");
+            report.add("images:    the release replays published qits/workspace-base, qits/workspace,");
+            report.add("           qits/projects-daemon and qits/project-agent at their released "
+                    + "versions —");
+            report.add("           the coordinates qits-workspaces and qits-projects pin. Nothing "
+                    + "is supplied by hand.");
             report.forEach(ctx::log);
         });
     }

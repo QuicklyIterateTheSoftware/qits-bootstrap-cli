@@ -687,9 +687,12 @@ public class SeedPhases {
      * value below is generated on the first boot and recorded, and initdb takes it instead.
      * <p>
      * <b>Which databases are here, and which are deliberately not.</b> This phase provisions what
-     * the SEED STACK needs: the deployer's own store, and the stores of the core services that
-     * come up beside it — qits-ci (its database and its outbox), qits-platform-idp and
-     * qits-platform-dns. Every one of them runs Flyway at boot against a database that has to exist
+     * the SEED STACK needs: the deployer's own store AND ITS OUTBOX, and the stores of the core
+     * services that come up beside it — qits-ci (its database and its outbox), qits-platform-idp
+     * and qits-platform-dns. Two of the six are outboxes because the eventstream library keeps its
+     * own Flyway lineage and cannot share a database with its host; ci carried one from the start
+     * and the deployer joined the bus on 2026-08-10.
+     * Every one of them runs Flyway at boot against a database that has to exist
      * already, and at that point in a cold boot no deployer exists to make one. The nameserver is
      * the loudest about it on purpose: it refuses to start rather than answer NXDOMAIN for every
      * hostname the platform hands out. Everything else — projects, workspaces, events — is
@@ -707,6 +710,9 @@ public class SeedPhases {
                     "qits.pg.superuser-password");
             String deployments = pgPassword(ctx, state, "PG_DEPLOYMENTS_PASSWORD",
                     "qits.pg.deployments-password");
+            String deploymentsEventstream = pgPassword(ctx, state,
+                    "PG_DEPLOYMENTS_EVENTSTREAM_PASSWORD",
+                    "qits.pg.deployments-eventstream-password");
             String ci = pgPassword(ctx, state, "PG_CI_PASSWORD", "qits.pg.ci-password");
             String ciEventstream = pgPassword(ctx, state, "PG_CI_EVENTSTREAM_PASSWORD",
                     "qits.pg.ci-eventstream-password");
@@ -716,6 +722,7 @@ public class SeedPhases {
                     "qits.pg.platform-dns-password");
             boot.state.pgSuperuserPassword = superuser;
             boot.state.pgDeploymentsPassword = deployments;
+            boot.state.pgDeploymentsEventstreamPassword = deploymentsEventstream;
             boot.state.pgCiPassword = ci;
             boot.state.pgCiEventstreamPassword = ciEventstream;
             boot.state.pgPlatformIdpPassword = platformIdp;
@@ -732,6 +739,7 @@ public class SeedPhases {
             // would be lost with the run that generated it.
             state.put("PG_SUPERUSER_PASSWORD", superuser);
             state.put("PG_DEPLOYMENTS_PASSWORD", deployments);
+            state.put("PG_DEPLOYMENTS_EVENTSTREAM_PASSWORD", deploymentsEventstream);
             state.put("PG_CI_PASSWORD", ci);
             state.put("PG_CI_EVENTSTREAM_PASSWORD", ciEventstream);
             state.put("PG_PLATFORM_IDP_PASSWORD", platformIdp);
@@ -789,6 +797,14 @@ public class SeedPhases {
                 // survived while this file did not is repaired rather than left refusing
                 // connections.
                 provision(ctx, admin, "qits_deployments", deployments, true);
+                // The deployer's OUTBOX, a second database with its own Flyway lineage. The
+                // deployer joined the event bus on 2026-08-10 and its deployments.yml declares
+                // `postgresql:eventstream:qits_deployments_eventstream`, so a RUNNING deployer
+                // provisions this for its own successor — but the FIRST one comes up from the seed
+                // compose file, before any deployer exists, and refuses to boot without it. Not
+                // converged, like every other role below: the deployer's registry owns the
+                // password from that first pipeline deployment on.
+                provision(ctx, admin, "qits_deployments_eventstream", deploymentsEventstream, false);
                 // The two core seed services. Created once and never altered again — from their
                 // first pipeline deployment the deployer's resource registry owns these passwords,
                 // and it rotates them when it has to. See PgAdmin.ensureRoleIfMissing.
@@ -802,7 +818,7 @@ public class SeedPhases {
                 // deployer registers later is the row this creates.
                 provision(ctx, admin, "qits_platform_dns", platformDns, false);
             }
-            ctx.note("5 databases ready on " + pg);
+            ctx.note("6 databases ready on " + pg);
         });
     }
 
@@ -929,8 +945,9 @@ public class SeedPhases {
                     .mask(orEmpty(boot.state.pgSuperuserPassword))
                     .mask(orEmpty(boot.state.pgDeploymentsPassword))
                     // The seed services' credentials are NOT in this file — the deployer injects
-                    // their triples from its own registry. Masked anyway: a line each, against the
-                    // day one of them is pinned here by hand.
+                    // their triples from its own registry, its own outbox included. Masked anyway:
+                    // a line each, against the day one of them is pinned here by hand.
+                    .mask(orEmpty(boot.state.pgDeploymentsEventstreamPassword))
                     .mask(orEmpty(boot.state.pgCiPassword))
                     .mask(orEmpty(boot.state.pgCiEventstreamPassword))
                     .mask(orEmpty(boot.state.pgPlatformIdpPassword))
@@ -1100,6 +1117,8 @@ public class SeedPhases {
         // Resolved by seed-postgres, which runs before both generated files are written.
         values.put("PG_SUPERUSER_PASSWORD", orEmpty(boot.state.pgSuperuserPassword));
         values.put("PG_DEPLOYMENTS_PASSWORD", orEmpty(boot.state.pgDeploymentsPassword));
+        values.put("PG_DEPLOYMENTS_EVENTSTREAM_PASSWORD",
+                orEmpty(boot.state.pgDeploymentsEventstreamPassword));
         values.put("PG_CI_PASSWORD", orEmpty(boot.state.pgCiPassword));
         values.put("PG_CI_EVENTSTREAM_PASSWORD", orEmpty(boot.state.pgCiEventstreamPassword));
         values.put("PG_PLATFORM_IDP_PASSWORD", orEmpty(boot.state.pgPlatformIdpPassword));

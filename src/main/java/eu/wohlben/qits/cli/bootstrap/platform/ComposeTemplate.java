@@ -301,17 +301,41 @@ public final class ComposeTemplate {
                 container_name: ${ENV_NAME}-qits-deployments
                 group_add: ["${DOCKER_GID}"]
                 environment:
-                  # ADOPTER #1 of the generic resource contract. Every application that declares
-                  # `resources: postgresql:<name>` is handed QITS_RESOURCE_<NAME>_URL/_USERNAME/_PASSWORD
-                  # by this very deployer; its own store arrives the same way, from the bootstrap rather
-                  # than from itself. Unset, the binary refuses to boot at Flyway — which is what makes it
-                  # safe to have no depends_on: a deployer that starts before its database simply restarts
-                  # until the database is there.
+                  # ADOPTER #1 of the generic resource contract, and TWO STORES, TWO TRIPLES — the same
+                  # shape ci's block below carries and for the same reason. Every application that
+                  # declares `resources: postgresql:<name>` is handed
+                  # QITS_RESOURCE_<NAME>_URL/_USERNAME/_PASSWORD by this very deployer; its own two
+                  # arrive the same way, from the bootstrap rather than from itself. Unset, the binary
+                  # refuses to boot at Flyway — which is what makes it safe to have no depends_on: a
+                  # deployer that starts before its database simply restarts until the database is
+                  # there.
                   #
                   # The role, the database and the username are one identity: qits_deployments.
+                  #
+                  # The second triple is the OUTBOX of the eventstream library the deployer joined on
+                  # 2026-08-10: two Flyway lineages cannot share one database. The library reads the
+                  # `eventstream` name in its own shipped defaults, so that spelling is not a choice
+                  # made here.
+                  #
+                  # SPELLED HERE, AND ONLY HERE. Compose starts this container before any deployer
+                  # exists, so the bootstrap created both roles and databases over JDBC. Every
+                  # deployment after this one is handed the same six variables by a RUNNING deployer,
+                  # from `resources: postgresql:db, postgresql:eventstream:qits_deployments_eventstream`
+                  # in this repository's deployments.yml — which is why the run-args line beside this
+                  # file carries the first triple only, as the deployer's own bootstrap credential, and
+                  # never the second.
                   QITS_RESOURCE_DB_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_deployments
                   QITS_RESOURCE_DB_USERNAME: qits_deployments
                   QITS_RESOURCE_DB_PASSWORD: "${PG_DEPLOYMENTS_PASSWORD}"
+                  QITS_RESOURCE_EVENTSTREAM_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_deployments_eventstream
+                  QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_deployments_eventstream
+                  QITS_RESOURCE_EVENTSTREAM_PASSWORD: "${PG_DEPLOYMENTS_EVENTSTREAM_PASSWORD}"
+                  # The event bus, and the same override the seed ci carries one block down: the
+                  # eventstream jar's shipped default is the pre-rename `qits-events:8080`, which
+                  # resolves to nothing on this network. The deployer SUBSCRIBES durably here — a
+                  # BuildSuccessful it never receives is a deployment that never happens — so a wrong
+                  # value costs more than a lost publish.
+                  QITS_EVENTS_URL: http://${ENV_NAME}-qits-events:8080
                   # Which tier this deployer is, so it can register its own resource row and resolve the
                   # postgres host of an environment application without asking itself first.
                   QITS_ENVIRONMENT: ${ENV_NAME}
@@ -533,8 +557,8 @@ public final class ComposeTemplate {
             # variables are injected BEFORE the arguments here, and docker keeps the last -e — so a
             # datasource line here is an operator PIN that outlives a password rotation and breaks the
             # deployment it looks like it is configuring. The seed compose file spells the triples for
-            # qits-ci and qits-platform-idp for the one reason that does not apply here: it starts them
-            # before any deployer exists.
+            # qits-ci, qits-platform-idp, qits-platform-dns and the deployer's OWN OUTBOX for the one
+            # reason that does not apply here: it starts them before any deployer exists.
             #
             # EVERY LINE OF A QITS APPLICATION CARRIES QITS_OBSERVABILITY_URL, for the same reason the seed
             # compose spells it on every service: the images ship the bare qits-observability, and that
@@ -604,7 +628,19 @@ public final class ComposeTemplate {
             # provision one. Machine auth INBOUND only: it validates qits-ci's bearer and mints nothing, so
             # no oidc-client and no secret — but the audience it validates AGAINST is this tier's alias, and
             # the image still ships the pre-rename repository name.
-            qits.platform.deployments.run-args.qits-deployments=-v qits-deployments-config:/work/config -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QITS_RESOURCE_DB_URL=jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_deployments -e QITS_RESOURCE_DB_USERNAME=qits_deployments -e QITS_RESOURCE_DB_PASSWORD=${PG_DEPLOYMENTS_PASSWORD} -e QITS_ENVIRONMENT=${ENV_NAME} -e QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD=${PG_SUPERUSER_PASSWORD} -e QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT} -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-deployments -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            #
+            # ONE TRIPLE, NOT TWO, and the asymmetry with the seed compose block is the point. The
+            # deployer's OUTBOX is declared — `postgresql:eventstream:qits_deployments_eventstream` in
+            # its own deployments.yml — so a RUNNING deployer provisions it for its successor and
+            # injects the triple from the registry row that holds the current password. Pinning it here
+            # would be an operator pin that outlives the next rotation. QITS_RESOURCE_DB_* stays because
+            # it is the ONE credential nothing else can issue: the deployer's own store is what the
+            # bootstrap hands it and the deployer then registers as its own.
+            #
+            # QITS_EVENTS_URL is the wire-name override and belongs here, not in the resources: the
+            # eventstream jar's baked default is the pre-rename `qits-events:8080`, and this deployer
+            # SUBSCRIBES — a BuildSuccessful it never receives is a deployment that never happens.
+            qits.platform.deployments.run-args.qits-deployments=-v qits-deployments-config:/work/config -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QITS_RESOURCE_DB_URL=jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_deployments -e QITS_RESOURCE_DB_USERNAME=qits_deployments -e QITS_RESOURCE_DB_PASSWORD=${PG_DEPLOYMENTS_PASSWORD} -e QITS_ENVIRONMENT=${ENV_NAME} -e QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD=${PG_SUPERUSER_PASSWORD} -e QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT} -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-deployments -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The idp's own deployment. NO DATASOURCE ENV AND NO VOLUME: `resources: postgresql:db` in its
             # deployments.yml is what gets it a store, and the deployer injects the triple from the
             # registry row before the successor starts. That row is what keeps the SIGNING KEY across

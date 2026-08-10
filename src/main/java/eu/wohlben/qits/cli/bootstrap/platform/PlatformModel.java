@@ -135,17 +135,45 @@ public final class PlatformModel {
      * ci-daemon belongs here and nowhere else. It ships no image and no health endpoint, so it is
      * not a deployable — but its binary is an ordinary release-train artifact, and a release train
      * needs the repository on the git host.
+     * <p>
+     * <b>The three image publishers joined on 2026-08-10</b> for that same reason. qits-oci-workspace,
+     * qits-workspace-daemon and qits-projects-daemon publish versioned docker images the platform
+     * pins — qits/workspace-base, qits/workspace, qits/projects-daemon, qits/project-agent — and none
+     * of them is an application of the deployer: an image nothing runs as a container has no
+     * deployments.yml and no health endpoint. They need the repository, the history and the release
+     * replay below, and nothing else.
      */
     public static final List<String> SEEDED_REPOS = List.of(
             "oci", "ci-daemon", "eventstream", "spa-ui-components", "userflows",
             "platform-spa-docs", "spa-deployments",
             "integrations-angular", "integrations-quarkus", "spa-home", "spa-projects",
             "spa-workspaces", "platform-spa-artifacts", "spa-observability", "spa-events",
-            "spa-ci");
+            "spa-ci", "oci-workspace", "workspace-daemon", "projects-daemon");
 
-    /** The publishers whose released versions the wrapper installs. Order is dependency order. */
+    /**
+     * The publishers whose released versions the platform pins, replayed on a fresh platform because
+     * a pin is only as good as the registry behind it. <b>Order is dependency order</b>, and this
+     * list is where that order lives — {@code BootstrapPlan} makes one phase per entry, in this
+     * sequence.
+     * <p>
+     * The first four are the Maven and npm packages the wrapper's builds install. The last three are
+     * DOCKER IMAGES, added on 2026-08-10 after a fresh registry was measured to hold no
+     * qits/workspace-base at all, which fails every workspace launch:
+     * <ul>
+     *   <li><b>qits-oci-workspace strictly before qits-workspace-daemon.</b> The daemon's
+     *       {@code docker/Dockerfile} carries {@code ARG WORKSPACE_BASE=…/qits/workspace-base:<pin>}
+     *       and its build PULLS that image through the registry — which the base's own replay is what
+     *       fills. The other order builds against a tag the registry has never seen.
+     *   <li><b>qits-projects-daemon last</b>, and for the same reason: its layered
+     *       {@code qits/project-agent} build reads the pin out of
+     *       {@code .config/qits/workspace-base.version} and passes it as {@code --build-arg BASE}.
+     *       It is independent of qits-workspace-daemon; only the base has to precede it.
+     * </ul>
+     */
     public static final List<String> RELEASE_PUBLISHERS =
-            List.of("spa-ui-components", "integrations-angular", "eventstream", "integrations-quarkus");
+            List.of("spa-ui-components", "integrations-angular", "eventstream",
+                    "integrations-quarkus",
+                    "oci-workspace", "workspace-daemon", "projects-daemon");
 
     private PlatformModel() {
     }
@@ -172,8 +200,8 @@ public final class PlatformModel {
      */
     public static String repoPath(String name) {
         return switch (name) {
-            case "ci-daemon" -> "daemons/qits-ci-daemon";
-            case "oci", "oci-postgresql" -> "images/qits-" + name;
+            case "ci-daemon", "workspace-daemon", "projects-daemon" -> "daemons/qits-" + name;
+            case "oci", "oci-postgresql", "oci-workspace" -> "images/qits-" + name;
             // Framework glue is shared code, so the integrations sit in libs/ like any other lib.
             case "eventstream", "spa-ui-components", "userflows",
                  "integrations-angular", "integrations-quarkus" -> "libs/qits-" + name;

@@ -97,6 +97,23 @@ class BootstrapPlanTest {
     }
 
     /**
+     * The image publishers, and the one order among them that is not a preference: the workspace
+     * base's replay is what puts qits/workspace-base in the registry, and both daemon builds PULL
+     * it at a pinned version. Replaying a daemon first builds against a tag nothing has pushed.
+     */
+    @Test
+    void theWorkspaceBaseIsReplayedBeforeEverythingThatLayersOnIt() {
+        List<String> ids = ids(plan(Map.of()));
+
+        assertThat(ids).containsSubsequence("release-oci-workspace", "release-workspace-daemon");
+        assertThat(ids).containsSubsequence("release-oci-workspace", "release-projects-daemon");
+        // Still before the deployables: qits-workspaces and qits-projects pin these images, and a
+        // pin with nothing behind it fails at the first workspace launch rather than at deploy.
+        assertThat(ids).containsSubsequence("release-projects-daemon", "environment",
+                "deploy-workspaces");
+    }
+
+    /**
      * The two phases a domain adds, and where they have to sit. The certificate goes BEFORE the seed
      * stack, because the edge is started there with a keystore and a keystore whose files are missing
      * fails startup. The zone goes AFTER the health wait, because it is written over the nameserver's

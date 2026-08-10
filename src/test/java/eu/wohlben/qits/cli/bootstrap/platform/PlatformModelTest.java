@@ -22,7 +22,14 @@ class PlatformModelTest {
                 .isEqualTo("frontends/qits-platform-spa-artifacts");
 
         assertThat(PlatformModel.repoPath("ci-daemon")).isEqualTo("daemons/qits-ci-daemon");
+        // The two daemons that joined the replay set on 2026-08-10. The default arm would clone
+        // services/ from GitHub and the sources phase would fail on a directory nobody has.
+        assertThat(PlatformModel.repoPath("workspace-daemon"))
+                .isEqualTo("daemons/qits-workspace-daemon");
+        assertThat(PlatformModel.repoPath("projects-daemon"))
+                .isEqualTo("daemons/qits-projects-daemon");
         assertThat(PlatformModel.repoPath("oci")).isEqualTo("images/qits-oci");
+        assertThat(PlatformModel.repoPath("oci-workspace")).isEqualTo("images/qits-oci-workspace");
         // An image repository, not a service: the default arm would clone services/ from GitHub.
         assertThat(PlatformModel.repoPath("oci-postgresql"))
                 .isEqualTo("images/qits-oci-postgresql");
@@ -165,6 +172,21 @@ class PlatformModelTest {
                 .hasSize(PlatformModel.DEPLOYABLES.size() + PlatformModel.SEEDED_REPOS.size())
                 .containsAll(PlatformModel.DEPLOYABLES)
                 .containsAll(PlatformModel.SEEDED_REPOS);
+    }
+
+    /**
+     * Every publisher whose release is replayed needs a repository on the git host, a checkout and a
+     * main history — which is what SEEDED_REPOS gets it. A publisher missing from that list has no
+     * source directory to read a tag out of, and the replay phase fails on a path nobody cloned.
+     */
+    @Test
+    void everyReleasePublisherIsARepositoryTheBootstrapSeeds() {
+        assertThat(PlatformModel.SEEDED_REPOS).containsAll(PlatformModel.RELEASE_PUBLISHERS);
+        // Dependency order, and the one pair that is load-bearing: the daemon builds pull
+        // qits/workspace-base at a pinned version, and the base's own replay is what publishes it.
+        assertThat(PlatformModel.RELEASE_PUBLISHERS)
+                .containsSubsequence("oci-workspace", "workspace-daemon")
+                .containsSubsequence("oci-workspace", "projects-daemon");
     }
 
     @Test

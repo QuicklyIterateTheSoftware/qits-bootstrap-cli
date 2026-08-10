@@ -31,6 +31,13 @@ public class RunState {
     /** The password of the deployer's own role, converged on every rerun. */
     public String pgDeploymentsPassword;
     /**
+     * The deployer's OUTBOX role, beside its own store above. The deployer joined the event bus on
+     * 2026-08-10, and the eventstream library keeps its outbox in a second database with its own
+     * Flyway lineage — so the seed deployer needs two credentials, exactly as the seed ci does.
+     * Not converged: from the first pipeline deployment the deployer's registry owns it.
+     */
+    public String pgDeploymentsEventstreamPassword;
+    /**
      * The passwords of the CORE SEED SERVICES' databases: qits-ci's own store, its outbox, the
      * idp's, and the nameserver's.
      * <p>
