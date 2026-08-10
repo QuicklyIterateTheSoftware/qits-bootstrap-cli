@@ -688,14 +688,14 @@ public class SeedPhases {
      * <p>
      * <b>Which databases are here, and which are deliberately not.</b> This phase provisions what
      * the SEED STACK needs: the deployer's own store AND ITS OUTBOX, and the stores of the core
-     * services that come up beside it — qits-ci (its database and its outbox), qits-platform-idp
-     * and qits-platform-dns. Two of the six are outboxes because the eventstream library keeps its
-     * own Flyway lineage and cannot share a database with its host; ci carried one from the start
-     * and the deployer joined the bus on 2026-08-10.
+     * services that come up beside it — qits-ci (its database and its outbox), qits-platform-idp,
+     * qits-platform-dns and qits-events. Two of the seven are outboxes because the eventstream
+     * library keeps its own Flyway lineage and cannot share a database with its host; ci carried
+     * one from the start and the deployer joined the bus on 2026-08-10.
      * Every one of them runs Flyway at boot against a database that has to exist
      * already, and at that point in a cold boot no deployer exists to make one. The nameserver is
      * the loudest about it on purpose: it refuses to start rather than answer NXDOMAIN for every
-     * hostname the platform hands out. Everything else — projects, workspaces, events — is
+     * hostname the platform hands out. Everything else — projects, workspaces, observability — is
      * pipeline-deployed only, so the deployer creates their roles and databases during their own
      * deployments from the {@code resources:} line in each repository's deployments.yml. Adding
      * them here would put a second authority on a credential that has exactly one.
@@ -720,6 +720,7 @@ public class SeedPhases {
                     "qits.pg.platform-idp-password");
             String platformDns = pgPassword(ctx, state, "PG_PLATFORM_DNS_PASSWORD",
                     "qits.pg.platform-dns-password");
+            String events = pgPassword(ctx, state, "PG_EVENTS_PASSWORD", "qits.pg.events-password");
             boot.state.pgSuperuserPassword = superuser;
             boot.state.pgDeploymentsPassword = deployments;
             boot.state.pgDeploymentsEventstreamPassword = deploymentsEventstream;
@@ -727,6 +728,7 @@ public class SeedPhases {
             boot.state.pgCiEventstreamPassword = ciEventstream;
             boot.state.pgPlatformIdpPassword = platformIdp;
             boot.state.pgPlatformDnsPassword = platformDns;
+            boot.state.pgEventsPassword = events;
 
             // RECORDED BEFORE THE SERVER IS STARTED, and the order is the whole point.
             // POSTGRES_PASSWORD applies at initdb only: once the data volume holds a cluster, the
@@ -744,6 +746,7 @@ public class SeedPhases {
             state.put("PG_CI_EVENTSTREAM_PASSWORD", ciEventstream);
             state.put("PG_PLATFORM_IDP_PASSWORD", platformIdp);
             state.put("PG_PLATFORM_DNS_PASSWORD", platformDns);
+            state.put("PG_EVENTS_PASSWORD", events);
             state.write();
             ctx.log("  recorded in " + state.file() + " before the server starts");
 
@@ -817,8 +820,23 @@ public class SeedPhases {
                 // qits-platform-dns with the prefix dropped and dashes underscored — so the row the
                 // deployer registers later is the row this creates.
                 provision(ctx, admin, "qits_platform_dns", platformDns, false);
+                // The BUS, on the same terms and for the same reason: it joined the seed on
+                // 2026-08-10, so it boots from the compose file before any deployer could have
+                // created it a database, and its datasource is an expression over the triple with
+                // no fallback URL — unset, it dies at Flyway's first connect.
+                //
+                // WHY HANDING THIS CREDENTIAL OVER IS SAFE, checked in the deployer rather than
+                // assumed (PgResourceProvisioner.ensureRole): on the first pipeline deployment of
+                // an application the role EXISTS and the deployer's pd_resource registry has no
+                // row for it, and that pair is its reconcile arm — it rotates the role to a fresh
+                // password, records it, and starts the successor with what it recorded. The seed
+                // container is stopped by the same cutover, so nothing is left holding the old
+                // value. Every redeploy after that finds a row and touches nothing. This is
+                // exactly what ci, the idp and the nameserver already go through; the CLI only
+                // opens the door and never alters the role again.
+                provision(ctx, admin, "qits_events", events, false);
             }
-            ctx.note("6 databases ready on " + pg);
+            ctx.note("7 databases ready on " + pg);
         });
     }
 
@@ -951,7 +969,8 @@ public class SeedPhases {
                     .mask(orEmpty(boot.state.pgCiPassword))
                     .mask(orEmpty(boot.state.pgCiEventstreamPassword))
                     .mask(orEmpty(boot.state.pgPlatformIdpPassword))
-                    .mask(orEmpty(boot.state.pgPlatformDnsPassword)), ctx::log);
+                    .mask(orEmpty(boot.state.pgPlatformDnsPassword))
+                    .mask(orEmpty(boot.state.pgEventsPassword)), ctx::log);
             Boot.must(result, "writing the deployer's run-args failed");
             ctx.log("  " + properties.lines().filter(l -> l.startsWith("qits.platform.deployments.run-args")).count()
                     + " applications configured on the qits-deployments-config volume");
@@ -1123,6 +1142,7 @@ public class SeedPhases {
         values.put("PG_CI_EVENTSTREAM_PASSWORD", orEmpty(boot.state.pgCiEventstreamPassword));
         values.put("PG_PLATFORM_IDP_PASSWORD", orEmpty(boot.state.pgPlatformIdpPassword));
         values.put("PG_PLATFORM_DNS_PASSWORD", orEmpty(boot.state.pgPlatformDnsPassword));
+        values.put("PG_EVENTS_PASSWORD", orEmpty(boot.state.pgEventsPassword));
         values.put("IDP", boot.config.idpIssuer());
         values.put("PUSH_TOKEN", boot.config.pushToken());
         values.put("MACHINE_REQUIRED", String.valueOf(boot.config.machineAuth()));

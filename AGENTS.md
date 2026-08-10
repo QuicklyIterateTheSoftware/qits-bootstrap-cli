@@ -57,9 +57,9 @@ forced. Add to that list rather than deviating quietly.
   is a courtesy and never a dependency: reads that stop answering turn it off with one line.
   The deploy half of the same wait talks too: `DeployLogStream` relays the deployer's log lines
   about the repository being waited for under a `  pd| ` prefix, read from `docker logs
-  --timestamps` because the events service is itself something this run deploys — half the waits
-  happen before any feed exists, while the docker socket is always there. Same courtesy rule: a
-  read that fails relays nothing and fails nothing.
+  --timestamps` because what it wants is the deployer's own account of one repository — a log line,
+  not an event — while the docker socket is always there. Same courtesy rule: a read that fails
+  relays nothing and fails nothing.
 - **An announcement the platform makes once, this program re-makes once.** The push's post-receive
   and the run's build-succeeded are both fire-and-forget, and both have been lost for real — the
   idp's post-receive died with the database cutover the qits-oci-postgresql deploy one phase

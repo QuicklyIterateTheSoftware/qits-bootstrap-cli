@@ -19,9 +19,10 @@ import java.util.Optional;
  * prod}, {@code Deployed qits-observability@<sha> into prod (<container>)} — so this relays those
  * lines, the same way the ci relay reads the run.
  * <p>
- * <b>The source is {@code docker logs}, not an event feed.</b> The events service is itself an
- * application this run deploys, so half of the waits happen before any feed exists — while the
- * docker socket is the one thing the whole program cannot run without. Timestamps come from docker
+ * <b>The source is {@code docker logs}, not an event feed.</b> The bus is in the seed since
+ * 2026-08-10, so it does answer by the time the deploy waits run — but what this relay wants is the
+ * deployer's own account of one repository, which is a log line and not an event, and the docker
+ * socket is the one thing the whole program cannot run without. Timestamps come from docker
  * ({@code --timestamps}), so "what is new since the last poll" is a since-filter rather than a
  * diff, and the deployer is found fresh on every read because a self-update hand-off renames its
  * container mid-boot.

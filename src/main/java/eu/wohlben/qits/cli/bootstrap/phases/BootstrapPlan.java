@@ -54,6 +54,12 @@ public final class BootstrapPlan {
             // repository builds green on its own — no qits Maven dependency, no client bundle — so
             // its image needs nothing this run has not got yet.
             phases.add(seed.seedImage("platform-dns"));
+            // The bus, in the first half for the same reason as the edge and the nameserver: a
+            // clone of qits-events resolves against Maven Central alone. It declares no qits Maven
+            // dependency and no <repositories>, and the @qits npm package its client needs is
+            // stood in for by the placeholder bundle — so nothing here waits on the publishes
+            // below.
+            phases.add(seed.seedImage("events"));
             phases.add(seed.seedArtifactsStart());
             phases.add(seed.mavenPublish("eventstream", "qits-eventstream",
                     "publish qits-eventstream into seed artifacts"));

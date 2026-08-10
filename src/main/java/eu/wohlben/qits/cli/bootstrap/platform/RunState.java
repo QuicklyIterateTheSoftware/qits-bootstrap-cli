@@ -39,9 +39,9 @@ public class RunState {
     public String pgDeploymentsEventstreamPassword;
     /**
      * The passwords of the CORE SEED SERVICES' databases: qits-ci's own store, its outbox, the
-     * idp's, and the nameserver's.
+     * idp's, the nameserver's, and the bus's.
      * <p>
-     * These four exist because their containers boot from the seed compose file, before any
+     * These five exist because their containers boot from the seed compose file, before any
      * deployer exists to provision anything — so the CLI creates the roles and the seed carries
      * the credentials. From the first pipeline deployment onwards the deployer's registry owns
      * them, which is why the CLI creates those roles and never alters them again.
@@ -50,6 +50,7 @@ public class RunState {
     public String pgCiEventstreamPassword;
     public String pgPlatformIdpPassword;
     public String pgPlatformDnsPassword;
+    public String pgEventsPassword;
     /** The environment row the deployer reconciled. */
     public String environmentId;
     /** The temporary maven-over-HTTP container that breaks the first-boot dependency cycle. */

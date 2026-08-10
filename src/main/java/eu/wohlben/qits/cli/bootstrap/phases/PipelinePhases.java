@@ -151,6 +151,22 @@ public class PipelinePhases {
                 return viaGateway.ok() ? viaGateway : boot.http.get("http://" + env
                         + "-qits-deployments:8080/platform-deployments/q/health/ready", Map.of());
             });
+            // THE BUS, and it is waited for here rather than trusted to arrive: every green build
+            // of this run travels ci -> outbox -> this service -> the deployer's subscriber, and
+            // the first push is two phases away. Through the edge with the direct alias as the
+            // fallback, exactly as ci and the deployer above — the service serves everything it
+            // has under /events, health included, and the gateway routes that prefix verbatim.
+            //
+            // No auth-plane probe below for it: it enforces no machine gate, so there is no tenant
+            // to warm.
+            boot.awaitHealth(ctx, env + "-qits-events (the bus, through the edge, else direct)",
+                    () -> {
+                        Http.Response viaGateway = boot.http.get(
+                                boot.config.eventsUrl() + "/q/health/ready", Map.of());
+                        return viaGateway.ok() ? viaGateway
+                                : boot.http.get("http://" + env
+                                        + "-qits-events:8080/events/q/health/ready", Map.of());
+                    });
             // Health is not enough with the machine gate on: a freshly (re)created service
             // initializes its OIDC tenant lazily on the FIRST request, and if that races idp's own
             // restart, every request 500s for a few seconds — reads included. Poll one read per

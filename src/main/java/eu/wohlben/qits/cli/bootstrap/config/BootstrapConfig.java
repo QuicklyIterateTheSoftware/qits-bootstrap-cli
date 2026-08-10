@@ -267,6 +267,19 @@ public interface BootstrapConfig {
     }
 
     /**
+     * qits-events — the BUS — through the edge and the gateway's route table, like ci and the
+     * deployer above. The gateway routes {@code /events/*} verbatim, and this service serves
+     * everything it has under that one segment, health included.
+     * <p>
+     * Dialled for one purpose: the seed health wait. Nothing this program does publishes or reads
+     * an event over HTTP — the announcements travel ci's outbox and the deployer's subscriber — but
+     * a bus nobody waited for is a bus the first green build can outrun.
+     */
+    default String eventsUrl() {
+        return "http://qits-platform-edge:8080/events";
+    }
+
+    /**
      * qits-platform-dns' HTTP surface — its health and the zone API — <b>at its own alias, not
      * through the edge</b>, which is the one exception to the rule the two addresses above follow.
      * There is no gateway route to this service and there must not be one: the gateway proxies HTTP

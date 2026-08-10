@@ -44,10 +44,18 @@ public final class PlatformModel {
      * before the pipeline could have deployed it. It is also the platform's only public nameserver,
      * so once a registrar delegates a domain here every minute with no server answering is an
      * outage rather than a slow start.
+     * <p>
+     * <b>qits-events joined on 2026-08-10, because it is the BUS and the bus is now the only road a
+     * green build takes.</b> The direct ci -&gt; deployer announcement is retired; what is left is
+     * ci -&gt; outbox -&gt; qits-events -&gt; the deployer's durable subscriber. Every hop of that
+     * chain has to exist before the FIRST deploy phase, and the pipeline used to bring the bus up
+     * at phase 46 — six deployables after the first one announced. A seeded bus is one more seed
+     * image and one more database; the alternative is a bootstrap whose first six deployments are
+     * announced into nothing.
      */
     public static final List<String> CORE = List.of(
             "gateway", "platform-edge", "platform-artifacts", "ci", "deployments", "platform-idp",
-            "platform-dns", "oci-postgresql");
+            "platform-dns", "events", "oci-postgresql");
 
     /**
      * Everything the platform deploys through itself. Order matters: observability first (quiets
@@ -281,8 +289,8 @@ public final class PlatformModel {
      * registry answers JSON only, so it has none.
      * <p>
      * <b>Every seed service is spelled out</b>, because a bundle directory is the Angular project
-     * key and moves whenever its client is renamed — three of the six name their client something
-     * other than {@code qits-spa-<name>}, and two have no client at all. The path is the one the
+     * key and moves whenever its client is renamed — two of the nine name their client something
+     * other than {@code qits-spa-<name>}, and four have no client at all. The path is the one the
      * service's Dockerfile checks with {@code test -f}, so a stale spelling fails the seed build
      * minutes in rather than at the edit.
      * <p>
@@ -298,6 +306,7 @@ public final class PlatformModel {
                     "service/src/main/webui/dist/qits-platform-spa-artifacts/browser";
             case "deployments" -> "service/src/main/webui/dist/qits-spa-deployments/browser";
             case "ci" -> "service/src/main/webui/dist/qits-spa-ci/browser";
+            case "events" -> "service/src/main/webui/dist/qits-spa-events/browser";
             default -> "";
         };
     }

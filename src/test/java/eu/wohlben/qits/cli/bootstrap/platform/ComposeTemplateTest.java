@@ -30,6 +30,7 @@ class ComposeTemplateTest {
         values.put("PG_CI_EVENTSTREAM_PASSWORD", "eeeeffff00001111");
         values.put("PG_PLATFORM_IDP_PASSWORD", "2222333344445555");
         values.put("PG_PLATFORM_DNS_PASSWORD", "66667777888899aa");
+        values.put("PG_EVENTS_PASSWORD", "bbbbccccddddeeee");
         values.put("IDP", "http://qits-platform-idp:8080/idp");
         values.put("PUSH_TOKEN", "local-dev");
         values.put("MACHINE_REQUIRED", "true");
@@ -93,7 +94,8 @@ class ComposeTemplateTest {
                 .doesNotContain("${PG_CI_PASSWORD}")
                 .doesNotContain("${PG_CI_EVENTSTREAM_PASSWORD}")
                 .doesNotContain("${PG_PLATFORM_IDP_PASSWORD}")
-                .doesNotContain("${PG_PLATFORM_DNS_PASSWORD}");
+                .doesNotContain("${PG_PLATFORM_DNS_PASSWORD}")
+                .doesNotContain("${PG_EVENTS_PASSWORD}");
         // The domain fragments are filled even when they are empty: a leftover placeholder would
         // reach the file as literal text and compose would refuse it.
         assertThat(compose).doesNotContain("${DNS_IDENTITY}")
@@ -228,18 +230,56 @@ class ComposeTemplateTest {
                 .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_CD=");
     }
 
+    /**
+     * <b>ci's direct door to the deployer is gone from both files.</b> A green build travels the bus
+     * now — ci -&gt; outbox -&gt; the bus -&gt; the deployer's durable subscriber — and qits-ci reads
+     * no {@code qits.platform.deployments.intake-url} any more. A generated line naming a key
+     * nothing reads outlives its reader and reads like configuration for years.
+     * <p>
+     * What replaces it is one address, and it has to be in both files for the same reason the intake
+     * had to be: the eventstream jar's shipped default is the pre-rename {@code qits-events:8080},
+     * which resolves to nothing on this network.
+     */
     @Test
-    void ciIsPointedAtTheIntakeInBothPlaces() {
-        // Fire-and-forget and swallowed at debug: a wrong value deploys nothing and says nothing,
-        // which is why it is spelled rather than inherited. Move one, move both.
-        String intake = "QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL"
-                + ": http://prod-qits-deployments:8080"
-                + "/platform-deployments/api/events/build-succeeded";
+    void ciAnnouncesOnTheBusAndTheDirectIntakeIsGone() {
+        String compose = ComposeTemplate.compose(tokens());
 
-        assertThat(ComposeTemplate.compose(tokens())).contains(intake);
-        assertThat(runArgsLine("qits-ci")).contains(
-                "-e QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL=http://prod-qits-deployments:8080"
-                        + "/platform-deployments/api/events/build-succeeded");
+        assertThat(compose).doesNotContain("QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL:");
+        assertThat(runArgsLine("qits-ci")).doesNotContain("QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL");
+        assertThat(ComposeTemplate.runArgs(tokens()))
+                .doesNotContain("-e QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL=");
+
+        assertThat(serviceBlock(compose, ENV + "-qits-ci"))
+                .contains("QITS_EVENTS_URL: http://prod-qits-events:8080");
+        assertThat(runArgsLine("qits-ci")).contains("-e QITS_EVENTS_URL=http://prod-qits-events:8080");
+    }
+
+    /**
+     * <b>The bus is a seed service.</b> Every green build of a cold boot travels it, so it has to
+     * answer before the first deployment rather than at its own place in the deploy train — which is
+     * six deployables later. Its container name is its wire alias, which is both what ci and the
+     * deployer dial and what the deployer searches for when it adopts this container's successor.
+     */
+    @Test
+    void theBusIsInTheSeedAndIsHandedItsDatabase() {
+        String compose = ComposeTemplate.compose(tokens());
+        String block = serviceBlock(compose, ENV + "-qits-events");
+
+        assertThat(compose).contains("image: qits/events:latest");
+        // The deployer's own default derivation of the database name, so the row it registers on the
+        // first pipeline deployment is the row the bootstrap created.
+        assertThat(block).contains("QITS_RESOURCE_DB_URL: "
+                        + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_events")
+                .contains("QITS_RESOURCE_DB_USERNAME: qits_events")
+                .contains("QITS_RESOURCE_DB_PASSWORD: \"bbbbccccddddeeee\"");
+        // No volume and no machine auth: the store is the postgres beside it, and this service
+        // enforces no gate — which is why its run-args line carries neither either.
+        assertThat(block).doesNotContain("volumes:")
+                .doesNotContain("QITS_AUTH_MACHINE_")
+                .doesNotContain("QUARKUS_OIDC_");
+        // The deployer injects the triple from `resources: postgresql:db`; a pin in the run-args
+        // would be appended after that injection and would outlive the next rotation.
+        assertThat(runArgsLine("qits-events")).doesNotContain("QITS_RESOURCE_");
     }
 
     /**
@@ -390,12 +430,13 @@ class ComposeTemplateTest {
     }
 
     /**
-     * The two CORE SEED SERVICES' stores. Both containers are started by compose before any deployer
-     * exists, so the seed file is the only place their credentials can come from — and the bootstrap
-     * created the roles and the databases over JDBC minutes earlier.
+     * ci's and the idp's stores — the bus has a test of its own above. Every one of these containers
+     * is started by compose before any deployer exists, so the seed file is the only place their
+     * credentials can come from, and the bootstrap created the roles and the databases over JDBC
+     * minutes earlier.
      */
     @Test
-    void theSeedsTwoDatabaseConsumersAreHandedTheirTriples() {
+    void theSeedsDatabaseConsumersAreHandedTheirTriples() {
         String compose = ComposeTemplate.compose(tokens());
         String ci = serviceBlock(compose, ENV + "-qits-ci");
         String idp = serviceBlock(compose, "qits-platform-idp");

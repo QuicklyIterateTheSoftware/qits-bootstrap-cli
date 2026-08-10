@@ -117,9 +117,13 @@ class PlatformModelTest {
     void theSeedIsEveryServiceTheRestIsBuiltAndReachedThrough() {
         // The nameserver is in the seed because the boot itself writes to it: with a domain set, the
         // zone row is created over its API hours before the pipeline could have deployed it.
+        //
+        // The bus is in it since 2026-08-10, when ci's direct POST to the deployer was retired: a
+        // green build is ci -> outbox -> qits-events -> the deployer's subscriber, and every hop has
+        // to exist before the FIRST deployment. Deployed at phase 46 it did not.
         assertThat(PlatformModel.CORE).containsExactlyInAnyOrder(
                 "gateway", "platform-edge", "platform-artifacts", "ci", "deployments",
-                "platform-idp", "platform-dns", "oci-postgresql");
+                "platform-idp", "platform-dns", "events", "oci-postgresql");
         // Every seed service is also deployed through the pipeline afterwards; nothing stays
         // hand-built.
         assertThat(PlatformModel.DEPLOYABLES).containsAll(PlatformModel.CORE);
@@ -148,6 +152,10 @@ class PlatformModelTest {
                 .isEqualTo("src/main/webui/dist/qits-spa-home/browser");
         assertThat(PlatformModel.seedUiPath("ci"))
                 .isEqualTo("service/src/main/webui/dist/qits-spa-ci/browser");
+        // The bus joined the seed on 2026-08-10 and it HAS a client, so it needs a placeholder: its
+        // Dockerfile stops the build with `test -f` on this exact path before the native compile.
+        assertThat(PlatformModel.seedUiPath("events"))
+                .isEqualTo("service/src/main/webui/dist/qits-spa-events/browser");
         // No client at all, and empty is the answer that says so: a seed build must not be made to
         // require a bundle that does not exist.
         assertThat(PlatformModel.seedUiPath("platform-idp")).isEmpty();

@@ -59,6 +59,9 @@ class BootstrapPlanTest {
         assertThat(ids).containsSubsequence("seed-image-gateway", "seed-image-platform-edge",
                 "seed-image-platform-artifacts");
         assertThat(ids).containsSubsequence("seed-image-platform-dns", "seed-artifacts");
+        // The bus is in the first half too: qits-events declares no qits Maven dependency, so it
+        // waits on none of the publishes below it.
+        assertThat(ids).containsSubsequence("seed-image-events", "seed-artifacts");
         // The daemon digest is written into the compose file and the deployer's run-args, so it is
         // measured before either is generated.
         assertThat(ids).containsSubsequence("ci-daemon", "idp-secrets", "compose-file",
@@ -142,7 +145,7 @@ class BootstrapPlanTest {
 
         assertThat(warm).contains("seed-skipped")
                 .doesNotContain("ci-daemon", "seed-image-ci", "seed-image-platform-edge",
-                        "seed-image-oci-postgresql", "auth-core-seed");
+                        "seed-image-oci-postgresql", "seed-image-events", "auth-core-seed");
         assertThat(warm.size()).isLessThan(cold.size());
         // The pipeline half is untouched: a warm rerun still pushes and still waits.
         assertThat(warm).contains("deploy-deployments", "release-train-push", "summary");

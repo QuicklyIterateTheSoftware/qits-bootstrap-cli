@@ -93,6 +93,9 @@ class BootstrapConfigTest {
         assertThat(config.ciUrl()).isEqualTo("http://qits-platform-edge:8080/ci");
         assertThat(config.platformDeploymentsUrl())
                 .isEqualTo("http://qits-platform-edge:8080/platform-deployments");
+        // The bus, through the edge like the two above. It is a seed service now, so the boot waits
+        // for it — and it serves everything under one segment, health included.
+        assertThat(config.eventsUrl()).isEqualTo("http://qits-platform-edge:8080/events");
         // The ONE deploy ref, on both planes: platform/main is retired.
         assertThat(config.envBranch()).isEqualTo("environment/preprod");
         // The issuer is a value consumers validate as well as an address this program dials.
