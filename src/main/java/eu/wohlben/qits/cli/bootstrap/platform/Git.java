@@ -29,8 +29,15 @@ public class Git {
                 to.toString()).timeout(Duration.ofMinutes(30)), out);
     }
 
+    /**
+     * {@code --tags} is load-bearing, not a nicety. The release replay reads the version to replay
+     * off the newest tag reachable from main, and a plain pull moves the BRANCH without the tags —
+     * measured: a refresh that carried the release commit but not its tag made the replay
+     * faithfully re-release the previous version, republishing an old image and driving a
+     * consumer's pin backwards through the follow-bumps.
+     */
     public ProcessResult pullFastForward(Path repo, Consumer<String> out) {
-        return in(repo, out, "pull", "--ff-only");
+        return in(repo, out, "pull", "--ff-only", "--tags");
     }
 
     public ProcessResult submodulesShallow(Path repo, Consumer<String> out) {
