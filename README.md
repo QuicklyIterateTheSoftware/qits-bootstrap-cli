@@ -329,13 +329,22 @@ below.
 | 40–53 | one phase per deployable: push `main` quietly and `environment/<name>` for real, then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-platform-edge is second to last: it is the host port, so its cutover takes this program's own door away for a beat |
 | 54–55 | push the seeded repositories; the closing report |
 
-Three things every deploy phase does that are easy to miss: it pushes `main` quietly
-(`-o qits.no-ci`) so a second cold native build is not queued for the same sha; it replays the
-`build-succeeded` event once when a run is green but no deployment row appeared after a minute —
-the observed lost-event failure; and when the push is up to date and the only run at that sha is
-RED, it re-announces the push to qits-ci once and waits for a run newer than the red one. A red run
-means there is no image, so replaying the build event would only buy an `IMAGE_MISSING` row — a
-rerun has to ask for the BUILD.
+Four things every deploy phase does that are easy to miss: it pushes `main` quietly
+(`-o qits.no-ci`) so a second cold native build is not queued for the same sha; it re-announces the
+push once when a real push has no CI run at its sha after a minute — the git host's announcement is
+fire-and-forget, and the first proving run lost qits-platform-idp's to the database cutover the
+qits-oci-postgresql deploy one phase earlier had just caused; it replays the `build-succeeded`
+event once when a run is green but no deployment row appeared after a minute — the same loss, one
+hop later; and when the push is up to date and the only run at that sha is RED, it re-announces the
+push to qits-ci once and waits for a run newer than the red one. A red run means there is no image,
+so replaying the build event would only buy an `IMAGE_MISSING` row — a rerun has to ask for the
+BUILD.
+
+While a deploy phase waits it also talks: the CI run's own output is relayed under `ci|` (a poll of
+the run, not a feed — qits-ci serves none), and the deployer's account of this repository —
+registered, deployed, failed — is relayed from its container log under `pd|`. The push before them
+prints git's own output inline. Silence during a wait is therefore always the platform being
+silent, never the display.
 
 Phase 28 restarts the seed deployer when the run-args it just wrote differ from what the volume
 held. The deployer reads that file once, at its own boot, so a rerun that changes it changes

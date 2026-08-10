@@ -181,6 +181,16 @@ public class Docker {
     }
 
     /**
+     * A container's log since an RFC3339 moment, each line led by docker's own timestamp — which is
+     * what lets the caller ask only for what is new. stderr rides along: the runner merges the
+     * streams, and a container's log arrives on both.
+     */
+    public List<String> logsSince(String container, String since) {
+        return lines(runner.run(
+                Cmd.of("docker", "logs", "--timestamps", "--since", since, container), null));
+    }
+
+    /**
      * Builds an image from a Dockerfile fed on stdin, which is how the seed builds get the
      * mirror-free FROM lines without touching the checkout.
      */

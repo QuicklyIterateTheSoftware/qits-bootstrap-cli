@@ -55,6 +55,18 @@ forced. Add to that list rather than deviating quietly.
   websocket for run logs — following along is polling `GET /ci/api/runs/{runId}`, which answers with
   each step's output whole and bounded, so the relay subtracts by overlap rather than by length. It
   is a courtesy and never a dependency: reads that stop answering turn it off with one line.
+  The deploy half of the same wait talks too: `DeployLogStream` relays the deployer's log lines
+  about the repository being waited for under a `  pd| ` prefix, read from `docker logs
+  --timestamps` because the events service is itself something this run deploys — half the waits
+  happen before any feed exists, while the docker socket is always there. Same courtesy rule: a
+  read that fails relays nothing and fails nothing.
+- **An announcement the platform makes once, this program re-makes once.** The push's post-receive
+  and the run's build-succeeded are both fire-and-forget, and both have been lost for real — the
+  idp's post-receive died with the database cutover the qits-oci-postgresql deploy one phase
+  earlier had caused (ci's pool was severed as the announcement arrived; no run was ever enqueued).
+  A pushed sha with no run after a minute, and a green run with no deployment row after a minute,
+  each get their announcement re-made exactly once inside the wait. One more attempt, never a retry
+  loop: if the second announcement dies too, the phase warns at its timeout as before.
 - **Every address this CLI dials is a wire alias, and there is no second set.** The run joins
   `qits-net` in its second phase and reaches the platform the way every other member does:
   `qits-platform-artifacts:8080`, the postgres alias on 5432, `qits-platform-idp:8080`, and ci and

@@ -533,7 +533,7 @@ public class PipelinePhases {
                 ctx.log("  pushed " + sha.substring(0, 7)
                         + ", waiting for the deployment (a cold native build — be patient)");
             }
-            awaitDeployment(ctx, name, repo, sha, ref, baselineRowId, baselineRunId);
+            awaitDeployment(ctx, name, repo, sha, ref, baselineRowId, baselineRunId, !upToDate);
         });
     }
 
@@ -673,11 +673,16 @@ public class PipelinePhases {
     }
 
     private void awaitDeployment(PhaseContext ctx, String name, String repo, String sha,
-            String ref, String baselineRowId, String baselineRunId) {
+            String ref, String baselineRowId, String baselineRunId, boolean pushed) {
         boolean platformService = PlatformModel.isPlatformService(name);
         CiLogStream ciLog = new CiLogStream(boot.ci, ctx);
+        DeployLogStream pdLog = new DeployLogStream(boot.docker, ctx, repo,
+                PlatformModel.wireAlias("deployments", boot.config.envName()),
+                PlatformModel.pdNamePrefix("deployments", boot.config.envName()));
         long[] greenForMillis = {0};
+        long[] noRunForMillis = {0};
         boolean[] replayed = {false};
+        boolean[] reannounced = {false};
         long interval = boot.config.pollInterval().toMillis();
         String target = platformService
                 ? "a container named " + PlatformModel.pdNamePrefix(name, boot.config.envName())
@@ -687,6 +692,9 @@ public class PipelinePhases {
         try {
             String outcome = Waiter.await(ctx, target, boot.config.deployTimeout(),
                     boot.config.pollInterval(), () -> {
+                        // The deployer's account of this repository, before the verdict is read, so
+                        // "what is it doing" is answered in the same breath as "is it done".
+                        pdLog.follow();
                         String deploymentState = "no row yet";
                         if (platformService) {
                             Optional<String[]> container = platformContainerAtSha(name, sha);
@@ -747,6 +755,26 @@ public class PipelinePhases {
                                         output.lines().forEach(line -> ctx.log("    " + line));
                                     });
                             return Waiter.Poll.done("CI " + runStatus, runStatus);
+                        }
+                        // The git host's push announcement is fire-and-forget too, and it dies for
+                        // real: the first proving run lost qits-platform-idp's to the database
+                        // cutover the previous phase's qits-oci-postgresql deploy had just caused —
+                        // ci's pool was severed the second the announcement arrived, no run was
+                        // ever enqueued, and the wait read "ci run not started" for its entire
+                        // hour. A pushed sha with no run a minute later IS that loss: nothing
+                        // upstream retries, so make the announcement again, once. Only after a real
+                        // push — the up-to-date branches already sent whatever event they needed.
+                        if (pushed && runStatus.isBlank()) {
+                            noRunForMillis[0] += interval;
+                            if (noRunForMillis[0] >= 60_000 && !reannounced[0]) {
+                                ctx.warn(repo + " was pushed but ci never started a run at "
+                                        + sha.substring(0, 7)
+                                        + " — the announcement is lost, making it again");
+                                reannouncePush(ctx, repo, sha, ref);
+                                reannounced[0] = true;
+                            }
+                        } else {
+                            noRunForMillis[0] = 0;
                         }
                         // The run's own announcement is fire-and-forget and can be lost.
                         // A green run with no deployment row a minute later is that loss — hand the
