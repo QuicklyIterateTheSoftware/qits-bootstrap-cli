@@ -21,6 +21,8 @@ class ComposeTemplateTest {
         values.put("COMPOSE_FILE", "docker-compose.qits.yml");
         values.put("PORT", "8080");
         values.put("REGISTRY_PORT", "8081");
+        values.put("MIRROR_PORT", "8082");
+        values.put("GIT_HOST_PORT", "8083");
         values.put("PG_PORT", "5433");
         values.put("DNS_PORT", "53");
         values.put("PG_SUPERUSER_PASSWORD", "0123456789abcdef");
@@ -31,6 +33,9 @@ class ComposeTemplateTest {
         values.put("PG_PLATFORM_IDP_PASSWORD", "2222333344445555");
         values.put("PG_PLATFORM_DNS_PASSWORD", "66667777888899aa");
         values.put("PG_EVENTS_PASSWORD", "bbbbccccddddeeee");
+        values.put("PG_PLATFORM_MIRROR_PASSWORD", "1234123412341234");
+        values.put("PG_GITHOST_PASSWORD", "5678567856785678");
+        values.put("PG_GITHOST_EVENTSTREAM_PASSWORD", "9abc9abc9abc9abc");
         values.put("IDP", "http://qits-platform-idp:8080/idp");
         values.put("PUSH_TOKEN", "local-dev");
         values.put("MACHINE_REQUIRED", "true");
@@ -61,6 +66,13 @@ class ComposeTemplateTest {
         assertThat(start).isNotNegative();
         int next = compose.indexOf("container_name: ", start + 1);
         return next < 0 ? compose.substring(start) : compose.substring(start, next);
+    }
+
+    /** Every generated run-args line, without the comments that explain them. */
+    private static List<String> runArgsLines() {
+        return ComposeTemplate.runArgs(tokens()).lines()
+                .filter(line -> line.startsWith("qits.platform.deployments.run-args."))
+                .toList();
     }
 
     private static String runArgsLine(String application) {
@@ -95,7 +107,11 @@ class ComposeTemplateTest {
                 .doesNotContain("${PG_CI_EVENTSTREAM_PASSWORD}")
                 .doesNotContain("${PG_PLATFORM_IDP_PASSWORD}")
                 .doesNotContain("${PG_PLATFORM_DNS_PASSWORD}")
-                .doesNotContain("${PG_EVENTS_PASSWORD}");
+                .doesNotContain("${PG_EVENTS_PASSWORD}")
+                .doesNotContain("${PG_PLATFORM_MIRROR_PASSWORD}")
+                .doesNotContain("${PG_GITHOST_PASSWORD}")
+                .doesNotContain("${PG_GITHOST_EVENTSTREAM_PASSWORD}");
+        assertThat(compose).doesNotContain("${MIRROR_PORT}").doesNotContain("${GIT_HOST_PORT}");
         // The domain fragments are filled even when they are empty: a leftover placeholder would
         // reach the file as literal text and compose would refuse it.
         assertThat(compose).doesNotContain("${DNS_IDENTITY}")
@@ -127,9 +143,11 @@ class ComposeTemplateTest {
         assertThat(compose).doesNotContain("container_name: qits-cd")
                 .doesNotContain("container_name: qits-serviceregistry");
         // And no seed carries a pre-rename name, which nothing would resolve.
-        assertThat(compose).doesNotContain("container_name: qits-artifacts")
-                .doesNotContain("container_name: qits-idp")
-                .doesNotContain("container_name: qits-platform-deployments");
+        assertThat(compose).doesNotContain("container_name: qits-idp")
+                .doesNotContain("container_name: qits-platform-deployments")
+                // The byte-plane split retired this one: the store is an environment service, so a
+                // seed under the bare name is a container nothing on this platform dials.
+                .doesNotContain("container_name: qits-platform-artifacts");
     }
 
     @Test
@@ -198,11 +216,11 @@ class ComposeTemplateTest {
                         + "prod-qits-deployments");
         assertThat(serviceBlock(compose, ENV + "-qits-deployments"))
                 .contains("QITS_AUTH_MACHINE_AUDIENCE: prod-qits-deployments");
-        // The artifacts service is a platform service, so its alias IS its repository name and the
-        // shipped default is already right — but who its outbound token is FOR still moved.
-        assertThat(serviceBlock(compose, "qits-platform-artifacts"))
-                .doesNotContain("QITS_AUTH_MACHINE_AUDIENCE")
-                .contains("QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE: prod-qits-ci");
+        // The artifacts service validates a tier-qualified audience since the split, and mints
+        // nothing at all: the git host's announcement was the only token it ever asked for.
+        assertThat(serviceBlock(compose, ENV + "-qits-artifacts"))
+                .contains("QITS_AUTH_MACHINE_AUDIENCE: prod-qits-artifacts")
+                .doesNotContain("QUARKUS_OIDC_CLIENT_");
 
         assertThat(runArgsLine("qits-ci"))
                 .contains("-e QITS_AUTH_MACHINE_AUDIENCE=prod-qits-ci")
@@ -211,6 +229,128 @@ class ComposeTemplateTest {
                         + "prod-qits-deployments");
         assertThat(runArgsLine("qits-deployments"))
                 .contains("-e QITS_AUTH_MACHINE_AUDIENCE=prod-qits-deployments");
+        assertThat(runArgsLine("qits-artifacts"))
+                .contains("-e QITS_AUTH_MACHINE_AUDIENCE=prod-qits-artifacts")
+                .doesNotContain("QUARKUS_OIDC_CLIENT_");
+        // Neither new byte service holds an identity: the mirror has no auth surface at all, and
+        // the git host validates a push option rather than a token.
+        assertThat(runArgsLine("qits-platform-mirror")).doesNotContain("QITS_AUTH_MACHINE_")
+                .doesNotContain("QUARKUS_OIDC_");
+        assertThat(runArgsLine("qits-githost")).doesNotContain("QITS_AUTH_MACHINE_")
+                .doesNotContain("QUARKUS_OIDC_");
+    }
+
+    /**
+     * <b>THE BYTE PLANE, in the seed stack.</b> Three services where there was one, each with its
+     * own store, its own volume and its own door — and the split runs through every client's
+     * configuration, which is what the rest of this class checks one consumer at a time.
+     */
+    @Test
+    void theByteplaneIsThreeServicesWithThreeStoresAndThreeDoors() {
+        String compose = ComposeTemplate.compose(tokens());
+        String artifacts = serviceBlock(compose, ENV + "-qits-artifacts");
+        String mirror = serviceBlock(compose, "qits-platform-mirror");
+        String githost = serviceBlock(compose, ENV + "-qits-githost");
+
+        // The hosted store keeps the registry port and the file H2 it always had; only its name
+        // and its plane moved.
+        assertThat(compose).contains("image: qits/artifacts:latest");
+        assertThat(artifacts).contains("- \"127.0.0.1:8081:8080\"")
+                .contains("QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL: "
+                        + "jdbc:h2:file:/data/artifacts/h2/artifacts")
+                .contains("- qits-artifacts-data:/data")
+                // The git host left, and every knob it owned left with it.
+                .doesNotContain("QITS_REPOSITORIES_GIT_")
+                .doesNotContain("QITS_CI_INTAKE_URL");
+
+        // The caches: a platform service, its own database, its own published door.
+        assertThat(compose).contains("image: qits/platform-mirror:latest");
+        assertThat(mirror).contains("- \"127.0.0.1:8082:8080\"")
+                .contains("QITS_RESOURCE_DB_URL: "
+                        + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_platform_mirror")
+                .contains("QITS_RESOURCE_DB_PASSWORD: \"1234123412341234\"")
+                // Without it the process writes its cache where ${user.home} resolves for a
+                // passwd-less uid, which is the literal "?".
+                .contains("QITS_ARTIFACTS_BLOBS_DIR: /data/mirror/blobs")
+                .contains("- qits-platform-mirror-data:/data");
+
+        // The git host: two stores, because the outbox is a lineage of its own.
+        assertThat(compose).contains("image: qits/githost:latest");
+        assertThat(githost).contains("- \"127.0.0.1:8083:8080\"")
+                .contains("QITS_RESOURCE_DB_URL: "
+                        + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_githost")
+                .contains("QITS_RESOURCE_EVENTSTREAM_URL: "
+                        + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_githost_eventstream")
+                .contains("QITS_ARTIFACTS_BLOBS_DIR: /data/githost/blobs")
+                .contains("- qits-githost-data:/data")
+                // A push is a durable event now, not an HTTP call to two consumers.
+                .contains("QITS_EVENTS_URL: http://prod-qits-events:8080")
+                .doesNotContain("QITS_CI_INTAKE_URL")
+                // Without the resolver the name-addressed scheme 404s and every agent container
+                // starts with an empty workspace.
+                .contains("QITS_PROJECTS_NAME_RESOLVER_URL: "
+                        + "http://prod-qits-projects:8080/projects/api/projects")
+                .contains("QITS_REPOSITORIES_GIT_PUSH_TOKEN: \"local-dev\"")
+                .contains("QITS_REPOSITORIES_GIT_PROTECT_DEFAULT_BRANCH: \"true\"");
+    }
+
+    /**
+     * <b>The two-endpoint topology, as every client sees it.</b> Hosted content is this tier's
+     * qits-artifacts; third-party content is qits-platform-mirror. The step containers are where it
+     * matters most, because ci ships all four roots defaulted to the one service that used to be
+     * both.
+     */
+    @Test
+    void hostedContentIsTheStoreAndThirdPartyContentIsTheMirror() {
+        String ci = serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-ci");
+        String runArgs = runArgsLine("qits-ci");
+
+        for (String block : new String[]{ci.replace(": ", "="), runArgs}) {
+            assertThat(block).contains(
+                            "QITS_ARTIFACTS_NPM_HOSTED_URL=http://prod-qits-artifacts:8080"
+                                    + "/artifacts/npm/npm/")
+                    .contains("QITS_ARTIFACTS_NPM_PROXY_URL=http://qits-platform-mirror:8080"
+                            + "/artifacts/npm/npmjs/")
+                    .contains("QITS_ARTIFACTS_MAVEN_REGISTRY_URL=http://prod-qits-artifacts:8080"
+                            + "/artifacts/maven/maven")
+                    .contains("QITS_ARTIFACTS_DOCS_URL=http://prod-qits-artifacts:8080"
+                            + "/artifacts/docs/docs");
+        }
+        // The publish target is the HOSTED registry and never the mirror: a publish step pushes the
+        // platform's own image, and the mirror takes no writes at all.
+        assertThat(runArgs).contains("-e QITS_ARTIFACTS_REGISTRY_HOST=localhost:8081");
+        // The docs reader is handed the same address ci injects, so the two cannot disagree.
+        assertThat(runArgsLine("qits-docs")).contains(
+                "-e QITS_DOCS_ARTIFACTS_URL=http://prod-qits-artifacts:8080/artifacts/docs/docs");
+    }
+
+    /**
+     * <b>Every git address is qits-githost's, and none of them carries {@code /artifacts}.</b> The
+     * git host is a service of its own since the byte-plane split, so a value still pointing at the
+     * store is a clone of nothing.
+     */
+    @Test
+    void everyGitAddressIsTheGitHostsOwn() {
+        String compose = ComposeTemplate.compose(tokens());
+        String host = "http://prod-qits-githost:8080";
+
+        // ci appends /git/<repoId> itself, so its two keys are the ROOT with no path.
+        assertThat(serviceBlock(compose, ENV + "-qits-ci"))
+                .contains("QITS_CI_GIT_HOST_URL: " + host)
+                .contains("QITS_CI_CONTAINER_GIT_URL: " + host);
+        assertThat(runArgsLine("qits-ci")).contains("-e QITS_CI_GIT_HOST_URL=" + host)
+                .contains("-e QITS_CI_CONTAINER_GIT_URL=" + host);
+        // The two services that push. Their key was renamed with the split — a deployment still
+        // passing qits.artifacts.url configures nothing and silently takes the default.
+        assertThat(runArgsLine("qits-projects")).contains("-e QITS_GITHOST_URL=" + host)
+                .contains("-e QITS_PROJECTS_AGENT_GIT_BASE=" + host + "/git")
+                .doesNotContain("QITS_ARTIFACTS_URL");
+        assertThat(runArgsLine("qits-workspaces")).contains("-e QITS_GITHOST_URL=" + host)
+                .doesNotContain("QITS_ARTIFACTS_URL");
+        // The LINES, not the comments: the git host's own line says in prose where its clone url
+        // used to be, and that sentence is why the reader knows what moved.
+        assertThat(runArgsLines()).allSatisfy(line -> assertThat(line)
+                .doesNotContain("/artifacts/git"));
     }
 
     @Test
@@ -220,14 +360,20 @@ class ComposeTemplateTest {
         // The route SEGMENT names the component and did not move; only the host did.
         assertThat(compose).contains(
                 "QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS: prod-qits-deployments");
+        // Both byte-plane hosts carry the tier now, and the docs segment moved with its
+        // repository. The mirror is deliberately absent: it answers the same prefixes as the store,
+        // and two services cannot share one prefix behind one entry.
         assertThat(compose).contains(
-                "QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS: qits-platform-artifacts");
-        assertThat(compose).doesNotContain("QITS_GATEWAY_PROXY_HOSTS_CD:");
+                "QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS: prod-qits-artifacts");
+        assertThat(compose).contains("QITS_GATEWAY_PROXY_HOSTS_DOCS: prod-qits-docs");
+        assertThat(compose).doesNotContain("QITS_GATEWAY_PROXY_HOSTS_CD:")
+                .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_MIRROR");
         assertThat(runArgsLine("qits-gateway"))
                 .contains("QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS=prod-qits-deployments")
-                .contains("QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=qits-platform-artifacts")
-                .contains("QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DOCS=qits-platform-docs")
-                .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_CD=");
+                .contains("QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=prod-qits-artifacts")
+                .contains("QITS_GATEWAY_PROXY_HOSTS_DOCS=prod-qits-docs")
+                .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_CD=")
+                .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_MIRROR");
     }
 
     /**
@@ -307,9 +453,10 @@ class ComposeTemplateTest {
         String properties = ComposeTemplate.runArgs(tokens());
 
         for (String application : new String[]{"qits-platform-edge", "qits-gateway",
-                "qits-platform-artifacts", "qits-ci", "qits-deployments", "qits-platform-idp",
+                "qits-artifacts", "qits-platform-mirror", "qits-githost",
+                "qits-ci", "qits-deployments", "qits-platform-idp",
                 "qits-platform-dns", "qits-stt", "qits-projects", "qits-workspaces", "qits-events",
-                "qits-platform-docs", "qits-observability", "qits-oci-postgresql"}) {
+                "qits-docs", "qits-observability", "qits-oci-postgresql"}) {
             assertThat(properties).contains("qits.platform.deployments.run-args." + application + "=");
         }
         // The retired pair is deployed by nothing, so it configures nothing.
@@ -317,9 +464,11 @@ class ComposeTemplateTest {
                 .doesNotContain("run-args.qits-serviceregistry=");
         // A line under a pre-rename application name configures NOTHING: the deployment comes up
         // with no volumes and no env, passes health, and has lost its database.
-        assertThat(properties).doesNotContain("run-args.qits-artifacts=")
-                .doesNotContain("run-args.qits-idp=")
-                .doesNotContain("run-args.qits-platform-deployments=");
+        assertThat(properties).doesNotContain("run-args.qits-idp=")
+                .doesNotContain("run-args.qits-platform-deployments=")
+                // The two the byte-plane split retired, on the same terms.
+                .doesNotContain("run-args.qits-platform-artifacts=")
+                .doesNotContain("run-args.qits-platform-docs=");
         // The namespace moved with the merge-back; the old spelling configures nothing.
         assertThat(properties).doesNotContain("qits.cd.run-args.");
         assertThat(properties).contains("-e QITS_REPOSITORIES_GIT_PUSH_TOKEN=local-dev");
@@ -332,16 +481,23 @@ class ComposeTemplateTest {
         assertThat(properties).contains("QITS_EDGE_UPSTREAM_HOST_PATTERN={env}-qits-gateway");
     }
 
+    /**
+     * The two qits-projects dials were the GIT HOST's, and they left with it. The name resolver is
+     * what turns a name-addressed clone into a repo id; the backup intake is gone entirely, because
+     * a push is a durable event both consumers read off the bus.
+     */
     @Test
-    void artifactsDialsProjectsForBackupsAndForNameResolution() {
-        // Both keys default to a monolith-era localhost, so unset means the service calls itself:
-        // no backups, and a name-addressed git clone that 404s with an empty agent /workspace.
-        String artifacts = runArgsLine("qits-platform-artifacts");
-
-        assertThat(artifacts).contains("-e QITS_PROJECTS_INTAKE_URL=http://prod-qits-projects:8080"
-                + "/projects/api/events/post-receive");
-        assertThat(artifacts).contains("-e QITS_PROJECTS_NAME_RESOLVER_URL="
+    void theGitHostDialsProjectsForNameResolutionAndNobodyPostsAPushAnyMore() {
+        assertThat(runArgsLine("qits-githost")).contains("-e QITS_PROJECTS_NAME_RESOLVER_URL="
                 + "http://prod-qits-projects:8080/projects/api/projects");
+        assertThat(runArgsLine("qits-artifacts")).doesNotContain("QITS_PROJECTS_");
+        assertThat(runArgsLines()).allSatisfy(line -> assertThat(line)
+                .doesNotContain("QITS_PROJECTS_INTAKE_URL")
+                .doesNotContain("QITS_CI_INTAKE_URL"));
+        assertThat(ComposeTemplate.compose(tokens()).lines()
+                .filter(line -> line.strip().startsWith("QITS_"))
+                .toList())
+                .allSatisfy(line -> assertThat(line).doesNotContain("QITS_CI_INTAKE_URL"));
     }
 
     @Test
@@ -420,13 +576,16 @@ class ComposeTemplateTest {
         }
         // Each of these keys REPLACES the shipped list rather than extending it, and every id in
         // them carries the environment name, which no shipped default can follow.
-        assertThat(idp).contains("QITS_IDP_CLIENTS=prod-qits-ci,qits-platform-artifacts,"
+        assertThat(idp).contains("QITS_IDP_CLIENTS=prod-qits-ci,prod-qits-artifacts,"
                 + "prod-qits-workspaces,prod-qits-gateway");
         assertThat(idp).contains("QITS_IDP_CLIENT_PROD_QITS_CI_AUDIENCES=")
-                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_AUDIENCES=")
+                .contains("QITS_IDP_CLIENT_PROD_QITS_ARTIFACTS_AUDIENCES=")
                 .contains("prod-qits-deployments");
-        // The git host's wildcard project claim, under the id the git host now holds.
-        assertThat(idp).contains("QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_CLAIMS_PROJECT=*");
+        // The wildcard project claim, under the id it moved to when the store became an
+        // environment service. It is this bootstrap's own trigger identity now: the git host mints
+        // nothing at all.
+        assertThat(idp).contains("QITS_IDP_CLIENT_PROD_QITS_ARTIFACTS_CLAIMS_PROJECT=*");
+        assertThat(idp).doesNotContain("QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_");
     }
 
     /**
@@ -473,8 +632,12 @@ class ComposeTemplateTest {
         assertThat(compose).contains("qits-projects-data:")
                 .contains("qits-workspaces-data:")
                 .contains("qits-stt-data:")
-                .contains("qits-platform-artifacts-data:")
-                .contains("qits-oci-postgresql-data:");
+                .contains("qits-oci-postgresql-data:")
+                // One volume per byte store, and never a shared one: each service's reclaim sweep
+                // counts every file it did not put there as unreferenced.
+                .contains("qits-artifacts-data:")
+                .contains("qits-platform-mirror-data:")
+                .contains("qits-githost-data:");
     }
 
     /**
@@ -493,10 +656,16 @@ class ComposeTemplateTest {
                 .toList();
 
         assertThat(h2).singleElement().asString()
-                .startsWith("qits.platform.deployments.run-args.qits-platform-artifacts=")
+                .startsWith("qits.platform.deployments.run-args.qits-artifacts=")
                 .contains("-e QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL=jdbc:h2:file:/data/artifacts"
                         + "/h2/artifacts")
-                .contains("-v qits-platform-artifacts-data:/data");
+                .contains("-v qits-artifacts-data:/data");
+        // The two new byte services declare their stores instead, so the deployer injects the
+        // triples and a pin here would outlive the next rotation.
+        assertThat(runArgsLine("qits-platform-mirror")).doesNotContain("QITS_RESOURCE_")
+                .contains("-v qits-platform-mirror-data:/data");
+        assertThat(runArgsLine("qits-githost")).doesNotContain("QITS_RESOURCE_")
+                .contains("-v qits-githost-data:/data");
 
         // No run-args line pins a resource triple either: the deployer's injection comes first and
         // docker keeps the last -e, so a line here would win and never be rotated.
