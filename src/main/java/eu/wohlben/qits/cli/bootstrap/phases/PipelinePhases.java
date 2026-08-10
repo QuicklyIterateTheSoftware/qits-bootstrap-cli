@@ -298,11 +298,15 @@ public class PipelinePhases {
             // SoftwareRelease, which every follow-bump then has to recognise as old news. The
             // published state is what this phase exists to restore; already restored is a skip,
             // not a rerun. The question is asked by SHA, not version: the version lives only on
-            // the trigger event, and a replay-triggered run's event never touches the bus — the
-            // tag's commit and the trigger name SCMRelease are both on the run row and identify
-            // the release run exactly. A fresh platform never skips here: its ci has no runs.
-            String tagSha = boot.git.commitOf(src, version);
-            if (!tagSha.isBlank() && boot.ci.greenReleaseRunAt(repo, tagSha)) {
+            // the trigger event, and a replay-triggered run's event never touches the bus. The
+            // sha is MAIN'S HEAD, not the tag's commit — an event-triggered run is cloned at the
+            // head of main and recorded there (its script checks the tag out itself, invisibly to
+            // the run row); matched against the tag's commit, a repository whose main had moved
+            // past its release waited a full budget on a run that had already succeeded — the
+            // second bus-only proving run, phase 36. The trigger name is what keeps a follow-up
+            // bump run (also at main's head) from answering for a release.
+            String mainSha = boot.git.head(src);
+            if (!mainSha.isBlank() && boot.ci.greenReleaseRunAt(repo, mainSha)) {
                 ctx.skip("release " + version + " already ran green — the registry holds what "
                         + "this replay publishes");
             }
@@ -349,9 +353,10 @@ public class PipelinePhases {
             // "An EVENT run of this repository" is not "the release run": an upstream's
             // SoftwareRelease fires this repository's own follow-up bump, also an EVENT run — a
             // 1-second quiet-exit that landed NEWEST during the first bus-only bootstrap and hid
-            // the wait's real target. The release run is the one triggered by an SCMRelease at
-            // the tag's own commit; both facts ride on the run row, so no event lookup — a
-            // manually triggered run's event is nowhere to look up.
+            // the wait's real target. The release run is the one an SCMRelease triggered at
+            // main's head — where an event-triggered run is cloned and recorded; the tag checkout
+            // is its script's own business. Both facts ride on the run row, so no event lookup —
+            // a manually triggered run's event is nowhere to look up.
             String status = Waiter.await(ctx, repo + "'s " + version + " release run",
                     boot.config.releaseTimeout(),
                     boot.config.pollInterval(), () -> {
@@ -361,7 +366,7 @@ public class PipelinePhases {
                                 .ifPresent(ciLog::follow);
                         for (String[] run : boot.ci.finishedEventRuns(repo)) {
                             if (!run[0].equals(baselineRun) && "SCMRelease".equals(run[2])
-                                    && tagSha.equals(run[3])) {
+                                    && mainSha.equals(run[3])) {
                                 return Waiter.Poll.done(run[1], run[1]);
                             }
                         }

@@ -57,10 +57,6 @@ public class Git {
         return in(repo, null, "rev-parse", "--short", ref).trimmed();
     }
 
-    /** The full commit sha a ref points at — a TAG dereferenced to the commit it names. */
-    public String commitOf(Path repo, String ref) {
-        return in(repo, null, "rev-parse", ref + "^{commit}").trimmed();
-    }
 
     /** The newest release tag reachable from a ref, or empty when the repo has never released. */
     public String describeTag(Path repo, String ref) {
