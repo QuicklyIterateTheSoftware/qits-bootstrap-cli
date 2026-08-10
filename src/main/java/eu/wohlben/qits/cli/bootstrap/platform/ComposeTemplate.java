@@ -472,6 +472,12 @@ public final class ComposeTemplate {
                   QITS_CI_CONTAINER_DAEMON_URL: ws://${ENV_NAME}-qits-ci:8080/ci/daemon
                   # Same class of self-name: the release train asks workspaces for version identity.
                   QITS_CI_WORKSPACES_URL: http://${ENV_NAME}-qits-workspaces:8080
+                  # The event bus. The eventstream jar's shipped default is the pre-rename
+                  # `qits-events:8080`, which resolves to nothing on this network — measured: every
+                  # outbox delivery of the seed ci dialled it, got ConnectException, and gave up
+                  # after its five attempts. The deployed ci gets this same value from its run-args;
+                  # the seed has to be told here, like every other wire name in this block.
+                  QITS_EVENTS_URL: http://${ENV_NAME}-qits-events:8080
                   # The binary every step container downloads and execs — uploaded by this bootstrap, digest
                   # pinned. Blank would mean every run fails as never-registered.
                   QITS_CI_DAEMON_VERSION: "${DAEMON_SHA}"
