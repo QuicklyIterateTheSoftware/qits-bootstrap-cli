@@ -366,13 +366,20 @@ class ComposeTemplateTest {
         assertThat(compose).contains(
                 "QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS: prod-qits-artifacts");
         assertThat(compose).contains("QITS_GATEWAY_PROXY_HOSTS_DOCS: prod-qits-docs");
+        // THE SEGMENT IS `git`, NOT `githost`. The gateway composes the key from the segment and
+        // routes verbatim, and what the service serves is /git — which is what every clone url
+        // already hardcodes.
+        assertThat(compose).contains("QITS_GATEWAY_PROXY_HOSTS_GIT: prod-qits-githost");
         assertThat(compose).doesNotContain("QITS_GATEWAY_PROXY_HOSTS_CD:")
+                .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_GITHOST")
                 .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_MIRROR");
         assertThat(runArgsLine("qits-gateway"))
                 .contains("QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS=prod-qits-deployments")
                 .contains("QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=prod-qits-artifacts")
                 .contains("QITS_GATEWAY_PROXY_HOSTS_DOCS=prod-qits-docs")
+                .contains("QITS_GATEWAY_PROXY_HOSTS_GIT=prod-qits-githost")
                 .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_CD=")
+                .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_GITHOST")
                 .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_MIRROR");
     }
 
