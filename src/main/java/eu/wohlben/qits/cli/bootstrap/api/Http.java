@@ -48,7 +48,6 @@ public class Http {
         }
     }
 
-    private final HttpClient client;
     private final Duration timeout;
 
     public Http() {
@@ -57,10 +56,6 @@ public class Http {
 
     public Http(Duration timeout) {
         this.timeout = timeout;
-        this.client = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(10))
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
     }
 
     public Response get(String url, Map<String, String> headers) {
@@ -136,8 +131,24 @@ public class Http {
         return builder;
     }
 
+    /**
+     * A fresh client — a fresh connection and a fresh name lookup — per request, deliberately.
+     * <p>
+     * A pooled connection is a cached answer to "who is this name", and on qits-net that answer
+     * changes mid-run: every peer this program dials is a container it restarts or replaces. The
+     * third proving run measured what the cache costs. qits-platform-idp crashed its first boot
+     * (fresh postgres still in initdb — the compose-resurrection design, restart-until-ready) and
+     * came back healthy at 16s; one poll connected during the restart's DNS flux, landed on a
+     * WRONG peer, and the shared client then reused that connection for every later poll — ninety
+     * seconds of steady 404 from a service that was up the whole time, and a failed boot. Polls
+     * are seconds apart; the pool saves nothing this program can feel and caches the one thing it
+     * must never cache.
+     */
     private Response send(HttpRequest request) {
-        try {
+        try (HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build()) {
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             return new Response(response.statusCode(), response.body() == null ? "" : response.body());
         } catch (IOException e) {

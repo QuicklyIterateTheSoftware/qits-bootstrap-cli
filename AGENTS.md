@@ -193,6 +193,12 @@ the deployables are pulled rather than rebuilt.
 
 ## Gotchas
 
+- **`Http` builds a fresh client per request, and pooling must not come back.** A pooled
+  connection is a cached answer to "who is this name", and every peer on qits-net is a container
+  this run restarts or replaces. Measured: a poll that connected during qits-platform-idp's
+  crash-restart landed on a wrong peer, the shared client reused that connection, and the wait
+  read ninety seconds of 404 from a service that was healthy the whole time.
+
 - Quarkus' own logging is turned down in `application.properties` because this program repaints the
   screen. Anything worth saying goes through the display or the run log.
 - JLine's `Display` arithmetic breaks on wrapped lines, so every line is cut to the terminal width
