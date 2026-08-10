@@ -5,9 +5,13 @@ import java.time.Duration;
 import java.util.Map;
 
 /**
- * qits-platform-artifacts: the maven repository, the npm registry, the OCI registry, the daemon
- * store and
- * the git host, all on one published port.
+ * qits-artifacts: the platform's own packages — the hosted maven repository, the hosted npm
+ * registry, the hosted OCI registry, the daemon binaries and the docs bundles, all on one published
+ * port.
+ * <p>
+ * <b>Two things it no longer is.</b> The pull-through caches are qits-platform-mirror, so nothing
+ * third-party is asked of this service; the git host is qits-githost, so {@link GitHostApi} owns
+ * the repository lifecycle and the clone urls that used to hang off {@code /artifacts/git}.
  */
 public class ArtifactsApi {
 
@@ -36,19 +40,6 @@ public class ArtifactsApi {
         String url = base + "/maven/maven/" + groupPath + "/" + artifactId + "/" + version + "/"
                 + artifactId + "-" + version + "." + extension;
         return http.get(url, Map.of()).ok();
-    }
-
-    /**
-     * Creates a repository on the git host. Idempotent by design: 201 when this call created it,
-     * 200 when one was already there.
-     */
-    public Http.Response createRepository(String repoId) {
-        return http.putJson(base + "/git/" + repoId, Json.object("defaultBranch", "main"), Map.of());
-    }
-
-    /** The clone and push URL of a repository on the platform git host. */
-    public String gitUrl(String repoId) {
-        return base + "/git/" + repoId;
     }
 
     /**
