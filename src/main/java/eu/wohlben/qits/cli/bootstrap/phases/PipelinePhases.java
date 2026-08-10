@@ -325,7 +325,14 @@ public class PipelinePhases {
                     PlatformModel.wireAlias("platform-artifacts", boot.config.envName()),
                     PlatformModel.wireAlias("ci", boot.config.envName()));
             String event = "{\"name\":\"SCMRelease\",\"payload\":{"
+                    // BOTH spellings, because a real SCMRelease carries both: `repository` is the
+                    // row id and `repositoryName` the stable name, and a trigger file may match
+                    // either — the daemon repos match the NAME, a decision from the era when their
+                    // row ids were per-platform UUIDs. The replay that omitted it evaluated clean
+                    // against nineteen repositories and matched none, 200 with empty runIds —
+                    // measured, third bus-only proving run, phase 41.
                     + "\"repository\":" + Json.quote(repo) + ","
+                    + "\"repositoryName\":" + Json.quote(repo) + ","
                     + "\"branch\":\"main\","
                     + "\"version\":" + Json.quote(version) + "}}";
             // The trigger evaluates on the request thread now: 200 means the run rows exist as the
