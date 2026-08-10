@@ -777,6 +777,15 @@ public class SeedPhases {
                 + "      <mirrorOf>central</mirrorOf>\n"
                 + "      <url>" + boot.config.mirrorUrl() + "/artifacts/maven/central</url>\n"
                 + "    </mirror>\n"
+                // The hosted half: a publish that consumes an earlier publish (registries needs
+                // blobstore, githost-events needs eventstream) resolves it from the store it was
+                // just deployed to. Same exact-id trick — the consumer poms declare a `qits-maven`
+                // repository, and this mirror is what wins over the external:http:* blocker.
+                + "    <mirror>\n"
+                + "      <id>qits-maven</id>\n"
+                + "      <mirrorOf>qits-maven</mirrorOf>\n"
+                + "      <url>" + boot.config.artifactsUrl() + "/maven/maven</url>\n"
+                + "    </mirror>\n"
                 + "  </mirrors>\n"
                 + "</settings>\n"
                 + "SETTINGS\n";
