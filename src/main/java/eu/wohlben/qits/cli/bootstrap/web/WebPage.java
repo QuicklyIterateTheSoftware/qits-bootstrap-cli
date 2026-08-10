@@ -223,6 +223,13 @@ public final class WebPage {
               var es = new EventSource('events');
               es.addEventListener('snapshot', function (e) {
                 var s = JSON.parse(e.data);
+                // A tab from an earlier run holds that run's HTML; reattaching its stream to a new
+                // boot would render new frames into an old layout. Reload once the boot changes —
+                // the fresh load fetches whatever page THIS binary serves.
+                if (s.bootId) {
+                  if (!window.__bootId) { window.__bootId = s.bootId; }
+                  else if (s.bootId !== window.__bootId) { location.reload(); return; }
+                }
                 state = s;
                 base = { run: s.runElapsedMs, current: s.currentElapsedMs, at: Date.now() };
                 setLines(tailEl, s.tail || []);

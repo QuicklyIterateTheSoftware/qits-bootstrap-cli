@@ -174,6 +174,10 @@ public final class BootState {
         json.append(",\"now\":").append(System.currentTimeMillis());
         json.append(",\"total\":").append(phases.size());
         json.append(",\"currentIndex\":").append(currentIndex);
+        // The run's identity, for the page: a tab left open from an EARLIER run keeps that run's
+        // HTML and quietly reattaches its stream to the next one — measured as "the new layout was
+        // never added". A snapshot naming a different boot makes the page reload itself.
+        json.append(",\"bootId\":").append(startedAt);
         json.append(",\"runElapsedMs\":").append(System.currentTimeMillis() - startedAt);
         json.append(",\"currentElapsedMs\":")
                 .append(currentIndex < 0 ? 0 : System.currentTimeMillis() - currentStartedAt);
