@@ -324,10 +324,22 @@ public class PipelinePhases {
                     + "\"repository\":" + Json.quote(repo) + ","
                     + "\"branch\":\"main\","
                     + "\"version\":" + Json.quote(version) + "}}";
-            Http.Response triggered = boot.ci.trigger(event, token);
-            if (!triggered.ok()) {
+            // The trigger evaluates on the request thread now: 200 means the run rows exist as the
+            // call returns, and 503 means NOTHING was accepted — qits-ci's own contract, written so
+            // a retry loses nothing. Three tries, because the one measured refusal cause is a
+            // candidate read meeting a service mid-cutover, which is over in seconds.
+            Http.Response triggered = null;
+            for (int attempt = 1; attempt <= 3; attempt++) {
+                triggered = boot.ci.trigger(event, token);
+                if (triggered.ok()) {
+                    break;
+                }
+                ctx.log("  trigger attempt " + attempt + " refused: " + triggered.describe());
+                sleep(5000);
+            }
+            if (triggered == null || !triggered.ok()) {
                 throw new IllegalStateException("SCMRelease trigger for " + repo + " refused: "
-                        + triggered.describe());
+                        + (triggered == null ? "no answer" : triggered.describe()));
             }
             ctx.log("  SCMRelease triggered, waiting for the release run");
 
