@@ -360,10 +360,11 @@ public class PipelinePhases {
             // "An EVENT run of this repository" is not "the release run": an upstream's
             // SoftwareRelease fires this repository's own follow-up bump, also an EVENT run — a
             // 1-second quiet-exit that landed NEWEST during the first bus-only bootstrap and hid
-            // the wait's real target. The release run is the one an SCMRelease triggered at
-            // main's head — where an event-triggered run is cloned and recorded; the tag checkout
-            // is its script's own business. Both facts ride on the run row, so no event lookup —
-            // a manually triggered run's event is nowhere to look up.
+            // the wait's real target. The release run is the one that EXECUTED the release
+            // pipeline file, at main's head — where an event-triggered run is cloned and recorded;
+            // the tag checkout is its script's own business. The config path is the only fact that
+            // identifies it: a bump can trigger on the upstream's SCMRelease, so the trigger name
+            // collides, and every event run records main's head, so the sha collides too.
             String status = Waiter.await(ctx, repo + "'s " + version + " release run",
                     boot.config.releaseTimeout(),
                     boot.config.pollInterval(), () -> {
@@ -372,7 +373,9 @@ public class PipelinePhases {
                                 .filter(id -> !id.equals(baselineRun))
                                 .ifPresent(ciLog::follow);
                         for (String[] run : boot.ci.finishedEventRuns(repo)) {
-                            if (!run[0].equals(baselineRun) && "SCMRelease".equals(run[2])
+                            if (!run[0].equals(baselineRun)
+                                    && eu.wohlben.qits.cli.bootstrap.api.CiApi.RELEASE_CONFIG
+                                            .equals(run[2])
                                     && mainSha.equals(run[3])) {
                                 return Waiter.Poll.done(run[1], run[1]);
                             }

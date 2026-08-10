@@ -12,6 +12,9 @@ import java.util.Optional;
 /** qits-ci: the manual event trigger and the run listings the waits poll. */
 public class CiApi {
 
+    /** The one file whose run IS a repository's release — the identity no other run fact gives. */
+    public static final String RELEASE_CONFIG = ".config/qits/ci-event-release.yml";
+
     private final Http http;
     private final String base;
 
@@ -55,13 +58,14 @@ public class CiApi {
 
     /**
      * Every finished EVENT run of a repository in the window, newest first, as
-     * {@code [id, status, triggerEventName, commitSha]}. All of them rather than the newest alone,
-     * because "EVENT run" is not "release run": a follow-up bump fired by an upstream's
-     * SoftwareRelease is an EVENT run of this same repository — a 1-second quiet-exit that landed
-     * NEWEST during the first bus-only bootstrap and hid the release run behind it. The trigger
-     * event's NAME is what tells them apart, and it rides on the run row itself — resolving the
-     * event against qits-events would find nothing for a manually triggered run, whose event never
-     * touches the bus.
+     * {@code [id, status, configPath, commitSha]}. All of them rather than the newest alone,
+     * because "EVENT run" is not "release run": a follow-up bump fired by an upstream's release is
+     * an EVENT run of this same repository — a 1-second quiet-exit that landed NEWEST during the
+     * first bus-only bootstrap and hid the release run behind it. The CONFIG PATH is what tells
+     * them apart, and it is the only fact that does: a bump may trigger on the upstream's
+     * SCMRelease (the daemon repos' do), so the trigger name collides, and every event run is
+     * recorded at main's head, so the sha collides too — measured, fourth proving run, where a
+     * name-and-sha match skipped a replay whose images were never published.
      */
     public List<String[]> finishedEventRuns(String repoId) {
         Http.Response response = http.get(base + "/api/runs/finished?limit=20", Map.of());
@@ -74,17 +78,16 @@ public class CiApi {
                     && "EVENT".equals(Json.text(run, "triggerType"))
                     && !Json.text(run, "status").isBlank()) {
                 runs.add(new String[] {Json.text(run, "id"), Json.text(run, "status"),
-                        Json.text(run, "triggerEventName"), Json.text(run, "commitSha")});
+                        Json.text(run, "configPath"), Json.text(run, "commitSha")});
             }
         }
         return runs;
     }
 
     /**
-     * Whether a green SCMRelease-triggered run already exists at this commit — the question the
-     * release replay's skip asks. The sha rather than the version, because the version lives only
-     * on the trigger event and a manually triggered run's event is nowhere to resolve; the sha is
-     * on the run row, and the tag the replay would push names exactly one.
+     * Whether a green run of the RELEASE PIPELINE already exists at this commit — the question the
+     * release replay's skip asks. The config path is the identity: trigger name and sha both
+     * collide with an upstream-fired bump run of the same repository.
      */
     public boolean greenReleaseRunAt(String repoId, String commitSha) {
         Http.Response response = http.get(base + "/api/runs?repositoryId=" + repoId + "&limit=20",
@@ -95,7 +98,7 @@ public class CiApi {
         for (JsonNode run : Json.parse(response.body()).path("runs")) {
             if ("EVENT".equals(Json.text(run, "triggerType"))
                     && "SUCCESS".equals(Json.text(run, "status"))
-                    && "SCMRelease".equals(Json.text(run, "triggerEventName"))
+                    && RELEASE_CONFIG.equals(Json.text(run, "configPath"))
                     && commitSha.equals(Json.text(run, "commitSha"))) {
                 return true;
             }
