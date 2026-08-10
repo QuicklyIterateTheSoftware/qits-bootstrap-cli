@@ -55,6 +55,11 @@ class CompositeUiTest {
         }
 
         @Override
+        public void event(String line) {
+            seen.add("ev " + line);
+        }
+
+        @Override
         public void finished(RunResult result) {
             seen.add("finished " + result.exitCode());
         }

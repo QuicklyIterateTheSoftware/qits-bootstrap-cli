@@ -32,7 +32,8 @@ forced. Add to that list rather than deviating quietly.
     engine/     the phase state machine: Phase, PhaseEngine, PhaseContext, Waiter
     proc/       ProcessRunner and friends: streaming, bounded tails, the full log
     ui/         Ui, the live TuiUi (JLine Display), the PlainUi fallback, the WebUi that keeps
-                the run's state for the browser, and the CompositeUi that feeds them all
+                the run's state for the browser, the CompositeUi that feeds them all, and the
+                EventFeed that follows the platform's own events beside the boot's output
     web/        the browser view's three routes and the one page they serve
     config/     BootstrapConfig (@ConfigMapping, read from .env) and its command-line overrides
     platform/   what the platform is made of: PlatformModel, the generated compose and run-args,
@@ -139,6 +140,16 @@ forced. Add to that list rather than deviating quietly.
 - **The displays are fed, never asked.** A new display implements `Ui` and is added to the
   `CompositeUi` in `UiFactory`; the engine knows nothing about how many there are. A display that
   throws must not end the boot — the composite swallows a watcher's failure on purpose.
+- **The platform's own account of itself is a SECOND stream, never mixed into the first.**
+  `EventFeed` polls qits-events through the edge on its own daemon thread for the whole run and
+  feeds `Ui.event`, which the live display puts in a column of its own, the plain one marks
+  `  ev| `, and the browser view puts beside the step output. Two reasons it is a poll and not the
+  bus's socket: a subscriber is a durable consumer with a name, and this run is a spectator that
+  comes and goes; and the service is one the boot DEPLOYS and redeploys, so there is nothing to
+  stay connected to. Its rules are `CiLogStream`'s courtesy rule taken further — a read that does
+  not answer says nothing and changes nothing, arriving and going away are both silent, and the
+  feed starts at the HEAD of the log because a reseeded platform's history is not this run's.
+  It must never be given a way to fail or slow a phase.
 - Parentless pom, Quarkus pinned to the platform's version.
 
 ## Build forms
@@ -185,6 +196,13 @@ shape and order, the compose and run-args generation, the seed-Dockerfile rewrit
 state file, the plain renderer's output, and **the launcher's `docker run` argv** — asserted whole,
 because a flag dropped there is a bootstrap that gets further than it should before it breaks.
 
+The event feed is tested the same way the ci relay is: the pure parts here (one event to one line,
+the column arithmetic, the watermark and the ids that stop a row arriving twice) and the rest on a
+real bootstrap. **What only a real bootstrap proves** is that the edge routes `/events/api/events`
+to a bus that answers this run unauthenticated, that the head-then-forward pair reads a live log the
+way the query API's cursor is documented to, and that the column keeps up across the bus's own
+redeployment.
+
 The phases that shell docker are deliberately not unit-tested — a fake docker daemon would prove
 that the fake works. **A real bootstrap is their test**, and it is the gate a change to them has to
 pass. `unwrap` then `bootstrap` on a machine whose volumes stayed is the cheap form of it: the
@@ -202,7 +220,12 @@ the deployables are pulled rather than rebuilt.
 - Quarkus' own logging is turned down in `application.properties` because this program repaints the
   screen. Anything worth saying goes through the display or the run log.
 - JLine's `Display` arithmetic breaks on wrapped lines, so every line is cut to the terminal width
-  and subprocess ANSI escapes are stripped (`proc/Ansi`).
+  and subprocess ANSI escapes are stripped (`proc/Ansi`). **The lower region is two columns, so the
+  cut is now PER COLUMN**: each side is cut to its own width and the left one is padded to a fixed
+  split, because cutting the joined pair would cut the event column away rather than the overlong
+  build line that caused it, and an unpadded left column would move the divider every frame. Under
+  100 columns the split is not made at all — `TuiUi.eventColumn` answers 0 and the event pane is
+  dropped, which is the only honest thing to do with forty characters.
 - **JLine is pinned to its `exec` provider** in `UiFactory`, and the dependency is `jline-terminal`
   rather than the aggregate `jline`. The providers that call libc cannot be compiled into a native
   image on this GraalVM: the jni one unpacks a `.so` from its class initializer, and the ffm one

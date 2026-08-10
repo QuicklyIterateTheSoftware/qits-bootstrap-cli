@@ -196,6 +196,15 @@ public interface BootstrapConfig {
     boolean tui();
 
     /**
+     * 0 = do not follow the platform's own events beside the boot's output.
+     * <p>
+     * On by default and free when nothing answers: the feed is one poll every few seconds on a
+     * daemon thread, and for the first half of a bootstrap qits-events does not exist yet.
+     */
+    @WithDefault("true")
+    boolean eventsFeed();
+
+    /**
      * 0 = no browser view at all: the HTTP server never binds a port.
      * <p>
      * These three are read twice — here, and in {@code application.properties}, which maps them

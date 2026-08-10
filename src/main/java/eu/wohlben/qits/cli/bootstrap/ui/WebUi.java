@@ -64,6 +64,11 @@ public class WebUi implements Ui {
     }
 
     @Override
+    public void event(String line) {
+        state.event(line);
+    }
+
+    @Override
     public void finished(RunResult result) {
         state.finished(result);
     }

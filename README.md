@@ -144,6 +144,7 @@ the same names `qits-local-up.sh` read:
 | `QITS_WEB_PORT` | `8480` | the browser view's port |
 | `QITS_WEB_HOST` | `0.0.0.0` | who can reach the view — the host side of the publish (WSL2 browsers need non-loopback); `127.0.0.1` keeps it off the LAN |
 | `QITS_TAIL_LINES` | `2000` | lines of the running step kept for the body |
+| `QITS_EVENTS_FEED` | `1` | 0 = do not follow the platform's own events beside the step's output |
 | `QITS_LOG_FILE` | `qits-bootstrap-cli.log` | the full log of every command |
 
 `--wrapper-dir`, `--skip-build`, `--no-tui`, `--platform-env` and `--domain` answer the same
@@ -247,13 +248,41 @@ when it gives up**:
 That line is the point of this program. A bootstrap spends most of its life waiting, and a wait
 you cannot see is indistinguishable from a hang.
 
-**The body** is the merged stdout and stderr of the step running right now — the maven, docker and
-npm output — as a rolling tail, repainted on a 250 ms timer. Everything, tail included, also goes
-to `qits-bootstrap-cli.log`; memory stays bounded whatever a build prints.
+**The body** is two columns.
+
+    ──────────────────────────────────────────────┬─ platform events ────────────────
+    [INFO] Building qits-platform-idp 2026.802…   │ 14:22:01 SCMRelease qits-stt 1.4.0
+      ci| [INFO] performing analysis…             │ 14:22:07 BuildSuccessful qits-stt
+      pd| Registered qits-observability in prod   │ 14:24:19 SoftwareRelease qits/qi…
+
+**On the left**, the merged stdout and stderr of the step running right now — the maven, docker and
+npm output, plus the `ci|` and `pd|` relays — as a rolling tail, repainted on a 250 ms timer.
+Everything, tail included, also goes to `qits-bootstrap-cli.log`; memory stays bounded whatever a
+build prints.
+
+**On the right**, what the PLATFORM says it is doing, as qits-events published it: one line per
+event, with the local clock, the event's name and the most telling thing its payload carries. It
+turns a boot from a list of steps into cause and effect — the push, the run it started, the release
+it published, the deployment that followed — announced by the services themselves rather than
+inferred from whatever phase is waiting.
+
+The feed is a poll every four seconds against `GET /events/api/events` through the edge, on its own
+daemon thread, from the moment the boot starts. **qits-events is a service this boot deploys and
+redeploys**, so for the first phases it does not exist and later it goes away and comes back; there
+is no connect and no disconnect, only reads that answer and reads that do not, and nothing is said
+either way. It starts at the HEAD of the log — the feed is what is happening now, not the history a
+reseeded platform still holds — and it can neither fail nor slow a phase. `QITS_EVENTS_FEED=0`
+turns it off.
+
+The split is fixed for a given terminal width, so the divider does not move under the reader: the
+event column is a third of the screen, kept between 36 and 60 characters, and each column's lines
+are cut to their own width. **Under 100 columns there is no second column** — half of eighty reads
+as neither — and the event pane is dropped rather than the layout corrupted.
 
 **Not a terminal?** A pipe, a dumb `TERM` or `--no-tui` gets plain sequential lines with the same
 phase markers and the same wait lines, throttled so an hour-long wait does not bury the log in its
-own clock.
+own clock. A line stream has no second column, so the platform's events are interleaved where they
+arrived under an `  ev| ` prefix, beside `  ci| ` and `  pd| `.
 
 **A failure** stops the boot, paints the failing tail and the exit code, and says which phase it
 was. Exit codes: `0` all good, `1` something warned (a deployment that never landed — the script's
@@ -267,9 +296,10 @@ The same run, in a browser, from phase 1:
 
 It is printed on the first line of every run. The page is the terminal display in HTML — the phase
 list with the finished ones dimmed, the running one with its elapsed time counting, the wait line,
-the pending count — and under it the running step's output, scrolling and sticky at the bottom
-unless you scroll up. It costs the boot nothing: the engine appends to a bounded state, and each
-connection reads what is new four times a second.
+the pending count — and under it the same two columns, the running step's output beside the
+platform's events, each scrolling and sticky at the bottom unless you scroll up. Below 720px they
+stack rather than shrink. It costs the boot nothing: the engine appends to a bounded state, and
+each connection reads what is new four times a second.
 
 It is not instead of the terminal display, it is beside it: **both** are fed every event, so a
 bootstrap started over ssh can be watched from a browser, on a phone, or by someone else. `unwrap`
@@ -281,7 +311,7 @@ program whose whole job is that the platform is not up yet:
 | | |
 | --- | --- |
 | `GET /` | the page |
-| `GET /events` | the run as it happens: one `snapshot` on connect, then `phase`, `status`, `line` and `done` as server-sent events, with a comment every 15s so nothing in the middle calls it dead |
+| `GET /events` | the run as it happens: one `snapshot` on connect, then `phase`, `status`, `line`, `ev` (a platform event) and `done` as server-sent events, with a comment every 15s so nothing in the middle calls it dead |
 | `GET /state.json` | the same state in one answer, for `curl` |
 
 Knobs: `QITS_WEB_PORT` (default `8480` — 8080 is the edge, 8081 is the artifacts service, and 8090 is

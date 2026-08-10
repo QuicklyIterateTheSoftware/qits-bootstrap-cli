@@ -10,6 +10,7 @@ import eu.wohlben.qits.cli.bootstrap.host.HostLauncher;
 import eu.wohlben.qits.cli.bootstrap.phases.Boot;
 import eu.wohlben.qits.cli.bootstrap.phases.BootstrapPlan;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
+import eu.wohlben.qits.cli.bootstrap.ui.EventFeed;
 import eu.wohlben.qits.cli.bootstrap.ui.Ui;
 import eu.wohlben.qits.cli.bootstrap.ui.UiFactory;
 import io.quarkus.runtime.annotations.CommandLineArguments;
@@ -120,10 +121,14 @@ public class BootstrapCommand implements Callable<Integer> {
             // Ctrl-C in the middle of a four-hour build must still hand the terminal back.
             Thread restore = new Thread(ui::close, "ui-restore");
             Runtime.getRuntime().addShutdownHook(restore);
+            // Started with the boot rather than by a phase: the platform's events run across the
+            // whole run, and for the first phases there is no service to read them from yet.
+            EventFeed feed = EventFeed.start(effective, ui);
             RunResult result;
             try {
                 result = new PhaseEngine(ui).run(phases);
             } finally {
+                feed.close();
                 try {
                     Runtime.getRuntime().removeShutdownHook(restore);
                 } catch (IllegalStateException alreadyShuttingDown) {

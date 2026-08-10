@@ -149,6 +149,11 @@ public class OverridableConfig implements BootstrapConfig {
     }
 
     @Override
+    public boolean eventsFeed() {
+        return base.eventsFeed();
+    }
+
+    @Override
     public boolean web() {
         return base.web();
     }

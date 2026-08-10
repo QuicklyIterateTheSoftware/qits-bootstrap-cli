@@ -110,6 +110,19 @@ public class PlainUi implements Ui {
         out.println(line);
     }
 
+    /**
+     * A line stream has no second column, so the platform's events are interleaved where they
+     * arrived, under a prefix of their own — the same narrow marking {@code ci|} and {@code pd|}
+     * carry, so a reader can tell at a glance whose line this is.
+     */
+    @Override
+    public void event(String line) {
+        out.println(EVENT_PREFIX + line);
+    }
+
+    /** Marks a line as the platform's rather than the boot's. */
+    static final String EVENT_PREFIX = "  ev| ";
+
     @Override
     public void finished(RunResult result) {
         out.println();

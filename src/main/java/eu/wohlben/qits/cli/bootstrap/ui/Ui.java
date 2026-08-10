@@ -32,6 +32,16 @@ public interface Ui extends AutoCloseable {
     void message(String line);
 
     /**
+     * One line of what the PLATFORM says, as qits-events published it — a second stream beside the
+     * running step's own output, and never mixed into it.
+     * <p>
+     * It belongs to the run rather than to a phase: {@link EventFeed} polls on its own thread from
+     * the moment the boot starts, so these arrive between phases and during a wait. A display shows
+     * them wherever it has room, or drops them.
+     */
+    void event(String line);
+
+    /**
      * Whether this display redraws. A live one takes the screen back when it closes, so the caller
      * prints the closing report afterwards; a plain one has already printed everything it saw.
      */

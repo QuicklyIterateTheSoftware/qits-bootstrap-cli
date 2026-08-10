@@ -37,6 +37,9 @@ class BootstrapConfigTest {
         assertThat(config.pushToken()).isEqualTo("local-dev");
         assertThat(config.machineAuth()).isTrue();
         assertThat(config.skipBuild()).isFalse();
+        // The platform's own events are followed by default: free when nothing answers, and for
+        // most of a bootstrap nothing does.
+        assertThat(config.eventsFeed()).isTrue();
         assertThat(config.deployTimeout()).isEqualTo(Duration.ofHours(1));
         assertThat(config.envName()).isEqualTo("prod");
         assertThat(config.orgUrl()).isEqualTo("https://github.com/QuicklyIterateTheSoftware");
@@ -59,6 +62,7 @@ class BootstrapConfigTest {
         env.put("QITS_WRAPPER_DIR", "/home/me/code/qits-qits");
         env.put("QITS_SRC", "/tmp/sources");
         env.put("QITS_ENV_NAME", "preprod");
+        env.put("QITS_EVENTS_FEED", "0");
 
         BootstrapConfig config = from(env);
 
@@ -71,6 +75,7 @@ class BootstrapConfigTest {
         // The script's knobs are 1 and 0, not true and false.
         assertThat(config.skipBuild()).isTrue();
         assertThat(config.machineAuth()).isFalse();
+        assertThat(config.eventsFeed()).isFalse();
         assertThat(config.deployTimeout()).isEqualTo(Duration.ofMinutes(10));
         assertThat(config.wrapperDir()).contains("/home/me/code/qits-qits");
         assertThat(config.src()).isEqualTo("/tmp/sources");

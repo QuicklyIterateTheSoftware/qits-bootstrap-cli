@@ -30,11 +30,16 @@ import java.util.concurrent.TimeUnit;
  *     ok  8/47 build the seed image qits/ci:latest (11m02s)
  *   ▸  9/45 build the seed image qits/idp:latest       ⠹ 2m10s
  *      waiting for the native build — 2m10s elapsed
- *   ─────────────────────────────────────────────────────────
- *   [INFO] Building qits-platform-idp 2026.802.191319
- *   ... the last N lines of the running command ...
+ *   ────────────────────────────────────┬─ platform events ──
+ *   [INFO] Building qits-platform-idp   │ 14:22:01 SCMRelease qits-stt 1.4.0
+ *   ... the last lines of the command   │ 14:22:07 BuildSuccessful qits-stt
  * </pre>
  *
+ * The lower region is two columns: on the left what the running step is printing, on the right what
+ * the PLATFORM is announcing while it does it. The split is fixed for a given terminal width so the
+ * divider does not move under the reader, and on a narrow terminal there is no right column at all —
+ * cutting build output to half of eighty columns shows nothing worth reading.
+ * <p>
  * The whole frame is repainted on a 250 ms timer, so a long silence still shows a moving clock —
  * which is the difference between "it is working" and "it is stuck".
  */
@@ -44,9 +49,23 @@ public class TuiUi implements Ui {
     private static final String[] SPINNER_ASCII = {"|", "/", "-", "\\"};
     private static final int MAX_DONE_LINES = 6;
 
+    /** Below this the screen is one column and the event pane is dropped. */
+    static final int MIN_SPLIT_WIDTH = 100;
+
+    /** What the event column is kept between: wide enough for a name and a version, never greedy. */
+    static final int MIN_EVENT_COLUMN = 36;
+    static final int MAX_EVENT_COLUMN = 60;
+
+    /** Between the columns. Three cells, so the divider line's ┬ sits under the │. */
+    static final String GUTTER = " │ ";
+
+    /** Event lines kept for the right column. A screen holds tens; this holds a scroll of them. */
+    private static final int EVENT_LINES = 500;
+
     private final Terminal terminal;
     private final Display display;
     private final TailBuffer tail;
+    private final TailBuffer eventTail = new TailBuffer(EVENT_LINES);
     private final boolean unicode;
     private final String logPath;
     private final ScheduledExecutorService ticker =
@@ -137,6 +156,16 @@ public class TuiUi implements Ui {
         tail.add(line);
     }
 
+    /**
+     * The right column's own tail. It is NOT cleared when a phase starts, the way the left one is:
+     * the platform's account of itself runs across phases, and that continuity is the point of
+     * showing it beside them.
+     */
+    @Override
+    public synchronized void event(String line) {
+        eventTail.add(line);
+    }
+
     @Override
     public synchronized void finished(RunResult result) {
         this.result = result;
@@ -197,18 +226,65 @@ public class TuiUi implements Ui {
                             ? AttributedStyle.BOLD.foreground(AttributedStyle.GREEN)
                             : AttributedStyle.BOLD.foreground(AttributedStyle.RED), width));
         }
-        lines.add(styled("─".repeat(width), faint(), width));
+        int events = eventColumn(width);
+        lines.add(styled(divider(width, events), faint(), width));
 
         int body = Math.max(3, rows - lines.size());
         List<String> tailLines = tail.last(body);
-        for (String line : tailLines) {
-            lines.add(styled(line, AttributedStyle.DEFAULT, width));
-        }
-        for (int i = tailLines.size(); i < body; i++) {
-            lines.add(new AttributedString(""));
+        List<String> eventLines = events > 0 ? eventTail.last(body) : List.of();
+        for (int i = 0; i < body; i++) {
+            String left = i < tailLines.size() ? tailLines.get(i) : "";
+            String right = i < eventLines.size() ? eventLines.get(i) : "";
+            if (left.isEmpty() && right.isEmpty()) {
+                lines.add(new AttributedString(""));
+            } else {
+                lines.add(styled(row(left, right, width, events), AttributedStyle.DEFAULT, width));
+            }
         }
 
         display.update(lines, 0);
+    }
+
+    /**
+     * How many columns the event pane gets, or 0 for "this terminal is too narrow to split".
+     * <p>
+     * A third of the screen, bounded at both ends: less than {@link #MIN_EVENT_COLUMN} shows a
+     * timestamp and half a name, and more than {@link #MAX_EVENT_COLUMN} takes room from build
+     * output for a column whose lines are short by construction. It depends on the width alone, so
+     * the divider only ever moves when the terminal is resized.
+     */
+    static int eventColumn(int width) {
+        if (width < MIN_SPLIT_WIDTH) {
+            return 0;
+        }
+        return Math.clamp(width / 3, MIN_EVENT_COLUMN, MAX_EVENT_COLUMN);
+    }
+
+    /**
+     * One row of the lower region: the step's line, padded to the split, then the event line.
+     * <p>
+     * Each side is cut to its OWN width before they are joined. JLine's frame arithmetic breaks on a
+     * line that wraps, and cutting the pair afterwards would cut the event column away rather than
+     * the overlong build line that caused it. The padding is what makes the divider a straight
+     * vertical: without it the gutter would sit wherever the left line happened to end.
+     */
+    static String row(String left, String right, int width, int eventColumn) {
+        if (eventColumn <= 0) {
+            return Format.fit(left, width);
+        }
+        int leftWidth = width - eventColumn - GUTTER.length();
+        String cut = Format.fit(left, leftWidth);
+        return cut + " ".repeat(leftWidth - cut.length()) + GUTTER + Format.fit(right, eventColumn);
+    }
+
+    /** The rule under the header, carrying the right column's only label. */
+    static String divider(int width, int eventColumn) {
+        if (eventColumn <= 0) {
+            return "─".repeat(width);
+        }
+        String label = " platform events ";
+        return "─".repeat(width - eventColumn - GUTTER.length()) + "─┬─"
+                + label + "─".repeat(eventColumn - label.length());
     }
 
     private String title(int width) {

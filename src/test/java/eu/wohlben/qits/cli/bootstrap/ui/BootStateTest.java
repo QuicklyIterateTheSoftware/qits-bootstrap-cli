@@ -85,6 +85,28 @@ class BootStateTest {
         assertThat(state.snapshotJson()).doesNotContain("output of the first phase");
     }
 
+    /**
+     * The event column runs across phases: the platform's account of itself does not restart
+     * because this program moved to the next step.
+     */
+    @Test
+    void thePlatformsEventsAreTheirOwnColumnAndSurviveAPhaseChange() {
+        BootState state = new BootState(200);
+        Phase one = new Phase("a", "first", ctx -> {
+        });
+        Phase two = new Phase("b", "second", ctx -> {
+        });
+        state.started(List.of(one, two));
+        state.phaseStarted(0, one);
+        state.output("output of the first phase");
+        state.event("14:22:07 SCMRelease qits-stt 1.4.0");
+        state.phaseStarted(1, two);
+
+        String json = state.snapshotJson();
+        assertThat(json).doesNotContain("output of the first phase");
+        assertThat(json).contains("\"events\":[\"14:22:07 SCMRelease qits-stt 1.4.0\"]");
+    }
+
     @Test
     void aReaderIsToldWhatChangedSinceItLastLooked() {
         BootState state = new BootState(200);
@@ -95,10 +117,11 @@ class BootStateTest {
 
         state.phaseStarted(0, phase);
         state.output("[INFO] building");
+        state.event("14:22:07 SCMRelease qits-stt 1.4.0");
         state.status("waiting for qits-ci — no run yet · 10s elapsed");
 
         List<BootState.Event> events = state.since(cursor);
-        assertThat(types(events)).containsExactly("snapshot", "line", "status");
+        assertThat(types(events)).containsExactly("snapshot", "line", "ev", "status");
         assertThat(events.getLast().json()).contains("waiting for qits-ci");
         // Each event is one SSE frame, so no value in it may carry a raw newline.
         assertThat(events).allSatisfy(e -> assertThat(e.json()).doesNotContain("\n"));

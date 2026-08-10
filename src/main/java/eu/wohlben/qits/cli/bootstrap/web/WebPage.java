@@ -53,9 +53,28 @@ public final class WebPage {
               .ok { color: var(--green); }
               .bad { color: var(--red); }
               .note { color: var(--dim); font-weight: 400; }
-              #tail {
-                flex: 1; margin: 0; padding: 8px 14px; overflow: auto; white-space: pre-wrap;
+              /* The lower half is two columns: the running step on the left, what the platform
+                 announced on the right. Stacked below 720px, where side by side leaves neither
+                 column wide enough to read. */
+              #lower { flex: 1; display: flex; min-height: 0; }
+              #tail, #events {
+                margin: 0; padding: 8px 14px; overflow: auto; white-space: pre-wrap;
                 word-break: break-word; font: inherit; color: var(--fg);
+              }
+              #tail { flex: 1; min-width: 0; }
+              #events {
+                flex: 0 0 clamp(240px, 30%, 460px); border-left: 1px solid var(--line);
+                color: var(--dim);
+              }
+              #events::before {
+                content: 'platform events'; display: block; color: var(--cyan);
+                padding-bottom: 4px;
+              }
+              @media (max-width: 720px) {
+                #lower { flex-direction: column; }
+                #events {
+                  flex: 0 0 30%; border-left: none; border-top: 1px solid var(--line);
+                }
               }
               #foot {
                 border-top: 1px solid var(--line); padding: 4px 14px; color: var(--dim);
@@ -76,7 +95,10 @@ public final class WebPage {
               <div id="phases"></div>
               <div id="summary" class="summary"></div>
             </header>
-            <pre id="tail"></pre>
+            <div id="lower">
+              <pre id="tail"></pre>
+              <pre id="events"></pre>
+            </div>
             <div id="foot">
               <span id="conn">connecting…</span>
               <span id="counts"></span>
@@ -85,12 +107,14 @@ public final class WebPage {
             <script>
             (function () {
               var MAX_TAIL = 2000;
+              var MAX_EVENTS = 500;
               var DONE_ROWS = 8;
               var state = { phases: [], currentIndex: -1, status: '', summary: '',
                             exitCode: null, log: '', total: 0 };
               var base = { run: 0, current: 0, at: Date.now() };
               var showAll = false;
               var tailEl = document.getElementById('tail');
+              var eventsEl = document.getElementById('events');
               var phasesEl = document.getElementById('phases');
 
               function fmt(ms) {
@@ -171,21 +195,23 @@ public final class WebPage {
                   settled.length + '/' + total + ' phases';
               }
 
-              function atBottom() {
-                return tailEl.scrollHeight - tailEl.scrollTop - tailEl.clientHeight < 40;
+              /* Both columns behave the same way, so they share one pair of functions: a reader
+                 who scrolled up stays where they are, and one at the bottom is carried along. */
+              function atBottom(el) {
+                return el.scrollHeight - el.scrollTop - el.clientHeight < 40;
               }
-              function appendLines(lines) {
-                var stick = atBottom();
-                var text = tailEl.textContent;
+              function appendTo(el, lines, max) {
+                var stick = atBottom(el);
+                var text = el.textContent;
                 text += (text ? '\\n' : '') + lines.join('\\n');
                 var all = text.split('\\n');
-                if (all.length > MAX_TAIL) { all = all.slice(all.length - MAX_TAIL); }
-                tailEl.textContent = all.join('\\n');
-                if (stick) { tailEl.scrollTop = tailEl.scrollHeight; }
+                if (all.length > max) { all = all.slice(all.length - max); }
+                el.textContent = all.join('\\n');
+                if (stick) { el.scrollTop = el.scrollHeight; }
               }
-              function setTail(lines) {
-                tailEl.textContent = lines.join('\\n');
-                tailEl.scrollTop = tailEl.scrollHeight;
+              function setLines(el, lines) {
+                el.textContent = lines.join('\\n');
+                el.scrollTop = el.scrollHeight;
               }
 
               function conn(text, off) {
@@ -199,7 +225,8 @@ public final class WebPage {
                 var s = JSON.parse(e.data);
                 state = s;
                 base = { run: s.runElapsedMs, current: s.currentElapsedMs, at: Date.now() };
-                setTail(s.tail || []);
+                setLines(tailEl, s.tail || []);
+                setLines(eventsEl, s.events || []);
                 render();
               });
               es.addEventListener('phase', function (e) {
@@ -216,7 +243,10 @@ public final class WebPage {
                 render();
               });
               es.addEventListener('line', function (e) {
-                appendLines([JSON.parse(e.data).text]);
+                appendTo(tailEl, [JSON.parse(e.data).text], MAX_TAIL);
+              });
+              es.addEventListener('ev', function (e) {
+                appendTo(eventsEl, [JSON.parse(e.data).text], MAX_EVENTS);
               });
               es.addEventListener('done', function (e) {
                 var d = JSON.parse(e.data);

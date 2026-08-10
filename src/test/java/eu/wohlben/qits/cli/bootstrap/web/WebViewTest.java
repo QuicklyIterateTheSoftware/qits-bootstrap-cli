@@ -39,6 +39,9 @@ class WebViewTest {
         assertThat(html).contains("<title>qits bootstrap</title>");
         assertThat(html).contains("id=\"phases\"");
         assertThat(html).contains("id=\"tail\"");
+        // The lower half is two columns: the step's output and what the platform announced.
+        assertThat(html).contains("id=\"events\"");
+        assertThat(html).contains("es.addEventListener('ev'");
         assertThat(html).contains("new EventSource('events')");
         // Nothing to fetch: no page of a bootstrap may depend on a network it is bootstrapping.
         assertThat(html).doesNotContain("//cdn");
@@ -52,6 +55,7 @@ class WebViewTest {
 
         assertThat(json).contains("\"phases\":[");
         assertThat(json).contains("\"tail\":[");
+        assertThat(json).contains("\"events\":[");
         assertThat(json).contains("\"currentIndex\":");
         assertThat(json).contains("\"seq\":");
     }

@@ -56,6 +56,11 @@ class PhaseEngineTest {
         }
 
         @Override
+        public void event(String line) {
+            events.add("ev:" + line);
+        }
+
+        @Override
         public void close() {
         }
     }

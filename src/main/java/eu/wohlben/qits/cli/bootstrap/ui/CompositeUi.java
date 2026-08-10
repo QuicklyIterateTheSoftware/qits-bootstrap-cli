@@ -66,6 +66,11 @@ public class CompositeUi implements Ui {
     }
 
     @Override
+    public void event(String line) {
+        each(ui -> ui.event(line));
+    }
+
+    @Override
     public void finished(RunResult result) {
         each(ui -> ui.finished(result));
     }

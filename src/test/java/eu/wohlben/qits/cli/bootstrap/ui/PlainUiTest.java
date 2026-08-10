@@ -99,6 +99,17 @@ class PlainUiTest {
                 .contains("finished with warnings");
     }
 
+    /** No second column in a line stream: the platform's events are marked and interleaved. */
+    @Test
+    void aPlatformEventIsMarkedTheWayACiLineIs() {
+        PlainUi ui = new PlainUi(out);
+        ui.output("[INFO] building");
+        ui.event("14:22:07 SCMRelease qits-stt 1.4.0");
+
+        assertThat(printed()).isEqualTo("    [INFO] building%n  ev| 14:22:07 SCMRelease qits-stt 1.4.0%n"
+                .formatted());
+    }
+
     @Test
     void isNotALiveDisplaySoTheCallerDoesNotReprintTheReport() {
         assertThat(new PlainUi(out).live()).isFalse();

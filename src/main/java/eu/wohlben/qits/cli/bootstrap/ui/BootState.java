@@ -40,7 +40,11 @@ public final class BootState {
     public record Event(long seq, String type, String json) {
     }
 
+    /** The right column's lines. Its own ring, because it is not cleared with the step's tail. */
+    private static final int EVENT_LINES = 500;
+
     private final TailBuffer tail;
+    private final TailBuffer eventTail = new TailBuffer(EVENT_LINES);
     private final Deque<Event> events = new ArrayDeque<>();
     private final List<Phase> phases = new ArrayList<>();
     private final List<PhaseState> states = new ArrayList<>();
@@ -125,6 +129,16 @@ public final class BootState {
         emit("line", Json.object("text", line));
     }
 
+    /**
+     * One line of what the platform announced. The frame is named {@code ev} rather than
+     * {@code event} because in the browser every frame is an event, and a stream whose event type
+     * is "event" reads as a mistake.
+     */
+    public synchronized void event(String line) {
+        eventTail.add(line);
+        emit("ev", Json.object("text", line));
+    }
+
     public synchronized void status(String status) {
         if (status == null) {
             return;
@@ -175,14 +189,19 @@ public final class BootState {
             json.append(phaseJson(i));
         }
         json.append("],\"tail\":[");
-        List<String> lines = tail.all();
+        quoted(json, tail.all());
+        json.append("],\"events\":[");
+        quoted(json, eventTail.all());
+        return json.append("]}").toString();
+    }
+
+    private static void quoted(StringBuilder json, List<String> lines) {
         for (int i = 0; i < lines.size(); i++) {
             if (i > 0) {
                 json.append(',');
             }
             json.append(Json.quote(lines.get(i)));
         }
-        return json.append("]}").toString();
     }
 
     /** The changes after {@code cursor}, oldest first. */
