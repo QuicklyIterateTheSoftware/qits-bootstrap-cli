@@ -203,6 +203,19 @@ class PlatformModelTest {
         assertThat(PlatformModel.dockerfilePath("platform-idp")).isEqualTo("docker/Dockerfile");
     }
 
+    /**
+     * The one repository the seed publishes by module. Its event vocabulary is what qits-ci and
+     * qits-projects consume; the git host's service is not for anyone to resolve.
+     */
+    @Test
+    void theGitHostIsSeededByItsEventModuleAndEveryOtherRepositoryWhole() {
+        assertThat(PlatformModel.mavenModule("githost")).isEqualTo("githost-events");
+        assertThat(PlatformModel.mavenModule("eventstream")).isEmpty();
+        assertThat(PlatformModel.mavenModule("blobstore")).isEmpty();
+        assertThat(PlatformModel.mavenModule("registries")).isEmpty();
+        assertThat(PlatformModel.mavenModule("integrations-quarkus")).isEmpty();
+    }
+
     @Test
     void theDeployablesAndTheSeededReposAreDisjointAndTogetherAreEveryRepository() {
         assertThat(PlatformModel.DEPLOYABLES).doesNotContainAnyElementsOf(

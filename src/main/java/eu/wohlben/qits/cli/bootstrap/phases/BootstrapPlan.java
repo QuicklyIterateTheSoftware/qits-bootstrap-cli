@@ -87,6 +87,13 @@ public final class BootstrapPlan {
                     "publish qits-registries into seed artifacts"));
             phases.add(seed.mavenPublish("eventstream", "qits-eventstream",
                     "publish qits-eventstream into seed artifacts"));
+            // The git host's event vocabulary, AFTER qits-eventstream because that is its only
+            // dependency, and one module of qits-githost rather than the repository whole. Two
+            // consumers need it out of the store: the ci image built four phases below, and
+            // qits-projects, which the train deploys long before the git host's own deployment
+            // could have published anything.
+            phases.add(seed.mavenPublish("githost", "qits-githost-events",
+                    "publish qits-githost-events into seed artifacts"));
             phases.add(seed.mavenPublish("integrations-quarkus", "qits-auth-core",
                     "publish qits-auth-core into seed artifacts"));
             phases.add(seed.uiComponentsPublish());

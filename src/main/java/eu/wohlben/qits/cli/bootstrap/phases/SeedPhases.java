@@ -62,11 +62,16 @@ public class SeedPhases {
      * the first seed image is built, and into the real store once it answers.
      * <p>
      * qits-registries is written against qits-blobstore's entities, so the blob store goes first;
-     * qits-auth-core is last because it is the one every service consumes and the probe that skips
-     * this phase asks for it.
+     * qits-githost-events is written against qits-eventstream and follows it; qits-auth-core is
+     * last because it is the one every service consumes and the probe that skips this phase asks
+     * for it.
+     * <p>
+     * <b>githost names a SERVICE repository and publishes one module of it</b> — its event
+     * vocabulary, which qits-ci and qits-projects consume. {@link PlatformModel#mavenModule} says
+     * which module and why.
      */
-    private static final List<String> SEED_LIBRARIES =
-            List.of("blobstore", "registries", "eventstream", "integrations-quarkus");
+    static final List<String> SEED_LIBRARIES =
+            List.of("blobstore", "registries", "eventstream", "githost", "integrations-quarkus");
 
     private final Boot boot;
 
@@ -323,15 +328,24 @@ public class SeedPhases {
      * steady state. The cycle is broken with a temporary, bootstrap-owned file repository, served
      * over HTTP on the registry port and removed before the real artifacts container claims it.
      * <p>
-     * <b>The byte-plane split made this phase carry four libraries instead of one</b>, and that is
-     * not a widening for its own sake: qits-artifacts, qits-platform-mirror and qits-githost are
+     * <b>The byte-plane split made this phase carry several libraries instead of one</b>, and that
+     * is not a widening for its own sake: qits-artifacts, qits-platform-mirror and qits-githost are
      * built out of qits-blobstore and qits-registries, and all three of their seed images are built
      * before anything of this platform can publish a jar. A seed build resolving a library the
      * temporary registry does not hold fails minutes in, naming a version nobody ever pushed.
      * <p>
-     * <b>One container, four deploys, in dependency order.</b> {@code mvn deploy} installs into the
-     * container's own local repository on its way out, so qits-registries resolves the qits-blobstore
-     * the line above it just built — which is the whole reason these are not four containers.
+     * <b>The temporary registry holds every qits jar a seed image could ask for, whatever the plan's
+     * order is.</b> qits-ci's image is the one that consumes qits-githost-events, and today it is
+     * built after {@code seed-artifacts} has taken the registry port — so the copy it really
+     * resolves is the store's, published by {@link #mavenPublish}. Both lists carry the jar because
+     * the two are one port: whichever server is behind it when an image builds has to answer, and a
+     * reordering that moves an image to the other side of {@code seed-artifacts} must not be able to
+     * turn that into a failed build.
+     * <p>
+     * <b>One container, one deploy per entry, in dependency order.</b> {@code mvn deploy} installs
+     * into the container's own local repository on its way out, so qits-registries resolves the
+     * qits-blobstore the line above it just built — which is the whole reason these are not one
+     * container each.
      */
     public Phase mavenSeed() {
         return new Phase("maven-seed",
@@ -340,7 +354,7 @@ public class SeedPhases {
                     // Version-agnostic on purpose: the checkouts publish their real calver, so a
                     // pinned-version probe never matches and a rerun collides with whoever holds
                     // the registry port. Metadata present = auth-core is served, whatever version —
-                    // and auth-core is deployed LAST below, so its presence answers for all four.
+                    // and auth-core is deployed LAST below, so its presence answers for the set.
                     //
                     // TWO ADDRESSES, because in-network there are two servers rather than one
                     // port. On the host both answered 127.0.0.1:REGISTRY_PORT, so one probe found
@@ -365,8 +379,9 @@ public class SeedPhases {
                     StringBuilder script = new StringBuilder("set -eu\n");
                     for (String library : SEED_LIBRARIES) {
                         script.append("cd /src-").append(library)
-                                .append(" && mvn -B -ntp deploy -DskipTests ")
-                                .append("-DaltDeploymentRepository=seed::default::file:///repo\n");
+                                .append(" && mvn -B -ntp deploy -DskipTests")
+                                .append(mavenModuleArgs(library))
+                                .append(" -DaltDeploymentRepository=seed::default::file:///repo\n");
                     }
                     String cid = create(ctx, List.of(
                             "docker", "create", "--user", "root", "--entrypoint", "sh",
@@ -625,6 +640,16 @@ public class SeedPhases {
         }
     }
 
+    /**
+     * The maven arguments that build ONE module of a repository, or none when the whole repository
+     * is published. Both halves of the seed use it, so a repository published by module is
+     * published the same way into the temporary registry and into the store.
+     */
+    static String mavenModuleArgs(String repoName) {
+        String module = PlatformModel.mavenModule(repoName);
+        return module.isEmpty() ? "" : " -pl " + module + " -am";
+    }
+
     public Phase mavenPublish(String repoName, String artifactId, String title) {
         return new Phase("publish-" + artifactId, title, ctx -> {
             // The checkouts publish their real calver, and the registry refuses to overwrite a
@@ -639,7 +664,8 @@ public class SeedPhases {
                     "docker", "create", "--network", Boot.NETWORK, "--user", "root",
                     "--entrypoint", "sh", "maven:3.9-eclipse-temurin-25",
                     "-c", mavenSettings() + "cd /src && mvn -B -ntp -s /root/.m2/settings.xml "
-                            + "deploy -DskipTests -DaltDeploymentRepository=qits::default::"
+                            + "deploy -DskipTests" + mavenModuleArgs(repoName)
+                            + " -DaltDeploymentRepository=qits::default::"
                             + boot.config.artifactsUrl() + "/maven/maven"));
             copyIn(ctx, boot.state.repoDir(repoName), cid);
             startAndReap(ctx, cid, artifactId + " publish failed");

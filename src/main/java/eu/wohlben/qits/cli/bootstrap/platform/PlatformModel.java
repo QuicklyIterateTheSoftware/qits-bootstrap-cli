@@ -282,6 +282,29 @@ public final class PlatformModel {
         };
     }
 
+    /**
+     * The one maven module of a repository the seed publishes, or empty when it publishes the
+     * repository whole.
+     * <p>
+     * <b>qits-githost is the only entry, and the reason is what its {@code githost-events} module
+     * is.</b> That module is a vocabulary: four records and one dependency (qits-eventstream), no
+     * container. qits-ci and qits-projects consume it and nothing else of the git host — so the
+     * seed owes them that jar and none of the rest. Publishing the repository whole would build
+     * the git host's own service to hand over a data module, which is minutes of native-image
+     * work for bytes nobody asked for, and would put a service jar in the registry that only its
+     * own image ever loads.
+     * <p>
+     * {@code SeedPhases} turns this into {@code -pl <module> -am}, and {@code -am} is not optional:
+     * it carries the ROOT POM with the module, and an artifact whose parent the registry does not
+     * hold resolves nowhere.
+     */
+    public static String mavenModule(String name) {
+        return switch (name) {
+            case "githost" -> "githost-events";
+            default -> "";
+        };
+    }
+
     public static String repo(String name) {
         return "qits-" + name;
     }

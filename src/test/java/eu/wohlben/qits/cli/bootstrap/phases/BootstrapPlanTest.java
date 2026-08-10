@@ -51,9 +51,16 @@ class BootstrapPlanTest {
         // publish lands before the ci image that consumes them is built.
         assertThat(ids).containsSubsequence("seed-image-artifacts", "seed-artifacts",
                 "publish-qits-blobstore", "publish-qits-registries-oci", "publish-qits-eventstream",
+                // The git host's vocabulary sits between its own dependency and auth-core: it is
+                // built against qits-eventstream and against nothing else.
+                "publish-qits-githost-events",
                 "publish-qits-auth-core", "publish-ui-components",
                 "publish-angular", "seed-image-ci", "seed-image-deployments",
                 "seed-image-platform-idp", "ci-daemon");
+        // The ci image consumes qits-githost-events, so the publish is before it — and qits-projects
+        // consumes it too, which the deploy train reaches long before the git host's own deployment.
+        assertThat(ids).containsSubsequence("publish-qits-githost-events", "seed-image-ci",
+                "deploy-projects", "deploy-githost");
         // THE BYTE PLANE'S THREE IMAGES ARE BUILT TOGETHER, and all three before the store is
         // started: each is built out of qits-blobstore and qits-registries, which the maven seed
         // put in the temporary registry before the first image. There is nothing they could wait

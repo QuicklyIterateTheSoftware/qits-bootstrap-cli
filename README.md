@@ -335,33 +335,33 @@ into a page that arrives when the run is over, so that is what to verify before 
 
 ## What it does, in order
 
-Built from configuration at startup, so the count in the header is real. A cold boot is 59 phases;
-`QITS_SKIP_BUILD=1` drops phases 6–26 and keeps the other 39. `QITS_DOMAIN` adds two more, marked
-below.
+Built from configuration at startup, so the count in the header is real. A cold boot is 69 phases;
+`QITS_SKIP_BUILD=1` drops phases 6–33 and puts two in their place — the skip gate and postgres —
+for 43. `QITS_DOMAIN` adds two more, marked below.
 
 | | phase |
 | --- | --- |
 | 1–5 | preflight (docker, git, where the wrapper is, and which domain — if any — this platform serves); join `qits-net`, which every address after it needs; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 37 platform repositories; read `.qits-bootstrap.env` |
-| 6 | seed the qits libraries the byte plane is built from — `qits-blobstore`, `qits-registries`, `qits-eventstream`, `qits-auth-core` — into a temporary file repository served over HTTP, which is what breaks the first-boot cycle: three of the images below are built out of jars only this platform will ever publish |
+| 6 | seed the qits libraries the byte plane is built from — `qits-blobstore`, `qits-registries`, `qits-eventstream`, `qits-githost-events` (one module of qits-githost: the vocabulary its consumers need, not its service), `qits-auth-core` — into a temporary file repository served over HTTP, which is what breaks the first-boot cycle: three of the images below are built out of jars only this platform will ever publish |
 | 7–14 | seed images `qits/gateway`, `qits/platform-edge`, `qits/platform-mirror`, `qits/artifacts`, `qits/githost`, `qits/oci-postgresql`, `qits/platform-dns`, `qits/events` — the eight that need nothing from a running platform |
 | 15 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC the ten databases the seed stack needs: the deployer's own and its outbox's, qits-ci's own and its outbox's, qits-platform-idp's, qits-platform-dns', qits-events', qits-platform-mirror's, and qits-githost's own and its outbox's. Three are outboxes because the eventstream library keeps its own Flyway lineage and cannot share a database with its host. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |
 | 16 | have qits-platform-mirror serving, because every publish below resolves its third-party half through it — Maven Central, npmjs — and a cache that is not up is not a slow publish but a failed one. It cannot pull through itself: its own image was built minutes ago with the mirror prefixes rewritten to the direct upstreams |
 | 17 | have qits-artifacts serving the registry port, so there is somewhere to publish to |
-| 18–23 | publish `qits-blobstore`, `qits-registries`, `qits-eventstream`, `qits-auth-core`, `@qits/ui-components`, `@qits/angular` |
-| 24–26 | seed images `qits/ci`, `qits/deployments`, `qits/platform-idp` |
-| 27–31 | the five step images from qits-oci |
-| 32 | the ci-daemon musl static binary, and its digest |
-| 33 | resolve the idp's client secrets (given, kept, generated) and record the run state |
-| 34–35 | generate the seed compose file; write the deployer's run-args onto its config volume |
+| 18–24 | publish `qits-blobstore`, `qits-registries`, `qits-eventstream`, `qits-githost-events`, `qits-auth-core`, `@qits/ui-components`, `@qits/angular`. The git host's vocabulary is here because two consumers need it out of the store long before the git host's own deployment could publish anything: the `qits/ci` image three phases below, and qits-projects, which the deploy train reaches eight phases before qits-githost |
+| 25–27 | seed images `qits/ci`, `qits/deployments`, `qits/platform-idp` |
+| 28–32 | the five step images from qits-oci |
+| 33 | the ci-daemon musl static binary, and its digest |
+| 34 | resolve the idp's client secrets (given, kept, generated) and record the run state |
+| 35–36 | generate the seed compose file; write the deployer's run-args onto its config volume |
 | — | **with `QITS_DOMAIN` only**: write a self-signed placeholder certificate onto the `qits-edge-letsencrypt` volume, unless one is already there. It is before the stack starts because the edge's keystore names those files and a keystore whose files are missing fails startup |
-| 36–37 | start the seed stack (only what the deployer does not already manage); wait for the idp, the edge, the gateway, the store, the mirror, the git host, the nameserver, ci, the deployer and the bus — all on qits-net |
+| 37–38 | start the seed stack (only what the deployer does not already manage); wait for the idp, the edge, the gateway, the store, the mirror, the git host, the nameserver, ci, the deployer and the bus — all on qits-net |
 | — | **with `QITS_DOMAIN` only**: create the zone in qits-platform-dns (`POST /dns/api/zones`, 409 tolerated). No records: their values are this host's public address, which the run cannot know |
-| 38 | publish the ci-daemon binary, version-addressed by its digest |
-| 39–40 | create the 37 repositories on qits-githost; pre-seed the seeded histories with `-o qits.no-ci` |
-| 41–49 | replay the release pipeline of each publisher the platform pins, and wait for each run. Two are the byte plane's own libraries and **qits-blobstore goes before qits-registries**, which is written against its entities; four are the Maven and npm packages the wrapper's builds install; three are docker images — `qits/workspace-base`, then `qits/workspace` and `qits/projects-daemon` + `qits/project-agent`. **The base goes first and that order is load-bearing**: both daemon builds pull it at a pinned version, and the base's own replay is what puts it in the registry. A publisher with no release tag reachable from main STOPS the boot, which is right: a pin nobody has minted has nothing to dangle |
-| 50 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
-| 44–57 | one phase per deployable: push `main` quietly and `environment/<name>` for real, then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-platform-edge is second to last: it is the host port, so its cutover takes this program's own door away for a beat |
-| 58–59 | push the seeded repositories; the closing report |
+| 39 | publish the ci-daemon binary, version-addressed by its digest |
+| 40–41 | create the 37 repositories on qits-githost; pre-seed the seeded histories with `-o qits.no-ci` |
+| 42–50 | replay the release pipeline of each publisher the platform pins, and wait for each run. Two are the byte plane's own libraries and **qits-blobstore goes before qits-registries**, which is written against its entities; four are the Maven and npm packages the wrapper's builds install; three are docker images — `qits/workspace-base`, then `qits/workspace` and `qits/projects-daemon` + `qits/project-agent`. **The base goes first and that order is load-bearing**: both daemon builds pull it at a pinned version, and the base's own replay is what puts it in the registry. A publisher with no release tag reachable from main STOPS the boot, which is right: a pin nobody has minted has nothing to dangle |
+| 51 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
+| 52–67 | one phase per deployable: push `main` quietly and `environment/<name>` for real, then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-platform-edge is second to last: it is the host port, so its cutover takes this program's own door away for a beat |
+| 68–69 | push the seeded repositories; the closing report |
 
 Four things every deploy phase does that are easy to miss: it pushes `main` quietly
 (`-o qits.no-ci`) so a second cold native build is not queued for the same sha; it re-announces the
