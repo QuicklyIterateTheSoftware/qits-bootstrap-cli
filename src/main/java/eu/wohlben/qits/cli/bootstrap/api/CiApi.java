@@ -62,6 +62,28 @@ public class CiApi {
     }
 
     /**
+     * Whether a green release run for this repository at this version already exists — read off the
+     * run's own trigger payload, where the version is the one distinctive token. A field this
+     * method cannot find degrades to {@code false}, which is the safe direction: the replay runs
+     * as it always has.
+     */
+    public boolean releasedVersionRan(String repoId, String version) {
+        Http.Response response = http.get(base + "/api/runs?repositoryId=" + repoId + "&limit=20",
+                Map.of());
+        if (!response.ok()) {
+            return false;
+        }
+        for (JsonNode run : Json.parse(response.body()).path("runs")) {
+            if ("EVENT".equals(Json.text(run, "triggerType"))
+                    && "SUCCESS".equals(Json.text(run, "status"))
+                    && Json.text(run, "triggerEventPayload").contains("\"" + version + "\"")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * The newest run of a repository, whatever it is. The caller needs the whole row, not just the
      * status: a repository can hold several runs at one commit, so only the row's id says whether
      * the newest one is this phase's or an earlier one's.

@@ -277,6 +277,15 @@ public class PipelinePhases {
                         + "— nothing to replay");
             }
             ctx.log("  release tag " + version);
+            // A replay whose run already went green has nothing left to publish, and re-running it
+            // is not free: an image publisher rebuilds for many minutes and re-fires its
+            // SoftwareRelease, which every follow-bump then has to recognise as old news. The
+            // published state is what this phase exists to restore; already restored is a skip,
+            // not a rerun. A fresh platform never skips here — its ci has no runs.
+            if (boot.ci.releasedVersionRan(repo, version)) {
+                ctx.skip("release " + version + " already ran green — the registry holds what "
+                        + "this replay publishes");
+            }
             // The newest finished run BEFORE this attempt triggers is a previous attempt's, and
             // must not be read as this one's outcome. Null when the repo never ran.
             String baselineRun = boot.ci.finishedEventRun(repo).map(r -> r[0]).orElse(null);
