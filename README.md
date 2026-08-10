@@ -131,7 +131,7 @@ the same names `qits-local-up.sh` read:
 | `QITS_MACHINE_AUTH` | `1` | machine-token enforcement for ci, deployments and platform-artifacts |
 | `QITS_PUSH_TOKEN` | `local-dev` | the git host's push token — the documented escape hatch, not a secret |
 | `QITS_DEPLOY_TIMEOUT` | `3600` | seconds to wait per application deployment |
-| `QITS_RELEASE_TIMEOUT` | `1800` | seconds to wait per replayed release run |
+| `QITS_RELEASE_TIMEOUT` | `3600` | seconds to wait per replayed release run |
 | `QITS_HEALTH_TIMEOUT` | `120` | seconds to wait per seed service |
 | `QITS_POLL_INTERVAL` | `10` | seconds between polls |
 | `QITS_ENV_NAME` | `prod` | the environment, and the ONE deploy ref is its `environment/<name>`. It is the **platform environment** — the tier whose branch deploys the platform plane — and it is inside every wire alias, every deployed container name and every idp client id. `--platform-env` is the same knob for one run |

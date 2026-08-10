@@ -278,11 +278,21 @@ public class PipelinePhases {
             }
             ctx.log("  release tag " + version);
             // A replay whose run already went green has nothing left to publish, and re-running it
-            // is not free: an image publisher rebuilds for many minutes and re-fires its
+            // is not free: an image publisher rebuilds for half an hour and re-fires its
             // SoftwareRelease, which every follow-bump then has to recognise as old news. The
             // published state is what this phase exists to restore; already restored is a skip,
-            // not a rerun. A fresh platform never skips here — its ci has no runs.
-            if (boot.ci.releasedVersionRan(repo, version)) {
+            // not a rerun. The VERSION lives only on the trigger event — ci's run API carries no
+            // payload, measured — so each green event run's trigger is resolved against
+            // qits-events, through the edge like every other read. A fresh platform never skips
+            // here: its ci has no runs and its event log is empty.
+            boolean alreadyReplayed = boot.ci.greenEventRunTriggers(repo).stream()
+                    .anyMatch(eventId -> {
+                        Http.Response event = boot.http.get(
+                                "http://qits-platform-edge:8080/events/api/events/" + eventId,
+                                Map.of());
+                        return event.ok() && event.body().contains(version);
+                    });
+            if (alreadyReplayed) {
                 ctx.skip("release " + version + " already ran green — the registry holds what "
                         + "this replay publishes");
             }

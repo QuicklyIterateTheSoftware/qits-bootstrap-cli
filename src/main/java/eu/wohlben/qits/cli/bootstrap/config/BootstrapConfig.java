@@ -122,8 +122,13 @@ public interface BootstrapConfig {
     @WithDefault("3600")
     Duration deployTimeout();
 
-    /** How long to wait for a replayed release run to finish. */
-    @WithDefault("1800")
+    /**
+     * How long to wait for a replayed release run to finish. An hour, not the half it used to be:
+     * the image publishers replay a full docker build, and one uncached workspace-image build was
+     * measured at 35 minutes — behind another replay in the queue, the old budget expired on a run
+     * that went on to succeed.
+     */
+    @WithDefault("3600")
     Duration releaseTimeout();
 
     /** How long to wait for a seed service to report ready. */

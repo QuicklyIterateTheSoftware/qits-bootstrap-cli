@@ -2,6 +2,9 @@ package eu.wohlben.qits.cli.bootstrap.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -62,25 +65,27 @@ public class CiApi {
     }
 
     /**
-     * Whether a green release run for this repository at this version already exists — read off the
-     * run's own trigger payload, where the version is the one distinctive token. A field this
-     * method cannot find degrades to {@code false}, which is the safe direction: the replay runs
-     * as it always has.
+     * The trigger-event ids of this repository's green EVENT runs, newest first. The runs API
+     * carries no event payload in any of its answers — measured on the live service, list and
+     * detail both — so a caller that needs the released VERSION resolves the event id against
+     * qits-events. An unreachable API answers an empty list, which is the safe direction: the
+     * caller replays as it always has.
      */
-    public boolean releasedVersionRan(String repoId, String version) {
+    public List<String> greenEventRunTriggers(String repoId) {
         Http.Response response = http.get(base + "/api/runs?repositoryId=" + repoId + "&limit=20",
                 Map.of());
         if (!response.ok()) {
-            return false;
+            return List.of();
         }
+        List<String> triggers = new ArrayList<>();
         for (JsonNode run : Json.parse(response.body()).path("runs")) {
             if ("EVENT".equals(Json.text(run, "triggerType"))
                     && "SUCCESS".equals(Json.text(run, "status"))
-                    && Json.text(run, "triggerEventPayload").contains("\"" + version + "\"")) {
-                return true;
+                    && !Json.text(run, "triggerEventId").isBlank()) {
+                triggers.add(Json.text(run, "triggerEventId"));
             }
         }
-        return false;
+        return triggers;
     }
 
     /**
