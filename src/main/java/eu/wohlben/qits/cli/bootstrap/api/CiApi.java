@@ -39,10 +39,13 @@ public class CiApi {
         return http.postJson(base + "/api/events/trigger", eventJson, bearer(token));
     }
 
-    /** Replays a post-receive announcement the git host made and nobody heard. */
-    public Http.Response postReceive(String eventJson, String token) {
-        return http.postJson(base + "/api/events/post-receive", eventJson, bearer(token));
-    }
+    // THERE IS NO postReceive REPLAY ANY MORE, and its absence is the byte-plane split's dividend.
+    // POST /ci/api/events/post-receive was the git host's fire-and-forget announcement, and this
+    // CLI re-made it whenever a pushed sha had no run after a minute — a real loss, measured twice
+    // on this platform. qits-githost publishes SCMPublishCommit through the eventstream outbox
+    // instead and qits-ci consumes it durably, so a push that landed is a row that will be
+    // delivered: a ci that was down, restarting or mid-cutover reads it back. The endpoint is gone
+    // from qits-ci, and a replay of it would be a call to nothing.
 
     /**
      * The id and status of the newest finished EVENT run of a repository, if one has finished.

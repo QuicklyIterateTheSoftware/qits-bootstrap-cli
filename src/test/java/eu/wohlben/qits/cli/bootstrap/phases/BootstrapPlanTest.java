@@ -38,7 +38,7 @@ class BootstrapPlanTest {
         // The wrapper comes before the sources because the sources are read out of it, and a cold
         // machine has none: that phase clones it from the org.
         assertThat(ids(phases)).startsWith("preflight", "network", "wrapper", "sources",
-                "recorded-state", "auth-core-seed");
+                "recorded-state", "maven-seed");
         assertThat(ids(phases)).endsWith("release-train-push", "summary");
         assertThat(phases).allSatisfy(phase -> assertThat(phase.title()).isNotBlank());
     }
@@ -47,17 +47,29 @@ class BootstrapPlanTest {
     void theSeedOrderIsTheOneTheDependenciesForce() {
         List<String> ids = ids(plan(Map.of()));
 
-        // artifacts is built and started before anything can be published into it, and both maven
-        // publishes land before the ci image that consumes them is built.
-        assertThat(ids).containsSubsequence("seed-image-platform-artifacts", "seed-artifacts",
-                "publish-qits-eventstream", "publish-qits-auth-core", "publish-ui-components",
+        // artifacts is built and started before anything can be published into it, and every maven
+        // publish lands before the ci image that consumes them is built.
+        assertThat(ids).containsSubsequence("seed-image-artifacts", "seed-artifacts",
+                "publish-qits-blobstore", "publish-qits-registries-oci", "publish-qits-eventstream",
+                "publish-qits-auth-core", "publish-ui-components",
                 "publish-angular", "seed-image-ci", "seed-image-deployments",
                 "seed-image-platform-idp", "ci-daemon");
+        // THE BYTE PLANE'S THREE IMAGES ARE BUILT TOGETHER, and all three before the store is
+        // started: each is built out of qits-blobstore and qits-registries, which the maven seed
+        // put in the temporary registry before the first image. There is nothing they could wait
+        // for — the real store does not exist until one of them is running.
+        assertThat(ids).containsSubsequence("maven-seed", "seed-image-platform-mirror",
+                "seed-image-artifacts", "seed-image-githost", "seed-artifacts");
+        // THE MIRROR IS STARTED BEFORE THE STORE, because every publish after it resolves its
+        // third-party half through the mirror's caches — and postgres before the mirror, which
+        // refuses to boot without its database.
+        assertThat(ids).containsSubsequence("seed-image-platform-mirror", "seed-postgres",
+                "seed-mirror", "seed-artifacts", "publish-qits-blobstore");
         // The edge needs nothing from the platform — no client bundle, no qits dependency — so its
         // image is built in the first half, beside the gateway it fronts. The nameserver is there
         // for the same reason: a clone of that repository builds green on its own.
         assertThat(ids).containsSubsequence("seed-image-gateway", "seed-image-platform-edge",
-                "seed-image-platform-artifacts");
+                "seed-image-artifacts");
         assertThat(ids).containsSubsequence("seed-image-platform-dns", "seed-artifacts");
         // The bus is in the first half too: qits-events declares no qits Maven dependency, so it
         // waits on none of the publishes below it.
@@ -70,6 +82,11 @@ class BootstrapPlanTest {
         // database, and seed-stack is what starts the deployer.
         assertThat(ids).containsSubsequence("seed-image-oci-postgresql", "seed-postgres",
                 "idp-secrets", "compose-file", "pd-run-args", "seed-stack");
+        // The git host is in the seed stack rather than started by hand: nothing needs it before
+        // compose brings it up, and git-repos — the first phase that PUTs against it — is after
+        // the health wait.
+        assertThat(ids).containsSubsequence("seed-image-githost", "seed-stack", "seed-health",
+                "git-repos");
         // The retired pair is built by nothing: one component replaced both.
         assertThat(ids).doesNotContain("seed-image-cd", "seed-image-serviceregistry");
     }
@@ -81,20 +98,21 @@ class BootstrapPlanTest {
         assertThat(ids).containsSubsequence("environment", "deploy-observability",
                 "deploy-oci-postgresql",
                 "deploy-platform-idp", "deploy-stt", "deploy-projects", "deploy-workspaces",
-                "deploy-events", "deploy-platform-docs", "deploy-platform-dns", "deploy-gateway",
-                "deploy-platform-artifacts", "deploy-ci", "deploy-platform-edge",
-                "deploy-deployments");
+                "deploy-events", "deploy-docs", "deploy-platform-dns", "deploy-gateway",
+                "deploy-platform-mirror", "deploy-artifacts", "deploy-githost", "deploy-ci",
+                "deploy-platform-edge", "deploy-deployments");
         assertThat(ids).doesNotContain("deploy-cd", "deploy-serviceregistry");
         // Pre-rename spellings deploy nothing and would push to repositories nobody reads.
-        assertThat(ids).doesNotContain("deploy-artifacts", "deploy-idp",
-                "deploy-platform-deployments");
+        assertThat(ids).doesNotContain("deploy-idp", "deploy-platform-deployments",
+                "deploy-platform-artifacts", "deploy-platform-docs");
     }
 
     @Test
     void theReleasesTheWrapperBuildsInstallAreReplayedBeforeAnythingIsDeployed() {
         List<String> ids = ids(plan(Map.of()));
 
-        assertThat(ids).containsSubsequence("preseed", "release-spa-ui-components",
+        assertThat(ids).containsSubsequence("preseed", "release-blobstore", "release-registries",
+                "release-spa-ui-components",
                 "release-integrations-angular", "release-eventstream",
                 "release-integrations-quarkus", "environment", "deploy-observability");
     }
@@ -145,7 +163,10 @@ class BootstrapPlanTest {
 
         assertThat(warm).contains("seed-skipped")
                 .doesNotContain("ci-daemon", "seed-image-ci", "seed-image-platform-edge",
-                        "seed-image-oci-postgresql", "seed-image-events", "auth-core-seed");
+                        "seed-image-oci-postgresql", "seed-image-events", "maven-seed",
+                        // The mirror is started by hand only on the build path; a warm rerun's
+                        // compose file starts it like every other seed service.
+                        "seed-mirror", "seed-artifacts");
         assertThat(warm.size()).isLessThan(cold.size());
         // The pipeline half is untouched: a warm rerun still pushes and still waits.
         assertThat(warm).contains("deploy-deployments", "release-train-push", "summary");

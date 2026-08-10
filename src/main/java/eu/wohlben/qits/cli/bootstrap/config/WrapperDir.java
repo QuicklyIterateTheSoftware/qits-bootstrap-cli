@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -29,14 +30,20 @@ public final class WrapperDir {
      * The services directory is the second half of the same question, and it is what tells a
      * wrapper apart from any other repository that happens to use submodules.
      * <p>
-     * The directory is named for the repository the registry and the git host live in, which is
-     * qits-platform-artifacts since the 2026-08-08 rename. A wrapper checked out before it carries
-     * the old {@code services/qits-artifacts} instead — and is still recognised, because the
-     * {@code .gitmodules} test below only asks for {@code services/qits-} and every wrapper that
-     * ever existed matches it.
+     * The directory is named for the repository the hosted registries live in. <b>BOTH SPELLINGS
+     * ARE ACCEPTED, and that is the pattern rather than a transition</b>: the repository was
+     * qits-artifacts, became qits-platform-artifacts in the 2026-08-08 rename, and went back to
+     * qits-artifacts when the byte-plane split moved the caches out. A checkout made under either
+     * name is a wrapper, and asking for only one of them turns somebody's working copy into "no
+     * wrapper repository at or above …".
+     * <p>
+     * The {@code .gitmodules} test below is the wider net and catches both anyway — it only asks
+     * for {@code services/qits-} — but a wrapper whose file is missing or unreadable is recognised
+     * by the directories alone, and that arm has to know both names.
      */
     private static final String MARKER_FILE = ".gitmodules";
-    private static final String MARKER_DIR = "services/qits-platform-artifacts";
+    private static final List<String> MARKER_DIRS =
+            List.of("services/qits-artifacts", "services/qits-platform-artifacts");
 
     /**
      * The wrapper's repository name, which is also the directory a cold start clones it into. It is
@@ -53,7 +60,7 @@ public final class WrapperDir {
         if (candidate == null || !Files.isDirectory(candidate)) {
             return false;
         }
-        if (Files.isDirectory(candidate.resolve(MARKER_DIR))) {
+        if (MARKER_DIRS.stream().anyMatch(dir -> Files.isDirectory(candidate.resolve(dir)))) {
             return true;
         }
         Path modules = candidate.resolve(MARKER_FILE);

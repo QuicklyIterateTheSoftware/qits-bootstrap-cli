@@ -32,14 +32,6 @@ public class PipelinePhases {
     private static final Map<String, String> PROBE_BEARER =
             Map.of("Authorization", "Bearer qits-bootstrap-auth-plane-probe");
 
-    /**
-     * git's "this ref did not exist" sha, which is what a re-announced push carries as its oldSha.
-     * qits-ci ignores the field — the run is read out of newSha — but the wire contract has the
-     * shape of a real hook call and a replay that lies about it would be harder to recognise in a
-     * log than one that says plainly it knows no predecessor.
-     */
-    private static final String NO_PREDECESSOR_SHA = "0".repeat(40);
-
     private final Boot boot;
 
     public PipelinePhases(Boot boot) {
@@ -53,11 +45,19 @@ public class PipelinePhases {
             boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
             // The artifacts instance used while building seed images has no machine credentials:
             // the idp did not exist yet. Replace it so compose starts the real service with the
-            // generated client secret; otherwise post-receive notifications reach CI bare.
-            String artifacts = PlatformModel.wireAlias("platform-artifacts", boot.config.envName());
+            // audience it validates against; otherwise every admin write reaches it unguarded.
+            String artifacts = PlatformModel.wireAlias("artifacts", boot.config.envName());
             if (boot.docker.allNames().contains(artifacts)) {
                 ctx.log("  replacing the bootstrap artifact registry with the authenticated seed service");
                 boot.docker.removeContainer(artifacts, ctx::log);
+            }
+            // The same hand-off for the mirror, which seed-mirror started by hand before any
+            // compose file existed. Its volume is the cache and survives the recreate; what it
+            // gains is the observability address and the deployer's adoption at the next cutover.
+            String mirror = PlatformModel.wireAlias("platform-mirror", boot.config.envName());
+            if (boot.docker.allNames().contains(mirror)) {
+                ctx.log("  handing the seed mirror over to compose, from the same volume");
+                boot.docker.removeContainer(mirror, ctx::log);
             }
             // The same hand-off for postgres: seed-postgres started it by hand, and compose has to
             // own the container it is about to declare or the two fight over the host port. The
@@ -105,7 +105,7 @@ public class PipelinePhases {
     }
 
     /**
-     * idp first: with the gate on, the first push's post-receive needs a token, and the replayed
+     * idp first: with the gate on, the release replays' triggers need a token and the replayed
      * build-succeeded needs one too. qits-deployments before anything asks it for an environment
      * operation — it owns the topology and the socket both, so nothing else can answer for it.
      * <p>
@@ -128,7 +128,19 @@ public class PipelinePhases {
             boot.awaitHealth(ctx, env + "-qits-gateway (on qits-net, behind the edge)",
                     () -> boot.http.get("http://" + env + "-qits-gateway:8080/q/health/ready",
                             Map.of()));
-            boot.awaitHealth(ctx, "qits-platform-artifacts (on qits-net)", boot.artifacts::health);
+            // THE BYTE PLANE'S THREE, each at its own alias. They are polled together because they
+            // fail together in the same way — a store, a cache and a git host are three services
+            // now, and "the registry answers" stopped being one question at the split.
+            boot.awaitHealth(ctx, env + "-qits-artifacts (the store, on qits-net)",
+                    boot.artifacts::health);
+            boot.awaitHealth(ctx, "qits-platform-mirror (the caches, on qits-net)",
+                    () -> boot.http.get(boot.config.mirrorUrl() + "/mirror/q/health/ready",
+                            Map.of()));
+            // BEFORE git-repos, which is two phases away and PUTs a repository per platform
+            // repository against it. Its readiness includes the database it refuses to boot
+            // without, which is exactly what those calls need.
+            boot.awaitHealth(ctx, env + "-qits-githost (the git host, on qits-net)",
+                    boot.githost::health);
             // At its OWN alias, which is the one exception to "everything through the edge": there
             // is no gateway route to this service and there must not be one, so its record API is
             // addressed directly. Health lives under /dns/q because that is the service's own
@@ -220,24 +232,26 @@ public class PipelinePhases {
     }
 
     /**
-     * Creating a repository is a wire call: the git host keeps every repository as blobs in
-     * qits-platform-artifacts' own store, so there is no volume to seed and nothing on disk to
-     * initialise.
+     * Creating a repository is a wire call: qits-githost keeps every repository as blobs in its own
+     * store, so there is no volume to seed and nothing on disk to initialise.
      * The PUT is idempotent — 201 when this call created it, 200 when one was already there.
+     * <p>
+     * The address moved with the service at the byte-plane split — {@code <env>-qits-githost:8080/git}
+     * where it was {@code qits-platform-artifacts:8080/artifacts/git} — and the contract did not.
      */
     public Phase gitRepositories() {
         return new Phase("git-repos", "create the platform's repositories on the git host", ctx -> {
             int created = 0;
             for (String name : PlatformModel.platformRepos()) {
                 String repo = PlatformModel.repo(name);
-                ctx.status("PUT " + boot.artifacts.gitUrl(repo));
-                Http.Response response = boot.artifacts.createRepository(repo);
+                ctx.status("PUT " + boot.githost.gitUrl(repo));
+                Http.Response response = boot.githost.createRepository(repo);
                 if (response.status() != 200 && response.status() != 201) {
                     throw new IllegalStateException("create of " + repo + " answered "
                             + response.describe());
                 }
                 created += response.status() == 201 ? 1 : 0;
-                ctx.log("  " + repo + " -> /artifacts/git/" + repo
+                ctx.log("  " + repo + " -> /git/" + repo
                         + (response.status() == 201 ? "  (created)" : ""));
             }
             ctx.note(created + " created, "
@@ -258,7 +272,7 @@ public class PipelinePhases {
                 String repo = PlatformModel.repo(name);
                 Path src = boot.state.repoDir(name);
                 ctx.status("pushing " + repo + " main, quietly");
-                ProcessResult result = boot.git.push(src, boot.artifacts.gitUrl(repo),
+                ProcessResult result = boot.git.push(src, boot.githost.gitUrl(repo),
                         List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()), "main",
                         boot.config.pushToken(), ctx::log);
                 Boot.must(result, "pre-seed push of " + repo + " failed");
@@ -313,7 +327,7 @@ public class PipelinePhases {
             // The newest finished run BEFORE this attempt triggers is a previous attempt's, and
             // must not be read as this one's outcome. Null when the repo never ran.
             String baselineRun = boot.ci.finishedEventRun(repo).map(r -> r[0]).orElse(null);
-            ProcessResult push = boot.git.push(src, boot.artifacts.gitUrl(repo),
+            ProcessResult push = boot.git.push(src, boot.githost.gitUrl(repo),
                     List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
                     "refs/tags/" + version, boot.config.pushToken(), ctx::log);
             Boot.must(push, "tag push of " + repo + " " + version + " failed");
@@ -322,7 +336,7 @@ public class PipelinePhases {
             // uses to announce pushes, because this stands in for the announcement a real release
             // would have made.
             String token = boot.tokenOrNull(
-                    PlatformModel.wireAlias("platform-artifacts", boot.config.envName()),
+                    PlatformModel.wireAlias("artifacts", boot.config.envName()),
                     PlatformModel.wireAlias("ci", boot.config.envName()));
             String event = "{\"name\":\"SCMRelease\",\"payload\":{"
                     // BOTH spellings, because a real SCMRelease carries both: `repository` is the
@@ -402,7 +416,7 @@ public class PipelinePhases {
      * <p>
      * The flag is not decoration. The deployer ships a platform service only from the branch the
      * platform environment listens to, so an environment created without it leaves
-     * qits-platform-idp, qits-platform-artifacts, qits-platform-docs and the edge registering
+     * qits-platform-idp, qits-platform-mirror, qits-platform-dns and the edge registering
      * nothing and deploying nowhere — silently, because "no tier is the platform one" and "this
      * branch is not the platform tier's" are one answer.
      * <p>
@@ -537,12 +551,13 @@ public class PipelinePhases {
             String ref = boot.config.envBranch();
             //
             // BOTH refs, one sha, and only one of them deploys. The ref that does not deploy still
-            // has to exist and point here, so it goes up with -o qits.no-ci: a second post-receive
-            // for the same sha would queue a second cold native build of an image the first one
-            // already published.
+            // has to exist and point here, so it goes up with -o qits.no-ci: a second
+            // SCMPublishCommit without it would queue a second cold native build of an image the
+            // first one already published. The option is a FACT on the event now — the git host
+            // publishes it either way and qits-ci's listener is what honours it.
             // BEFORE the pushes, and that is the whole point of where these two lines sit. A
             // terminal row carrying the baseline id belongs to an earlier run, not this one — but
-            // the push is what creates this one, and post-receive can register it before the read
+            // the push is what creates this one, and its event can register it before the read
             // below returns. Captured after the push, the baseline is this phase's OWN run: every
             // later poll calls it stale, the FAILED short-circuit never fires, and a build that
             // died in seven seconds is waited on for the full hour. Found by the 2026-08-07
@@ -560,13 +575,13 @@ public class PipelinePhases {
 
             String quietRef = "main";
             ctx.status("pushing " + repo + " to " + quietRef + " (quietly)");
-            Boot.must(boot.git.push(src, boot.artifacts.gitUrl(repo),
+            Boot.must(boot.git.push(src, boot.githost.gitUrl(repo),
                             List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
                             "HEAD:refs/heads/" + quietRef, boot.config.pushToken(), ctx::log),
                     "push of " + repo + " to " + quietRef + " failed");
 
             ctx.status("pushing " + repo + " to " + ref + " (the ref that deploys it)");
-            ProcessResult push = boot.git.push(src, boot.artifacts.gitUrl(repo),
+            ProcessResult push = boot.git.push(src, boot.githost.gitUrl(repo),
                     List.of("qits.token=" + boot.config.pushToken()),
                     "HEAD:refs/heads/" + ref, boot.config.pushToken(), ctx::log);
             Boot.must(push, "push of " + repo + " to " + ref + " failed");
@@ -585,16 +600,17 @@ public class PipelinePhases {
             if (upToDate && staleRedRun(repo, sha, baselineRunId)) {
                 // No push, no event, and the run this sha already has is RED. There is no image to
                 // deploy, so the build event below would only buy an IMAGE_MISSING row — which is
-                // what a human then had to unpick by hand on the first prod bootstrap. Ask for the
-                // BUILD instead, by making the announcement the git host makes on a real push.
+                // what a human then had to unpick by hand on the first prod bootstrap.
                 //
-                // The baseline captured above is the red run's own id, so the wait below already
-                // ignores it and reads only a run NEWER than it. If that one is red too, the phase
-                // warns exactly as it did before: this replaces a dead end with one more attempt,
-                // not with a retry loop.
-                ctx.log("  " + repo + " unchanged and its newest run at " + sha.substring(0, 7)
-                        + " is red — re-announcing the push so ci builds it again");
-                reannouncePush(ctx, repo, sha, ref);
+                // NOTHING HERE CAN ASK FOR THE BUILD ANY MORE, and saying so is better than
+                // pretending. This used to re-announce the push to ci's HTTP intake; that intake is
+                // gone with the byte-plane split — a push is a durable SCMPublishCommit now, and
+                // qits-ci's own listener has already had this one and built it red. The two ways
+                // forward are both a person's: fix what failed and push again, or trigger the
+                // pipeline by hand. The wait below still runs, and still ends at its timeout.
+                ctx.warn(repo + " is unchanged and its newest run at " + sha.substring(0, 7)
+                        + " is red. The push was delivered and built; there is no announcement left"
+                        + " to re-make. Fix the build and push again");
             } else if (upToDate) {
                 // No push, no event — and not live at HEAD either. The image exists from an
                 // earlier run; hand the deployer the event it never got, naming the ref that
@@ -828,21 +844,27 @@ public class PipelinePhases {
                                     });
                             return Waiter.Poll.done("CI " + runStatus, runStatus);
                         }
-                        // The git host's push announcement is fire-and-forget too, and it dies for
-                        // real: the first proving run lost qits-platform-idp's to the database
-                        // cutover the previous phase's qits-oci-postgresql deploy had just caused —
-                        // ci's pool was severed the second the announcement arrived, no run was
-                        // ever enqueued, and the wait read "ci run not started" for its entire
-                        // hour. A pushed sha with no run a minute later IS that loss: nothing
-                        // upstream retries, so make the announcement again, once. Only after a real
-                        // push — the up-to-date branches already sent whatever event they needed.
+                        // A pushed sha with no run used to mean a LOST announcement, and this is
+                        // where the boot re-made it: the git host's post-receive POST was
+                        // fire-and-forget, and the first proving run lost qits-platform-idp's to the
+                        // database cutover the previous phase had just caused — ci's pool was
+                        // severed the second it arrived, no run was ever enqueued, and the wait read
+                        // "ci run not started" for its entire hour.
+                        //
+                        // <b>It cannot be lost any more.</b> qits-githost writes SCMPublishCommit to
+                        // the eventstream outbox inside the push's own transaction and qits-ci
+                        // consumes it durably, so a ci that is down, restarting or mid-cutover reads
+                        // it back when it returns. What is left is a WAIT, and the delay is the
+                        // consumer catching up rather than an event nobody holds. Said once, so a
+                        // slow start is legible and nobody goes looking for a replay that no longer
+                        // exists.
                         if (pushed && runStatus.isBlank()) {
                             noRunForMillis[0] += interval;
                             if (noRunForMillis[0] >= 60_000 && !reannounced[0]) {
-                                ctx.warn(repo + " was pushed but ci never started a run at "
-                                        + sha.substring(0, 7)
-                                        + " — the announcement is lost, making it again");
-                                reannouncePush(ctx, repo, sha, ref);
+                                ctx.log("  " + repo + " was pushed a minute ago and ci has not "
+                                        + "started a run at " + sha.substring(0, 7)
+                                        + " yet — the push is a durable event, so this is a "
+                                        + "consumer catching up rather than a lost announcement");
                                 reannounced[0] = true;
                             }
                         } else {
@@ -949,42 +971,18 @@ public class PipelinePhases {
                 .isPresent();
     }
 
-    /**
-     * Announces the push to ci the way the git host does, so a sha whose only run is red gets
-     * built again. This is a POST-RECEIVE, not a build-succeeded: what is missing is the IMAGE,
-     * and only a run makes one.
-     * <p>
-     * The token is minted as the platform store client, exactly as the release replay's is, because
-     * that is the identity the git host announces with — ci's intake checks the token's project
-     * claim against the repo the event names, and the store speaks for every repository, so it is
-     * the one client granted the wildcard. The branch is the ref that DEPLOYS the application,
-     * spelled the way the hook spells it: the branch name, with no refs/heads/ in front.
-     * <p>
-     * Retried like the build event, and for the same reason: this call travels through the edge and
-     * the gateway, both of which are applications this run deploys.
-     */
-    private void reannouncePush(PhaseContext ctx, String repo, String sha, String ref) {
-        Http.Response last = null;
-        for (int attempt = 1; attempt <= 3; attempt++) {
-            try {
-                String token = boot.tokenOrNull(
-                        PlatformModel.wireAlias("platform-artifacts", boot.config.envName()),
-                        PlatformModel.wireAlias("ci", boot.config.envName()));
-                last = boot.ci.postReceive(Json.object("repoId", repo, "branch", ref,
-                        "oldSha", NO_PREDECESSOR_SHA, "newSha", sha), token);
-                if (last.ok()) {
-                    ctx.log("  post-receive re-announced for " + repo + " on " + ref
-                            + " — waiting for the run it queues");
-                    return;
-                }
-            } catch (RuntimeException e) {
-                ctx.log("  re-announce attempt " + attempt + " failed: " + e.getMessage());
-            }
-            sleep(5000);
-        }
-        ctx.warn("could not re-announce the push for " + repo
-                + (last == null ? "" : ": " + last.describe()));
-    }
+    // THE PUSH RE-ANNOUNCEMENT IS GONE, and the rule it served is not.
+    //
+    // "An announcement the platform makes once, this program re-makes once" had two halves. The
+    // BUILD half survives above, as postBuildEvent: qits-ci's green-run notice still travels the
+    // bus and the deployer still keeps an HTTP intake for a person to hand it the event by hand.
+    // The PUSH half is retired, because there is no longer an announcement to lose: qits-githost
+    // writes SCMPublishCommit to its outbox inside the push's own transaction, and qits-ci's
+    // durable listener reads it back after any outage of its own. POST /ci/api/events/post-receive
+    // is gone from that service, and a call to it would be a call to nothing.
+    //
+    // What is left where it used to fire is one log line, so a wait that is long says which of the
+    // two it is: a consumer catching up, not an event nobody holds.
 
     private static void sleep(long millis) {
         try {
@@ -1007,7 +1005,7 @@ public class PipelinePhases {
                 String repo = PlatformModel.repo(name);
                 Path src = boot.state.repoDir(name);
                 ctx.status("pushing " + repo);
-                ProcessResult result = boot.git.push(src, boot.artifacts.gitUrl(repo),
+                ProcessResult result = boot.git.push(src, boot.githost.gitUrl(repo),
                         List.of("qits.token=" + boot.config.pushToken()), "main",
                         boot.config.pushToken(), ctx::log);
                 Boot.must(result, "push of " + repo + " failed");
@@ -1036,12 +1034,21 @@ public class PipelinePhases {
                     + "/            the host's one port, in front of every environment");
             report.add("gateway:   " + env + "-qits-gateway on qits-net "
                     + "(variant: local, UNAUTHENTICATED) — no host port of its own");
-            report.add("registry:  localhost:" + boot.config.registryPort() + " (host daemon only)");
+            report.add("registry:  localhost:" + boot.config.registryPort()
+                    + " — the platform's OWN images and packages (" + env + "-qits-artifacts)");
+            report.add("mirror:    localhost:" + boot.config.mirrorPort()
+                    + " — everything third-party, cached (qits-platform-mirror).");
+            report.add("           Point dockerd's registry-mirrors at it: "
+                    + "\"registry-mirrors\": [\"http://localhost:"
+                    + boot.config.mirrorPort() + "\"]");
             report.add("dns:       qits-platform-dns, published on " + boot.config.dnsPort()
                     + " udp AND tcp — a sibling of the edge, never a route behind it.");
             report.add("           Zones and records are ROWS: " + boot.config.dnsUrl()
                     + "/api/zones");
-            report.add("git host:  http://localhost:" + boot.config.port() + "/artifacts/git/<repoId>");
+            report.add("git host:  http://localhost:" + boot.config.gitHostPort()
+                    + "/git/<repoId> — qits-githost, its own service and its own port.");
+            report.add("           On qits-net it is " + boot.config.gitHostUrl()
+                    + "/<repoId>, which is what every service dials.");
             report.add("dev loop:  commit in a repo, rerun with QITS_SKIP_BUILD=1 — the push redeploys it");
             report.add("deploy:    push " + boot.config.envBranch()
                     + " — the ONE deploy ref; pushing main builds but deploys nothing.");

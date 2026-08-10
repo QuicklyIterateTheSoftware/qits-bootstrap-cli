@@ -52,13 +52,48 @@ public interface BootstrapConfig {
     int port();
 
     /**
-     * Host port qits-platform-artifacts publishes for the DOCKER DAEMON's pulls and pushes.
-     * localhost registries are HTTP-allowed by docker without daemon config, which is the whole
-     * trick — and the daemon is the host's, so this is the number a seed build resolves through.
-     * This CLI reads the registry API and the git host by wire alias, not through here.
+     * Host port qits-artifacts publishes for the DOCKER DAEMON's pulls and pushes of the platform's
+     * OWN images. localhost registries are HTTP-allowed by docker without daemon config, which is
+     * the whole trick — and the daemon is the host's, so this is the number a seed build resolves
+     * through. This CLI reads the registry API by wire alias, not through here.
+     * <p>
+     * It is the HOSTED half of the two-endpoint topology; {@link #mirrorPort()} is the other. The
+     * number did not move with the byte-plane split, deliberately: every committed pipeline config
+     * and every {@code QITS_ARTIFACTS_REGISTRY_HOST} on this platform says 8081, and what changed
+     * behind it is which service answers.
      */
     @WithDefault("8081")
     int registryPort();
+
+    /**
+     * Host port qits-platform-mirror publishes, and the THIRD-PARTY half of the two-endpoint
+     * topology: Docker Hub, quay.io, the Red Hat registry, npmjs and Maven Central, each behind a
+     * pull-through cache.
+     * <p>
+     * It is published for the same consumer the registry port is — the HOST's docker daemon, which
+     * cannot resolve a qits-net alias — and it is a second port rather than a path on the first
+     * because both services answer the same literal prefixes ({@code /artifacts/npm},
+     * {@code /artifacts/maven}, {@code /v2}). Two services cannot share one prefix behind one
+     * gateway entry, so the client's configuration is what picks between them.
+     */
+    @WithDefault("8082")
+    int mirrorPort();
+
+    /**
+     * Host port qits-githost publishes, and the reason it publishes one at all: <b>a person pushes
+     * from the host.</b>
+     * <p>
+     * The git host used to be inside qits-platform-artifacts and rode its published port —
+     * {@code localhost:8081/artifacts/git/<repo>} was the clone url a developer typed. The split
+     * moved the routes to a service of its own, so without a port of its own that door closes: the
+     * wire alias resolves on qits-net and nowhere else, and a workstation is not on qits-net.
+     * <p>
+     * Nothing in this CLI dials it. Every phase that pushes runs INSIDE the payload container,
+     * which joins qits-net in its second phase, so it uses the alias like every other member. This
+     * port exists for the person and for anything else on the host.
+     */
+    @WithDefault("8083")
+    int gitHostPort();
 
     /**
      * Host port the platform's postgres publishes.
@@ -147,7 +182,7 @@ public interface BootstrapConfig {
     @WithDefault("local-dev")
     String pushToken();
 
-    /** 1 = machine-token enforcement ON for ci, deployments, platform-artifacts and the idp. */
+    /** 1 = machine-token enforcement ON for ci, deployments, artifacts and the idp. */
     @WithDefault("true")
     boolean machineAuth();
 
@@ -213,7 +248,10 @@ public interface BootstrapConfig {
     @WithDefault("true")
     boolean web();
 
-    /** The browser view's port. Away from 8080 (the edge) and 8081 (artifacts) on purpose. */
+    /**
+     * The browser view's port. Away from the four this platform publishes on purpose: 8080 (the
+     * edge), 8081 (qits-artifacts), 8082 (qits-platform-mirror) and 8083 (qits-githost).
+     */
     @WithDefault("8480")
     int webPort();
 
@@ -242,15 +280,56 @@ public interface BootstrapConfig {
     }
 
     /**
-     * qits-platform-artifacts on qits-net: the registry, the git host and the artifacts API.
+     * qits-artifacts on qits-net: the platform's OWN packages — the hosted Maven repository, the
+     * hosted npm registry, the hosted OCI registry, the daemon binaries and the docs bundles.
      * <p>
      * <b>Every address below is a wire alias, because this CLI runs on qits-net.</b> They were
      * {@code 127.0.0.1:<published port>} while it ran on the host. There is no switch between the
      * two: the run joins the network before it dials anything, so the in-network address is the
      * only one there is and nothing has to decide which shape to use.
+     * <p>
+     * <b>It carries the environment name since the byte-plane split.</b> This service is an
+     * environment service again — the caches that made it platform-scoped are
+     * {@link #mirrorUrl()} now — so its alias is qualified like ci's and the deployer's, and a
+     * hard-coded qits-platform-artifacts resolves to nothing.
      */
     default String artifactsUrl() {
-        return "http://qits-platform-artifacts:8080/artifacts";
+        return "http://" + envName() + "-qits-artifacts:8080/artifacts";
+    }
+
+    /**
+     * qits-platform-mirror on qits-net: everything THIRD-PARTY a build resolves, cached.
+     * <p>
+     * Scheme, host and port with NO path, which is the one address shape in this file that has to
+     * be that way: this service answers under two unrelated prefixes — {@code /mirror/q} for its
+     * health and the registries' own literals ({@code /artifacts/npm}, {@code /artifacts/maven},
+     * {@code /v2}) for content — so a base with a path would be right for one caller and wrong for
+     * the next. Each use appends what it wants.
+     * <p>
+     * A PLATFORM service, so the alias carries no tier: one cache of Maven Central serves every
+     * environment on the machine, which is the whole reason this half of the byte plane stayed up
+     * here when the rest went back to being per-tier.
+     */
+    default String mirrorUrl() {
+        return "http://qits-platform-mirror:8080";
+    }
+
+    /**
+     * qits-githost on qits-net, at the segment its Vert.x routes hard-code: {@code /git}.
+     * <p>
+     * The git smart-HTTP host is a service of its own since the byte-plane split — it was never an
+     * artifact, it only shared the storage — and an ENVIRONMENT service, because every one of its
+     * consumers already was one. A clone url is therefore
+     * {@code http://<env>-qits-githost:8080/git/<repoId>}, and the {@code /artifacts} that used to
+     * be in front of it is gone with the service that owned it.
+     * <p>
+     * Health is {@code /git/q/health/ready}: the segment is the service's own
+     * {@code quarkus.http.non-application-root-path}, chosen to sit under the same prefix so a
+     * prefix-routing gateway can reach both. The git routes themselves cannot follow it — git
+     * treats the base as opaque and no config key can move them.
+     */
+    default String gitHostUrl() {
+        return "http://" + envName() + "-qits-githost:8080/git";
     }
 
     /**

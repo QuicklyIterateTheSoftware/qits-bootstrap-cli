@@ -25,6 +25,11 @@ class BootstrapConfigTest {
 
         assertThat(config.port()).isEqualTo(8080);
         assertThat(config.registryPort()).isEqualTo(8081);
+        // The other two byte doors. 8082 is the pull-through mirror — dockerd's registry-mirrors
+        // names it, and every committed Dockerfile spells it in its FROM lines. 8083 is the git
+        // host, which needs a door of its own since it stopped riding the registry's.
+        assertThat(config.mirrorPort()).isEqualTo(8082);
+        assertThat(config.gitHostPort()).isEqualTo(8083);
         // 5433, not 5432: a postgres already installed on the workstation must not be a bind
         // conflict this program has to explain.
         assertThat(config.pgPort()).isEqualTo(5433);
@@ -52,6 +57,8 @@ class BootstrapConfigTest {
         Map<String, String> env = new LinkedHashMap<>();
         env.put("QITS_PORT", "9090");
         env.put("QITS_REGISTRY_PORT", "9091");
+        env.put("QITS_MIRROR_PORT", "9092");
+        env.put("QITS_GIT_HOST_PORT", "9093");
         env.put("QITS_PG_PORT", "5555");
         env.put("QITS_DNS_PORT", "5353");
         env.put("QITS_DOMAIN", "qits-dev.eu");
@@ -68,6 +75,8 @@ class BootstrapConfigTest {
 
         assertThat(config.port()).isEqualTo(9090);
         assertThat(config.registryPort()).isEqualTo(9091);
+        assertThat(config.mirrorPort()).isEqualTo(9092);
+        assertThat(config.gitHostPort()).isEqualTo(9093);
         assertThat(config.pgPort()).isEqualTo(5555);
         assertThat(config.dnsPort()).isEqualTo(5353);
         assertThat(config.domain()).contains("qits-dev.eu");
@@ -92,7 +101,14 @@ class BootstrapConfigTest {
         BootstrapConfig config = from(Map.of("QITS_PORT", "9090", "QITS_REGISTRY_PORT", "9091",
                 "QITS_ENV_NAME", "preprod"));
 
-        assertThat(config.artifactsUrl()).isEqualTo("http://qits-platform-artifacts:8080/artifacts");
+        // THE BYTE PLANE'S THREE ADDRESSES, and two of the three carry the environment name: the
+        // store and the git host are environment services since the split, the cache is not.
+        assertThat(config.artifactsUrl())
+                .isEqualTo("http://preprod-qits-artifacts:8080/artifacts");
+        assertThat(config.gitHostUrl()).isEqualTo("http://preprod-qits-githost:8080/git");
+        // Scheme, host and port with NO path: this service answers under /mirror/q for health and
+        // under the registries' own literals for content, so each caller appends what it wants.
+        assertThat(config.mirrorUrl()).isEqualTo("http://qits-platform-mirror:8080");
         // Through the EDGE, not straight at prod-qits-ci: the edge and the gateway's route table
         // are the path this run has to keep exercising.
         assertThat(config.ciUrl()).isEqualTo("http://qits-platform-edge:8080/ci");

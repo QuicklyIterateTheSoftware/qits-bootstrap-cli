@@ -35,8 +35,11 @@ public final class BootstrapPlan {
 
         if (boot.config.skipBuild()) {
             phases.add(seed.skipBuildGate());
+            // Not a build, so a warm rerun still needs it: it resolves the passwords both generated
+            // files carry, and the deployer refuses to boot without the database it names.
+            phases.add(seed.seedPostgres());
         } else {
-            phases.add(seed.authCoreSeed());
+            phases.add(seed.mavenSeed());
             // CORE order, and the Maven bootstrap that has to happen in the middle of it:
             // qits-ci consumes qits-eventstream from the Maven repository it will use in steady
             // state, so artifacts is brought up alone and the dependencies are published before
@@ -46,7 +49,13 @@ public final class BootstrapPlan {
             // client to place a bundle for and no qits dependency to resolve, so its image builds
             // from Maven Central alone. Beside the gateway because that is what it fronts.
             phases.add(seed.seedImage("platform-edge"));
-            phases.add(seed.seedImage("platform-artifacts"));
+            // THE BYTE PLANE'S THREE, together and here rather than after the publishes below: all
+            // three are built out of qits-blobstore and qits-registries, which the maven-seed phase
+            // put in the temporary registry before the first image was built. There is nothing they
+            // could wait for — the real store does not exist until one of them is running.
+            phases.add(seed.seedImage("platform-mirror"));
+            phases.add(seed.seedImage("artifacts"));
+            phases.add(seed.seedImage("githost"));
             // Beside artifacts because it needs nothing either: the image is upstream postgres,
             // built from one FROM line, so it costs seconds rather than a native build.
             phases.add(seed.seedImage("oci-postgresql"));
@@ -60,7 +69,22 @@ public final class BootstrapPlan {
             // stood in for by the placeholder bundle — so nothing here waits on the publishes
             // below.
             phases.add(seed.seedImage("events"));
+            // BEFORE the mirror is started, because the mirror refuses to boot without its
+            // database — and the mirror is started by hand, before any compose file exists.
+            phases.add(seed.seedPostgres());
+            // BEFORE seed-artifacts, and that order is what the two-endpoint topology costs: every
+            // publish below resolves its third-party half — maven plugins, Maven Central, every
+            // unscoped npm package — through the mirror's caches. A mirror that is not answering is
+            // not a slow publish but a failed one.
+            phases.add(seed.seedMirrorStart());
             phases.add(seed.seedArtifactsStart());
+            // The byte-plane libraries first and in dependency order, for the reason
+            // PlatformModel.RELEASE_PUBLISHERS spells: qits-registries is written against
+            // qits-blobstore's entities.
+            phases.add(seed.mavenPublish("blobstore", "qits-blobstore",
+                    "publish qits-blobstore into seed artifacts"));
+            phases.add(seed.mavenPublish("registries", "qits-registries-oci",
+                    "publish qits-registries into seed artifacts"));
             phases.add(seed.mavenPublish("eventstream", "qits-eventstream",
                     "publish qits-eventstream into seed artifacts"));
             phases.add(seed.mavenPublish("integrations-quarkus", "qits-auth-core",
@@ -77,11 +101,11 @@ public final class BootstrapPlan {
             phases.add(seed.ciDaemon());
         }
 
-        // OUTSIDE the skip-build branch, and before idp-secrets. The deployer refuses to boot
-        // without this database and the seed stack starts it three phases from now, so the server
-        // has to answer before the compose file that addresses it is written. A warm rerun needs
-        // it just as much: the passwords it resolves fill both generated files.
-        phases.add(seed.seedPostgres());
+        // seed-postgres is inside BOTH arms above rather than here, and the byte-plane split is why:
+        // qits-platform-mirror is started by hand in the middle of the build arm and refuses to boot
+        // without its database, so the server has to answer before that phase — while a warm rerun
+        // has no such phase and needs postgres only for the passwords both generated files carry.
+        // One placement per arm, each the earliest point that arm needs.
         phases.add(seed.idpSecrets());
         phases.add(seed.composeFile());
         phases.add(seed.pdRunArgs());

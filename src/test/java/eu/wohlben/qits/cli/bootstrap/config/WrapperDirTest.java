@@ -45,10 +45,24 @@ class WrapperDirTest {
         // A checkout whose .gitmodules is missing or unreadable is still a wrapper if the
         // submodule is on disk — which is what a `git submodule update --init` leaves behind.
         Path root = Files.createDirectories(temp.resolve("no-gitmodules"));
+        Files.createDirectories(root.resolve("services/qits-artifacts"));
+
+        assertThat(WrapperDir.detect(root.resolve("services/qits-artifacts"))).contains(root);
+    }
+
+    /**
+     * <b>Both spellings of the store's directory are a wrapper.</b> The repository was
+     * qits-artifacts, became qits-platform-artifacts in the 2026-08-08 rename, and went back when
+     * the byte-plane split moved the caches out — so a working copy on either side of either rename
+     * has to be recognised. Asking for one of them turns somebody's checkout into "no wrapper
+     * repository at or above …".
+     */
+    @Test
+    void thePreSplitSpellingIsStillAWrapper() throws IOException {
+        Path root = Files.createDirectories(temp.resolve("pre-split"));
         Files.createDirectories(root.resolve("services/qits-platform-artifacts"));
 
-        assertThat(WrapperDir.detect(root.resolve("services/qits-platform-artifacts")))
-                .contains(root);
+        assertThat(WrapperDir.isWrapper(root)).isTrue();
     }
 
     @Test

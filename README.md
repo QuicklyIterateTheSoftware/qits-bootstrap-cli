@@ -12,11 +12,11 @@ four-hour cold start is no longer four hours of silence.
     │   ✓ 32/59 wait for the seed services (1m20s)                               │
     │   ✓ 33/59 publish the ci-daemon binary to the registry (12s)  — 8d0f1a2b…  │
     │ ▸ 34/59 create the platform's repositories on the git host   ⠹ 4s          │
-    │      PUT http://127.0.0.1:8081/artifacts/git/qits-spa-ci                   │
+    │      PUT http://prod-qits-githost:8080/git/qits-spa-ci                     │
     │   25 phases pending — next: pre-seed release-train histories               │
     ├────────────────────────────────────────────────────────────────────────────┤
-    │  qits-spa-deployments -> /artifacts/git/qits-spa-deployments  (created)    │
-    │  qits-spa-observability -> /artifacts/git/qits-spa-observability (created) │
+    │  qits-spa-deployments -> /git/qits-spa-deployments  (created)              │
+    │  qits-spa-observability -> /git/qits-spa-observability  (created)          │
     │  … the running step's own output, live                                     │
     └────────────────────────────────────────────────────────────────────────────┘
 
@@ -77,8 +77,9 @@ call libc do not survive being compiled into a native image. One process per ter
 that already shells docker and git for a living.
 
 It runs **in a container on `qits-net`**, with the host's docker socket mounted. Every address it
-dials is a wire alias — `qits-platform-artifacts:8080`, the postgres alias on 5432,
-`qits-platform-idp:8080`, and qits-ci and qits-deployments through `qits-platform-edge:8080` — and
+dials is a wire alias — `prod-qits-artifacts:8080`, `qits-platform-mirror:8080`,
+`prod-qits-githost:8080`, the postgres alias on 5432, `qits-platform-idp:8080`, and qits-ci and
+qits-deployments through `qits-platform-edge:8080` — and
 the run joins the network itself, before it dials anything. There is no host-addressed mode beside
 that one.
 
@@ -123,12 +124,14 @@ the same names `qits-local-up.sh` read:
 | `QITS_SRC` | `.qits-bootstrap-src` | where those checkouts are cloned to |
 | `QITS_ORG_URL` | the GitHub org | where a repository with no local checkout is cloned from — the wrapper included, on a cold start. Read anonymously |
 | `QITS_PORT` | `8080` | the host's ONE published port, bound by qits-platform-edge. It is the door for a person's browser; the CLI dials the edge's alias instead |
-| `QITS_REGISTRY_PORT` | `8081` | qits-platform-artifacts' host port, for the DOCKER DAEMON: seed builds run with `--network host` and resolve Maven through `localhost:<this>`. The CLI reads the registry API and the git host by alias |
+| `QITS_REGISTRY_PORT` | `8081` | qits-artifacts' host port, for the DOCKER DAEMON: seed builds run with `--network host` and resolve Maven through `localhost:<this>`, and publish steps push the platform's own images there. The HOSTED half of the two-endpoint topology. The CLI reads the registry API by alias |
+| `QITS_MIRROR_PORT` | `8082` | qits-platform-mirror's host port, and the THIRD-PARTY half: Docker Hub, quay.io, the Red Hat registry, npmjs and Maven Central, each behind a pull-through cache. Point dockerd's `registry-mirrors` at it, and note that every committed Dockerfile spells `localhost:8082/{hub,quay,redhat}/…` in its `FROM` lines — a seed build rewrites those back to the direct upstreams, because a cold start cannot pull through the mirror it is starting |
+| `QITS_GIT_HOST_PORT` | `8083` | qits-githost's host port, and what a PERSON clones and pushes through: `http://localhost:8083/git/<repo>`. The git host is a service of its own since the byte-plane split, so it needs a door of its own — it used to ride the registry's. Nothing in the CLI dials it; every phase that pushes runs inside a container on qits-net |
 | `QITS_PG_PORT` | `5433` | what the platform's postgres publishes on 127.0.0.1, for a person with a `psql`. The CLI connects to the wire alias on 5432 like every other consumer. 5433 so a postgres already on the workstation is not a bind conflict |
 | `QITS_DNS_PORT` | `53` | what qits-platform-dns publishes, **on UDP and on TCP**. 53 because that is the port a registrar's delegation reaches; the service binds 8053 inside the container, since below 1024 needs privileges it should not hold. TCP is not the optional half — a truncated UDP answer carries zero records and the client's TCP retry is the only way it gets one. **Move it on a workstation that already holds 53**, which most do: measured on the WSL2 development host, systemd-resolved holds it, docker refuses the publish, and `compose up` then fails as a whole — the entire seed stack, not just the nameserver. `5353` there. A delegation cannot follow a port, so anything but 53 is for local testing |
 | `QITS_DOMAIN` | unset | **the domain this platform serves.** Unset is a full platform with no public names: the nameserver runs with no zones and the edge stays on plain HTTP. Set, this run gives the nameserver its identity (`ns1.<domain>`, `hostmaster.<domain>`), creates the zone row, and gives the edge ports 80, 443 and a loopback 9000 with a Let's Encrypt certificate slot on a volume. It writes no records and touches no registrar — both need this host's public IP. Lowercase, at least two labels, no trailing dot; a bad value stops the run before anything is built. `--domain` is the same knob for one run |
 | `QITS_SKIP_BUILD` | `0` | 1 = the seed images and the daemon binary exist; skip to compose and the pushes |
-| `QITS_MACHINE_AUTH` | `1` | machine-token enforcement for ci, deployments and platform-artifacts |
+| `QITS_MACHINE_AUTH` | `1` | machine-token enforcement for ci, deployments and artifacts |
 | `QITS_PUSH_TOKEN` | `local-dev` | the git host's push token — the documented escape hatch, not a secret |
 | `QITS_DEPLOY_TIMEOUT` | `3600` | seconds to wait per application deployment |
 | `QITS_RELEASE_TIMEOUT` | `3600` | seconds to wait per replayed release run |
@@ -314,8 +317,8 @@ program whose whole job is that the platform is not up yet:
 | `GET /events` | the run as it happens: one `snapshot` on connect, then `phase`, `status`, `line`, `ev` (a platform event) and `done` as server-sent events, with a comment every 15s so nothing in the middle calls it dead |
 | `GET /state.json` | the same state in one answer, for `curl` |
 
-Knobs: `QITS_WEB_PORT` (default `8480` — 8080 is the edge, 8081 is the artifacts service, and 8090 is
-taken often enough to be a poor default), `QITS_WEB_HOST` (default `0.0.0.0` — on WSL2 the
+Knobs: `QITS_WEB_PORT` (default `8480` — 8080 is the edge, 8081 the artifacts service, 8082 the
+mirror, 8083 the git host, and 8090 is taken often enough to be a poor default), `QITS_WEB_HOST` (default `0.0.0.0` — on WSL2 the
 Windows-side browser cannot reliably reach a WSL-loopback bind; set `127.0.0.1` to keep the view
 off the LAN), and `QITS_WEB=0`, which turns it off entirely — no server, no port.
 
@@ -338,24 +341,25 @@ below.
 
 | | phase |
 | --- | --- |
-| 1–5 | preflight (docker, git, where the wrapper is, and which domain — if any — this platform serves); join `qits-net`, which every address after it needs; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 33 platform repositories; read `.qits-bootstrap.env` |
-| 6 | seed `qits-auth-core` for the first artifacts build (a temporary file repository, served over HTTP, that breaks the first-boot cycle) |
-| 7–12 | seed images `qits/gateway`, `qits/platform-edge`, `qits/platform-artifacts`, `qits/oci-postgresql`, `qits/platform-dns`, `qits/events` — the six that need nothing from the platform |
-| 13 | have qits-platform-artifacts serving the registry port, so there is somewhere to publish to |
-| 14–17 | publish `qits-eventstream`, `qits-auth-core`, `@qits/ui-components`, `@qits/angular` |
-| 18–20 | seed images `qits/ci`, `qits/deployments`, `qits/platform-idp` |
-| 21–25 | the five step images from qits-oci |
-| 26 | the ci-daemon musl static binary, and its digest |
-| 27 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC the seven databases the seed stack needs: the deployer's own and its outbox's, qits-ci's own and its outbox's, qits-platform-idp's, qits-platform-dns' and qits-events'. Two are outboxes because the eventstream library keeps its own Flyway lineage and cannot share a database with its host. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |
-| 28 | resolve the idp's client secrets (given, kept, generated) and record the run state |
-| 29–30 | generate the seed compose file; write the deployer's run-args onto its config volume |
+| 1–5 | preflight (docker, git, where the wrapper is, and which domain — if any — this platform serves); join `qits-net`, which every address after it needs; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 37 platform repositories; read `.qits-bootstrap.env` |
+| 6 | seed the qits libraries the byte plane is built from — `qits-blobstore`, `qits-registries`, `qits-eventstream`, `qits-auth-core` — into a temporary file repository served over HTTP, which is what breaks the first-boot cycle: three of the images below are built out of jars only this platform will ever publish |
+| 7–14 | seed images `qits/gateway`, `qits/platform-edge`, `qits/platform-mirror`, `qits/artifacts`, `qits/githost`, `qits/oci-postgresql`, `qits/platform-dns`, `qits/events` — the eight that need nothing from a running platform |
+| 15 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC the ten databases the seed stack needs: the deployer's own and its outbox's, qits-ci's own and its outbox's, qits-platform-idp's, qits-platform-dns', qits-events', qits-platform-mirror's, and qits-githost's own and its outbox's. Three are outboxes because the eventstream library keeps its own Flyway lineage and cannot share a database with its host. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |
+| 16 | have qits-platform-mirror serving, because every publish below resolves its third-party half through it — Maven Central, npmjs — and a cache that is not up is not a slow publish but a failed one. It cannot pull through itself: its own image was built minutes ago with the mirror prefixes rewritten to the direct upstreams |
+| 17 | have qits-artifacts serving the registry port, so there is somewhere to publish to |
+| 18–23 | publish `qits-blobstore`, `qits-registries`, `qits-eventstream`, `qits-auth-core`, `@qits/ui-components`, `@qits/angular` |
+| 24–26 | seed images `qits/ci`, `qits/deployments`, `qits/platform-idp` |
+| 27–31 | the five step images from qits-oci |
+| 32 | the ci-daemon musl static binary, and its digest |
+| 33 | resolve the idp's client secrets (given, kept, generated) and record the run state |
+| 34–35 | generate the seed compose file; write the deployer's run-args onto its config volume |
 | — | **with `QITS_DOMAIN` only**: write a self-signed placeholder certificate onto the `qits-edge-letsencrypt` volume, unless one is already there. It is before the stack starts because the edge's keystore names those files and a keystore whose files are missing fails startup |
-| 31–32 | start the seed stack (only what the deployer does not already manage); wait for the idp, the edge, the gateway, artifacts, the nameserver, ci, the deployer and the bus — all on qits-net |
+| 36–37 | start the seed stack (only what the deployer does not already manage); wait for the idp, the edge, the gateway, the store, the mirror, the git host, the nameserver, ci, the deployer and the bus — all on qits-net |
 | — | **with `QITS_DOMAIN` only**: create the zone in qits-platform-dns (`POST /dns/api/zones`, 409 tolerated). No records: their values are this host's public address, which the run cannot know |
-| 33 | publish the ci-daemon binary, version-addressed by its digest |
-| 34–35 | create the 33 repositories on the git host; pre-seed the seeded histories with `-o qits.no-ci` |
-| 36–42 | replay the release pipeline of each publisher the platform pins, and wait for each run. Four are the Maven and npm packages the wrapper's builds install; three are docker images — `qits/workspace-base`, then `qits/workspace` and `qits/projects-daemon` + `qits/project-agent`. **The base goes first and that order is load-bearing**: both daemon builds pull it at a pinned version, and the base's own replay is what puts it in the registry. A publisher with no release tag reachable from main STOPS the boot, which is right: a pin nobody has minted has nothing to dangle |
-| 43 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
+| 38 | publish the ci-daemon binary, version-addressed by its digest |
+| 39–40 | create the 37 repositories on qits-githost; pre-seed the seeded histories with `-o qits.no-ci` |
+| 41–49 | replay the release pipeline of each publisher the platform pins, and wait for each run. Two are the byte plane's own libraries and **qits-blobstore goes before qits-registries**, which is written against its entities; four are the Maven and npm packages the wrapper's builds install; three are docker images — `qits/workspace-base`, then `qits/workspace` and `qits/projects-daemon` + `qits/project-agent`. **The base goes first and that order is load-bearing**: both daemon builds pull it at a pinned version, and the base's own replay is what puts it in the registry. A publisher with no release tag reachable from main STOPS the boot, which is right: a pin nobody has minted has nothing to dangle |
+| 50 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
 | 44–57 | one phase per deployable: push `main` quietly and `environment/<name>` for real, then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-platform-edge is second to last: it is the host port, so its cutover takes this program's own door away for a beat |
 | 58–59 | push the seeded repositories; the closing report |
 
@@ -376,16 +380,16 @@ registered, deployed, failed — is relayed from its container log under `pd|`. 
 prints git's own output inline. Silence during a wait is therefore always the platform being
 silent, never the display.
 
-Phase 30 restarts the seed deployer when the run-args it just wrote differ from what the volume
+Phase 35 restarts the seed deployer when the run-args it just wrote differ from what the volume
 held. The deployer reads that file once, at its own boot, so a rerun that changes it changes
 nothing for a container that is already running.
 
-Phases 6 and 13 are the two that bind the registry port, and both ask first whether
-qits-platform-artifacts is already serving it — by GET on the artifacts API's own health at the
-store's wire alias, which the temporary nginx does not answer to. On a platform whose store is
-deployed, the answer is yes: the deployed container publishes the same port from the same volume, so
-phase 6 skips and phase 13 waits for that store instead of starting a seed beside it. Binding it
-anyway is `port is already allocated`, exit 125, and a stopped boot.
+Phases 6 and 17 are the two that bind the registry port, and both ask first whether qits-artifacts
+is already serving it — by GET on the artifacts API's own health at the store's wire alias, which the
+temporary nginx does not answer to. On a platform whose store is deployed, the answer is yes: the
+deployed container publishes the same port from the same volume, so phase 6 skips and phase 17 waits
+for that store instead of starting a seed beside it. Binding it anyway is `port is already
+allocated`, exit 125, and a stopped boot.
 
 The temporary registry of phase 6 has **two consumers and two addresses**, which is the shape every
 container the bootstrap starts for the daemon's benefit has: the CLI dials it on `qits-net` by its

@@ -3,6 +3,7 @@ package eu.wohlben.qits.cli.bootstrap.phases;
 import eu.wohlben.qits.cli.bootstrap.api.ArtifactsApi;
 import eu.wohlben.qits.cli.bootstrap.api.PdApi;
 import eu.wohlben.qits.cli.bootstrap.api.CiApi;
+import eu.wohlben.qits.cli.bootstrap.api.GitHostApi;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.IdpApi;
 import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
@@ -32,6 +33,8 @@ public class Boot {
 
     public final Http http = new Http();
     public final ArtifactsApi artifacts;
+    /** The git host, a service of its own since the byte-plane split. */
+    public final GitHostApi githost;
     public final CiApi ci;
     public final PdApi pd;
     public final IdpApi idp;
@@ -43,6 +46,7 @@ public class Boot {
         this.docker = new Docker(runner);
         this.git = new Git(runner);
         this.artifacts = new ArtifactsApi(http, config.artifactsUrl());
+        this.githost = new GitHostApi(http, config.gitHostUrl());
         this.ci = new CiApi(http, config.ciUrl());
         this.pd = new PdApi(http, config.platformDeploymentsUrl());
         this.idp = new IdpApi(http, config.idpIssuer());

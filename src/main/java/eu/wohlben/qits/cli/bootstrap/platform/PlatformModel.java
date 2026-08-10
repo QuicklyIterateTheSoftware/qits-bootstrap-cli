@@ -9,9 +9,11 @@ import java.util.List;
  * order is what it is.
  * <p>
  * A <b>name</b> here is the repository's name without the {@code qits-} prefix, and it is also the
- * deployer's application name — {@code platform-artifacts} is qits-platform-artifacts is the
- * application {@code qits-platform-artifacts}. The 2026-08-08 rename moved the plane INTO the
- * repository names, so a name now says which plane its service is on and nothing else has to.
+ * deployer's application name — {@code platform-idp} is qits-platform-idp is the application
+ * {@code qits-platform-idp}. The 2026-08-08 rename moved the plane INTO the repository names, so a
+ * name now says which plane its service is on and nothing else has to. The byte-plane split moved
+ * three of them the other way on 2026-08-10: {@code artifacts}, {@code docs} and {@code githost}
+ * are environment services and say so by carrying no plane at all.
  */
 public final class PlatformModel {
 
@@ -21,7 +23,7 @@ public final class PlatformModel {
      * over.
      * <p>
      * qits-platform-idp is in here because every service that enforces machine auth is: a seed ci
-     * that cannot reach an issuer answers 401 to the git host's very first post-receive.
+     * that cannot reach an issuer refuses this bootstrap's very first authenticated call.
      * qits-deployments is in here because it owns the topology AND the docker socket — nothing can
      * create the environment or deploy anything until it answers. It is one component: it replaces
      * the qits-cd and qits-serviceregistry pair the seed used to carry.
@@ -52,10 +54,17 @@ public final class PlatformModel {
      * at phase 46 — six deployables after the first one announced. A seeded bus is one more seed
      * image and one more database; the alternative is a bootstrap whose first six deployments are
      * announced into nothing.
+     * <p>
+     * <b>The byte plane split into three on 2026-08-10, and all three are in the seed.</b>
+     * qits-artifacts is what qits-platform-artifacts was minus the caches and minus git, and it is
+     * an environment service again. qits-platform-mirror holds the pull-through caches, so it is
+     * where every third-party byte a build resolves comes from — a seed publish included, which is
+     * why it starts before the first one. qits-githost is the git host, and the first push of the
+     * boot is a push to it: nothing can be built from a repository nothing hosts.
      */
     public static final List<String> CORE = List.of(
-            "gateway", "platform-edge", "platform-artifacts", "ci", "deployments", "platform-idp",
-            "platform-dns", "events", "oci-postgresql");
+            "gateway", "platform-edge", "platform-mirror", "artifacts", "githost", "ci",
+            "deployments", "platform-idp", "platform-dns", "events", "oci-postgresql");
 
     /**
      * Everything the platform deploys through itself. Order matters: observability first (quiets
@@ -91,16 +100,24 @@ public final class PlatformModel {
      * Plan is plain values and no deployment reads the database inside the docker window. The same
      * self-referential class as the registry pulling its own successor before stopping itself.
      * <p>
-     * <b>qits-platform-dns sits beside qits-platform-docs</b>, before the gateway and well before
+     * <b>qits-platform-dns sits beside qits-docs</b>, before the gateway and well before
      * the edge. Nothing in this train dials it: a DNS query arrives from the internet rather than
      * from qits-net, so its cutover can interrupt queries and nothing else. What it must not do is
      * fall inside the edge's window, which is the one deployment that takes this program's own door
      * away for a beat.
+     * <p>
+     * <b>The byte plane's three sit together, and their order inside it is forced.</b>
+     * qits-platform-mirror is first of the three: every image build and every dependency
+     * resolution after it goes through the mirror, so its cutover belongs before the services whose
+     * builds it feeds rather than in the middle of them. qits-githost comes after qits-artifacts
+     * and before qits-ci, because ci reads pipeline config out of the git host and clones from it —
+     * and because the githost's own deployment is the one that re-hosts the repository this train
+     * pushes to, the same self-referential class as postgres and the deployer.
      */
     public static final List<String> DEPLOYABLES = List.of(
             "observability", "oci-postgresql", "platform-idp", "stt", "projects", "workspaces",
-            "events", "platform-docs", "platform-dns", "gateway", "platform-artifacts", "ci",
-            "platform-edge", "deployments");
+            "events", "docs", "platform-dns", "gateway", "platform-mirror", "artifacts", "githost",
+            "ci", "platform-edge", "deployments");
 
     /**
      * The deployables on the PLATFORM plane: one instance for the whole platform, deployed once
@@ -120,6 +137,14 @@ public final class PlatformModel {
      * qits-platform-docs (one docs repository inside that store, so a second reader per tier would
      * be two front doors onto one shelf).
      * <p>
+     * <b>The byte-plane split settled that pair on 2026-08-10, and only the caches stayed up
+     * here.</b> qits-platform-artifacts held the pull-through caches, and THAT was the whole reason
+     * it could not be per-tier: a cache of Maven Central is one cache for a machine however many
+     * tiers it runs. Those caches are qits-platform-mirror now, so the hosted registries went back
+     * to being an environment service (qits-artifacts) and the docs reader followed the shelf it
+     * reads (qits-docs). The git host left with them, as qits-githost, and it is an environment
+     * service too: every one of its consumers already was one.
+     * <p>
      * <b>It grew to five on 2026-08-09</b>, and qits-platform-dns is of exactly that kind: one
      * delegated nameserver answers for every environment's hostnames, because a zone is a row and
      * {@code <epic>.qits-dev.eu} and its neighbours are rows in one database behind one delegation.
@@ -133,7 +158,7 @@ public final class PlatformModel {
      * set and {@code platform/main} is retired.
      */
     public static final List<String> PLATFORM_SERVICES = List.of(
-            "platform-edge", "platform-idp", "platform-artifacts", "platform-docs", "platform-dns");
+            "platform-edge", "platform-idp", "platform-mirror", "platform-dns");
 
     /**
      * Repositories that need a repository on the platform git host and a main push, but are not
@@ -150,12 +175,18 @@ public final class PlatformModel {
      * of them is an application of the deployer: an image nothing runs as a container has no
      * deployments.yml and no health endpoint. They need the repository, the history and the release
      * replay below, and nothing else.
+     * <p>
+     * <b>qits-blobstore and qits-registries joined on 2026-08-10</b>, and they are the byte plane's
+     * own libraries: the content-addressed blob store, and one Maven module per registry format.
+     * Three services build against them — qits-artifacts, qits-platform-mirror and qits-githost —
+     * and none of those builds can run on the platform until the jars are IN the platform's Maven
+     * registry, which is what a repository plus a release replay gets them.
      */
     public static final List<String> SEEDED_REPOS = List.of(
-            "oci", "ci-daemon", "eventstream", "spa-ui-components", "userflows",
-            "platform-spa-docs", "spa-deployments",
+            "oci", "ci-daemon", "eventstream", "blobstore", "registries", "spa-ui-components",
+            "userflows", "spa-docs", "spa-deployments",
             "integrations-angular", "integrations-quarkus", "spa-home", "spa-projects",
-            "spa-workspaces", "platform-spa-artifacts", "spa-observability", "spa-events",
+            "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events",
             "spa-ci", "oci-workspace", "workspace-daemon", "projects-daemon");
 
     /**
@@ -177,9 +208,17 @@ public final class PlatformModel {
      *       {@code .config/qits/workspace-base.version} and passes it as {@code --build-arg BASE}.
      *       It is independent of qits-workspace-daemon; only the base has to precede it.
      * </ul>
+     * <p>
+     * <b>The byte-plane libraries are first, and their pair order is as load-bearing as the images'
+     * is.</b> qits-registries depends on qits-blobstore — every format module is written against
+     * the blob store's entities — so a registries build that runs before the blob store's release
+     * resolves a version the Maven registry has never held. Both go before qits-eventstream and
+     * everything after it for one reason: three services in the deploy train consume them, and a
+     * deployable cannot be built out of jars that are not published yet.
      */
     public static final List<String> RELEASE_PUBLISHERS =
-            List.of("spa-ui-components", "integrations-angular", "eventstream",
+            List.of("blobstore", "registries",
+                    "spa-ui-components", "integrations-angular", "eventstream",
                     "integrations-quarkus",
                     "oci-workspace", "workspace-daemon", "projects-daemon");
 
@@ -210,13 +249,16 @@ public final class PlatformModel {
         return switch (name) {
             case "ci-daemon", "workspace-daemon", "projects-daemon" -> "daemons/qits-" + name;
             case "oci", "oci-postgresql", "oci-workspace" -> "images/qits-" + name;
-            // Framework glue is shared code, so the integrations sit in libs/ like any other lib.
-            case "eventstream", "spa-ui-components", "userflows",
+            // Framework glue is shared code, so the integrations sit in libs/ like any other lib —
+            // and so do the byte plane's two, which are libraries by the same test: three services
+            // consume them and none of them is deployed.
+            case "eventstream", "blobstore", "registries", "spa-ui-components", "userflows",
                  "integrations-angular", "integrations-quarkus" -> "libs/qits-" + name;
             // Anything served at a URL is a frontend, whether it is spelled qits-spa-<x> or
-            // qits-platform-spa-<x>. Both spellings exist and both are checked: the artifacts
-            // client is qits-platform-spa-artifacts, the deployments client is qits-spa-deployments
-            // — the plane moved from the client's name to the service's and back again.
+            // qits-platform-spa-<x>. Every frontend is back to the first spelling since the
+            // byte-plane split renamed the last two (qits-spa-artifacts, qits-spa-docs); the second
+            // arm stays because a wrapper checked out before that rename still has the old
+            // directories, and a path that resolves to nothing clones the org's copy in silence.
             default -> name.startsWith("spa-") || name.startsWith("platform-spa-")
                     ? "frontends/qits-" + name
                     : "services/qits-" + name;
@@ -288,21 +330,26 @@ public final class PlatformModel {
      * a clean checkout has no dist directory while the hosted npm registry does not exist yet. The
      * registry answers JSON only, so it has none.
      * <p>
-     * <b>Every seed service is spelled out</b>, because a bundle directory is the Angular project
-     * key and moves whenever its client is renamed — two of the nine name their client something
-     * other than {@code qits-spa-<name>}, and four have no client at all. The path is the one the
-     * service's Dockerfile checks with {@code test -f}, so a stale spelling fails the seed build
-     * minutes in rather than at the edit.
+     * <b>Every seed service that has one is spelled out</b>, because a bundle directory is the
+     * Angular project key and moves whenever its client is renamed — it does not follow the
+     * repository name. The path is the one the service's Dockerfile checks with {@code test -f}, so
+     * a stale spelling fails the seed build minutes in rather than at the edit.
      * <p>
-     * Empty is a real answer, not a gap: qits-platform-idp ships no client, and qits-platform-edge
-     * serves no paths of its own at all. {@code SeedPhases.seedImage} writes no placeholder for
-     * them. A seed service added without a line here also gets none — and the Dockerfile's own
-     * {@code test -f} names the exact path it wanted, which is the clearest failure available.
+     * Empty is a real answer, not a gap: qits-platform-idp ships no client, qits-platform-edge
+     * serves no paths of its own at all, qits-githost serves nothing but the git wire protocol, and
+     * qits-platform-mirror's admin UI is a later work package. {@code SeedPhases.seedImage} writes
+     * no placeholder for them. A seed service added without a line here also gets none — and the
+     * Dockerfile's own {@code test -f} names the exact path it wanted, which is the clearest
+     * failure available.
      */
     public static String seedUiPath(String name) {
         return switch (name) {
             case "gateway" -> "src/main/webui/dist/qits-spa-home/browser";
-            case "platform-artifacts" ->
+            // The REPOSITORY is qits-spa-artifacts since the byte-plane split; the Angular PROJECT
+            // inside it is still qits-platform-spa-artifacts, and the project key is what names the
+            // dist directory the service's Dockerfile tests for. The two move separately, so this
+            // path follows the project and not the repository.
+            case "artifacts" ->
                     "service/src/main/webui/dist/qits-platform-spa-artifacts/browser";
             case "deployments" -> "service/src/main/webui/dist/qits-spa-deployments/browser";
             case "ci" -> "service/src/main/webui/dist/qits-spa-ci/browser";
@@ -319,7 +366,7 @@ public final class PlatformModel {
      * <p>
      * <b>A client id is a wire alias</b>, which is why this is a method and not a constant: an
      * environment service's identity carries its tier ({@code prod-qits-ci}), a platform service's
-     * does not ({@code qits-platform-artifacts}). With the default environment name this is
+     * does not ({@code qits-platform-idp}). With the default environment name this is
      * exactly the list qits-platform-idp ships. With another one it follows, which the shipped
      * list cannot — and the id is part of the config KEY
      * ({@code qits.idp.client.<id>.secret}), so a client the deployment spells differently from
@@ -340,9 +387,20 @@ public final class PlatformModel {
      * by the client id — {@code IDP_SECRET_CI}, not {@code IDP_SECRET_PROD_QITS_CI} — because the
      * id moves with the environment name and a placeholder cannot be spelled with a value that is
      * not known until the run starts.
+     * <p>
+     * <b>qits-artifacts is on this list under its own name and its id now carries the tier</b>: the
+     * byte-plane split made it an environment service, so its client is {@code <env>-qits-artifacts}
+     * where it used to be the bare qits-platform-artifacts. Every key derived from it moves with it,
+     * which is exactly what a client id being a wire alias means.
+     * <p>
+     * <b>The two new byte services hold no client at all.</b> qits-platform-mirror has no auth
+     * surface — it serves cached third-party bytes to anonymous clients and mints nothing — and
+     * qits-githost validates a push option rather than a token, and publishes on the bus, which
+     * enforces no gate. A client neither of them would ever present is a secret to rotate for
+     * nothing.
      */
     public static final List<String> IDP_CLIENT_APPS =
-            List.of("ci", "platform-artifacts", "workspaces", "gateway");
+            List.of("ci", "artifacts", "workspaces", "gateway");
 
     /**
      * The {@code aud} values the platform's clients may ask for: every client above plus
