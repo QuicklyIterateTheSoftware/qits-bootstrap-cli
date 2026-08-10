@@ -297,18 +297,12 @@ public class PipelinePhases {
             // is not free: an image publisher rebuilds for half an hour and re-fires its
             // SoftwareRelease, which every follow-bump then has to recognise as old news. The
             // published state is what this phase exists to restore; already restored is a skip,
-            // not a rerun. The VERSION lives only on the trigger event — ci's run API carries no
-            // payload, measured — so each green event run's trigger is resolved against
-            // qits-events, through the edge like every other read. A fresh platform never skips
-            // here: its ci has no runs and its event log is empty.
-            boolean alreadyReplayed = boot.ci.greenEventRunTriggers(repo).stream()
-                    .anyMatch(eventId -> {
-                        Http.Response event = boot.http.get(
-                                "http://qits-platform-edge:8080/events/api/events/" + eventId,
-                                Map.of());
-                        return event.ok() && event.body().contains(version);
-                    });
-            if (alreadyReplayed) {
+            // not a rerun. The question is asked by SHA, not version: the version lives only on
+            // the trigger event, and a replay-triggered run's event never touches the bus — the
+            // tag's commit and the trigger name SCMRelease are both on the run row and identify
+            // the release run exactly. A fresh platform never skips here: its ci has no runs.
+            String tagSha = boot.git.commitOf(src, version);
+            if (!tagSha.isBlank() && boot.ci.greenReleaseRunAt(repo, tagSha)) {
                 ctx.skip("release " + version + " already ran green — the registry holds what "
                         + "this replay publishes");
             }
@@ -340,18 +334,27 @@ public class PipelinePhases {
             // The same relay the deploy wait uses. A release run is a build too, and it was as
             // silent as the other one.
             CiLogStream ciLog = new CiLogStream(boot.ci, ctx);
-            String status = Waiter.await(ctx, repo + "'s release run at " + boot.config.ciUrl()
-                            + "/api/runs/finished", boot.config.releaseTimeout(),
+            // "An EVENT run of this repository" is not "the release run": an upstream's
+            // SoftwareRelease fires this repository's own follow-up bump, also an EVENT run — a
+            // 1-second quiet-exit that landed NEWEST during the first bus-only bootstrap and hid
+            // the wait's real target. The release run is the one triggered by an SCMRelease at
+            // the tag's own commit; both facts ride on the run row, so no event lookup — a
+            // manually triggered run's event is nowhere to look up.
+            String status = Waiter.await(ctx, repo + "'s " + version + " release run",
+                    boot.config.releaseTimeout(),
                     boot.config.pollInterval(), () -> {
                         boot.ci.newestRun(repo)
                                 .map(run -> Json.text(run, "id"))
                                 .filter(id -> !id.equals(baselineRun))
                                 .ifPresent(ciLog::follow);
-                        Optional<String[]> finished = boot.ci.finishedEventRun(repo);
-                        return finished
-                                .filter(r -> !r[0].equals(baselineRun))
-                                .<Waiter.Poll<String>>map(r -> Waiter.Poll.done(r[1], r[1]))
-                                .orElseGet(() -> Waiter.Poll.pending("still running"));
+                        for (String[] run : boot.ci.finishedEventRuns(repo)) {
+                            if (!run[0].equals(baselineRun) && "SCMRelease".equals(run[2])
+                                    && tagSha.equals(run[3])) {
+                                return Waiter.Poll.done(run[1], run[1]);
+                            }
+                        }
+                        return Waiter.Poll.pending("no finished release run for " + version
+                                + " yet");
                     });
             if (!"SUCCESS".equals(status)) {
                 throw new IllegalStateException(repo + " release run ended " + status

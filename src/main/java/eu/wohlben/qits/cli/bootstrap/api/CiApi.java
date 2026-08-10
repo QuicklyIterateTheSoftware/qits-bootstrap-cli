@@ -49,43 +49,58 @@ public class CiApi {
      * bootstrap, the same stale-row family the deploy wait already guards against.
      */
     public Optional<String[]> finishedEventRun(String repoId) {
-        Http.Response response = http.get(base + "/api/runs/finished?limit=20", Map.of());
-        if (!response.ok()) {
-            return Optional.empty();
-        }
-        JsonNode runs = Json.parse(response.body()).path("runs");
-        for (JsonNode run : runs) {
-            if (repoId.equals(Json.text(run, "repoId")) && "EVENT".equals(Json.text(run, "triggerType"))) {
-                String status = Json.text(run, "status");
-                return status.isBlank() ? Optional.empty()
-                        : Optional.of(new String[] {Json.text(run, "id"), status});
-            }
-        }
-        return Optional.empty();
+        List<String[]> all = finishedEventRuns(repoId);
+        return all.isEmpty() ? Optional.empty() : Optional.of(all.get(0));
     }
 
     /**
-     * The trigger-event ids of this repository's green EVENT runs, newest first. The runs API
-     * carries no event payload in any of its answers — measured on the live service, list and
-     * detail both — so a caller that needs the released VERSION resolves the event id against
-     * qits-events. An unreachable API answers an empty list, which is the safe direction: the
-     * caller replays as it always has.
+     * Every finished EVENT run of a repository in the window, newest first, as
+     * {@code [id, status, triggerEventName, commitSha]}. All of them rather than the newest alone,
+     * because "EVENT run" is not "release run": a follow-up bump fired by an upstream's
+     * SoftwareRelease is an EVENT run of this same repository — a 1-second quiet-exit that landed
+     * NEWEST during the first bus-only bootstrap and hid the release run behind it. The trigger
+     * event's NAME is what tells them apart, and it rides on the run row itself — resolving the
+     * event against qits-events would find nothing for a manually triggered run, whose event never
+     * touches the bus.
      */
-    public List<String> greenEventRunTriggers(String repoId) {
-        Http.Response response = http.get(base + "/api/runs?repositoryId=" + repoId + "&limit=20",
-                Map.of());
+    public List<String[]> finishedEventRuns(String repoId) {
+        Http.Response response = http.get(base + "/api/runs/finished?limit=20", Map.of());
         if (!response.ok()) {
             return List.of();
         }
-        List<String> triggers = new ArrayList<>();
+        List<String[]> runs = new ArrayList<>();
+        for (JsonNode run : Json.parse(response.body()).path("runs")) {
+            if (repoId.equals(Json.text(run, "repoId"))
+                    && "EVENT".equals(Json.text(run, "triggerType"))
+                    && !Json.text(run, "status").isBlank()) {
+                runs.add(new String[] {Json.text(run, "id"), Json.text(run, "status"),
+                        Json.text(run, "triggerEventName"), Json.text(run, "commitSha")});
+            }
+        }
+        return runs;
+    }
+
+    /**
+     * Whether a green SCMRelease-triggered run already exists at this commit — the question the
+     * release replay's skip asks. The sha rather than the version, because the version lives only
+     * on the trigger event and a manually triggered run's event is nowhere to resolve; the sha is
+     * on the run row, and the tag the replay would push names exactly one.
+     */
+    public boolean greenReleaseRunAt(String repoId, String commitSha) {
+        Http.Response response = http.get(base + "/api/runs?repositoryId=" + repoId + "&limit=20",
+                Map.of());
+        if (!response.ok()) {
+            return false;
+        }
         for (JsonNode run : Json.parse(response.body()).path("runs")) {
             if ("EVENT".equals(Json.text(run, "triggerType"))
                     && "SUCCESS".equals(Json.text(run, "status"))
-                    && !Json.text(run, "triggerEventId").isBlank()) {
-                triggers.add(Json.text(run, "triggerEventId"));
+                    && "SCMRelease".equals(Json.text(run, "triggerEventName"))
+                    && commitSha.equals(Json.text(run, "commitSha"))) {
+                return true;
             }
         }
-        return triggers;
+        return false;
     }
 
     /**
