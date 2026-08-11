@@ -347,6 +347,12 @@ class ComposeTemplateTest {
                 .doesNotContain("QITS_ARTIFACTS_URL");
         assertThat(runArgsLine("qits-workspaces")).contains("-e QITS_GITHOST_URL=" + host)
                 .doesNotContain("QITS_ARTIFACTS_URL");
+        // The deployer's OWN address for the same host — a plain property, because this file is its
+        // configuration. Its shipped default is the pre-split qits-platform-artifacts, and this read
+        // is how a green build becomes a deployment: without the line every build-succeeded event
+        // dies on a connect timeout and nothing deploys.
+        assertThat(ComposeTemplate.runArgs(tokens()))
+                .contains("\nqits.platform.deployments.git-host-url=" + host + "\n");
         // The LINES, not the comments: the git host's own line says in prose where its clone url
         // used to be, and that sentence is why the reader knows what moved.
         assertThat(runArgsLines()).allSatisfy(line -> assertThat(line)

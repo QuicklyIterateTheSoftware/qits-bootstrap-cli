@@ -751,6 +751,11 @@ public final class ComposeTemplate {
             # fills its own log with the attempts. qits-oci-postgresql is the one exception and says so on
             # its own line: it is upstream postgres, which has no exporter to point anywhere.
             #
+            # WHERE THE DEPLOYER READS A DEPLOYMENT SPEC — a plain property, not a run-args line, because
+            # this file is the deployer's own configuration. The image still ships the pre-split
+            # qits-platform-artifacts, a name that resolves to nothing; the spec read is how a green build
+            # becomes a deployment, so a deployer without this line deploys nothing and says only "timeout".
+            qits.platform.deployments.git-host-url=http://${ENV_NAME}-qits-githost:8080
             # THE HOST PORT IS THE EDGE'S. qits-gateway carries no -p at all any more; publishing it from two
             # applications is a bind conflict that only shows up on the second cutover.
             ${EDGE_TLS_NOTE}qits.platform.deployments.run-args.qits-platform-edge=-p ${PORT}:8080${EDGE_TLS_ARGS} -e QITS_EDGE_ENVIRONMENTS=${ENV_NAME} -e QITS_EDGE_DEFAULT_ENVIRONMENT=${ENV_NAME} -e QITS_EDGE_UPSTREAM_HOST_PATTERN={env}-qits-gateway -e QITS_EDGE_UPSTREAM_PORT=8080 -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
