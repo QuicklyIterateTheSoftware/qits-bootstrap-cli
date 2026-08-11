@@ -21,10 +21,12 @@ public class GitHostApi {
 
     private final Http http;
     private final String base;
+    private final String healthBase;
 
-    public GitHostApi(Http http, String gitHostUrl) {
+    public GitHostApi(Http http, String gitHostUrl, String gitHostHealthUrl) {
         this.http = http;
         this.base = gitHostUrl;
+        this.healthBase = gitHostHealthUrl;
     }
 
     public String base() {
@@ -32,12 +34,12 @@ public class GitHostApi {
     }
 
     /**
-     * Readiness at the service's own non-application root path. It sits under {@code /git} so a
-     * prefix-routing gateway reaches health and the wire protocol through one entry; the git routes
-     * themselves cannot follow it, because git treats the base as opaque.
+     * Readiness at the service's own non-application root path, which is {@code /githost} and not
+     * the {@code /git} the wire protocol answers on. The two prefixes ride one gateway entry, so a
+     * caller reaches both; only this program has to know they are two.
      */
     public Http.Response health() {
-        return http.get(base + "/q/health/ready", Map.of());
+        return http.get(healthBase + "/q/health/ready", Map.of());
     }
 
     /**

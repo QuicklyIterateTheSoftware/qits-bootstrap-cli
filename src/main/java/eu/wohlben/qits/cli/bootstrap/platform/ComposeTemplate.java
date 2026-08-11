@@ -395,11 +395,15 @@ public final class ComposeTemplate {
                   # ALIAS — this tier's own services carry the tier's name, the platform's four do not.
                   # Aliases of the pipeline-deployed services resolve the moment the deployer cuts them
                   # over; until then those routes 502.
-                  # The HOSTED registries, and root-level /v2 with them. qits-platform-mirror answers the
-                  # same three prefixes and is deliberately NOT on this table: two services cannot share
-                  # one prefix behind one gateway entry, so third-party traffic picks the mirror by its
-                  # own published port and its own client configuration instead.
+                  # The HOSTED registries, and root-level /v2 with them.
                   QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS: ${ENV_NAME}-qits-artifacts   # also claims root-level /v2 (OCI registry)
+                  # THE CACHES, at their OWN segment and nothing else. qits-platform-mirror answers the
+                  # store's three prefixes too, and those are deliberately not routed here: two services
+                  # cannot share one prefix behind one gateway entry, so third-party traffic picks the
+                  # mirror by its own published port and its own client configuration. /mirror is the
+                  # service's own segment — its view and its health — and nothing else claims it. A
+                  # PLATFORM service, so the alias carries no tier: one cache serves every environment.
+                  QITS_GATEWAY_PROXY_HOSTS_MIRROR: qits-platform-mirror
                   QITS_GATEWAY_PROXY_HOSTS_CI: ${ENV_NAME}-qits-ci
                   QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS: ${ENV_NAME}-qits-deployments
                   QITS_GATEWAY_PROXY_HOSTS_OBSERVABILITY: ${ENV_NAME}-qits-observability
@@ -414,12 +418,14 @@ public final class ComposeTemplate {
                   # gateway's own enum have to land in the same release. A key that is MISSING is not an
                   # error: an entry is the on-switch, so absence is a prefix nothing claims and a 404.
                   QITS_GATEWAY_PROXY_HOSTS_DOCS: ${ENV_NAME}-qits-docs
-                  # THE GIT HOST, and the segment is `git` rather than `githost` — routing is verbatim
-                  # and what the service serves is /git, which is what every clone url already
-                  # hardcodes. This is the entry that makes QITS_WORKSPACE_GIT_HOST work: a workspace
-                  # container reaches this platform through the gateway and through nothing else, so
-                  # without this line its clone is a 404 from the tier's own front door.
-                  QITS_GATEWAY_PROXY_HOSTS_GIT: ${ENV_NAME}-qits-githost
+                  # THE GIT HOST, at the segment that names it. /githost carries its view, its API and
+                  # its health; the git WIRE PROTOCOL stays at /git, which the gateway carries as a
+                  # second prefix on this same entry — every clone url already hardcodes it and git
+                  # treats the base as opaque. One entry, two prefixes, one key. This is the entry that
+                  # makes QITS_WORKSPACE_GIT_HOST work: a workspace container reaches this platform
+                  # through the gateway and through nothing else, so without this line its clone is a
+                  # 404 from the tier's own front door.
+                  QITS_GATEWAY_PROXY_HOSTS_GITHOST: ${ENV_NAME}-qits-githost
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
                 networks: [qits-net]
                 # No depends_on: on later runs compose starts only the services the deployer does not already
@@ -759,7 +765,7 @@ public final class ComposeTemplate {
             # THE HOST PORT IS THE EDGE'S. qits-gateway carries no -p at all any more; publishing it from two
             # applications is a bind conflict that only shows up on the second cutover.
             ${EDGE_TLS_NOTE}qits.platform.deployments.run-args.qits-platform-edge=-p ${PORT}:8080${EDGE_TLS_ARGS} -e QITS_EDGE_ENVIRONMENTS=${ENV_NAME} -e QITS_EDGE_DEFAULT_ENVIRONMENT=${ENV_NAME} -e QITS_EDGE_UPSTREAM_HOST_PATTERN={env}-qits-gateway -e QITS_EDGE_UPSTREAM_PORT=8080 -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
-            qits.platform.deployments.run-args.qits-gateway=-e QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=${ENV_NAME}-qits-artifacts -e QITS_GATEWAY_PROXY_HOSTS_CI=${ENV_NAME}-qits-ci -e QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS=${ENV_NAME}-qits-deployments -e QITS_GATEWAY_PROXY_HOSTS_OBSERVABILITY=${ENV_NAME}-qits-observability -e QITS_GATEWAY_PROXY_HOSTS_PROJECTS=${ENV_NAME}-qits-projects -e QITS_GATEWAY_PROXY_HOSTS_WORKSPACES=${ENV_NAME}-qits-workspaces -e QITS_GATEWAY_PROXY_HOSTS_STT=${ENV_NAME}-qits-stt -e QITS_GATEWAY_PROXY_HOSTS_EVENTS=${ENV_NAME}-qits-events -e QITS_GATEWAY_PROXY_HOSTS_DOCS=${ENV_NAME}-qits-docs -e QITS_GATEWAY_PROXY_HOSTS_GIT=${ENV_NAME}-qits-githost -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.platform.deployments.run-args.qits-gateway=-e QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=${ENV_NAME}-qits-artifacts -e QITS_GATEWAY_PROXY_HOSTS_MIRROR=qits-platform-mirror -e QITS_GATEWAY_PROXY_HOSTS_CI=${ENV_NAME}-qits-ci -e QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS=${ENV_NAME}-qits-deployments -e QITS_GATEWAY_PROXY_HOSTS_OBSERVABILITY=${ENV_NAME}-qits-observability -e QITS_GATEWAY_PROXY_HOSTS_PROJECTS=${ENV_NAME}-qits-projects -e QITS_GATEWAY_PROXY_HOSTS_WORKSPACES=${ENV_NAME}-qits-workspaces -e QITS_GATEWAY_PROXY_HOSTS_STT=${ENV_NAME}-qits-stt -e QITS_GATEWAY_PROXY_HOSTS_EVENTS=${ENV_NAME}-qits-events -e QITS_GATEWAY_PROXY_HOSTS_DOCS=${ENV_NAME}-qits-docs -e QITS_GATEWAY_PROXY_HOSTS_GITHOST=${ENV_NAME}-qits-githost -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE HOSTED HALF OF THE BYTE PLANE, and the one deployment here still carrying a file
             # database: /data is the H2 and the blob store both, which is why the volume stays.
             #

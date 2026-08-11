@@ -51,7 +51,7 @@ public class Boot {
         this.docker = new Docker(runner);
         this.git = new Git(runner);
         this.artifacts = new ArtifactsApi(http, config.artifactsUrl());
-        this.githost = new GitHostApi(http, config.gitHostUrl());
+        this.githost = new GitHostApi(http, config.gitHostUrl(), config.gitHostHealthUrl());
         this.ci = new CiApi(http, config.ciUrl());
         this.pd = new PdApi(http, config.platformDeploymentsUrl());
         this.idp = new IdpApi(http, config.idpIssuer());

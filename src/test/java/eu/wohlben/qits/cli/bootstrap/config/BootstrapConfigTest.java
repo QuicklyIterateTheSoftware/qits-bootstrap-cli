@@ -106,6 +106,10 @@ class BootstrapConfigTest {
         assertThat(config.artifactsUrl())
                 .isEqualTo("http://preprod-qits-artifacts:8080/artifacts");
         assertThat(config.gitHostUrl()).isEqualTo("http://preprod-qits-githost:8080/git");
+        // TWO PREFIXES, one service. /git is the wire protocol, which git holds opaque; /githost is
+        // the service's own root, and health lives there. A health poll at /git/q is a 404 now.
+        assertThat(config.gitHostHealthUrl())
+                .isEqualTo("http://preprod-qits-githost:8080/githost");
         // Scheme, host and port with NO path: this service answers under /mirror/q for health and
         // under the registries' own literals for content, so each caller appends what it wants.
         assertThat(config.mirrorUrl()).isEqualTo("http://qits-platform-mirror:8080");

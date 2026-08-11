@@ -323,13 +323,23 @@ public interface BootstrapConfig {
      * {@code http://<env>-qits-githost:8080/git/<repoId>}, and the {@code /artifacts} that used to
      * be in front of it is gone with the service that owned it.
      * <p>
-     * Health is {@code /git/q/health/ready}: the segment is the service's own
-     * {@code quarkus.http.non-application-root-path}, chosen to sit under the same prefix so a
-     * prefix-routing gateway can reach both. The git routes themselves cannot follow it — git
-     * treats the base as opaque and no config key can move them.
+     * The health root is a DIFFERENT prefix — see {@link #gitHostHealthUrl()}.
      */
     default String gitHostUrl() {
         return "http://" + envName() + "-qits-githost:8080/git";
+    }
+
+    /**
+     * The git host's own segment: {@code /githost}, which carries its view, its API and its health
+     * at {@code /githost/q/health/ready}.
+     * <p>
+     * Two prefixes rather than one, because they answer to different owners. {@code /githost} is
+     * the service's {@code quarkus.http.non-application-root-path} and moves with a config key;
+     * {@code /git} is the git wire protocol, which treats the base as opaque and no key can move.
+     * The gateway carries both on one route entry, so nothing here has to choose between them.
+     */
+    default String gitHostHealthUrl() {
+        return "http://" + envName() + "-qits-githost:8080/githost";
     }
 
     /**
