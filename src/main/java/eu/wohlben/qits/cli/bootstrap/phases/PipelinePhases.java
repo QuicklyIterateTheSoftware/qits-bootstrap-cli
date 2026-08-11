@@ -272,10 +272,8 @@ public class PipelinePhases {
                 String repo = PlatformModel.repo(name);
                 Path src = boot.state.repoDir(name);
                 ctx.status("pushing " + repo + " main, quietly");
-                ProcessResult result = boot.git.push(src, boot.githost.gitUrl(repo),
-                        List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()), "main",
-                        boot.config.pushToken(), ctx::log);
-                Boot.must(result, "pre-seed push of " + repo + " failed");
+                boot.push(ctx, repo + " main", src, boot.githost.gitUrl(repo),
+                        List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()), "main");
                 ctx.log("  " + repo + " history at " + boot.git.shortRef(src, "main"));
             }
             ctx.note(PlatformModel.SEEDED_REPOS.size() + " histories");
@@ -327,10 +325,9 @@ public class PipelinePhases {
             // The newest finished run BEFORE this attempt triggers is a previous attempt's, and
             // must not be read as this one's outcome. Null when the repo never ran.
             String baselineRun = boot.ci.finishedEventRun(repo).map(r -> r[0]).orElse(null);
-            ProcessResult push = boot.git.push(src, boot.githost.gitUrl(repo),
+            boot.push(ctx, repo + " " + version, src, boot.githost.gitUrl(repo),
                     List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
-                    "refs/tags/" + version, boot.config.pushToken(), ctx::log);
-            Boot.must(push, "tag push of " + repo + " " + version + " failed");
+                    "refs/tags/" + version);
 
             // The manual trigger demands the one project=* client — the same identity the git host
             // uses to announce pushes, because this stands in for the announcement a real release
@@ -575,16 +572,14 @@ public class PipelinePhases {
 
             String quietRef = "main";
             ctx.status("pushing " + repo + " to " + quietRef + " (quietly)");
-            Boot.must(boot.git.push(src, boot.githost.gitUrl(repo),
-                            List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
-                            "HEAD:refs/heads/" + quietRef, boot.config.pushToken(), ctx::log),
-                    "push of " + repo + " to " + quietRef + " failed");
+            boot.push(ctx, repo + " to " + quietRef, src, boot.githost.gitUrl(repo),
+                    List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
+                    "HEAD:refs/heads/" + quietRef);
 
             ctx.status("pushing " + repo + " to " + ref + " (the ref that deploys it)");
-            ProcessResult push = boot.git.push(src, boot.githost.gitUrl(repo),
-                    List.of("qits.token=" + boot.config.pushToken()),
-                    "HEAD:refs/heads/" + ref, boot.config.pushToken(), ctx::log);
-            Boot.must(push, "push of " + repo + " to " + ref + " failed");
+            ProcessResult push = boot.push(ctx, repo + " to " + ref, src,
+                    boot.githost.gitUrl(repo), List.of("qits.token=" + boot.config.pushToken()),
+                    "HEAD:refs/heads/" + ref);
             String sha = boot.git.head(src);
             // git spells it "Everything up-to-date" — hyphens. Matching only the spaced form
             // meant no event was ever posted for an unchanged repo: environment applications were
@@ -1005,10 +1000,9 @@ public class PipelinePhases {
                 String repo = PlatformModel.repo(name);
                 Path src = boot.state.repoDir(name);
                 ctx.status("pushing " + repo);
-                ProcessResult result = boot.git.push(src, boot.githost.gitUrl(repo),
-                        List.of("qits.token=" + boot.config.pushToken()), "main",
-                        boot.config.pushToken(), ctx::log);
-                Boot.must(result, "push of " + repo + " failed");
+                ProcessResult result = boot.push(ctx, repo + " main", src,
+                        boot.githost.gitUrl(repo),
+                        List.of("qits.token=" + boot.config.pushToken()), "main");
                 boolean upToDate = result.out().toLowerCase(Locale.ROOT).contains("up to date");
                 ctx.log("  " + repo + (upToDate ? " already at main"
                         : " pushed " + boot.git.shortHead(src)));

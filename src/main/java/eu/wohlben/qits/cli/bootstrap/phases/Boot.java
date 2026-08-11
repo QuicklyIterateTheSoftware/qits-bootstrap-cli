@@ -15,8 +15,13 @@ import eu.wohlben.qits.cli.bootstrap.platform.RunState;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessRunner;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
+import eu.wohlben.qits.cli.bootstrap.ui.Format;
 
+import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
 /** Everything the phases share: the tools, the addresses and the run's own state. */
@@ -58,6 +63,70 @@ public class Boot {
             throw new IllegalStateException(what + " (exit " + result.exitCode() + ")\n"
                     + result.tailText(20));
         }
+    }
+
+    /** How long a push may keep failing before the boot gives up on it, and how often it retries. */
+    static final Duration PUSH_WINDOW = Duration.ofSeconds(90);
+    static final Duration PUSH_RETRY = Duration.ofSeconds(5);
+
+    /**
+     * Every push to the platform git host goes through here, retried inside a bounded window.
+     * <p>
+     * The boot deploys the platform's OWN postgres mid-run, and that cutover severs every
+     * service's connection pool for a few seconds. Measured on the 2026-08-11 boot: phase 51
+     * deployed qits-oci-postgresql, phase 52's push of qits-platform-idp landed in the flux, the
+     * git host misanswered it, and git exited 128 — a 30-minute boot killed at 52/67 by a
+     * transient the boot itself caused.
+     * <p>
+     * The retry is on ANY failure, not on a matched message: a push is idempotent (an up-to-date
+     * one is a no-op), so a genuine misconfiguration costs only this window before it fails with
+     * git's own last words. The token is masked here rather than at the call sites, so no retried
+     * or printed command can carry it to the screen.
+     */
+    public ProcessResult push(PhaseContext ctx, String what, Path repo, String url,
+                              List<String> options, String refspec) throws Exception {
+        return pushRetrying(ctx, what, PUSH_WINDOW, PUSH_RETRY,
+                () -> git.push(repo, url, options, refspec, config.pushToken(), ctx::log),
+                System::currentTimeMillis, Thread::sleep);
+    }
+
+    /** The clock and the sleep are arguments so a test can spend the window in no time at all. */
+    static ProcessResult pushRetrying(PhaseContext ctx, String what, Duration window,
+                                      Duration interval, Supplier<ProcessResult> attempt,
+                                      Waiter.Clock clock, Waiter.Sleeper sleeper) throws Exception {
+        long start = clock.millis();
+        List<ProcessResult> tries = new ArrayList<>();
+        try {
+            // Waiter, so a push that keeps failing looks like every other wait in this program:
+            // what is being pushed, what the last attempt said, how long, and when it gives up.
+            return Waiter.await(ctx, "the push of " + what, window, interval, () -> {
+                ProcessResult result = attempt.get();
+                tries.add(result);
+                if (result.ok()) {
+                    return Waiter.Poll.done(result, "pushed");
+                }
+                String words = lastWords(result);
+                ctx.log("  push of " + what + " failed (exit " + result.exitCode() + "): " + words);
+                return Waiter.Poll.pending("attempt " + tries.size() + " failed: " + words);
+            }, clock, sleeper);
+        } catch (TimeoutException giveUp) {
+            ProcessResult last = tries.getLast();
+            throw new IllegalStateException("push of " + what + " failed " + tries.size()
+                    + (tries.size() == 1 ? " time over " : " times over ")
+                    + Format.duration(Duration.ofMillis(clock.millis() - start))
+                    + " (exit " + last.exitCode() + "). Last words:\n" + last.tailText(20));
+        }
+    }
+
+    /** The last thing a failed command said. Already masked: the runner masks every line it reads. */
+    static String lastWords(ProcessResult result) {
+        List<String> tail = result.tail();
+        for (int i = tail.size() - 1; i >= 0; i--) {
+            if (!tail.get(i).isBlank()) {
+                return tail.get(i);
+            }
+        }
+        return "no output";
     }
 
     /**

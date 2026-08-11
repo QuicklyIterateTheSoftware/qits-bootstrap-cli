@@ -102,6 +102,14 @@ forced. Add to that list rather than deviating quietly.
 - **Phases are rerun-safe**, the same way the script's were: 409s tolerated, existing networks
   adopted, an already-attached container accepted, up-to-date pushes no-ops, publishes probed
   before they are made.
+- **Every push to the git host survives a bounded flux window** — `Boot.push`, retried every 5
+  seconds for 90, through `Waiter` so each failed attempt is on the screen. The boot deploys the
+  platform's own postgres mid-run and that cutover severs every connection pool for seconds:
+  measured on 2026-08-11, phase 52's push of qits-platform-idp met phase 51's postgres and exited
+  128, killing a 30-minute boot at 52/67. The retry is on ANY failure because a push is idempotent
+  and rerun-safe; a real misconfiguration costs the window and then fails with git's own last
+  words, the attempt count and the elapsed time. Push through `Boot.push`, never `git.push`: the
+  token is masked there once, for every attempt.
 - **Rerun-safe is not rename-safe, and the `environment` phase is where that line is drawn.**
   `--platform-env` names the standing environment, which is also the PLATFORM environment: the one
   tier whose branch deploys the platform plane. Bootstrapping over a platform whose environment
