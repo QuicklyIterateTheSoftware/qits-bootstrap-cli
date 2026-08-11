@@ -181,13 +181,21 @@ public final class PlatformModel {
      * Three services build against them — qits-artifacts, qits-platform-mirror and qits-githost —
      * and none of those builds can run on the platform until the jars are IN the platform's Maven
      * registry, which is what a repository plus a release replay gets them.
+     * <p>
+     * <b>qits-spa-githost and qits-platform-spa-mirror joined on 2026-08-11</b>, the last two byte
+     * services to grow a client. They are here for the reason every other frontend is: a checkout
+     * this run can clone, a repository on the git host, and a main history — so qits-projects
+     * inventories them and qits-workspaces can release them. Neither is a release publisher and
+     * neither is a deployable: their bundles ship inside qits-githost's and qits-platform-mirror's
+     * own images, as webui submodules.
      */
     public static final List<String> SEEDED_REPOS = List.of(
             "oci", "ci-daemon", "eventstream", "blobstore", "registries", "spa-ui-components",
             "userflows", "spa-docs", "spa-deployments",
             "integrations-angular", "integrations-quarkus", "spa-home", "spa-projects",
             "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events",
-            "spa-ci", "oci-workspace", "workspace-daemon", "projects-daemon");
+            "spa-ci", "spa-githost", "platform-spa-mirror",
+            "oci-workspace", "workspace-daemon", "projects-daemon");
 
     /**
      * The publishers whose released versions the platform pins, replayed on a fresh platform because
@@ -253,10 +261,11 @@ public final class PlatformModel {
             case "eventstream", "blobstore", "registries", "spa-ui-components", "userflows",
                  "integrations-angular", "integrations-quarkus" -> "libs/qits-" + name;
             // Anything served at a URL is a frontend, whether it is spelled qits-spa-<x> or
-            // qits-platform-spa-<x>. Every frontend is back to the first spelling since the
-            // byte-plane split renamed the last two (qits-spa-artifacts, qits-spa-docs); the second
-            // arm stays because a wrapper checked out before that rename still has the old
-            // directories, and a path that resolves to nothing clones the org's copy in silence.
+            // qits-platform-spa-<x>. Both spellings are live: the byte-plane split renamed two the
+            // first way (qits-spa-artifacts, qits-spa-docs) and qits-platform-spa-mirror was born
+            // the second way, because its service is on the platform plane. The second arm also
+            // catches a wrapper checked out before that rename, whose directories still carry the
+            // old names — and a path that resolves to nothing clones the org's copy in silence.
             default -> name.startsWith("spa-") || name.startsWith("platform-spa-")
                     ? "frontends/qits-" + name
                     : "services/qits-" + name;
@@ -356,12 +365,10 @@ public final class PlatformModel {
      * repository name. The path is the one the service's Dockerfile checks with {@code test -f}, so
      * a stale spelling fails the seed build minutes in rather than at the edit.
      * <p>
-     * Empty is a real answer, not a gap: qits-platform-idp ships no client, qits-platform-edge
-     * serves no paths of its own at all, qits-githost serves nothing but the git wire protocol, and
-     * qits-platform-mirror's admin UI is a later work package. {@code SeedPhases.seedImage} writes
-     * no placeholder for them. A seed service added without a line here also gets none — and the
-     * Dockerfile's own {@code test -f} names the exact path it wanted, which is the clearest
-     * failure available.
+     * Empty is a real answer, not a gap: qits-platform-idp ships no client and qits-platform-edge
+     * serves no paths of its own at all. {@code SeedPhases.seedImage} writes no placeholder for
+     * them. A seed service added without a line here also gets none — and the Dockerfile's own
+     * {@code test -f} names the exact path it wanted, which is the clearest failure available.
      */
     public static String seedUiPath(String name) {
         return switch (name) {
@@ -375,6 +382,17 @@ public final class PlatformModel {
             case "deployments" -> "service/src/main/webui/dist/qits-spa-deployments/browser";
             case "ci" -> "service/src/main/webui/dist/qits-spa-ci/browser";
             case "events" -> "service/src/main/webui/dist/qits-spa-events/browser";
+            // THE LAST TWO BYTE SERVICES TO GROW A CLIENT, on 2026-08-11. Both Dockerfiles took
+            // qits-artifacts' prebuilt-dist shape in the same change: Quinoa's install and build
+            // are neutered, the image STAGES a bundle built before it, and a `test -f` on the path
+            // below stops the build rather than shipping a service whose own segment 404s. So a
+            // seed image of either now needs a placeholder where it needed none the week before.
+            //
+            // The two paths differ in their FIRST segment, not by accident: qits-githost is a
+            // reactor and its application is the `service` module, while qits-platform-mirror is
+            // one module and its webui sits at the root.
+            case "githost" -> "service/src/main/webui/dist/qits-spa-githost/browser";
+            case "platform-mirror" -> "src/main/webui/dist/qits-platform-spa-mirror/browser";
             default -> "";
         };
     }

@@ -27,6 +27,13 @@ class PlatformModelTest {
                 .isEqualTo("services/qits-platform-mirror");
         assertThat(PlatformModel.repoPath("githost")).isEqualTo("services/qits-githost");
         assertThat(PlatformModel.repoPath("docs")).isEqualTo("services/qits-docs");
+        // And their two clients, added on 2026-08-11. BOTH FRONTEND SPELLINGS ARE LIVE: the git
+        // host's client is qits-spa-<x>, the mirror's is qits-platform-spa-<x> because its service
+        // is on the platform plane. A wrong directory here clones the org's copy in silence.
+        assertThat(PlatformModel.repoPath("spa-githost"))
+                .isEqualTo("frontends/qits-spa-githost");
+        assertThat(PlatformModel.repoPath("platform-spa-mirror"))
+                .isEqualTo("frontends/qits-platform-spa-mirror");
 
         assertThat(PlatformModel.repoPath("ci-daemon")).isEqualTo("daemons/qits-ci-daemon");
         // The two daemons that joined the replay set on 2026-08-10. The default arm would clone
@@ -183,15 +190,19 @@ class PlatformModelTest {
         // Dockerfile stops the build with `test -f` on this exact path before the native compile.
         assertThat(PlatformModel.seedUiPath("events"))
                 .isEqualTo("service/src/main/webui/dist/qits-spa-events/browser");
+        // The last two byte services to grow a client, on 2026-08-11. Both took the prebuilt-dist
+        // Dockerfile, so both now stop their seed build at a `test -f` on these exact paths. The
+        // first segment differs because the repositories do: qits-githost is a reactor whose
+        // application is the `service` module, qits-platform-mirror is one module.
+        assertThat(PlatformModel.seedUiPath("githost"))
+                .isEqualTo("service/src/main/webui/dist/qits-spa-githost/browser");
+        assertThat(PlatformModel.seedUiPath("platform-mirror"))
+                .isEqualTo("src/main/webui/dist/qits-platform-spa-mirror/browser");
         // No client at all, and empty is the answer that says so: a seed build must not be made to
         // require a bundle that does not exist.
         assertThat(PlatformModel.seedUiPath("platform-idp")).isEmpty();
         assertThat(PlatformModel.seedUiPath("platform-edge")).isEmpty();
         assertThat(PlatformModel.seedUiPath("oci-postgresql")).isEmpty();
-        // The git host serves a wire protocol and nothing else; the mirror's admin UI is a later
-        // work package. A placeholder for either is a bundle no Dockerfile asks for.
-        assertThat(PlatformModel.seedUiPath("githost")).isEmpty();
-        assertThat(PlatformModel.seedUiPath("platform-mirror")).isEmpty();
     }
 
     @Test
@@ -224,6 +235,21 @@ class PlatformModelTest {
                 .hasSize(PlatformModel.DEPLOYABLES.size() + PlatformModel.SEEDED_REPOS.size())
                 .containsAll(PlatformModel.DEPLOYABLES)
                 .containsAll(PlatformModel.SEEDED_REPOS);
+    }
+
+    /**
+     * The byte plane's two clients, added on 2026-08-11. Seeded like every other frontend — a
+     * checkout, a repository on the git host and a main history — and nothing more: their bundles
+     * ship inside their services' images, so a deploy phase or a release replay for either would
+     * wait on a deployment nobody makes and a tag nobody cut.
+     */
+    @Test
+    void theByteplaneClientsAreSeededAndNeitherDeployedNorReplayed() {
+        assertThat(PlatformModel.SEEDED_REPOS).contains("spa-githost", "platform-spa-mirror");
+        assertThat(PlatformModel.DEPLOYABLES)
+                .doesNotContain("spa-githost", "platform-spa-mirror");
+        assertThat(PlatformModel.RELEASE_PUBLISHERS)
+                .doesNotContain("spa-githost", "platform-spa-mirror");
     }
 
     /**
