@@ -213,11 +213,15 @@ class ComposeTemplateTest {
         // validates as qits-ci is a 401 on a gate that looks right from both sides.
         String compose = ComposeTemplate.compose(tokens());
 
+        // ci ASKS FOR THE ORCHESTRATOR, and that audience moved with the caller: it asked for the
+        // deployer while it posted build-succeeded, and that call was retired in favour of the bus.
+        // Its client id is also its OWNER string at qits-containers, which compares the token's
+        // `sub` to the owner in the path — so the two lines below are one fact twice.
         assertThat(serviceBlock(compose, ENV + "-qits-ci"))
                 .contains("QITS_AUTH_MACHINE_AUDIENCE: prod-qits-ci")
                 .contains("QUARKUS_OIDC_CLIENT_CLIENT_ID: prod-qits-ci")
                 .contains("QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE: "
-                        + "prod-qits-deployments");
+                        + "prod-qits-containers");
         assertThat(serviceBlock(compose, ENV + "-qits-deployments"))
                 .contains("QITS_AUTH_MACHINE_AUDIENCE: prod-qits-deployments");
         // The artifacts service validates a tier-qualified audience since the split, and mints
@@ -230,7 +234,7 @@ class ComposeTemplateTest {
                 .contains("-e QITS_AUTH_MACHINE_AUDIENCE=prod-qits-ci")
                 .contains("-e QUARKUS_OIDC_CLIENT_CLIENT_ID=prod-qits-ci")
                 .contains("-e QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE="
-                        + "prod-qits-deployments");
+                        + "prod-qits-containers");
         assertThat(runArgsLine("qits-deployments"))
                 .contains("-e QITS_AUTH_MACHINE_AUDIENCE=prod-qits-deployments");
         assertThat(runArgsLine("qits-artifacts"))
@@ -505,6 +509,41 @@ class ComposeTemplateTest {
     }
 
     /**
+     * <b>ci asks the orchestrator, and holds no socket at all.</b> This is the cutover's whole
+     * observable shape in the generated files, and both halves matter: the address it dials, in
+     * both files, and the grant it no longer gets, in both files.
+     * <p>
+     * The socket half is the one worth a test rather than a comment. ci executes repo-controlled
+     * pipelines, so it was the platform's most exposed service AND the holder of root on the host;
+     * a mount left in either file would restore that authority silently, because nothing in the
+     * image reads it and no build would fail. The address half fails loudly instead — an
+     * unreachable orchestrator is LAUNCH_FAILED on the first step — which is exactly why it needs
+     * less protection than the mount.
+     */
+    @Test
+    void ciAsksTheOrchestratorForItsStepContainersAndHoldsNoSocket() {
+        String compose = ComposeTemplate.compose(tokens());
+        String ci = serviceBlock(compose, ENV + "-qits-ci");
+        String runArgs = runArgsLine("qits-ci");
+
+        // The wire alias, in both files: the image ships the unqualified qits-containers:8080,
+        // which resolves to nothing on this network.
+        assertThat(ci).contains("QITS_CONTAINERS_URL: http://prod-qits-containers:8080");
+        assertThat(runArgs).contains("-e QITS_CONTAINERS_URL=http://prod-qits-containers:8080");
+
+        // And the grant that is gone. Not "no mount" alone — the socket group is the other half,
+        // and either one without the other is a container that cannot use what it was given.
+        assertThat(ci).doesNotContain("docker.sock").doesNotContain("group_add");
+        assertThat(runArgs).doesNotContain("docker.sock").doesNotContain("--group-add");
+
+        // The service that DOES hold it still does. This is a concentration, not a removal.
+        assertThat(serviceBlock(compose, ENV + "-qits-containers"))
+                .contains("- /var/run/docker.sock:/var/run/docker.sock");
+        assertThat(runArgsLine("qits-containers"))
+                .contains("-v /var/run/docker.sock:/var/run/docker.sock");
+    }
+
+    /**
      * qits-workspaces is told where a release lands, and it is this environment's deploy ref.
      * <p>
      * It ships a default of {@code environment/prod}, so a platform bootstrapped under any other
@@ -686,11 +725,11 @@ class ComposeTemplateTest {
                 .contains("QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_ci_eventstream")
                 .contains("QITS_RESOURCE_EVENTSTREAM_PASSWORD: \"eeeeffff00001111\"");
         // ci's /data held the H2 files and, before that, a git mirror per repository. The image has
-        // no /data at all now; the socket is what it still needs.
+        // no /data at all now — and no socket either, since it stopped starting containers itself.
         assertThat(ci).doesNotContain("QUARKUS_DATASOURCE_CI_JDBC_URL")
                 .doesNotContain("QUARKUS_DATASOURCE_EVENTSTREAM_JDBC_URL")
                 .doesNotContain("- qits-ci-data:/data")
-                .contains("- /var/run/docker.sock:/var/run/docker.sock");
+                .doesNotContain("docker.sock");
 
         assertThat(idp).contains("QITS_RESOURCE_DB_URL: "
                         + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_platform_idp")

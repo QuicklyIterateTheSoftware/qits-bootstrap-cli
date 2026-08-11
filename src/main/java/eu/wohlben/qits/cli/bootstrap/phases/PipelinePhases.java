@@ -190,9 +190,11 @@ public class PipelinePhases {
             // /containers/q because that is the service's own non-application root path, and
             // readiness includes the two databases it refuses to boot without.
             //
-            // No auth-plane probe beside the two below, deliberately: nothing in THIS run calls the
-            // orchestrator, so there is no first request to warm the tenant for. The probe belongs
-            // with the change that makes ci a caller.
+            // Its auth plane IS warmed below, and that note used to say the opposite: "nothing in
+            // THIS run calls the orchestrator, so there is no first request to warm the tenant for
+            // — the probe belongs with the change that makes ci a caller." This run is that change.
+            // ci asks this service for every pipeline step now, and the first pipeline of this boot
+            // is two phases away, so the first request to touch its OIDC tenant would be a build's.
             boot.awaitHealth(ctx, PlatformModel.wireAlias("containers", env)
                             + " (on qits-net, no gateway route)",
                     () -> boot.http.get("http://" + PlatformModel.wireAlias("containers", env)
@@ -219,6 +221,26 @@ public class PipelinePhases {
                     () -> warmWhenGuardRefused(boot.http.postJson(
                             boot.config.platformDeploymentsUrl() + "/api/events/build-succeeded",
                             "{}", PROBE_BEARER)));
+            // THE ORCHESTRATOR'S, and it is the one probe here that is READ-shaped. The two above
+            // are writes because a read on those services is unguarded and therefore never touches
+            // the tenant; every route of qits-containers is guarded, reads included — a row says
+            // which containers another module has running — so a listing presents the bearer and
+            // initializes the tenant exactly as a write would. It is also the safer shape by a
+            // wide margin: a write-shaped probe at a service whose writes START CONTAINERS is one
+            // malformed body away from being a workload, and with the gate OFF it would answer 400
+            // and spin here until the phase timed out. A read answers 401 warm, 200 with the gate
+            // off, and creates nothing either way.
+            //
+            // At its own alias, like its health poll above: there is no gateway route to this
+            // service and there must not be one. The owner in the path is ci's, because that is
+            // whose inventory this stands in for.
+            boot.awaitHealth(ctx, PlatformModel.wireAlias("containers", env)
+                            + " auth plane (junk bearer -> 401)",
+                    () -> warmWhenGuardRefused(boot.http.get(
+                            "http://" + PlatformModel.wireAlias("containers", env)
+                                    + ":8080/containers/api/containers/"
+                                    + PlatformModel.wireAlias("ci", env),
+                            PROBE_BEARER)));
         });
     }
 

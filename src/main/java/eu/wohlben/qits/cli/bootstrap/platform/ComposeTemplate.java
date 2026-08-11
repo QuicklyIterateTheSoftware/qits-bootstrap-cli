@@ -582,8 +582,12 @@ public final class ComposeTemplate {
               ${ENV_NAME}-qits-ci:
                 image: qits/ci:latest
                 container_name: ${ENV_NAME}-qits-ci
-                # Unprivileged uid stays; the socket group is all it needs.
-                group_add: ["${DOCKER_GID}"]
+                # NO SOCKET AND NO SOCKET GROUP, and that is the attack surface this cutover buys.
+                # ci held the host's docker socket to run every pipeline step, which is root on the
+                # host — and every step's script is repo-controlled code, so the one service most
+                # exposed to untrusted input was also the one holding the daemon. It asks
+                # ${ENV_NAME}-qits-containers now, over qits-net, with a bearer. Do not mount it
+                # back: nothing in the image reads it, and `docker` is not on this image's PATH.
                 environment:
                   # TWO STORES, TWO TRIPLES. ci's own database and the outbox of the eventstream library
                   # it joins are two Flyway lineages and cannot share one. The library reads the
@@ -611,8 +615,17 @@ public final class ComposeTemplate {
                   QITS_CI_GIT_HOST_URL: http://${ENV_NAME}-qits-githost:8080
                   QITS_CI_CONTAINER_GIT_URL: http://${ENV_NAME}-qits-githost:8080
                   # The network step containers join. Still qits-net: it is the deployer's legacy network,
-                  # the one every container on this host is on whatever plane it belongs to.
+                  # the one every container on this host is on whatever plane it belongs to. It is
+                  # ci's choice and travels in the workload spec; the orchestrator puts the container
+                  # on it.
                   QITS_CI_NETWORK: qits-net
+                  # WHERE STEP CONTAINERS COME FROM NOW. ci starts nothing itself: it asks this tier's
+                  # orchestrator, which is the only service on the host holding a docker socket. The
+                  # image ships the unqualified qits-containers:8080, which resolves to nothing here —
+                  # and an unreachable orchestrator is not a slow build but a failed one, recorded as
+                  # LAUNCH_FAILED on the first step. Same class of wire-alias spelling as the git host
+                  # and the bus above.
+                  QITS_CONTAINERS_URL: http://${ENV_NAME}-qits-containers:8080
                   # NO QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL. ci's direct POST to the deployer was retired
                   # on 2026-08-10: a green build is announced on the BUS now, ci -> outbox ->
                   # ${ENV_NAME}-qits-events -> the deployer's durable subscriber. qits-ci reads no such key
@@ -656,8 +669,8 @@ public final class ComposeTemplate {
                   # retired qits-platform-artifacts alias; on qits-net the store is this tier's.
                   QITS_CI_DAEMON_BINARY_URL_TEMPLATE: "http://${ENV_NAME}-qits-artifacts:8080/artifacts/daemons/qits-ci-daemon/{version}"
                   # Machine auth. Inbound: /ci/api/events/* demands a bearer addressed to this service whose
-                  # project claim covers the event's repo. Outbound: the build-succeeded notify to the
-                  # deployer carries one.
+                  # project claim covers the event's repo. Outbound: every request that starts, reads
+                  # or removes a step container carries one.
                   #
                   # THE AUDIENCE IS ITS WIRE ALIAS AND HAS TO BE SPELLED, for the same reason the deployer's
                   # is: the image ships the unqualified qits-ci, and the idp mints ${ENV_NAME}-qits-ci.
@@ -667,19 +680,28 @@ public final class ComposeTemplate {
                   QUARKUS_OIDC_CLIENT_CLIENT_ENABLED: "${MACHINE_CLIENT}"
                   QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL: ${IDP}
                   # The client id and the audience it asks for are BOTH this tier's aliases, and the image
-                  # ships the unqualified pair (qits-ci asking for qits-platform-deployments). Either one
-                  # left alone is a token request the idp refuses — invalid_client for the first,
-                  # invalid_target for the second — on a notify that is swallowed at debug.
+                  # ships the unqualified pair. Either one left alone is a token request the idp
+                  # refuses — invalid_client for the first, invalid_target for the second.
+                  #
+                  # THE CLIENT ID IS ALSO CI'S OWNER STRING AT THE ORCHESTRATOR. Every route of
+                  # qits-containers compares the token's `sub` to the owner in the path, and ci's
+                  # qits.ci.containers.owner defaults to reading this key — which is also what keeps
+                  # two tiers sharing one docker daemon out of each other's containers, since
+                  # dev-qits-ci and prod-qits-ci are different owners. Set them apart and every call
+                  # is a 403 the moment the gate goes on.
+                  #
+                  # THE AUDIENCE MOVED with the caller: ci asked ${ENV_NAME}-qits-deployments while it
+                  # posted build-succeeded to the deployer, and that call was retired in favour of the
+                  # bus. What it asks for now is the orchestrator.
                   QUARKUS_OIDC_CLIENT_CLIENT_ID: ${ENV_NAME}-qits-ci
-                  QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE: ${ENV_NAME}-qits-deployments
+                  QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE: ${ENV_NAME}-qits-containers
                   QUARKUS_OIDC_CLIENT_CREDENTIALS_SECRET: "${IDP_SECRET_CI}"
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
-                volumes:
-                  # The socket and nothing else. ci's /data held the H2 files, and before that a bare git
-                  # mirror per repository — it reads pipeline config off the git host's content routes
-                  # now, so the image has no /data at all and this container writes nothing that outlives
-                  # it. The socket stays: starting a step container is what this service does.
-                  - /var/run/docker.sock:/var/run/docker.sock
+                # NO VOLUMES AT ALL, and there is nothing left to add. ci's /data held the H2 files,
+                # and before that a bare git mirror per repository — it reads pipeline config off the
+                # git host's content routes now. The daemon socket was the last mount and it is gone
+                # with this cutover, so this container writes nothing that outlives it and holds
+                # nothing that outranks it.
                 networks: [qits-net]
                 restart: unless-stopped
 
@@ -887,7 +909,18 @@ public final class ComposeTemplate {
             # ci -> outbox -> ${ENV_NAME}-qits-events -> the deployer's durable subscriber, which is what
             # QITS_EVENTS_URL below configures. A line naming a key nothing reads outlives the reader.
             # QITS_AUTH_MACHINE_AUDIENCE and QUARKUS_OIDC_CLIENT_CLIENT_ID are both this tier's alias: ci
-            # ships the unqualified qits-ci for each, and the idp knows neither name.
+            # ships the unqualified qits-ci for each, and the idp knows neither name. THE CLIENT ID IS
+            # ALSO CI'S OWNER STRING at the orchestrator — qits.ci.containers.owner defaults to
+            # reading it, and qits-containers compares it to the token's `sub` on every route — so it
+            # is what keeps two tiers sharing one docker daemon out of each other's step containers.
+            #
+            # NO SOCKET AND NO --group-add, AND THAT IS THE POINT OF THIS CUTOVER. This line used to
+            # start every ci successor with the host's docker socket and the socket's group: root on
+            # the host, held by the one service that executes repo-controlled pipelines. ci starts no
+            # container itself now — it asks ${ENV_NAME}-qits-containers, which is the only service
+            # granted that socket — so the grant is gone from here and the platform's most exposed
+            # service is the one with the least authority. Putting it back grants root for nothing:
+            # the image has no docker CLI and reads no socket path.
             #
             # NO DATASOURCE ENV, AND NO DATA VOLUME — and the asymmetry with the seed compose block is
             # deliberate. ci's deployments.yml declares
@@ -899,13 +932,14 @@ public final class ComposeTemplate {
             # break the deployment it looks like it is configuring. The seed block spells the same
             # variables because at that moment no deployer exists to inject anything. The /data volume
             # went with the H2: the image has no mount point for it any more.
-            qits.platform.deployments.run-args.qits-ci=-v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QITS_CI_GIT_HOST_URL=http://${ENV_NAME}-qits-githost:8080 -e QITS_CI_CONTAINER_GIT_URL=http://${ENV_NAME}-qits-githost:8080 -e QITS_CI_NETWORK=qits-net -e QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT} -e QITS_ARTIFACTS_NPM_HOSTED_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/ -e QITS_ARTIFACTS_NPM_PROXY_URL=http://qits-platform-mirror:8080/artifacts/npm/npmjs/ -e QITS_ARTIFACTS_MAVEN_REGISTRY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven -e QITS_ARTIFACTS_DOCS_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/docs/docs -e QITS_CI_DAEMON_VERSION=${DAEMON_SHA} -e QITS_CI_DAEMON_BINARY_URL_TEMPLATE=http://${ENV_NAME}-qits-artifacts:8080/artifacts/daemons/qits-ci-daemon/{version} -e QITS_CI_CONTAINER_DAEMON_URL=ws://${ENV_NAME}-qits-ci:8080/ci/daemon -e QITS_CI_WORKSPACES_URL=http://${ENV_NAME}-qits-workspaces:8080 -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-ci -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT} -e QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ID=${ENV_NAME}-qits-ci -e QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-deployments -e QUARKUS_OIDC_CLIENT_CREDENTIALS_SECRET=${IDP_SECRET_CI} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.platform.deployments.run-args.qits-ci=-e QITS_CI_GIT_HOST_URL=http://${ENV_NAME}-qits-githost:8080 -e QITS_CI_CONTAINER_GIT_URL=http://${ENV_NAME}-qits-githost:8080 -e QITS_CI_NETWORK=qits-net -e QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080 -e QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT} -e QITS_ARTIFACTS_NPM_HOSTED_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/ -e QITS_ARTIFACTS_NPM_PROXY_URL=http://qits-platform-mirror:8080/artifacts/npm/npmjs/ -e QITS_ARTIFACTS_MAVEN_REGISTRY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven -e QITS_ARTIFACTS_DOCS_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/docs/docs -e QITS_CI_DAEMON_VERSION=${DAEMON_SHA} -e QITS_CI_DAEMON_BINARY_URL_TEMPLATE=http://${ENV_NAME}-qits-artifacts:8080/artifacts/daemons/qits-ci-daemon/{version} -e QITS_CI_CONTAINER_DAEMON_URL=ws://${ENV_NAME}-qits-ci:8080/ci/daemon -e QITS_CI_WORKSPACES_URL=http://${ENV_NAME}-qits-workspaces:8080 -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-ci -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT} -e QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ID=${ENV_NAME}-qits-ci -e QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-containers -e QUARKUS_OIDC_CLIENT_CREDENTIALS_SECRET=${IDP_SECRET_CI} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE CONTAINER ORCHESTRATOR, and the SOCKET IS THE LINE. Every successor of this
             # application has to be started with /var/run/docker.sock and the socket's group, because
             # starting containers is the whole component — a cutover that dropped either would deploy
             # a service that passes health and can do nothing. Same mount and same --group-add as
-            # qits-ci above and the deployer below, on the same terms: it is root-equivalent control
-            # of the host daemon, and this line IS the deliberate act of granting it.
+            # the deployer below, on the same terms: it is root-equivalent control of the host
+            # daemon, and this line IS the deliberate act of granting it — to ONE service now, which
+            # is what the grant just removed from ci above bought.
             #
             # NO DATASOURCE ENV AND NO VOLUME: both stores are declared (`resources: postgresql:db,
             # postgresql:eventstream:qits_containers_eventstream`) and injected by the deployer before
