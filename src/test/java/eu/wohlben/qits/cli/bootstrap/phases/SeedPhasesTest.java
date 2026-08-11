@@ -52,23 +52,33 @@ class SeedPhasesTest {
     @Test
     void theSeedLibrariesAreEveryJarASeedImageResolves() {
         assertThat(SeedPhases.SEED_LIBRARIES).containsExactly(
-                "blobstore", "registries", "eventstream", "githost", "integrations-quarkus");
-        // Dependency order, and each pair is forced: qits-registries is written against
-        // qits-blobstore's entities, and qits-githost-events against qits-eventstream.
+                "blobstore", "registries", "integrations-quarkus", "eventstream", "githost",
+                "containers");
+        // Dependency order, and every pair is forced by a pom: qits-registries is written against
+        // qits-blobstore's entities, qits-eventstream against qits-db-core (a module of
+        // qits-integrations-quarkus), qits-githost-events against qits-eventstream, and the
+        // orchestrator's two libraries against qits-db-core and qits-eventstream both.
         assertThat(SeedPhases.SEED_LIBRARIES).containsSubsequence("blobstore", "registries");
-        assertThat(SeedPhases.SEED_LIBRARIES).containsSubsequence("eventstream", "githost");
-        // auth-core is last, because the probe that skips the whole phase asks for it.
-        assertThat(SeedPhases.SEED_LIBRARIES).endsWith("integrations-quarkus");
+        assertThat(SeedPhases.SEED_LIBRARIES)
+                .containsSubsequence("integrations-quarkus", "eventstream", "githost");
+        assertThat(SeedPhases.SEED_LIBRARIES)
+                .containsSubsequence("integrations-quarkus", "containers");
+        assertThat(SeedPhases.SEED_LIBRARIES).containsSubsequence("eventstream", "containers");
+        // containers is last, because the probe that skips the whole phase asks for
+        // qits-containers-client — the last thing this phase publishes, so its presence is the one
+        // honest answer for the whole set.
+        assertThat(SeedPhases.SEED_LIBRARIES).endsWith("containers");
     }
 
     /**
-     * The git host is seeded by MODULE. Publishing the repository whole would build its service to
-     * hand over a data module; {@code -am} is what carries the root pom with it, without which the
-     * jar resolves nowhere.
+     * The git host and the orchestrator are seeded by MODULE. Publishing either repository whole
+     * would build its service to hand over a library; {@code -am} is what carries the root pom with
+     * it, without which the jar resolves nowhere.
      */
     @Test
     void theGitHostPublishesItsEventVocabularyAndNothingElse() {
         assertThat(SeedPhases.mavenModuleArgs("githost")).isEqualTo(" -pl githost-events -am");
+        assertThat(SeedPhases.mavenModuleArgs("containers")).isEqualTo(" -pl core,client -am");
         assertThat(SeedPhases.mavenModuleArgs("eventstream")).isEmpty();
         assertThat(SeedPhases.mavenModuleArgs("blobstore")).isEmpty();
         assertThat(SeedPhases.mavenModuleArgs("integrations-quarkus")).isEmpty();

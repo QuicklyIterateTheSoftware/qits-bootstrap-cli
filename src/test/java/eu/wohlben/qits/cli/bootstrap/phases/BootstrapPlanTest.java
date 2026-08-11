@@ -50,11 +50,14 @@ class BootstrapPlanTest {
         // artifacts is built and started before anything can be published into it, and every maven
         // publish lands before the ci image that consumes them is built.
         assertThat(ids).containsSubsequence("seed-image-artifacts", "seed-artifacts",
-                "publish-qits-blobstore", "publish-qits-registries-oci", "publish-qits-eventstream",
-                // The git host's vocabulary sits between its own dependency and auth-core: it is
-                // built against qits-eventstream and against nothing else.
-                "publish-qits-githost-events",
+                "publish-qits-blobstore", "publish-qits-registries-oci",
+                // The integrations before qits-eventstream: the event library is built against
+                // qits-db-core, which is one of their three modules.
                 "publish-qits-auth-core",
+                "publish-qits-eventstream",
+                // The git host's vocabulary follows its own dependency: it is built against
+                // qits-eventstream and against nothing else of this platform.
+                "publish-qits-githost-events",
                 // The orchestrator's two libraries, last of the publishes: they are built against
                 // qits-db-core, qits-arch-rules, qits-auth-core and qits-eventstream, so everything
                 // they resolve is already in the store.

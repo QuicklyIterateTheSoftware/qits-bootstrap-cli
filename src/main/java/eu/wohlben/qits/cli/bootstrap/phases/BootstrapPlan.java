@@ -85,21 +85,25 @@ public final class BootstrapPlan {
                     "publish qits-blobstore into seed artifacts"));
             phases.add(seed.mavenPublish("registries", "qits-registries-oci",
                     "publish qits-registries into seed artifacts"));
+            // The integrations BEFORE qits-eventstream, because qits-eventstream is written against
+            // qits-db-core — one of this repository's three modules — since 2026-08-11. A publish
+            // resolves its qits half from the store it is deploying into, so the order here is the
+            // same order the maven seed runs in and for the same reason.
+            phases.add(seed.mavenPublish("integrations-quarkus", "qits-auth-core",
+                    "publish qits-auth-core into seed artifacts"));
             phases.add(seed.mavenPublish("eventstream", "qits-eventstream",
                     "publish qits-eventstream into seed artifacts"));
-            // The git host's event vocabulary, AFTER qits-eventstream because that is its only
+            // The git host's event vocabulary, AFTER qits-eventstream because that is its only qits
             // dependency, and one module of qits-githost rather than the repository whole. Two
             // consumers need it out of the store: the ci image built four phases below, and
             // qits-projects, which the train deploys long before the git host's own deployment
             // could have published anything.
             phases.add(seed.mavenPublish("githost", "qits-githost-events",
                     "publish qits-githost-events into seed artifacts"));
-            phases.add(seed.mavenPublish("integrations-quarkus", "qits-auth-core",
-                    "publish qits-auth-core into seed artifacts"));
             // The orchestrator's two libraries, LAST of the maven publishes and before every image
             // built out of them. It has to be last: the pair is built against qits-db-core,
-            // qits-arch-rules and qits-auth-core (all three from qits-integrations-quarkus, one line
-            // up) and against qits-eventstream, so every jar it resolves is already in the store.
+            // qits-arch-rules and qits-auth-core (all three from qits-integrations-quarkus) and
+            // against qits-eventstream, so every jar it resolves is already in the store.
             //
             // It has to be BEFORE seed-image-ci: ci pins qits-containers-client, and a step
             // container's image build resolves from the platform's own Maven registry. There is no

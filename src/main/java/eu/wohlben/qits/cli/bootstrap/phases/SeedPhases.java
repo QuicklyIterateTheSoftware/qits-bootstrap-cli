@@ -52,26 +52,39 @@ public class SeedPhases {
      */
     private static final String AUTH_SEED_URL = "http://" + AUTH_SEED_HTTP + "/artifacts";
 
-    /** Where the metadata of a Maven artifact lives under an artifacts base url. */
-    private static final String AUTH_CORE_METADATA =
-            "/maven/maven/eu/wohlben/qits/qits-auth-core/maven-metadata.xml";
+    /**
+     * Where the metadata of the seed's LAST published artifact lives under an artifacts base url —
+     * the sentinel the skip probe asks for. See {@link #mavenSeed()} for why it is this one.
+     */
+    private static final String SEED_SENTINEL_METADATA =
+            "/maven/maven/eu/wohlben/qits/qits-containers-client/maven-metadata.xml";
 
     /**
      * The qits libraries a seed image build resolves, in DEPENDENCY ORDER, and the repository each
      * one is built from. Every one of them is published into the temporary registry below before
      * the first seed image is built, and into the real store once it answers.
      * <p>
-     * qits-registries is written against qits-blobstore's entities, so the blob store goes first;
-     * qits-githost-events is written against qits-eventstream and follows it; qits-auth-core is
-     * last because it is the one every service consumes and the probe that skips this phase asks
-     * for it.
-     * <p>
-     * <b>githost names a SERVICE repository and publishes one module of it</b> — its event
-     * vocabulary, which qits-ci and qits-projects consume. {@link PlatformModel#mavenModule} says
-     * which module and why.
+     * Every pair here is forced by a pom:
+     * <ul>
+     *   <li>qits-registries is written against qits-blobstore's entities, so the blob store is
+     *       first.
+     *   <li>qits-eventstream is written against qits-db-core, a module of qits-integrations-quarkus,
+     *       so the integrations come BEFORE it. This is the edge that broke the 2026-08-11 proving
+     *       run: the integrations used to be last, every earlier green run had an eventstream with
+     *       no qits dependency at all, and the day it grew one the seed resolved qits-db-core
+     *       against a registry that does not exist yet — "Connection refused" on localhost:8081,
+     *       minutes into the phase.
+     *   <li>qits-githost-events is written against qits-eventstream and follows it.
+     *   <li>qits-containers' two libraries are written against qits-db-core and qits-eventstream,
+     *       so the orchestrator is last.
+     * </ul>
+     * <b>githost and containers name SERVICE repositories and publish modules of them</b> — the git
+     * host's event vocabulary, and the orchestrator's core and client. {@link
+     * PlatformModel#mavenModule} says which modules and why.
      */
-    static final List<String> SEED_LIBRARIES =
-            List.of("blobstore", "registries", "eventstream", "githost", "integrations-quarkus");
+    static final List<String> SEED_LIBRARIES = List.of(
+            "blobstore", "registries", "integrations-quarkus", "eventstream", "githost",
+            "containers");
 
     private final Boot boot;
 
@@ -335,17 +348,19 @@ public class SeedPhases {
      * temporary registry does not hold fails minutes in, naming a version nobody ever pushed.
      * <p>
      * <b>The temporary registry holds every qits jar a seed image could ask for, whatever the plan's
-     * order is.</b> qits-ci's image is the one that consumes qits-githost-events, and today it is
-     * built after {@code seed-artifacts} has taken the registry port — so the copy it really
-     * resolves is the store's, published by {@link #mavenPublish}. Both lists carry the jar because
-     * the two are one port: whichever server is behind it when an image builds has to answer, and a
-     * reordering that moves an image to the other side of {@code seed-artifacts} must not be able to
-     * turn that into a failed build.
+     * order is.</b> qits-ci's image consumes qits-githost-events and qits-containers-client, and
+     * today it is built after {@code seed-artifacts} has taken the registry port — so the copies it
+     * really resolves are the store's, published by {@link #mavenPublish}. Both lists carry those
+     * jars because the two are one port: whichever server is behind it when an image builds has to
+     * answer, and a reordering that moves an image to the other side of {@code seed-artifacts} must
+     * not be able to turn that into a failed build.
      * <p>
-     * <b>One container, one deploy per entry, in dependency order.</b> {@code mvn deploy} installs
-     * into the container's own local repository on its way out, so qits-registries resolves the
-     * qits-blobstore the line above it just built — which is the whole reason these are not one
-     * container each.
+     * <b>One container, one deploy per entry, in the order {@link #SEED_LIBRARIES} spells.</b>
+     * {@code mvn deploy} installs into the container's own local repository on its way out, so
+     * qits-registries resolves the qits-blobstore the line above it just built — which is the whole
+     * reason these are not one container each. The other side of that: a library built before the
+     * qits jar it depends on resolves nothing local, reaches for the registry port that no server
+     * holds yet, and fails with "Connection refused". Read the poms before moving a line.
      */
     public Phase mavenSeed() {
         return new Phase("maven-seed",
@@ -353,25 +368,30 @@ public class SeedPhases {
                 ctx -> {
                     // Version-agnostic on purpose: the checkouts publish their real calver, so a
                     // pinned-version probe never matches and a rerun collides with whoever holds
-                    // the registry port. Metadata present = auth-core is served, whatever version —
-                    // and auth-core is deployed LAST below, so its presence answers for the set.
+                    // the registry port. Metadata present = qits-containers-client is served,
+                    // whatever version — and it is the LAST entry of SEED_LIBRARIES, deployed by
+                    // the last line of the one script below, so its presence answers for the whole
+                    // set. The sentinel has to be the last entry and nothing else: an earlier one
+                    // is served halfway through a run that then died, and the probe would skip a
+                    // phase that never finished.
                     //
                     // TWO ADDRESSES, because in-network there are two servers rather than one
                     // port. On the host both answered 127.0.0.1:REGISTRY_PORT, so one probe found
                     // whoever held it. Here the platform's own store answers under its wire alias
                     // and a previous run's temporary registry under its container name, and either
                     // one means this phase has nothing left to do.
-                    if (boot.http.get(boot.config.artifactsUrl() + AUTH_CORE_METADATA, Map.of()).ok()
-                            || boot.http.get(AUTH_SEED_URL + AUTH_CORE_METADATA, Map.of()).ok()) {
-                        ctx.skip("qits-auth-core is already served");
+                    if (boot.http.get(boot.config.artifactsUrl() + SEED_SENTINEL_METADATA,
+                                    Map.of()).ok()
+                            || boot.http.get(AUTH_SEED_URL + SEED_SENTINEL_METADATA, Map.of()).ok()) {
+                        ctx.skip("qits-containers-client is already served");
                     }
                     // The platform's own store may already hold the registry port, and then the
                     // temporary one cannot have it — the bind fails with "port is already
                     // allocated" and the boot stops. It does not need it either: the store IS the
-                    // Maven registry the seed builds resolve against, and qits-auth-core is
-                    // published into it by every bootstrap that gets past phase 10. If a store this
-                    // far along somehow has not got it, the seed build below fails by name rather
-                    // than resolving nothing quietly.
+                    // Maven registry the seed builds resolve against, and every one of these
+                    // libraries is published into it by every bootstrap that gets past phase 10. If
+                    // a store this far along somehow has not got one, the seed build below fails by
+                    // name rather than resolving nothing quietly.
                     storeAlreadyServing().ifPresent(who ->
                             ctx.skip(who + " serves port " + boot.config.registryPort()
                                     + " — it is the registry"));
