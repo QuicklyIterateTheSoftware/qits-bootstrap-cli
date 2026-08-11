@@ -865,10 +865,11 @@ public class SeedPhases {
      * <b>Which databases are here, and which are deliberately not.</b> This phase provisions what
      * the SEED STACK needs: the deployer's own store AND ITS OUTBOX, and the stores of the core
      * services that come up beside it — qits-ci (its database and its outbox), qits-platform-idp,
-     * qits-platform-dns, qits-events, qits-platform-mirror and qits-githost (its database and its
-     * outbox). Three of the ten are outboxes because the eventstream library keeps its own Flyway
-     * lineage and cannot share a database with its host; ci carried one from the start, the deployer
-     * joined the bus on 2026-08-10, and the git host is the newest publisher on it.
+     * qits-platform-dns, qits-events, qits-platform-mirror, qits-githost (its database and its
+     * outbox) and qits-containers (the same pair). Four of the twelve are outboxes because the
+     * eventstream library keeps its own Flyway lineage and cannot share a database with its host; ci
+     * carried one from the start, the deployer joined the bus on 2026-08-10, and the git host and
+     * the orchestrator are the newest publishers on it.
      * Every one of them runs Flyway at boot against a database that has to exist
      * already, and at that point in a cold boot no deployer exists to make one. The nameserver is
      * the loudest about it on purpose: it refuses to start rather than answer NXDOMAIN for every
@@ -904,6 +905,11 @@ public class SeedPhases {
                     "qits.pg.githost-password");
             String githostEventstream = pgPassword(ctx, state, "PG_GITHOST_EVENTSTREAM_PASSWORD",
                     "qits.pg.githost-eventstream-password");
+            String containers = pgPassword(ctx, state, "PG_CONTAINERS_PASSWORD",
+                    "qits.pg.containers-password");
+            String containersEventstream = pgPassword(ctx, state,
+                    "PG_CONTAINERS_EVENTSTREAM_PASSWORD",
+                    "qits.pg.containers-eventstream-password");
             boot.state.pgSuperuserPassword = superuser;
             boot.state.pgDeploymentsPassword = deployments;
             boot.state.pgDeploymentsEventstreamPassword = deploymentsEventstream;
@@ -915,6 +921,8 @@ public class SeedPhases {
             boot.state.pgPlatformMirrorPassword = platformMirror;
             boot.state.pgGithostPassword = githost;
             boot.state.pgGithostEventstreamPassword = githostEventstream;
+            boot.state.pgContainersPassword = containers;
+            boot.state.pgContainersEventstreamPassword = containersEventstream;
 
             // RECORDED BEFORE THE SERVER IS STARTED, and the order is the whole point.
             // POSTGRES_PASSWORD applies at initdb only: once the data volume holds a cluster, the
@@ -936,6 +944,8 @@ public class SeedPhases {
             state.put("PG_PLATFORM_MIRROR_PASSWORD", platformMirror);
             state.put("PG_GITHOST_PASSWORD", githost);
             state.put("PG_GITHOST_EVENTSTREAM_PASSWORD", githostEventstream);
+            state.put("PG_CONTAINERS_PASSWORD", containers);
+            state.put("PG_CONTAINERS_EVENTSTREAM_PASSWORD", containersEventstream);
             state.write();
             ctx.log("  recorded in " + state.file() + " before the server starts");
 
@@ -1039,8 +1049,15 @@ public class SeedPhases {
                 provision(ctx, admin, "qits_platform_mirror", platformMirror, false);
                 provision(ctx, admin, "qits_githost", githost, false);
                 provision(ctx, admin, "qits_githost_eventstream", githostEventstream, false);
+                // THE ORCHESTRATOR, a seed service since 2026-08-11 and a two-database one for the
+                // same reason ci and the git host are: its registry of rows and the eventstream
+                // outbox are two Flyway lineages and cannot share a database. Both names are the
+                // deployer's own derivation from the application name, so the rows it registers on
+                // the first pipeline deployment are the rows this creates.
+                provision(ctx, admin, "qits_containers", containers, false);
+                provision(ctx, admin, "qits_containers_eventstream", containersEventstream, false);
             }
-            ctx.note("10 databases ready on " + pg);
+            ctx.note("12 databases ready on " + pg);
         });
     }
 
@@ -1358,6 +1375,9 @@ public class SeedPhases {
         values.put("PG_GITHOST_PASSWORD", orEmpty(boot.state.pgGithostPassword));
         values.put("PG_GITHOST_EVENTSTREAM_PASSWORD",
                 orEmpty(boot.state.pgGithostEventstreamPassword));
+        values.put("PG_CONTAINERS_PASSWORD", orEmpty(boot.state.pgContainersPassword));
+        values.put("PG_CONTAINERS_EVENTSTREAM_PASSWORD",
+                orEmpty(boot.state.pgContainersEventstreamPassword));
         values.put("IDP", boot.config.idpIssuer());
         values.put("PUSH_TOKEN", boot.config.pushToken());
         values.put("MACHINE_REQUIRED", String.valueOf(boot.config.machineAuth()));

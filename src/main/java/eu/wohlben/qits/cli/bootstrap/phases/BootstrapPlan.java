@@ -96,11 +96,25 @@ public final class BootstrapPlan {
                     "publish qits-githost-events into seed artifacts"));
             phases.add(seed.mavenPublish("integrations-quarkus", "qits-auth-core",
                     "publish qits-auth-core into seed artifacts"));
+            // The orchestrator's two libraries, LAST of the maven publishes and before every image
+            // built out of them. It has to be last: the pair is built against qits-db-core,
+            // qits-arch-rules and qits-auth-core (all three from qits-integrations-quarkus, one line
+            // up) and against qits-eventstream, so every jar it resolves is already in the store.
+            //
+            // It has to be BEFORE seed-image-ci: ci pins qits-containers-client, and a step
+            // container's image build resolves from the platform's own Maven registry. There is no
+            // host ~/.m2 anywhere in this run to fall back on.
+            phases.add(seed.mavenPublish("containers", "qits-containers-client",
+                    "publish the qits-containers libraries into seed artifacts"));
             phases.add(seed.uiComponentsPublish());
             phases.add(seed.angularPublish());
             phases.add(seed.seedImage("ci"));
             phases.add(seed.seedImage("deployments"));
             phases.add(seed.seedImage("platform-idp"));
+            // The orchestrator's own image, in the second half because its reactor resolves four
+            // qits jars the publishes above put in the store. It has no client bundle to place: the
+            // service serves machines and there is no SPA to stand in for.
+            phases.add(seed.seedImage("containers"));
             for (String image : List.of("ci-base", "maven-base", "userflows-base", "node-base",
                     "node-docker-base")) {
                 phases.add(seed.stepImage(image));

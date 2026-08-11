@@ -54,9 +54,17 @@ class BootstrapPlanTest {
                 // The git host's vocabulary sits between its own dependency and auth-core: it is
                 // built against qits-eventstream and against nothing else.
                 "publish-qits-githost-events",
-                "publish-qits-auth-core", "publish-ui-components",
+                "publish-qits-auth-core",
+                // The orchestrator's two libraries, last of the publishes: they are built against
+                // qits-db-core, qits-arch-rules, qits-auth-core and qits-eventstream, so everything
+                // they resolve is already in the store.
+                "publish-qits-containers-client", "publish-ui-components",
                 "publish-angular", "seed-image-ci", "seed-image-deployments",
-                "seed-image-platform-idp", "ci-daemon");
+                "seed-image-platform-idp", "seed-image-containers", "ci-daemon");
+        // BEFORE the ci image, because ci pins qits-containers-client and a step-container image
+        // build resolves from the platform's own Maven registry — there is no host ~/.m2 in this
+        // run to fall back on.
+        assertThat(ids).containsSubsequence("publish-qits-containers-client", "seed-image-ci");
         // The ci image consumes qits-githost-events, so the publish is before it — and qits-projects
         // consumes it too, which the deploy train reaches long before the git host's own deployment.
         assertThat(ids).containsSubsequence("publish-qits-githost-events", "seed-image-ci",
@@ -106,7 +114,11 @@ class BootstrapPlanTest {
                 "deploy-oci-postgresql",
                 "deploy-platform-idp", "deploy-stt", "deploy-projects", "deploy-workspaces",
                 "deploy-events", "deploy-docs", "deploy-platform-dns", "deploy-gateway",
-                "deploy-platform-mirror", "deploy-artifacts", "deploy-githost", "deploy-ci",
+                "deploy-platform-mirror", "deploy-artifacts", "deploy-githost",
+                // The orchestrator immediately before ci: ci runs every step as a container it asks
+                // that service for, so a ci cutover inside the orchestrator's window is a pipeline
+                // with nowhere to run.
+                "deploy-containers", "deploy-ci",
                 "deploy-platform-edge", "deploy-deployments");
         assertThat(ids).doesNotContain("deploy-cd", "deploy-serviceregistry");
         // Pre-rename spellings deploy nothing and would push to repositories nobody reads.
@@ -170,7 +182,8 @@ class BootstrapPlanTest {
 
         assertThat(warm).contains("seed-skipped")
                 .doesNotContain("ci-daemon", "seed-image-ci", "seed-image-platform-edge",
-                        "seed-image-oci-postgresql", "seed-image-events", "maven-seed",
+                        "seed-image-oci-postgresql", "seed-image-events",
+                        "seed-image-containers", "publish-qits-containers-client", "maven-seed",
                         // The mirror is started by hand only on the build path; a warm rerun's
                         // compose file starts it like every other seed service.
                         "seed-mirror", "seed-artifacts");

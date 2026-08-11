@@ -179,6 +179,24 @@ public class PipelinePhases {
                                 : boot.http.get("http://" + env
                                         + "-qits-events:8080/events/q/health/ready", Map.of());
                     });
+            // THE CONTAINER ORCHESTRATOR, and it is waited for BEFORE the first pipeline of this
+            // boot rather than trusted to arrive: qits-ci runs every step as a container it asks
+            // this service for, so a pipeline that starts first has nowhere to run a step.
+            //
+            // At its OWN alias, the second exception to "everything through the edge" and for the
+            // same reason as the nameserver: there is no gateway route to this service and there
+            // must not be one. Every caller is a machine on qits-net, and a route would put a
+            // socket-holding orchestrator behind the platform's public door. Health lives under
+            // /containers/q because that is the service's own non-application root path, and
+            // readiness includes the two databases it refuses to boot without.
+            //
+            // No auth-plane probe beside the two below, deliberately: nothing in THIS run calls the
+            // orchestrator, so there is no first request to warm the tenant for. The probe belongs
+            // with the change that makes ci a caller.
+            boot.awaitHealth(ctx, PlatformModel.wireAlias("containers", env)
+                            + " (on qits-net, no gateway route)",
+                    () -> boot.http.get("http://" + PlatformModel.wireAlias("containers", env)
+                            + ":8080/containers/q/health/ready", Map.of()));
             // Health is not enough with the machine gate on: a freshly (re)created service
             // initializes its OIDC tenant lazily on the FIRST request, and if that races idp's own
             // restart, every request 500s for a few seconds — reads included. Poll one read per
@@ -1039,6 +1057,12 @@ public class PipelinePhases {
                     + " udp AND tcp — a sibling of the edge, never a route behind it.");
             report.add("           Zones and records are ROWS: " + boot.config.dnsUrl()
                     + "/api/zones");
+            report.add("workloads: " + PlatformModel.wireAlias("containers", env)
+                    + " on qits-net — the orchestrator that holds the");
+            report.add("           docker socket. No host port and no gateway route: every caller "
+                    + "is a machine");
+            report.add("           on this network, and every route of it is behind the machine "
+                    + "gate.");
             report.add("git host:  http://localhost:" + boot.config.gitHostPort()
                     + "/git/<repoId> — qits-githost, its own service and its own port.");
             report.add("           On qits-net it is " + boot.config.gitHostUrl()

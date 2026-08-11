@@ -61,10 +61,18 @@ public final class PlatformModel {
      * where every third-party byte a build resolves comes from — a seed publish included, which is
      * why it starts before the first one. qits-githost is the git host, and the first push of the
      * boot is a push to it: nothing can be built from a repository nothing hosts.
+     * <p>
+     * <b>qits-containers joined on 2026-08-11, and it is in the seed because qits-ci is.</b> It is
+     * the platform's container orchestrator: one service holds the docker socket and every module
+     * that needs a workload asks it, instead of each one shelling {@code docker run} with a
+     * vocabulary of its own. qits-ci hands it the step containers, so a ci that starts a pipeline
+     * before the orchestrator answers has nowhere to run a step — which is why this service is
+     * HEALTHY BEFORE THE FIRST PIPELINE, in the seed and in the deploy order both.
      */
     public static final List<String> CORE = List.of(
             "gateway", "platform-edge", "platform-mirror", "artifacts", "githost", "ci",
-            "deployments", "platform-idp", "platform-dns", "events", "oci-postgresql");
+            "containers", "deployments", "platform-idp", "platform-dns", "events",
+            "oci-postgresql");
 
     /**
      * Everything the platform deploys through itself. Order matters: observability first (quiets
@@ -113,11 +121,17 @@ public final class PlatformModel {
      * and before qits-ci, because ci reads pipeline config out of the git host and clones from it —
      * and because the githost's own deployment is the one that re-hosts the repository this train
      * pushes to, the same self-referential class as postgres and the deployer.
+     * <p>
+     * <b>qits-containers is immediately BEFORE qits-ci, and that pair's order is forced.</b> ci runs
+     * every pipeline step as a container it asks this service for, so a ci cutover landing while the
+     * orchestrator is mid-cutover is a pipeline with nowhere to run. Deploying the orchestrator first
+     * puts its window before ci's rather than inside it, and leaves the run's own remaining
+     * deployments — the edge and the deployer — behind a ci that already has a working step host.
      */
     public static final List<String> DEPLOYABLES = List.of(
             "observability", "oci-postgresql", "platform-idp", "stt", "projects", "workspaces",
             "events", "docs", "platform-dns", "gateway", "platform-mirror", "artifacts", "githost",
-            "ci", "platform-edge", "deployments");
+            "containers", "ci", "platform-edge", "deployments");
 
     /**
      * The deployables on the PLATFORM plane: one instance for the whole platform, deployed once
@@ -290,10 +304,10 @@ public final class PlatformModel {
     }
 
     /**
-     * The one maven module of a repository the seed publishes, or empty when it publishes the
-     * repository whole.
+     * The maven modules of a repository the seed publishes, comma-separated as maven's own
+     * {@code -pl} takes them, or empty when it publishes the repository whole.
      * <p>
-     * <b>qits-githost is the only entry, and the reason is what its {@code githost-events} module
+     * <b>qits-githost was the first entry, and the reason is what its {@code githost-events} module
      * is.</b> That module is a vocabulary: four records and one dependency (qits-eventstream), no
      * container. qits-ci and qits-projects consume it and nothing else of the git host — so the
      * seed owes them that jar and none of the rest. Publishing the repository whole would build
@@ -301,13 +315,21 @@ public final class PlatformModel {
      * work for bytes nobody asked for, and would put a service jar in the registry that only its
      * own image ever loads.
      * <p>
-     * {@code SeedPhases} turns this into {@code -pl <module> -am}, and {@code -am} is not optional:
-     * it carries the ROOT POM with the module, and an artifact whose parent the registry does not
+     * <b>qits-containers is the same shape with two modules instead of one.</b> Its consumers depend
+     * on {@code qits-containers-client} — the wire records and the HttpClient behind them — and
+     * {@code qits-containers-core} is what the client's own reactor is built beside; its
+     * {@code service} module is the deployable, a native image nobody resolves. So the seed publishes
+     * the two libraries and leaves the service to its own image build, which saves a native compile
+     * inside a maven container and keeps a jar only one image loads out of the registry.
+     * <p>
+     * {@code SeedPhases} turns this into {@code -pl <modules> -am}, and {@code -am} is not optional:
+     * it carries the ROOT POM with the modules, and an artifact whose parent the registry does not
      * hold resolves nowhere.
      */
     public static String mavenModule(String name) {
         return switch (name) {
             case "githost" -> "githost-events";
+            case "containers" -> "core,client";
             default -> "";
         };
     }
@@ -411,8 +433,8 @@ public final class PlatformModel {
      * ({@code qits.idp.client.<id>.secret}), so a client the deployment spells differently from
      * the token request is {@code invalid_client} with nothing in any log to say why.
      * <p>
-     * qits-deployments is deliberately NOT here. It mints nothing — the merge removed the
-     * oidc-client its ancestor needed to reach the registry — so it needs no client and no secret,
+     * qits-deployments and qits-containers are deliberately NOT here — see
+     * {@link #RECEIVE_ONLY_APPS}. Neither mints anything, so neither needs a client or a secret,
      * only the audience its callers may ask for. qits-cd is gone for the opposite reason to the
      * one that kept it: the client ids all moved on 2026-08-08, so no id in this list is one a
      * pre-rename platform would recognise anyway.
@@ -442,16 +464,30 @@ public final class PlatformModel {
             List.of("ci", "artifacts", "workspaces", "gateway");
 
     /**
-     * The {@code aud} values the platform's clients may ask for: every client above plus
-     * qits-deployments, which holds no client because it only receives. An audience a client may
-     * not ask for is {@code invalid_target}, not a silent bare call — and the key REPLACES the
-     * shipped list rather than extending it, so it is restated in full.
+     * The {@code aud} values the platform's clients may ask for: every client above plus the
+     * RECEIVE-ONLY applications below, which hold no client because they only validate. An audience
+     * a client may not ask for is {@code invalid_target}, not a silent bare call — and the key
+     * REPLACES the shipped list rather than extending it, so it is restated in full.
      */
     public static String idpAudiences(String envName) {
         List<String> audiences = new ArrayList<>(idpClients(envName));
-        audiences.add(wireAlias("deployments", envName));
+        RECEIVE_ONLY_APPS.forEach(app -> audiences.add(wireAlias(app, envName)));
         return String.join(",", audiences);
     }
+
+    /**
+     * The applications that VALIDATE a bearer and mint none. They are an audience and not a client:
+     * a client is what a service needs to ask for a token, and neither of these ever asks.
+     * <p>
+     * qits-deployments has been one since the merge-back removed the oidc-client its ancestor
+     * needed. <b>qits-containers joined on 2026-08-11</b>, and it is the stricter case of the pair:
+     * every route of it is guarded, reads included, because a row says which containers another
+     * module has running. Both halves of that gate are this one line — the service validates tokens
+     * addressed to {@code <env>-qits-containers}, and its callers may ask the idp for exactly that
+     * audience. Without it the caller is refused {@code invalid_target} and the service's own gate
+     * never sees a token at all.
+     */
+    public static final List<String> RECEIVE_ONLY_APPS = List.of("deployments", "containers");
 
     /** The env-var spelling of a client id: uppercase, dashes as underscores. */
     public static String clientKey(String clientId) {

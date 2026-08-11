@@ -36,6 +36,8 @@ class ComposeTemplateTest {
         values.put("PG_PLATFORM_MIRROR_PASSWORD", "1234123412341234");
         values.put("PG_GITHOST_PASSWORD", "5678567856785678");
         values.put("PG_GITHOST_EVENTSTREAM_PASSWORD", "9abc9abc9abc9abc");
+        values.put("PG_CONTAINERS_PASSWORD", "def0def0def0def0");
+        values.put("PG_CONTAINERS_EVENTSTREAM_PASSWORD", "0f0f0f0f0f0f0f0f");
         values.put("IDP", "http://qits-platform-idp:8080/idp");
         values.put("PUSH_TOKEN", "local-dev");
         values.put("MACHINE_REQUIRED", "true");
@@ -110,7 +112,9 @@ class ComposeTemplateTest {
                 .doesNotContain("${PG_EVENTS_PASSWORD}")
                 .doesNotContain("${PG_PLATFORM_MIRROR_PASSWORD}")
                 .doesNotContain("${PG_GITHOST_PASSWORD}")
-                .doesNotContain("${PG_GITHOST_EVENTSTREAM_PASSWORD}");
+                .doesNotContain("${PG_GITHOST_EVENTSTREAM_PASSWORD}")
+                .doesNotContain("${PG_CONTAINERS_PASSWORD}")
+                .doesNotContain("${PG_CONTAINERS_EVENTSTREAM_PASSWORD}");
         assertThat(compose).doesNotContain("${MIRROR_PORT}").doesNotContain("${GIT_HOST_PORT}");
         // The domain fragments are filled even when they are empty: a leftover placeholder would
         // reach the file as literal text and compose would refuse it.
@@ -445,6 +449,62 @@ class ComposeTemplateTest {
     }
 
     /**
+     * <b>The container orchestrator is a seed service, and the SOCKET is what it is.</b> qits-ci runs
+     * every pipeline step as a container it asks this service for, and the first pipeline of a cold
+     * boot is minutes after the seed comes up — so it is here rather than at its own place in the
+     * deploy train.
+     * <p>
+     * The mount and the group have to be in BOTH files. The compose half is what the seed can do;
+     * the run-args half is what the deployer starts every successor with, and a socket missing there
+     * is a cutover that leaves a service passing health and able to do nothing.
+     */
+    @Test
+    void theOrchestratorIsInTheSeedWithItsTwoStoresAndKeepsTheSocketAcrossACutover() {
+        String compose = ComposeTemplate.compose(tokens());
+        String block = serviceBlock(compose, ENV + "-qits-containers");
+        String runArgs = runArgsLine("qits-containers");
+
+        assertThat(compose).contains("image: qits/containers:latest");
+        // Two stores, two Flyway lineages: the registry of rows, and the eventstream outbox. Both
+        // names are the deployer's own derivation, so the rows it registers later are these.
+        assertThat(block).contains("QITS_RESOURCE_DB_URL: "
+                        + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_containers")
+                .contains("QITS_RESOURCE_DB_USERNAME: qits_containers")
+                .contains("QITS_RESOURCE_DB_PASSWORD: \"def0def0def0def0\"")
+                .contains("QITS_RESOURCE_EVENTSTREAM_URL: jdbc:postgresql://"
+                        + "prod-qits-oci-postgresql:5432/qits_containers_eventstream")
+                .contains("QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_containers_eventstream")
+                .contains("QITS_RESOURCE_EVENTSTREAM_PASSWORD: \"0f0f0f0f0f0f0f0f\"");
+        assertThat(block).contains("QITS_EVENTS_URL: http://prod-qits-events:8080");
+        // Every route of this service is guarded, so the audience is not decoration: the image ships
+        // the bare qits-containers and the idp mints prod-qits-containers. No oidc-client — it
+        // validates and mints nothing, exactly like the deployer.
+        assertThat(block).contains("QITS_AUTH_MACHINE_AUDIENCE: prod-qits-containers")
+                .contains("QITS_AUTH_MACHINE_REQUIRED: \"true\"")
+                .contains("QUARKUS_OIDC_AUTH_SERVER_URL: http://qits-platform-idp:8080/idp")
+                .doesNotContain("QUARKUS_OIDC_CLIENT_");
+        // The socket and the group, in the seed. No data volume: the store is the postgres beside
+        // it and nothing it writes outlives the container.
+        assertThat(block).contains("group_add: [\"988\"]")
+                .contains("- /var/run/docker.sock:/var/run/docker.sock");
+        assertThat(compose).doesNotContain("qits-containers-data:");
+
+        // And in the run-args, which is the half that survives the first cutover.
+        assertThat(runArgs).contains("-v /var/run/docker.sock:/var/run/docker.sock")
+                .contains("--group-add 988")
+                .contains("-e QITS_EVENTS_URL=http://prod-qits-events:8080")
+                .contains("-e QITS_AUTH_MACHINE_AUDIENCE=prod-qits-containers")
+                .contains("-e QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp");
+        // Both stores are declared in its deployments.yml, so the deployer injects the six
+        // variables — a pin here is appended after that injection and outlives the next rotation.
+        assertThat(runArgs).doesNotContain("QITS_RESOURCE_");
+        // No gateway route, and there must not be one: every caller is a machine on qits-net, and a
+        // route would put a socket-holding orchestrator behind the platform's public door.
+        assertThat(compose).doesNotContain("QITS_GATEWAY_PROXY_HOSTS_CONTAINERS");
+        assertThat(runArgsLine("qits-gateway")).doesNotContain("CONTAINERS");
+    }
+
+    /**
      * qits-workspaces is told where a release lands, and it is this environment's deploy ref.
      * <p>
      * It ships a default of {@code environment/prod}, so a platform bootstrapped under any other
@@ -469,7 +529,7 @@ class ComposeTemplateTest {
         String properties = ComposeTemplate.runArgs(tokens());
 
         for (String application : new String[]{"qits-platform-edge", "qits-gateway",
-                "qits-artifacts", "qits-platform-mirror", "qits-githost",
+                "qits-artifacts", "qits-platform-mirror", "qits-githost", "qits-containers",
                 "qits-ci", "qits-deployments", "qits-platform-idp",
                 "qits-platform-dns", "qits-stt", "qits-projects", "qits-workspaces", "qits-events",
                 "qits-docs", "qits-observability", "qits-oci-postgresql"}) {
@@ -691,6 +751,10 @@ class ComposeTemplateTest {
                 .doesNotContain("-v qits-ci-data:/data");
         assertThat(runArgsLine("qits-events")).doesNotContain("QITS_RESOURCE_")
                 .doesNotContain("-v qits-events-data:/data");
+        // The orchestrator declares two stores and keeps no volume: the socket is the only thing
+        // its line mounts.
+        assertThat(runArgsLine("qits-containers")).doesNotContain("QITS_RESOURCE_")
+                .doesNotContain("-v qits-containers-data:/data");
         // The two that keep a volume: /data is their own tree of files, not a database.
         assertThat(runArgsLine("qits-projects")).contains("-v qits-projects-data:/data")
                 .contains("-e QITS_PROJECTS_DATA_DIR=/data/mirrors")

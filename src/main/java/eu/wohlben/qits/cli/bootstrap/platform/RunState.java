@@ -63,6 +63,14 @@ public class RunState {
     public String pgPlatformMirrorPassword;
     public String pgGithostPassword;
     public String pgGithostEventstreamPassword;
+    /**
+     * The container orchestrator's pair, on the same terms as everything above. qits-containers keeps
+     * the registry of rows that says which containers may exist in one database and the eventstream
+     * outbox in a second, because two Flyway lineages cannot share one — the same pair qits-ci, the
+     * deployer and the git host carry.
+     */
+    public String pgContainersPassword;
+    public String pgContainersEventstreamPassword;
     /** The environment row the deployer reconciled. */
     public String environmentId;
     /** The temporary maven-over-HTTP container that breaks the first-boot dependency cycle. */

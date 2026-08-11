@@ -27,6 +27,14 @@ class PlatformModelTest {
                 .isEqualTo("services/qits-platform-mirror");
         assertThat(PlatformModel.repoPath("githost")).isEqualTo("services/qits-githost");
         assertThat(PlatformModel.repoPath("docs")).isEqualTo("services/qits-docs");
+        // The container orchestrator: a service, so services/ and docker/Dockerfile, and its wire
+        // alias carries the tier — one orchestrator per tier, holding that host's socket.
+        assertThat(PlatformModel.repoPath("containers")).isEqualTo("services/qits-containers");
+        assertThat(PlatformModel.dockerfilePath("containers")).isEqualTo("docker/Dockerfile");
+        assertThat(PlatformModel.isPlatformService("containers")).isFalse();
+        assertThat(PlatformModel.wireAlias("containers", "prod")).isEqualTo("prod-qits-containers");
+        assertThat(PlatformModel.pdNamePrefix("containers", "prod"))
+                .isEqualTo("qits-pd-prod-qits-containers-");
         // And their two clients, added on 2026-08-11. BOTH FRONTEND SPELLINGS ARE LIVE: the git
         // host's client is qits-spa-<x>, the mirror's is qits-platform-spa-<x> because its service
         // is on the platform plane. A wrong directory here clones the org's copy in silence.
@@ -134,8 +142,8 @@ class PlatformModelTest {
         assertThat(PlatformModel.DEPLOYABLES)
                 .filteredOn(name -> !PlatformModel.isPlatformService(name))
                 .containsExactlyInAnyOrder("observability", "oci-postgresql", "stt", "projects",
-                        "workspaces", "events", "gateway", "ci", "deployments", "artifacts",
-                        "githost", "docs");
+                        "workspaces", "events", "gateway", "ci", "containers", "deployments",
+                        "artifacts", "githost", "docs");
         // Every environment runs its own database, so postgres is an environment service like the
         // rest of them — the platform plane is what genuinely cannot be per-tier.
         assertThat(PlatformModel.isPlatformService("oci-postgresql")).isFalse();
@@ -149,9 +157,14 @@ class PlatformModelTest {
         // The bus is in it since 2026-08-10, when ci's direct POST to the deployer was retired: a
         // green build is ci -> outbox -> qits-events -> the deployer's subscriber, and every hop has
         // to exist before the FIRST deployment. Deployed at phase 46 it did not.
+        // The orchestrator is in it since 2026-08-11, because qits-ci is: ci runs every pipeline
+        // step as a container it asks that service for, and the first pipeline of a cold boot is
+        // minutes after the seed comes up. Deployed at its own place in the train it would not be
+        // there in time.
         assertThat(PlatformModel.CORE).containsExactlyInAnyOrder(
                 "gateway", "platform-edge", "platform-mirror", "artifacts", "githost", "ci",
-                "deployments", "platform-idp", "platform-dns", "events", "oci-postgresql");
+                "containers", "deployments", "platform-idp", "platform-dns", "events",
+                "oci-postgresql");
         // Every seed service is also deployed through the pipeline afterwards; nothing stays
         // hand-built.
         assertThat(PlatformModel.DEPLOYABLES).containsAll(PlatformModel.CORE);
@@ -199,7 +212,9 @@ class PlatformModelTest {
         assertThat(PlatformModel.seedUiPath("platform-mirror"))
                 .isEqualTo("src/main/webui/dist/qits-platform-spa-mirror/browser");
         // No client at all, and empty is the answer that says so: a seed build must not be made to
-        // require a bundle that does not exist.
+        // require a bundle that does not exist. The orchestrator serves machines and has no SPA at
+        // all, so it is in this half and not the one above.
+        assertThat(PlatformModel.seedUiPath("containers")).isEmpty();
         assertThat(PlatformModel.seedUiPath("platform-idp")).isEmpty();
         assertThat(PlatformModel.seedUiPath("platform-edge")).isEmpty();
         assertThat(PlatformModel.seedUiPath("oci-postgresql")).isEmpty();
@@ -221,6 +236,10 @@ class PlatformModelTest {
     @Test
     void theGitHostIsSeededByItsEventModuleAndEveryOtherRepositoryWhole() {
         assertThat(PlatformModel.mavenModule("githost")).isEqualTo("githost-events");
+        // The orchestrator's two LIBRARIES, and not its service: consumers pin
+        // qits-containers-client, `core` is what the reactor builds it beside, and the service
+        // module is a native image nobody resolves. Comma-separated is maven's own -pl spelling.
+        assertThat(PlatformModel.mavenModule("containers")).isEqualTo("core,client");
         assertThat(PlatformModel.mavenModule("eventstream")).isEmpty();
         assertThat(PlatformModel.mavenModule("blobstore")).isEmpty();
         assertThat(PlatformModel.mavenModule("registries")).isEmpty();
@@ -293,13 +312,24 @@ class PlatformModelTest {
         // the store and ci — ci reads pipeline config out of the git host and clones from it.
         assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
                 "platform-mirror", "artifacts", "githost", "ci");
+        // The orchestrator immediately before ci: ci runs every step as a container it asks that
+        // service for, so the two cutovers have to be ordered rather than overlapping.
+        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence("containers", "ci");
     }
 
     @Test
-    void theDeployerNeedsNoIdpClientAndTheAudienceListGrantsIt() {
-        // It mints nothing, so it holds no client — only the audience its callers may ask for.
+    void theReceiveOnlyServicesNeedNoIdpClientAndTheAudienceListGrantsThem() {
+        // Neither mints anything, so neither holds a client — only the audience its callers may ask
+        // for. An audience a caller may not ask for is invalid_target, and the service's own gate
+        // then never sees a token at all.
         assertThat(PlatformModel.idpClients("prod")).doesNotContain("prod-qits-deployments");
         assertThat(PlatformModel.idpAudiences("prod")).contains("prod-qits-deployments");
+        // The orchestrator, since 2026-08-11. It is the stricter case: EVERY route of it is behind
+        // the machine gate, reads included, so a caller with no grantable audience can do nothing
+        // at all.
+        assertThat(PlatformModel.idpClients("prod")).doesNotContain("prod-qits-containers");
+        assertThat(PlatformModel.idpAudiences("prod")).contains("prod-qits-containers");
+        assertThat(PlatformModel.RECEIVE_ONLY_APPS).containsExactly("deployments", "containers");
     }
 
     @Test
@@ -312,7 +342,7 @@ class PlatformModelTest {
                 "prod-qits-gateway");
         assertThat(PlatformModel.idpAudiences("prod")).isEqualTo(
                 "prod-qits-ci,prod-qits-artifacts,prod-qits-workspaces,prod-qits-gateway,"
-                        + "prod-qits-deployments");
+                        + "prod-qits-deployments,prod-qits-containers");
         // Every one of them follows the environment now: the artifacts client was the one platform
         // id in this list, and the byte-plane split made that service a tier's again.
         assertThat(PlatformModel.idpClients("preprod")).containsExactly(

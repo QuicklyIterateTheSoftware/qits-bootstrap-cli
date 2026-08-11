@@ -82,10 +82,15 @@ forced. Add to that list rather than deviating quietly.
   resolves `localhost:<registry port>` during seed builds — a container the CLI starts for the
   daemon's benefit needs both a publish and a network alias, and the temporary Maven registry is
   exactly that case.
-  **qits-platform-dns is the one service dialled at its own alias rather than through the edge**, and
-  that is not an inconsistency to tidy away: the gateway proxies HTTP and there is deliberately no
-  route to the record API, so `qits-platform-dns:8080/dns` is the only address it has. Its other door
-  is not HTTP at all — UDP and TCP on 8053, published on `QITS_DNS_PORT` — and nothing here speaks it.
+  **Two services are dialled at their own alias rather than through the edge**, and neither is an
+  inconsistency to tidy away — both are deliberately off the gateway's route table.
+  `qits-platform-dns:8080/dns` is the record API's only address: the gateway proxies HTTP and there
+  is no route to it. Its other door is not HTTP at all — UDP and TCP on 8053, published on
+  `QITS_DNS_PORT` — and nothing here speaks it.
+  `<env>-qits-containers:8080/containers` is the container orchestrator's, and it must stay unrouted:
+  every caller is a machine on qits-net, every route of the service is behind the machine gate, and a
+  gateway entry would put a socket-holding service behind the platform's public door. This CLI only
+  polls its health — it starts no workload through it.
 - **One binary, two halves, ONE configuration contract.** Outside a container the binary launches
   itself inside one; inside it, it runs the phases. The host half reads the same `BootstrapConfig`
   and re-interprets no `QITS_*` value: the container's working directory is the launcher's, so
