@@ -86,6 +86,42 @@ public class SeedPhases {
             "blobstore", "registries", "integrations-quarkus", "eventstream", "githost",
             "containers");
 
+    /**
+     * <b>The third-party download cache every maven container this program starts shares.</b>
+     * <p>
+     * These containers are stock maven images with an empty local repository, so each one used to
+     * pull the whole dependency world from Maven Central again — the seed phase, then one publish
+     * per library, then the ci-daemon build. Four cold bootstraps in one evening on 2026-08-11 and
+     * Central's CDN throttled this host: the maven phases crawled for hours and attempt 4 died at
+     * the qits-blobstore publish on a 502 from the mirror's central proxy. A named volume outlives
+     * both the phase and the run, so the second bootstrap of an evening downloads nothing.
+     * <p>
+     * It is NOT {@code qits-maven-seed}, which holds what this platform publishes. This one holds
+     * what the internet publishes, and {@code unwrap --with-data-volumes} keeps it for that reason.
+     */
+    static final String MAVEN_CACHE_VOLUME = "qits-maven-cache";
+
+    /** The mount, and the {@code -D} that points maven at it. Together, once, everywhere. */
+    static final String MAVEN_CACHE_MOUNT = MAVEN_CACHE_VOLUME + ":/cache";
+
+    /**
+     * The local repository is named on the command line rather than left to {@code HOME}, so the
+     * mount point is the same fact in every container whatever user it runs as.
+     */
+    static final String MAVEN_REPO_LOCAL = " -Dmaven.repo.local=/cache/repository";
+
+    /**
+     * <b>This run's qits bytes are always built, never remembered.</b> A cache that outlives the run
+     * is right for third-party jars, which are immutable at their version, and wrong for ours: a
+     * seed build stamps a calver that a later checkout reuses, so yesterday's
+     * {@code qits-db-core:2026.811.165001} can satisfy a resolution that today's source would
+     * answer differently — and the version says nothing about it. The restamp recovery made that
+     * real. Only a released artifact is unique per bytes, and these are not released.
+     * <p>
+     * The purge takes only {@code eu/wohlben/qits}, so every third-party jar in the cache stays.
+     */
+    static final String MAVEN_PURGE_QITS = "rm -rf /cache/repository/eu/wohlben/qits\n";
+
     private final Boot boot;
 
     public SeedPhases(Boot boot) {
@@ -356,11 +392,16 @@ public class SeedPhases {
      * not be able to turn that into a failed build.
      * <p>
      * <b>One container, one deploy per entry, in the order {@link #SEED_LIBRARIES} spells.</b>
-     * {@code mvn deploy} installs into the container's own local repository on its way out, so
-     * qits-registries resolves the qits-blobstore the line above it just built — which is the whole
-     * reason these are not one container each. The other side of that: a library built before the
-     * qits jar it depends on resolves nothing local, reaches for the registry port that no server
-     * holds yet, and fails with "Connection refused". Read the poms before moving a line.
+     * {@code mvn deploy} installs into the local repository on its way out, so qits-registries
+     * resolves the qits-blobstore the line above it just built — which is the whole reason these
+     * are not one container each. The other side of that: a library built before the qits jar it
+     * depends on resolves nothing local, reaches for the registry port that no server holds yet,
+     * and fails with "Connection refused". Read the poms before moving a line.
+     * <p>
+     * That local repository is now {@link #MAVEN_CACHE_VOLUME}, kept across runs so Central is not
+     * re-read every bootstrap — and the script starts by deleting this platform's own group out of
+     * it, so what one line hands the next is always this run's bytes. {@link #MAVEN_PURGE_QITS}
+     * says why that is not optional.
      */
     public Phase mavenSeed() {
         return new Phase("maven-seed",
@@ -396,17 +437,12 @@ public class SeedPhases {
                             ctx.skip(who + " serves port " + boot.config.registryPort()
                                     + " — it is the registry"));
                     boot.docker.ensureVolume("qits-maven-seed", ctx::log);
-                    StringBuilder script = new StringBuilder("set -eu\n");
-                    for (String library : SEED_LIBRARIES) {
-                        script.append("cd /src-").append(library)
-                                .append(" && mvn -B -ntp deploy -DskipTests")
-                                .append(mavenModuleArgs(library))
-                                .append(" -DaltDeploymentRepository=seed::default::file:///repo\n");
-                    }
+                    boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
                     String cid = create(ctx, List.of(
                             "docker", "create", "--user", "root", "--entrypoint", "sh",
-                            "-v", "qits-maven-seed:/repo", "maven:3.9-eclipse-temurin-25",
-                            "-c", script.toString()));
+                            "-v", "qits-maven-seed:/repo", "-v", MAVEN_CACHE_MOUNT,
+                            "maven:3.9-eclipse-temurin-25",
+                            "-c", seedScript()));
                     for (String library : SEED_LIBRARIES) {
                         ctx.log("  " + PlatformModel.repo(library) + " -> /src-" + library);
                         Boot.must(boot.docker.exec(Duration.ofMinutes(30), ctx::log, "cp",
@@ -670,6 +706,28 @@ public class SeedPhases {
         return module.isEmpty() ? "" : " -pl " + module + " -am";
     }
 
+    /** One container, every seed library, into the temporary file repository at {@code /repo}. */
+    static String seedScript() {
+        StringBuilder script = new StringBuilder("set -eu\n").append(MAVEN_PURGE_QITS);
+        for (String library : SEED_LIBRARIES) {
+            script.append("cd /src-").append(library)
+                    .append(" && mvn -B -ntp deploy -DskipTests")
+                    .append(mavenModuleArgs(library))
+                    .append(MAVEN_REPO_LOCAL)
+                    .append(" -DaltDeploymentRepository=seed::default::file:///repo\n");
+        }
+        return script.toString();
+    }
+
+    /** One repository, into the store. The settings first, then the purge, then the build. */
+    String publishScript(String repoName) {
+        return mavenSettings() + MAVEN_PURGE_QITS
+                + "cd /src && mvn -B -ntp -s /root/.m2/settings.xml deploy -DskipTests"
+                + mavenModuleArgs(repoName) + MAVEN_REPO_LOCAL
+                + " -DaltDeploymentRepository=qits::default::"
+                + boot.config.artifactsUrl() + "/maven/maven";
+    }
+
     public Phase mavenPublish(String repoName, String artifactId, String title) {
         return new Phase("publish-" + artifactId, title, ctx -> {
             // The checkouts publish their real calver, and the registry refuses to overwrite a
@@ -680,13 +738,12 @@ public class SeedPhases {
                     && boot.artifacts.mavenPublished("eu/wohlben/qits", artifactId, version, "jar")) {
                 ctx.skip(artifactId + " " + version + " already published");
             }
+            boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
             String cid = create(ctx, List.of(
                     "docker", "create", "--network", Boot.NETWORK, "--user", "root",
-                    "--entrypoint", "sh", "maven:3.9-eclipse-temurin-25",
-                    "-c", mavenSettings() + "cd /src && mvn -B -ntp -s /root/.m2/settings.xml "
-                            + "deploy -DskipTests" + mavenModuleArgs(repoName)
-                            + " -DaltDeploymentRepository=qits::default::"
-                            + boot.config.artifactsUrl() + "/maven/maven"));
+                    "--entrypoint", "sh", "-v", MAVEN_CACHE_MOUNT,
+                    "maven:3.9-eclipse-temurin-25",
+                    "-c", publishScript(repoName)));
             copyIn(ctx, boot.state.repoDir(repoName), cid);
             startAndReap(ctx, cid, artifactId + " publish failed");
         });
@@ -837,11 +894,18 @@ public class SeedPhases {
                     "the musl builder image failed to build");
 
             // --entrypoint: the builder image entrypoints to native-image itself.
+            //
+            // The shared download cache, for the same reason the publishes have it — and this
+            // build needs it most: it is on no network of ours, so it reads Maven Central direct
+            // rather than through the mirror's proxy, with nothing in front of it to be warm.
+            boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
             String cid = create(ctx, List.of(
                     "docker", "create", "--user", "root", "--entrypoint", "bash",
-                    "qits/graalvmce-musl-builder:jdk-25",
-                    "-c", "cd /qits-build && ./mvnw -B -ntp -pl ci-daemon -am package -Dnative "
-                            + "-DskipTests -Dquarkus.native.container-build=false"));
+                    "-v", MAVEN_CACHE_MOUNT, "qits/graalvmce-musl-builder:jdk-25",
+                    "-c", MAVEN_PURGE_QITS
+                            + "cd /qits-build && ./mvnw -B -ntp -pl ci-daemon -am package -Dnative "
+                            + "-DskipTests -Dquarkus.native.container-build=false"
+                            + MAVEN_REPO_LOCAL));
             Boot.must(boot.docker.exec(Duration.ofMinutes(30), ctx::log,
                     "cp", repo.toString(), cid + ":/qits-build"), "copying the daemon source in failed");
             ctx.status("cold musl native build of the ci-daemon");

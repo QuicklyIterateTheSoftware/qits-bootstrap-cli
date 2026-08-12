@@ -32,6 +32,23 @@ class UnwrapPhasesTest {
         assertThat(UnwrapPhases.isData("qits-edge-letsencrypt")).isFalse();
     }
 
+    /**
+     * The download cache is not this platform's data: it holds third-party jars from Maven Central,
+     * and re-fetching them on every re-bootstrap is what got this host throttled. The full teardown
+     * still takes it — that sweep is about the machine, not about the platform's state.
+     */
+    @Test
+    void theMavenDownloadCacheSurvivesADataReset() {
+        assertThat(UnwrapPhases.isData("qits-maven-cache")).isFalse();
+        assertThat(UnwrapPhases.isPlatformVolume("qits-maven-cache")).isTrue();
+        // Its neighbour is classified the other way: the seed repository holds what THIS platform
+        // published, which the next bootstrap republishes.
+        assertThat(UnwrapPhases.isData("qits-maven-seed")).isTrue();
+        // And the full teardown asks no questions of the keep list at all.
+        assertThat(UnwrapPhases.isPlatformVolume("qits-deployments-config")).isTrue();
+        assertThat(UnwrapPhases.isPlatformVolume("postgres-data")).isFalse();
+    }
+
     @Test
     void aVolumeMatchingNeitherListIsKept() {
         // This program did not create it and does not know what it is.

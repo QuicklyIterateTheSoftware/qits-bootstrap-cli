@@ -35,7 +35,10 @@ full clean slate; `unwrap --with-data-volumes` removes the `qits-*-data` volumes
 database needs and what keeps the push token, the client secrets and the deployer's run-args;
 `unwrap --dry-run` lists what would go and removes nothing. `qits-edge-letsencrypt` matches neither
 pattern and is therefore kept by `--with-data-volumes` — a certificate is rate-limited to re-issue,
-and a database reset is no reason to lose one.
+and a database reset is no reason to lose one. `qits-maven-cache` is kept by `--with-data-volumes`
+too, and named in the keep list rather than left to that rule: it is a cache of third-party jars
+from Maven Central, not this platform's data, and re-fetching the dependency world on every
+re-bootstrap is what got this host throttled. `--with-volumes` still takes both.
 
 It sweeps **both** deployer label namespaces — the current one and the retired qits-cd's — because
 taking a platform that was never bootstrapped since the merge-back off a machine is what unwrap is
@@ -342,7 +345,7 @@ for 42. `QITS_DOMAIN` adds two more, marked below.
 | | phase |
 | --- | --- |
 | 1–5 | preflight (docker, git, where the wrapper is, and which domain — if any — this platform serves); join `qits-net`, which every address after it needs; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 40 platform repositories; read `.qits-bootstrap.env` |
-| 6 | seed the qits libraries the byte plane is built from — `qits-blobstore`, `qits-registries`, `qits-eventstream`, `qits-githost-events` (one module of qits-githost: the vocabulary its consumers need, not its service), `qits-auth-core` — into a temporary file repository served over HTTP, which is what breaks the first-boot cycle: three of the images below are built out of jars only this platform will ever publish |
+| 6 | seed the qits libraries the byte plane is built from — `qits-blobstore`, `qits-registries`, `qits-eventstream`, `qits-githost-events` (one module of qits-githost: the vocabulary its consumers need, not its service), `qits-auth-core` — into a temporary file repository served over HTTP, which is what breaks the first-boot cycle: three of the images below are built out of jars only this platform will ever publish. Its maven container, every publish container below and the ci-daemon build share one download cache — the `qits-maven-cache` volume, mounted at `/cache` and named by `-Dmaven.repo.local` — so Maven Central is read once per machine rather than once per phase. Each of those scripts starts by deleting `eu/wohlben/qits` out of it: third-party bytes are immutable at their version and ours are not, because seed builds reuse calvers across runs |
 | 7–14 | seed images `qits/gateway`, `qits/platform-edge`, `qits/platform-mirror`, `qits/artifacts`, `qits/githost`, `qits/oci-postgresql`, `qits/platform-dns`, `qits/events` — the eight that need nothing from a running platform |
 | 15 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC the twelve databases the seed stack needs: the deployer's own and its outbox's, qits-ci's own and its outbox's, qits-platform-idp's, qits-platform-dns', qits-events', qits-platform-mirror's, qits-githost's own and its outbox's, and qits-containers' own and its outbox's. Four are outboxes because the eventstream library keeps its own Flyway lineage and cannot share a database with its host. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |
 | 16 | have qits-platform-mirror serving, because every publish below resolves its third-party half through it — Maven Central, npmjs — and a cache that is not up is not a slow publish but a failed one. It cannot pull through itself: its own image was built minutes ago with the mirror prefixes rewritten to the direct upstreams |

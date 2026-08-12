@@ -130,6 +130,15 @@ forced. Add to that list rather than deviating quietly.
 - **`unwrap` keeps the retired platform's patterns forever.** Cleaning a pre-merge-back machine is
   in scope, so the qits-cd labels and the pre-rename name prefixes stay beside the current ones.
   Adding a pattern is how this changes; removing one is not.
+- **A volume is data, config or CACHE, and the three sweeps differ.** `--with-data-volumes` is a
+  cold boot of this platform's state, so it takes `qits-*-data` and `qits-maven-seed` and keeps
+  `qits-*-config` and `qits-maven-cache`; `--with-volumes` takes every `qits-*` volume. The cache
+  holds third-party jars the bootstrap's own maven containers pulled from Maven Central — one
+  `/cache` mount named by `-Dmaven.repo.local`, shared by the seed, every publish and the
+  ci-daemon build — and re-fetching that world on each re-bootstrap is what throttled this host on
+  2026-08-11. **Every one of those scripts deletes `eu/wohlben/qits` out of the cache first**: a
+  third-party jar is immutable at its version and a seed-built qits jar is not, because seed
+  builds reuse calvers across runs.
 - **A name in `PlatformModel` is the repository name without `qits-`, and it is load-bearing four
   times over**: the wrapper directory, the git-host repository, the seed image tag and the
   deployer's application key. The plane lives in the name itself (`platform-idp`,

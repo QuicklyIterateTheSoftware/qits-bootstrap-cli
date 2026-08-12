@@ -1,5 +1,7 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
+import eu.wohlben.qits.cli.bootstrap.config.TestConfig;
+import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -7,6 +9,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -82,6 +85,59 @@ class SeedPhasesTest {
         assertThat(SeedPhases.mavenModuleArgs("eventstream")).isEmpty();
         assertThat(SeedPhases.mavenModuleArgs("blobstore")).isEmpty();
         assertThat(SeedPhases.mavenModuleArgs("integrations-quarkus")).isEmpty();
+    }
+
+    /**
+     * <b>The seed script reads Maven Central through a cache that outlives the run.</b> Without it
+     * every bootstrap re-downloaded the whole dependency world with a cold local repository, and
+     * four cold runs in one evening got this host throttled: the 2026-08-11 attempt 4 died at the
+     * qits-blobstore publish on a 502 from the mirror's central proxy.
+     */
+    @Test
+    void everySeedBuildResolvesThroughTheSharedCache() {
+        String script = SeedPhases.seedScript();
+
+        assertThat(script.lines().filter(line -> line.startsWith("cd /src-")))
+                .hasSize(SeedPhases.SEED_LIBRARIES.size())
+                .allSatisfy(line ->
+                        assertThat(line).contains("-Dmaven.repo.local=/cache/repository"));
+        assertThat(SeedPhases.MAVEN_CACHE_MOUNT).isEqualTo("qits-maven-cache:/cache");
+    }
+
+    /**
+     * <b>The cache keeps third-party bytes and never this platform's.</b> A seed build stamps a
+     * calver that a later checkout reuses, so a remembered qits jar could satisfy a resolution that
+     * this run's source would answer differently — under the same version, silently. Only released
+     * artifacts are unique per bytes, and these are not released.
+     */
+    @Test
+    void theQitsGroupIsPurgedBeforeAnythingIsBuilt() {
+        String script = SeedPhases.seedScript();
+
+        assertThat(script).startsWith("set -eu\nrm -rf /cache/repository/eu/wohlben/qits\n");
+        // Only our group: the third-party half of the cache is the whole point of having one.
+        assertThat(SeedPhases.MAVEN_PURGE_QITS)
+                .isEqualTo("rm -rf /cache/repository/eu/wohlben/qits\n");
+    }
+
+    /** The publish half of the same script, which is what phase 18 was killed in. */
+    @Test
+    void aPublishBuildCachesAndPurgesTheSameWay() {
+        SeedPhases phases = new SeedPhases(
+                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+
+        String script = phases.publishScript("githost");
+
+        assertThat(script).contains("rm -rf /cache/repository/eu/wohlben/qits\n");
+        assertThat(script).contains("-Dmaven.repo.local=/cache/repository");
+        // The purge is before the build, and the settings before both — a mirror written after the
+        // mvn line configures nothing.
+        assertThat(script.indexOf("SETTINGS"))
+                .isLessThan(script.indexOf("rm -rf /cache/repository"));
+        assertThat(script.indexOf("rm -rf /cache/repository")).isLessThan(script.indexOf("mvn "));
+        // Still by module, and still deploying to the store.
+        assertThat(script).contains(" -pl githost-events -am")
+                .contains("-DaltDeploymentRepository=qits::default::");
     }
 
     @Test

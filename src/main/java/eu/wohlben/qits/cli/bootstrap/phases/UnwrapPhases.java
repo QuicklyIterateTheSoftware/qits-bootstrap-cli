@@ -45,16 +45,31 @@ import java.util.Set;
  * migration into a re-issue of every credential on the machine. Keep-patterns are therefore
  * checked FIRST and win, and a volume matching neither set is kept — a sweep that guesses about a
  * volume it has never heard of is how someone's data goes.
+ * <p>
+ * <b>A CACHE is not data either.</b> {@code qits-maven-cache} holds third-party jars pulled from
+ * Maven Central, which belong to nobody here and are the same bytes after any reset. It is kept by
+ * {@code --with-data-volumes} and removed by {@code --with-volumes}: the middle answer is about
+ * this platform's state, the full one is about this machine.
  */
 public class UnwrapPhases {
 
-    /** Kept whatever else matches, and checked before anything is deleted. */
-    private static final List<String> KEEP = List.of("qits-*-config");
+    /**
+     * Kept whatever else matches, and checked before anything is deleted.
+     * <p>
+     * <b>{@code qits-maven-cache} is here because it is not this platform's data.</b> It holds
+     * third-party jars the bootstrap's own maven containers downloaded from Maven Central, and a
+     * database reset is no reason to fetch the dependency world again — four cold runs in one
+     * evening is what got this host throttled and killed a bootstrap on a 502. Naming it rather
+     * than letting it fall between the two patterns: it is a volume this program creates, so what
+     * happens to it is a decision, and it stays one if someone widens {@link #DATA}.
+     */
+    private static final List<String> KEEP = List.of("qits-*-config", "qits-maven-cache");
 
     /**
      * Deleted by {@code --with-data-volumes}. {@code qits-maven-seed} is the temporary Maven
      * repository the first-boot dependency cycle is broken with — rebuilt by the next bootstrap,
-     * so it is data in every sense that matters here.
+     * so it is data in every sense that matters here. The cache above is its opposite: qits bytes
+     * that this platform published against third-party bytes that it did not.
      */
     private static final List<String> DATA = List.of("qits-*-data", "qits-maven-seed");
 
@@ -201,14 +216,25 @@ public class UnwrapPhases {
         return boot.docker
                 .run(Cmd.of("docker", "volume", "ls", "-q"), null)
                 .captured().stream().map(String::trim)
-                .filter(name -> name.startsWith("qits-")).toList();
+                .filter(UnwrapPhases::isPlatformVolume).toList();
+    }
+
+    /**
+     * What {@code --with-volumes} takes: every volume the platform named, the keep list included.
+     * The full teardown asks no questions — {@link #isData} is the middle answer's test and this
+     * one is the total one, so a volume kept by {@code --with-data-volumes} still goes here.
+     */
+    static boolean isPlatformVolume(String name) {
+        return name.startsWith("qits-");
     }
 
     private Phase volumesKept() {
         return new Phase("volumes-kept", "keep the qits-* volumes", ctx -> {
             List<String> names = volumeNames();
-            ctx.log("  " + names.size() + " volume(s) kept: databases, registry blobs and the git host");
-            ctx.log("  add --with-data-volumes to reset the databases and keep the config volumes");
+            ctx.log("  " + names.size() + " volume(s) kept: databases, registry blobs, the git host"
+                    + " and the maven download cache");
+            ctx.log("  add --with-data-volumes to reset the databases and keep the config volumes"
+                    + " and the maven cache");
             ctx.log("  add --with-volumes for the full clean slate");
             ctx.note(names.size() + " kept");
         });

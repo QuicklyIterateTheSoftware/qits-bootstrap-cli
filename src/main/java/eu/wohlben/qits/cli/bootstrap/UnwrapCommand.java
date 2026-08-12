@@ -49,7 +49,8 @@ public class UnwrapCommand implements Callable<Integer> {
 
     @CommandLine.Option(names = "--with-data-volumes",
             description = "Also delete the qits-*-data volumes (and qits-maven-seed), keeping "
-                    + "qits-*-config. The re-bootstrap's answer. Not with --with-volumes.")
+                    + "qits-*-config and the qits-maven-cache download cache. The re-bootstrap's "
+                    + "answer. Not with --with-volumes.")
     boolean withDataVolumes;
 
     @CommandLine.Option(names = "--dry-run", description = "List what would go, remove nothing.")
