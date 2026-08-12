@@ -1,13 +1,16 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
+import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * What "the deployment landed" means to the platform-service wait, read off docker's status text.
- * The phases that shell docker are not unit-tested, but the sentence they judge a container by is
- * a pure function and it decided a boot wrongly once.
+ * The two sentences these phases read machine output by. The phases that shell docker and git are
+ * not unit-tested, but "is this container serving" and "did this push move anything" are pure
+ * functions — and each of them decided a boot wrongly once.
  */
 class PipelinePhasesTest {
 
@@ -43,5 +46,36 @@ class PipelinePhasesTest {
         assertThat(PipelinePhases.serving("Exited (137) 2 seconds ago")).isFalse();
         assertThat(PipelinePhases.serving("Created")).isFalse();
         assertThat(PipelinePhases.serving("Dead")).isFalse();
+    }
+
+    /** git's own spelling — hyphens. The one the tenth proving run found unmatched. */
+    @Test
+    void gitsHyphenatedSpellingIsUpToDate() {
+        assertThat(PipelinePhases.upToDate(push("Everything up-to-date"))).isTrue();
+    }
+
+    @Test
+    void theSpacedSpellingIsUpToDateToo() {
+        assertThat(PipelinePhases.upToDate(push("everything up to date"))).isTrue();
+    }
+
+    /** A push that moved a ref announced something, and both callers act on that. */
+    @Test
+    void aPushThatMovedARefIsNotUpToDate() {
+        assertThat(PipelinePhases.upToDate(push(
+                "To http://prod-qits-githost:8080/git/qits-eventstream",
+                " * [new tag]   2026.812.101500 -> 2026.812.101500"))).isFalse();
+    }
+
+    /** git says it LAST, so a push whose captured head is full is read from the tail. */
+    @Test
+    void theTailIsReadAsWellAsTheHead() {
+        ProcessResult tailOnly = new ProcessResult(0, List.of("counting objects"),
+                List.of("Everything up-to-date"), false, true);
+        assertThat(PipelinePhases.upToDate(tailOnly)).isTrue();
+    }
+
+    private static ProcessResult push(String... lines) {
+        return new ProcessResult(0, List.of(lines), List.of(lines), false, false);
     }
 }

@@ -4,8 +4,9 @@ import java.util.Map;
 
 /**
  * The issuer. The bootstrap presents the platform's own credentials because it IS the platform,
- * before there is anything to go through: the replayed build-succeeded event and the manual
- * release trigger are the two calls that need a token.
+ * before there is anything to go through: the replayed build-succeeded event and the environment
+ * reconcile are the calls that need a token. The release replays needed one too, until they became
+ * a tag push — a push authenticates with the git host's own token, not with a machine one.
  * <p>
  * qits-platform-idp publishes no host port and sits on no gateway route on purpose:
  * {@code /idp/token} behind an unauthenticated gateway is a token vending machine. That is why it

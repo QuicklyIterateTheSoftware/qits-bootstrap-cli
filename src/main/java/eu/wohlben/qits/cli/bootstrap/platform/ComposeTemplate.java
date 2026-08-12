@@ -165,12 +165,13 @@ public final class ComposeTemplate {
                   # deployer itself needs no client and no list: it mints nothing, it only validates.
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_AUDIENCES: "${IDP_AUDIENCES}"
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_AUDIENCES: "${IDP_AUDIENCES}"
-                  # The one wildcard grant, and it is THIS BOOTSTRAP'S now. qits-ci's manual trigger
-                  # names no repository, so it demands them all — a token granted project=* — and the
-                  # release replays are what present one. The grant used to be the git host's, which
-                  # announced every push over HTTP; qits-githost publishes on the bus instead and mints
-                  # nothing at all. The idp only states the claim; qits-ci's own enforcement is what
-                  # reads '*' as covering every value.
+                  # The one wildcard grant, and it is kept for a PERSON. qits-ci's manual trigger names
+                  # no repository, so it demands them all — a token granted project=*. This bootstrap
+                  # used to present one, for the release replays; they push the release tag now and
+                  # qits-githost's SCMPublishTag is what starts the run, so nothing here mints against
+                  # this claim. The grant stays because the trigger door stays: it is how a person asks
+                  # qits-ci for a run by hand. The idp only states the claim; qits-ci's own enforcement
+                  # is what reads '*' as covering every value.
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_CLAIMS_PROJECT: "*"
                   # WHERE TELEMETRY GOES, and it has to be spelled in every service below. The
                   # images ship the bare qits-observability, and that name died with the
@@ -994,9 +995,10 @@ public final class ComposeTemplate {
             # every token in flight — and pinning the triple here would outlive a rotation and break it.
             # The seed compose block spells the same three variables because it starts the idp before any
             # deployer exists. /data held the H2 and nothing else, so the volume went with it.
-            # The claims grant is the wildcard this bootstrap's own release replays present: qits-ci's
-            # manual trigger names no repository, so it demands them all. It used to be the git host's,
-            # which announced every push over HTTP; qits-githost publishes on the bus and mints nothing.
+            # The claims grant is the wildcard qits-ci's manual trigger demands: it names no repository,
+            # so a token for it is granted project=*. Nothing this bootstrap does mints against it any
+            # more — the release replays push a tag and let SCMPublishTag start the run — and it is kept
+            # for the person who asks qits-ci for a run by hand.
             # QITS_IDP_CLIENTS and both audience lists are restated in full, because each key REPLACES the
             # shipped list rather than extending it — and every id in them is a wire alias, so they move with
             # the environment name while the image's defaults cannot.

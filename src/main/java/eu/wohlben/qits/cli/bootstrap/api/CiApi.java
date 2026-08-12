@@ -5,11 +5,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.util.ArrayList;
 import java.util.List;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 
-/** qits-ci: the manual event trigger and the run listings the waits poll. */
+/** qits-ci: the run listings the waits poll. Nothing here writes — this client only reads. */
 public class CiApi {
 
     /** The one file whose run IS a repository's release — the identity no other run fact gives. */
@@ -31,15 +30,16 @@ public class CiApi {
         return health().ok();
     }
 
-    /**
-     * Stands in for the announcement a real release would have made. The trigger demands the one
-     * project=* client — the same identity the git host uses to announce pushes.
-     */
-    public Http.Response trigger(String eventJson, String token) {
-        return http.postJson(base + "/api/events/trigger", eventJson, bearer(token));
-    }
+    // THERE IS NO TRIGGER CALL ANY MORE, and the door it used is still there for a person.
+    // POST /ci/api/events/trigger took a hand-built SCMRelease, and the release replays presented
+    // one per publisher — an announcement of NOVELTY made by a restore, which woke the release
+    // train against a platform that was half deployed: every consumer's bump run ended in a
+    // release call to qits-workspaces, which the boot deploys minutes later. The replays push the
+    // release tag and nothing else now; the recipes select on SCMPublishTag, so the push IS the
+    // trigger. The endpoint, and the one project=* client that opens it, are kept for a person
+    // asking qits-ci for a run by hand.
 
-    // THERE IS NO postReceive REPLAY ANY MORE, and its absence is the byte-plane split's dividend.
+    // THERE IS NO postReceive REPLAY EITHER, and its absence is the byte-plane split's dividend.
     // POST /ci/api/events/post-receive was the git host's fire-and-forget announcement, and this
     // CLI re-made it whenever a pushed sha had no run after a minute — a real loss, measured twice
     // on this platform. qits-githost publishes SCMPublishCommit through the eventstream outbox
@@ -65,10 +65,13 @@ public class CiApi {
      * because "EVENT run" is not "release run": a follow-up bump fired by an upstream's release is
      * an EVENT run of this same repository — a 1-second quiet-exit that landed NEWEST during the
      * first bus-only bootstrap and hid the release run behind it. The CONFIG PATH is what tells
-     * them apart, and it is the only fact that does: a bump may trigger on the upstream's
-     * SCMRelease (the daemon repos' do), so the trigger name collides, and every event run is
-     * recorded at main's head, so the sha collides too — measured, fourth proving run, where a
-     * name-and-sha match skipped a replay whose images were never published.
+     * them apart, and it is the fact to ask by: every event run is recorded at main's head, so the
+     * sha collides — measured, fourth proving run, where a name-and-sha match skipped a replay
+     * whose images were never published. The trigger NAME is no answer either. It collided
+     * outright while release recipes fired on SCMRelease, which is the event a bump watches too;
+     * they select on SCMPublishTag now, and the collision is gone with it — but which event
+     * selects a recipe is the recipe's own business and has changed once already, while the file
+     * that ran is what the run IS.
      */
     public List<String[]> finishedEventRuns(String repoId) {
         Http.Response response = http.get(base + "/api/runs/finished?limit=20", Map.of());
@@ -89,8 +92,9 @@ public class CiApi {
 
     /**
      * Whether a green run of the RELEASE PIPELINE already exists at this commit — the question the
-     * release replay's skip asks. The config path is the identity: trigger name and sha both
-     * collide with an upstream-fired bump run of the same repository.
+     * release replay's skip asks. The config path is the identity, for the reasons above: the sha
+     * collides with an upstream-fired bump run of the same repository, and the trigger name is a
+     * property of the recipe rather than of the run.
      */
     public boolean greenReleaseRunAt(String repoId, String commitSha) {
         Http.Response response = http.get(base + "/api/runs?repositoryId=" + repoId + "&limit=20",
@@ -160,11 +164,4 @@ public class CiApi {
         return Optional.empty();
     }
 
-    private static Map<String, String> bearer(String token) {
-        Map<String, String> headers = new LinkedHashMap<>();
-        if (token != null && !token.isBlank()) {
-            headers.put("Authorization", "Bearer " + token);
-        }
-        return headers;
-    }
 }
