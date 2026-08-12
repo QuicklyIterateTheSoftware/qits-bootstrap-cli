@@ -13,6 +13,7 @@ public class OverridableConfig implements BootstrapConfig {
     private final BootstrapConfig base;
     private String wrapperDir;
     private Boolean skipBuild;
+    private Boolean shipMains;
     private Boolean tui;
     private String platformEnv;
     private String domain;
@@ -28,6 +29,12 @@ public class OverridableConfig implements BootstrapConfig {
 
     public OverridableConfig skipBuild(Boolean value) {
         this.skipBuild = value;
+        return this;
+    }
+
+    /** {@code --ship-mains}; unset is no answer, so {@code .env} keeps it. */
+    public OverridableConfig shipMains(Boolean value) {
+        this.shipMains = value;
         return this;
     }
 
@@ -56,6 +63,11 @@ public class OverridableConfig implements BootstrapConfig {
     @Override
     public boolean skipBuild() {
         return skipBuild != null ? skipBuild : base.skipBuild();
+    }
+
+    @Override
+    public boolean shipMains() {
+        return shipMains != null ? shipMains : base.shipMains();
     }
 
     @Override

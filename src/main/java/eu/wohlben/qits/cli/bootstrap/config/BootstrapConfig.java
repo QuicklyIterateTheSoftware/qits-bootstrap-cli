@@ -153,6 +153,22 @@ public interface BootstrapConfig {
     @WithDefault("false")
     boolean skipBuild();
 
+    /**
+     * <b>1 = deploy local mains instead of restoring the last release.</b> {@code --ship-mains} on
+     * the command line, {@code QITS_SHIP_MAINS} in {@code .env}.
+     * <p>
+     * A bootstrap RESTORES by default: it points the deploy ref at the commit of each deployable's
+     * newest release tag, so the platform comes back as its last released self. This flag is the
+     * dev loop's spelling — the deploy ref follows main's head, which is what the boot always did
+     * and what shipped an unreleased stack by accident on 2026-08-08. Now it takes saying so.
+     * <p>
+     * It changes ONE thing: where the deploy ref points. Local mains are pushed either way (the
+     * repositories need their history and the catalog needs the shape), the seed phase builds from
+     * main either way, and every wait, event and deployer call downstream is identical.
+     */
+    @WithDefault("false")
+    boolean shipMains();
+
     /** How long to wait per application deployment. */
     @WithDefault("3600")
     Duration deployTimeout();

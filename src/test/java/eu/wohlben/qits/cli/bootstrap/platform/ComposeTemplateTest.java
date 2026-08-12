@@ -753,8 +753,8 @@ class ComposeTemplateTest {
                 .contains("QITS_IDP_CLIENT_PROD_QITS_ARTIFACTS_AUDIENCES=")
                 .contains("prod-qits-deployments");
         // The wildcard project claim, under the id it moved to when the store became an
-        // environment service. It is this bootstrap's own trigger identity now: the git host mints
-        // nothing at all.
+        // environment service. Nobody in this bootstrap presents it any more — the release replays
+        // push a tag — and it stays for the person who triggers a run by hand.
         assertThat(idp).contains("QITS_IDP_CLIENT_PROD_QITS_ARTIFACTS_CLAIMS_PROJECT=*");
         assertThat(idp).doesNotContain("QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_");
     }

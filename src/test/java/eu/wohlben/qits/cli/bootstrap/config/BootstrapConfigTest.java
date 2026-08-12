@@ -42,6 +42,9 @@ class BootstrapConfigTest {
         assertThat(config.pushToken()).isEqualTo("local-dev");
         assertThat(config.machineAuth()).isTrue();
         assertThat(config.skipBuild()).isFalse();
+        // RESTORE IS THE DEFAULT: a boot deploys each deployable's newest release tag, and
+        // shipping the local mains takes saying --ship-mains.
+        assertThat(config.shipMains()).isFalse();
         // The platform's own events are followed by default: free when nothing answers, and for
         // most of a bootstrap nothing does.
         assertThat(config.eventsFeed()).isTrue();
@@ -64,6 +67,7 @@ class BootstrapConfigTest {
         env.put("QITS_DOMAIN", "qits-dev.eu");
         env.put("QITS_PUSH_TOKEN", "not-local-dev");
         env.put("QITS_SKIP_BUILD", "1");
+        env.put("QITS_SHIP_MAINS", "1");
         env.put("QITS_MACHINE_AUTH", "0");
         env.put("QITS_DEPLOY_TIMEOUT", "600");
         env.put("QITS_WRAPPER_DIR", "/home/me/code/qits-qits");
@@ -83,6 +87,7 @@ class BootstrapConfigTest {
         assertThat(config.pushToken()).isEqualTo("not-local-dev");
         // The script's knobs are 1 and 0, not true and false.
         assertThat(config.skipBuild()).isTrue();
+        assertThat(config.shipMains()).isTrue();
         assertThat(config.machineAuth()).isFalse();
         assertThat(config.eventsFeed()).isFalse();
         assertThat(config.deployTimeout()).isEqualTo(Duration.ofMinutes(10));
@@ -150,10 +155,12 @@ class BootstrapConfigTest {
         BootstrapConfig effective = new OverridableConfig(base)
                 .wrapperDir("/from/the/command/line")
                 .skipBuild(Boolean.TRUE)
+                .shipMains(Boolean.TRUE)
                 .tui(Boolean.FALSE);
 
         assertThat(effective.wrapperDir()).contains("/from/the/command/line");
         assertThat(effective.skipBuild()).isTrue();
+        assertThat(effective.shipMains()).isTrue();
         assertThat(effective.tui()).isFalse();
         // Everything not answered on the command line still comes from the file.
         assertThat(effective.port()).isEqualTo(8080);
@@ -163,10 +170,13 @@ class BootstrapConfigTest {
     void anOverrideThatWasNotGivenChangesNothing() {
         BootstrapConfig base = from(Map.of("QITS_WRAPPER_DIR", "/from/env"));
 
-        BootstrapConfig effective = new OverridableConfig(base).wrapperDir(null).skipBuild(null);
+        BootstrapConfig effective = new OverridableConfig(base).wrapperDir(null).skipBuild(null)
+                .shipMains(null);
 
         assertThat(effective.wrapperDir()).contains("/from/env");
         assertThat(effective.skipBuild()).isFalse();
+        // Not given on the command line and not in the file: the boot restores.
+        assertThat(effective.shipMains()).isFalse();
         assertThat(effective.tui()).isTrue();
     }
 

@@ -65,6 +65,36 @@ public class Git {
     }
 
     /**
+     * The tags reachable from a ref, NEWEST VERSION FIRST — git's own version sort, which is the
+     * order qits-ci collapses a multi-tag push by, so both sides of the platform mean the same
+     * thing by "the newest tag".
+     * <p>
+     * Not {@link #describeTag}, which answers the nearest tag in HISTORY: a release cut on an older
+     * commit and tagged later is nearer while being older, and the deploy ref must follow the
+     * newest RELEASE rather than the newest ancestor. {@code --merged} keeps it to this history —
+     * a tag on a side branch is not a release of main.
+     * <p>
+     * The list is bounded by the capture limit, which costs nothing: the caller wants the first
+     * entry and the sort has already put it there.
+     */
+    public List<String> tagsNewestFirst(Path repo, String ref) {
+        ProcessResult result = in(repo, null, "tag", "--list", "--sort=-v:refname", "--merged", ref);
+        return result.ok()
+                ? result.captured().stream().map(String::strip).filter(line -> !line.isBlank())
+                        .toList()
+                : List.of();
+    }
+
+    /**
+     * The COMMIT a ref names, peeled. An annotated tag's ref names a tag object, and a branch has
+     * to point at a commit — {@code rev-list -n 1} answers the commit for either shape.
+     */
+    public String commitOf(Path repo, String ref) {
+        ProcessResult result = in(repo, null, "rev-list", "-n", "1", ref);
+        return result.ok() ? result.trimmed() : "";
+    }
+
+    /**
      * A push to the platform git host.
      *
      * @param options push options; {@code qits.no-ci} keeps a push quiet, {@code qits.token} is

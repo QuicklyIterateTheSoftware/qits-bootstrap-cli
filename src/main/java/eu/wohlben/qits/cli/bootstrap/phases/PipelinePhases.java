@@ -20,6 +20,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeoutException;
+import java.util.regex.Pattern;
 
 /** From "the seed is up" to "the platform deployed itself". */
 public class PipelinePhases {
@@ -31,6 +32,9 @@ public class PipelinePhases {
      */
     private static final Map<String, String> PROBE_BEARER =
             Map.of("Authorization", "Bearer qits-bootstrap-auth-plane-probe");
+
+    /** A release version on this platform: CalVer, which is digits and dots. */
+    private static final Pattern CALVER = Pattern.compile("[0-9][0-9.]*");
 
     private final Boot boot;
 
@@ -105,9 +109,10 @@ public class PipelinePhases {
     }
 
     /**
-     * idp first: with the gate on, the release replays' triggers need a token and the replayed
-     * build-succeeded needs one too. qits-deployments before anything asks it for an environment
-     * operation — it owns the topology and the socket both, so nothing else can answer for it.
+     * idp first: with the gate on, every call this run makes by hand needs a token — the replayed
+     * build-succeeded and the environment reconcile. qits-deployments before anything asks it for
+     * an environment operation — it owns the topology and the socket both, so nothing else can
+     * answer for it.
      * <p>
      * The EDGE is the first hop of every call this program makes to ci and the deployer, so it is
      * the second thing asked and the first thing asked over the path the rest of the run uses. A
@@ -321,12 +326,25 @@ public class PipelinePhases {
     }
 
     /**
-     * The RELEASED artifacts, published by replaying each publisher's release pipeline. The wrapper
-     * builds install RELEASED versions, and a clean version only ever comes from a repo's
-     * ci-event-release.yml fired by an SCMRelease event; a post-receive publish on main produces a
-     * prerelease nothing pins. A fresh platform has had no releases, so the release pipeline is
-     * fired by hand — and waited for, because the deployables cannot build until the artifacts
-     * exist.
+     * The RELEASED artifacts, restored by re-establishing ONE SCM fact: the release tag. The
+     * wrapper builds install RELEASED versions, and a clean version only ever comes from a repo's
+     * ci-event-release.yml; a post-receive publish on main produces a prerelease nothing pins. That
+     * file declares {@code event: SCMPublishTag}, so pushing the tag is what starts the publish run
+     * — this phase pushes it and waits, and asks the platform for nothing else.
+     * <p>
+     * <b>It used to fabricate an SCMRelease</b> through qits-ci's manual trigger door, and that was
+     * harmful rather than merely indirect. SCMRelease means "a version is NEW": qits-ci announced
+     * SoftwareRelease per artifact and the release train woke up — a bump run in every consumer,
+     * each ending in a release call against qits-workspaces, which does not exist yet. Only the
+     * seed stack serves here; qits-workspaces is deployed by the phases below, minutes later. So
+     * every bootstrap left the same red maintenance-branch runs behind. A replay has no novelty to
+     * announce: the release happened once, long ago, and what a restore owes the platform is the
+     * SCM state it derives its artifacts from. Announcing novelty is qits-workspaces' job, on a
+     * real release.
+     * <p>
+     * The recipe a tag selects is read from MAIN on the git host, which is why {@code preseed}
+     * pushes main before any of these phases run: a repository with no main there matches no
+     * trigger file, and the tag would start nothing.
      * <p>
      * <b>The version replayed is the last release tag reachable from main</b>, and a repository
      * carrying none STOPS THE BOOT. That is right rather than harsh, and it is right for the image
@@ -337,7 +355,7 @@ public class PipelinePhases {
      */
     public Phase releaseReplay(String name) {
         String repo = PlatformModel.repo(name);
-        return new Phase("release-" + name, "replay the release pipeline of " + repo, ctx -> {
+        return new Phase("release-" + name, "replay " + repo + "'s release tag", ctx -> {
             Path src = boot.state.repoDir(name);
             String version = boot.git.describeTag(src, "main");
             if (version.isBlank()) {
@@ -346,76 +364,63 @@ public class PipelinePhases {
             }
             ctx.log("  release tag " + version);
             // A replay whose run already went green has nothing left to publish, and re-running it
-            // is not free: an image publisher rebuilds for half an hour and re-fires its
-            // SoftwareRelease, which every follow-bump then has to recognise as old news. The
-            // published state is what this phase exists to restore; already restored is a skip,
-            // not a rerun. The question is asked by SHA, not version: the version lives only on
-            // the trigger event, and a replay-triggered run's event never touches the bus. The
-            // sha is MAIN'S HEAD, not the tag's commit — an event-triggered run is cloned at the
-            // head of main and recorded there (its script checks the tag out itself, invisibly to
-            // the run row); matched against the tag's commit, a repository whose main had moved
-            // past its release waited a full budget on a run that had already succeeded — the
-            // second bus-only proving run, phase 36. The trigger name is what keeps a follow-up
-            // bump run (also at main's head) from answering for a release.
+            // is not free: an image publisher rebuilds for half an hour. The published state is
+            // what this phase exists to restore; already restored is a skip, not a rerun. The
+            // question is asked by SHA, not version: the version lives on the trigger event and
+            // the run row does not carry it. The sha is MAIN'S HEAD, not the tag's commit — an
+            // event-triggered run is cloned at the head of main and recorded there (its script
+            // checks the tag out itself, invisibly to the run row); matched against the tag's
+            // commit, a repository whose main had moved past its release waited a full budget on a
+            // run that had already succeeded — the second bus-only proving run, phase 36. The
+            // CONFIG PATH is what keeps a follow-up bump run (also at main's head) from answering
+            // for a release.
             String mainSha = boot.git.head(src);
             if (!mainSha.isBlank() && boot.ci.greenReleaseRunAt(repo, mainSha)) {
                 ctx.skip("release " + version + " already ran green — the registry holds what "
                         + "this replay publishes");
             }
-            // The newest finished run BEFORE this attempt triggers is a previous attempt's, and
-            // must not be read as this one's outcome. Null when the repo never ran.
+            // The newest finished run BEFORE the tag lands is a previous attempt's, and must not be
+            // read as this one's outcome. Null when the repo never ran.
             String baselineRun = boot.ci.finishedEventRun(repo).map(r -> r[0]).orElse(null);
-            boot.push(ctx, repo + " " + version, src, boot.githost.gitUrl(repo),
+            // THE PUSH IS THE WHOLE TRIGGER. qits-githost turns every ACCEPTED ref of a push into
+            // an event, so this one tag ref becomes one SCMPublishTag, which is the event the
+            // release recipe declares. `qits.no-ci` stays and suppresses nothing here: it is a
+            // fact on the COMMIT event and this push moves no branch — one refspec, one tag.
+            ProcessResult push = boot.push(ctx, repo + " " + version, src,
+                    boot.githost.gitUrl(repo),
                     List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
                     "refs/tags/" + version);
-
-            // The manual trigger demands the one project=* client — the same identity the git host
-            // uses to announce pushes, because this stands in for the announcement a real release
-            // would have made.
-            String token = boot.tokenOrNull(
-                    PlatformModel.wireAlias("artifacts", boot.config.envName()),
-                    PlatformModel.wireAlias("ci", boot.config.envName()));
-            String event = "{\"name\":\"SCMRelease\",\"payload\":{"
-                    // BOTH spellings, because a real SCMRelease carries both: `repository` is the
-                    // row id and `repositoryName` the stable name, and a trigger file may match
-                    // either — the daemon repos match the NAME, a decision from the era when their
-                    // row ids were per-platform UUIDs. The replay that omitted it evaluated clean
-                    // against nineteen repositories and matched none, 200 with empty runIds —
-                    // measured, third bus-only proving run, phase 41.
-                    + "\"repository\":" + Json.quote(repo) + ","
-                    + "\"repositoryName\":" + Json.quote(repo) + ","
-                    + "\"branch\":\"main\","
-                    + "\"version\":" + Json.quote(version) + "}}";
-            // The trigger evaluates on the request thread now: 200 means the run rows exist as the
-            // call returns, and 503 means NOTHING was accepted — qits-ci's own contract, written so
-            // a retry loses nothing. Three tries, because the one measured refusal cause is a
-            // candidate read meeting a service mid-cutover, which is over in seconds.
-            Http.Response triggered = null;
-            for (int attempt = 1; attempt <= 3; attempt++) {
-                triggered = boot.ci.trigger(event, token);
-                if (triggered.ok()) {
-                    break;
-                }
-                ctx.log("  trigger attempt " + attempt + " refused: " + triggered.describe());
-                sleep(5000);
+            if (upToDate(push)) {
+                // The tag is already here, so no ref moved, so nothing was announced and no run is
+                // coming — and there is no second door to knock on, which is the design rather
+                // than a gap: a restore re-establishes SCM state, and this state stands. The
+                // registry holds this version from the boot whose push first announced it.
+                //
+                // If THAT run went red the pin is missing, and the deployable that pins it says so
+                // a few phases later. Asking for the publish again is a person's move then, and
+                // both doors are theirs: qits-ci's manual trigger, or deleting the tag on the git
+                // host and pushing it again.
+                ctx.skip(version + " is already on the git host — no ref moved, nothing announced");
             }
-            if (triggered == null || !triggered.ok()) {
-                throw new IllegalStateException("SCMRelease trigger for " + repo + " refused: "
-                        + (triggered == null ? "no answer" : triggered.describe()));
-            }
-            ctx.log("  SCMRelease triggered, waiting for the release run");
+            ctx.log("  " + version + " pushed — the tag is what starts the release run");
 
             // The same relay the deploy wait uses. A release run is a build too, and it was as
             // silent as the other one.
             CiLogStream ciLog = new CiLogStream(boot.ci, ctx);
+            // The run is waited for by ROW, not by anything this phase was handed: the push
+            // returns as soon as the git host has the tag, and the event, the trigger evaluation
+            // and the run all happen behind it.
+            //
             // "An EVENT run of this repository" is not "the release run": an upstream's
             // SoftwareRelease fires this repository's own follow-up bump, also an EVENT run — a
             // 1-second quiet-exit that landed NEWEST during the first bus-only bootstrap and hid
             // the wait's real target. The release run is the one that EXECUTED the release
             // pipeline file, at main's head — where an event-triggered run is cloned and recorded;
-            // the tag checkout is its script's own business. The config path is the only fact that
-            // identifies it: a bump can trigger on the upstream's SCMRelease, so the trigger name
-            // collides, and every event run records main's head, so the sha collides too.
+            // the tag checkout is its script's own business. The config path is the fact that
+            // identifies it, and it stays the one to ask by: every event run records main's head,
+            // so the sha collides, and the trigger name is no protection either — it collided
+            // outright while releases were SCMRelease-fired, and a recipe is free to move to
+            // another event again.
             String status = Waiter.await(ctx, repo + "'s " + version + " release run",
                     boot.config.releaseTimeout(),
                     boot.config.pollInterval(), () -> {
@@ -571,14 +576,30 @@ public class PipelinePhases {
     /**
      * Sequential on purpose: each push triggers a cold native build on the host daemon, and a
      * workstation rarely wants eight at once. Every deployable takes the same path — push, and if
-     * the push was a no-op but the application is not live at HEAD, the build-succeeded event is
-     * posted by hand.
+     * the push was a no-op but the application is not live at the deployed commit, the
+     * build-succeeded event is posted by hand.
+     * <p>
+     * <b>A boot RESTORES: the deploy ref is moved to the commit of the newest release tag</b>, not
+     * to main's head. The platform comes back as its last released self, which is what a restore
+     * means and what makes a bootstrap a safe thing to run on a live machine. Everything after the
+     * ref is untouched — the git host announces the push, qits-ci builds it, BuildSuccessful
+     * reaches the deployer — because restore semantics belong in WHERE THE REF POINTS and nowhere
+     * else.
+     * <p>
+     * <b>This is the 2026-08-08 accident's fix, at the root.</b> An unreleased local main shipped
+     * to a live platform that day, and the answer then was discipline ("keep unreleased work on
+     * branches"), which was traded away every time the boot was used as the dev loop. Now the
+     * deploy ref simply does not follow main: shipping local mains is {@code --ship-mains}, and it
+     * has to be said out loud.
+     * <p>
+     * Local mains are still pushed, quietly. The repositories need their history and the wrapper's
+     * catalog needs the shape, and main being ahead of the release deploys nothing now.
      */
     public Phase deploy(String name) {
         String repo = PlatformModel.repo(name);
         return new Phase("deploy-" + name, repo + ": push -> ci build -> deploy", ctx -> {
             Path src = boot.state.repoDir(name);
-            overlayPipelineConfig(ctx, name, src);
+            boolean overlaid = overlayPipelineConfig(ctx, name, src);
 
             // ONE deploy ref, on both planes. A platform service used to have its own
             // branch; both planes now ask a green build the same question — does an environment
@@ -587,11 +608,12 @@ public class PipelinePhases {
             // ref is main.
             String ref = boot.config.envBranch();
             //
-            // BOTH refs, one sha, and only one of them deploys. The ref that does not deploy still
-            // has to exist and point here, so it goes up with -o qits.no-ci: a second
-            // SCMPublishCommit without it would queue a second cold native build of an image the
-            // first one already published. The option is a FACT on the event now — the git host
-            // publishes it either way and qits-ci's listener is what honours it.
+            // THREE PUSHES, and only the last of them deploys: main, the release tag, then the
+            // deploy ref at the commit the restore chose. main goes up with -o qits.no-ci because
+            // a second SCMPublishCommit without it would queue a cold native build of a commit
+            // that deploys nowhere — the option is a FACT on the event now, published either way,
+            // and qits-ci's listener is what honours it. The tag is quiet for the same reason and
+            // selects no pipeline anyway.
             // BEFORE the pushes, and that is the whole point of where these two lines sit. A
             // terminal row carrying the baseline id belongs to an earlier run, not this one — but
             // the push is what creates this one, and its event can register it before the read
@@ -616,17 +638,42 @@ public class PipelinePhases {
                     List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
                     "HEAD:refs/heads/" + quietRef);
 
-            ctx.status("pushing " + repo + " to " + ref + " (the ref that deploys it)");
+            // WHICH COMMIT DEPLOYS, decided after main is up so the commit it names is already in
+            // the store. Read here rather than in the plan: a tag is a fact about the checkout, and
+            // the checkout is refreshed by an earlier phase of this same run.
+            DeployPoint point = chooseDeployPoint(ctx, name, src, overlaid);
+            String sha = point.sha();
+            if (point.warn()) {
+                ctx.warn(repo + " has no release tag — deploying main's head "
+                        + SeedPhases.shortSha(sha) + ", which is unreleased code. Cut a release, "
+                        + "or say --ship-mains and mean it");
+            }
+            if (point.restored()) {
+                // The tag goes up too, and it is not decoration: it is the stamp that says this
+                // commit is that release, and qits-projects' backup consumer reads every
+                // SCMPublishTag. It starts nothing — a deployable's release recipe is fired by
+                // SCMRelease, so no pipeline anywhere selects this event.
+                //
+                // ONE TAG, THE NEWEST, and that is a trade: pushing every tag would restore the
+                // whole release history in one go, at one bus event and one full candidate sweep
+                // per tag across every repository qits-ci knows. The older tags restore nothing
+                // this boot needs.
+                ctx.status("pushing " + repo + " " + point.tag());
+                boot.push(ctx, repo + " " + point.tag(), src, boot.githost.gitUrl(repo),
+                        List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
+                        "refs/tags/" + point.tag());
+            }
+
+            ctx.status("pushing " + repo + " to " + ref + " at " + point.why());
+            // FORCED WHEN RESTORING, and only then. The deploy ref is a pointer rather than a
+            // history, and a restore may legitimately move it BACKWARDS: a machine whose last boot
+            // shipped mains carries an env ref ahead of the release, and a plain push of the older
+            // commit is refused as a non-fast-forward. --ship-mains keeps the plain push, so the
+            // dev loop cannot rewind anything by accident.
             ProcessResult push = boot.push(ctx, repo + " to " + ref, src,
                     boot.githost.gitUrl(repo), List.of("qits.token=" + boot.config.pushToken()),
-                    "HEAD:refs/heads/" + ref);
-            String sha = boot.git.head(src);
-            // git spells it "Everything up-to-date" — hyphens. Matching only the spaced form
-            // meant no event was ever posted for an unchanged repo: environment applications were
-            // rescued by the stale-row replay, and a platform service hung for its whole timeout on
-            // an event nobody sent. Found by the tenth proving run. Match both spellings.
-            String pushText = (push.tailText(50) + "\n" + push.out()).toLowerCase(Locale.ROOT);
-            boolean upToDate = pushText.contains("up to date") || pushText.contains("up-to-date");
+                    (point.restored() ? "+" : "") + sha + ":refs/heads/" + ref);
+            boolean upToDate = upToDate(push);
 
             if (alreadyLive(ctx, name, repo, sha)) {
                 ctx.note("already live at " + sha.substring(0, 7));
@@ -647,24 +694,106 @@ public class PipelinePhases {
                         + " is red. The push was delivered and built; there is no announcement left"
                         + " to re-make. Fix the build and push again");
             } else if (upToDate) {
-                // No push, no event — and not live at HEAD either. The image exists from an
+                // No push, no event — and not live at this commit either. The image exists from an
                 // earlier run; hand the deployer the event it never got, naming the ref that
                 // deploys it.
-                ctx.log("  " + repo + " unchanged but not deployed at HEAD — posting the build event");
+                ctx.log("  " + repo + " unchanged but not deployed at " + SeedPhases.shortSha(sha)
+                        + " — posting the build event");
                 postBuildEvent(ctx, repo, sha, ref);
             } else {
-                ctx.log("  pushed " + sha.substring(0, 7)
-                        + ", waiting for the deployment (a cold native build — be patient)");
+                ctx.log("  pushed " + point.why() + " (" + SeedPhases.shortSha(sha)
+                        + "), waiting for the deployment (a cold native build — be patient)");
             }
             awaitDeployment(ctx, name, repo, sha, ref, baselineRowId, baselineRunId, !upToDate);
         });
     }
 
-    /** Older checkouts get the standard publish step overlaid, so no push triggers nothing. */
-    private void overlayPipelineConfig(PhaseContext ctx, String name, Path src) throws Exception {
+    /**
+     * WHERE THIS DEPLOYABLE'S DEPLOY REF IS MOVED TO, and the phrase that says why.
+     * <p>
+     * {@code tag} is empty when the answer is main's head, which is what {@link #restored()} reads:
+     * a restored ref points at a release and carries its stamp, and a main-head ref carries
+     * neither.
+     */
+    record DeployPoint(String sha, String tag, String why, boolean warn) {
+        boolean restored() {
+            return !tag.isEmpty();
+        }
+    }
+
+    /**
+     * The choice itself, with the git reads left outside it.
+     * <ul>
+     *   <li><b>{@code --ship-mains}: main's head.</b> The dev loop, said out loud.
+     *   <li><b>An overlaid pipeline config: main's head.</b> The config this run just wrote lives
+     *       on main and on no release, so a restored commit would be a commit qits-ci has no
+     *       pipeline for — a push that builds nothing and a wait that ends at its timeout.
+     *   <li><b>A release tag: its commit.</b> The restore.
+     *   <li><b>No release tag: main's head, and WARN.</b> The honest cold-start answer — a
+     *       repository nobody has released has no released state to come back as, and the run says
+     *       so rather than pretending it restored something. Deliberately not the replay phases'
+     *       answer, which is to stop the boot: there a missing tag means a pin nothing holds, here
+     *       it means unreleased code deploying, which is a fact about the platform rather than a
+     *       contradiction in it.
+     * </ul>
+     */
+    static DeployPoint deployPoint(boolean shipMains, boolean overlaid, String tag, String tagSha,
+            String mainSha) {
+        if (shipMains) {
+            return new DeployPoint(mainSha, "", "main's head (--ship-mains)", false);
+        }
+        if (overlaid) {
+            return new DeployPoint(mainSha, "", "main's head (the pipeline config is only there)",
+                    false);
+        }
+        if (tag.isBlank() || tagSha.isBlank()) {
+            return new DeployPoint(mainSha, "", "main's head (no release tag)", true);
+        }
+        return new DeployPoint(tagSha, tag, "release " + tag, false);
+    }
+
+    /**
+     * A CALVER TAG: digits and dots, nothing else — the same shape the publishers' release steps
+     * check a tag against before they let it become a registry coordinate.
+     * <p>
+     * The filter is what keeps a stray tag off the deploy ref. Version sort orders by refname, so a
+     * {@code latest} or a {@code v2} would sort above every {@code 2026.812.101500} and a boot
+     * would deploy whatever commit it happened to name.
+     */
+    static String newestRelease(List<String> tagsNewestFirst) {
+        for (String tag : tagsNewestFirst) {
+            if (CALVER.matcher(tag).matches()) {
+                return tag;
+            }
+        }
+        return "";
+    }
+
+    /** The choice, with the checkout read. */
+    private DeployPoint chooseDeployPoint(PhaseContext ctx, String name, Path src,
+            boolean overlaid) {
+        if (boot.config.shipMains() || overlaid) {
+            return deployPoint(boot.config.shipMains(), overlaid, "", "", boot.git.head(src));
+        }
+        String tag = newestRelease(boot.git.tagsNewestFirst(src, "main"));
+        String tagSha = tag.isBlank() ? "" : boot.git.commitOf(src, tag);
+        DeployPoint point = deployPoint(false, false, tag, tagSha, boot.git.head(src));
+        if (point.restored()) {
+            ctx.log("  " + PlatformModel.repo(name) + " restores " + tag + " ("
+                    + SeedPhases.shortSha(point.sha()) + ")");
+        }
+        return point;
+    }
+
+    /**
+     * Older checkouts get the standard publish step overlaid, so no push triggers nothing. Answers
+     * whether it wrote one, because a repository whose pipeline exists only on main cannot be
+     * deployed from a release commit that predates it.
+     */
+    private boolean overlayPipelineConfig(PhaseContext ctx, String name, Path src) throws Exception {
         Path config = src.resolve(".config/qits/ci-post-receive.yml");
         if (Files.exists(config)) {
-            return;
+            return false;
         }
         String repo = PlatformModel.repo(name);
         ctx.warn(repo + " has no pipeline config — overlaying the standard publish step");
@@ -683,6 +812,7 @@ public class PipelinePhases {
         boot.git.add(src, ".config/qits/ci-post-receive.yml", ctx::log);
         boot.git.commitAsBootstrap(src,
                 "Opt into CI: publish this repo's image from a green push", ctx::log);
+        return true;
     }
 
     /**
@@ -793,6 +923,22 @@ public class PipelinePhases {
             return false;
         }
         return text.startsWith("up");
+    }
+
+    /**
+     * Did this push move NOTHING? Two phases ask it and both act on the answer, so it is one
+     * function: a deploy push that moved nothing announced no build, and a tag push that moved
+     * nothing announced no release.
+     * <p>
+     * git spells it "Everything up-to-date" — hyphens. Matching only the spaced form meant no event
+     * was ever posted for an unchanged repo: environment applications were rescued by the stale-row
+     * replay, and a platform service hung for its whole timeout on an event nobody sent. Found by
+     * the tenth proving run. Match both spellings, and read the TAIL as well as the captured head:
+     * git says it last, and a long push fills the capture.
+     */
+    static boolean upToDate(ProcessResult push) {
+        String text = (push.tailText(50) + "\n" + push.out()).toLowerCase(Locale.ROOT);
+        return text.contains("up to date") || text.contains("up-to-date");
     }
 
     private void awaitDeployment(PhaseContext ctx, String name, String repo, String sha,
@@ -1043,8 +1189,7 @@ public class PipelinePhases {
                 ProcessResult result = boot.push(ctx, repo + " main", src,
                         boot.githost.gitUrl(repo),
                         List.of("qits.token=" + boot.config.pushToken()), "main");
-                boolean upToDate = result.out().toLowerCase(Locale.ROOT).contains("up to date");
-                ctx.log("  " + repo + (upToDate ? " already at main"
+                ctx.log("  " + repo + (upToDate(result) ? " already at main"
                         : " pushed " + boot.git.shortHead(src)));
             }
             ctx.note(PlatformModel.SEEDED_REPOS.size() + " repositories");
@@ -1089,7 +1234,21 @@ public class PipelinePhases {
                     + "/git/<repoId> — qits-githost, its own service and its own port.");
             report.add("           On qits-net it is " + boot.config.gitHostUrl()
                     + "/<repoId>, which is what every service dials.");
-            report.add("dev loop:  commit in a repo, rerun with QITS_SKIP_BUILD=1 — the push redeploys it");
+            if (boot.config.shipMains()) {
+                report.add("mode:      --ship-mains — every deployable was deployed from your "
+                        + "local main, released or not");
+                report.add("dev loop:  commit in a repo, rerun with QITS_SKIP_BUILD=1 "
+                        + "--ship-mains — the push redeploys it");
+            } else {
+                report.add("mode:      restore — every deployable was deployed at the commit of "
+                        + "its newest release tag.");
+                report.add("           Local mains were pushed and deploy nothing. --ship-mains "
+                        + "ships them instead.");
+                report.add("dev loop:  commit in a repo, rerun with QITS_SKIP_BUILD=1 "
+                        + "--ship-mains — the push redeploys it.");
+                report.add("           Without --ship-mains a rerun restores the last release "
+                        + "and your commit deploys nowhere.");
+            }
             report.add("deploy:    push " + boot.config.envBranch()
                     + " — the ONE deploy ref; pushing main builds but deploys nothing.");
             report.add("           The platform services (" + String.join(", ",
