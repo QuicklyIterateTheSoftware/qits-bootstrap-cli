@@ -30,6 +30,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /**
@@ -149,6 +150,8 @@ public class SeedPhases {
                         + "the plugin, so this run is not the payload image this program builds");
             }
             ctx.log("  docker buildx: present");
+            boot.state.swarm = ensureSwarm(boot.docker, ctx::log);
+            ctx.log("  swarm: " + boot.state.swarm);
             if (!boot.git.available()) {
                 throw new IllegalStateException("no git on PATH");
             }
@@ -205,6 +208,81 @@ public class SeedPhases {
     }
 
     /**
+     * <b>The one swarm state this program repairs is {@code inactive}, and it repairs it here.</b>
+     * Every network it makes is an overlay and every service the platform will run is a swarm
+     * service, so a daemon that is not a swarm manager cannot carry this platform at all.
+     * <p>
+     * {@code inactive} is a machine that is in nobody's swarm: {@code docker swarm init} makes it a
+     * single-node one, which is what this host is. Every other state is somebody else's answer —
+     * {@code pending} is a join in flight, {@code locked} is a swarm that needs its unlock key, and
+     * {@code active} without the control plane is a WORKER, which takes its orders from a manager
+     * elsewhere. This phase names the state and stops. Initialising over any of them would tear a
+     * machine out of a cluster it belongs to.
+     *
+     * @return what the run summary prints
+     */
+    static String ensureSwarm(Docker docker, Consumer<String> out) {
+        Docker.Swarm swarm = docker.swarm();
+        if (swarm.ready()) {
+            return "active";
+        }
+        if (!swarm.inactive()) {
+            throw new IllegalStateException(swarmRefusal(swarm));
+        }
+        ProcessResult init = docker.initSwarm(out);
+        if (!init.ok()) {
+            throw new IllegalStateException(initRefusal(init));
+        }
+        // Read back rather than trusted: the exit code says the command ran, and what this phase
+        // owes every phase after it is a daemon that answers `active` to the next question.
+        Docker.Swarm after = docker.swarm();
+        if (!after.ready()) {
+            throw new IllegalStateException("docker swarm init succeeded and the daemon still says "
+                    + describe(after) + " — nothing here can make a swarm of that");
+        }
+        return "active (initialised by this run)";
+    }
+
+    private static String swarmRefusal(Docker.Swarm swarm) {
+        String fix = switch (swarm.state()) {
+            case "active" -> "This node is a WORKER: it runs tasks a manager gives it and creates "
+                    + "nothing of its own. Bootstrap on a manager of this swarm, or promote it";
+            case "pending" -> "A join is in flight. Let it finish, or `docker swarm leave --force`, "
+                    + "then rerun";
+            case "locked" -> "The swarm is locked. `docker swarm unlock` with its key, then rerun";
+            default -> "Either put this daemon in a swarm, or take it out of the one it half is: "
+                    + "`docker swarm leave --force`, then rerun";
+        };
+        return "this docker daemon is " + describe(swarm) + ", and the platform needs a swarm "
+                + "MANAGER: every network it creates is an overlay and every service it runs is a "
+                + "swarm service. " + fix + ". Nothing was changed — a machine in somebody else's "
+                + "swarm is not a bootstrap's to re-initialise";
+    }
+
+    /**
+     * <b>A host with several interfaces is told to choose, and it is told by a person.</b> Docker
+     * answers "could not choose an IP address to advertise" and stops. This program cannot answer it
+     * either — it runs as a container, so the routes it can read are docker's own and the address it
+     * would derive is the bridge's, not the one another node reaches this machine at. So the failure
+     * carries the exact command instead of a guess.
+     */
+    private static String initRefusal(ProcessResult init) {
+        if (init.out().contains("could not choose an IP address to advertise")) {
+            return "docker swarm init could not choose an address to advertise, because this host "
+                    + "has more than one. Run it once by hand with the address this machine is "
+                    + "reached at — `docker swarm init --advertise-addr <ip>` — and rerun the "
+                    + "bootstrap. This run cannot pick it: it is a container, and the routes it "
+                    + "sees are docker's rather than the host's";
+        }
+        return "docker swarm init failed (exit " + init.exitCode() + "): " + init.tailText(3);
+    }
+
+    private static String describe(Docker.Swarm swarm) {
+        return swarm.state() + (swarm.ready() || !"active".equals(swarm.state())
+                ? "" : " but not a manager");
+    }
+
+    /**
      * <b>The run joins qits-net, and every address after this line depends on it.</b> This CLI is a
      * container now, and every address it dials — the artifacts store, the edge, the idp, postgres
      * — is a wire alias that resolves for members of that network and for nobody else. A run that
@@ -212,7 +290,8 @@ public class SeedPhases {
      * timeout with a name that does not resolve.
      * <p>
      * FIRST, so nothing is dialled before it, and it ensures the network exists rather than
-     * assuming a platform stands: on a cold boot this is what creates qits-net. Attaching is
+     * assuming a platform stands: on a cold boot this is what creates qits-net, as the attachable
+     * overlay every member of the platform joins — see {@link Docker#ensureNetwork}. Attaching is
      * measured to take effect at once — the embedded DNS answers on the next lookup, with no
      * restart of this process.
      * <p>

@@ -49,7 +49,9 @@ public final class ComposeTemplate {
                 # qits.platform.deployments.legacy-network, which every container it starts also joins while
                 # the platform still holds direct cross-application URLs. External because the bootstrap (or a previous stack, or qits-ci's
                 # own boot) may have created it already — compose refuses to adopt a network it did not
-                # label.
+                # label — and external is also what keeps the DRIVER out of compose's hands: the
+                # bootstrap creates it as an attachable overlay, because a swarm service cannot
+                # attach a bridge and these plain containers still can attach an overlay.
                 name: qits-net
                 external: true
 

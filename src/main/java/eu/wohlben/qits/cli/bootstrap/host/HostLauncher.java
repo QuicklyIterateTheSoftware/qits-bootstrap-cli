@@ -69,10 +69,9 @@ public final class HostLauncher {
                 return 2;
             }
             out.println("docker daemon: reachable");
-            // Reported, never changed. `docker swarm init` would rewrite this machine's networking
-            // for every container on it, which is not a side effect a bootstrap gets to have; the
-            // move onto swarm is its own change. Saying the state out loud is what makes the next
-            // one's starting point a fact.
+            // Reported here, repaired inside: the payload's preflight initialises an INACTIVE
+            // daemon and refuses every other state that is not an active manager. This line stays
+            // because it is the state the run started from, printed before anything changes it.
             out.println("swarm: " + docker.swarmState());
 
             // A wrapper that is not here yet is a COLD START, not a failure: the run clones it,

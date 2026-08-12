@@ -21,6 +21,12 @@ public class RunState {
     public String daemonSha;
     /** The docker socket's group id, which ci and the deployer join. */
     public String dockerGid = "0";
+    /**
+     * The daemon's swarm as preflight left it — {@code active}, or {@code active (initialised by
+     * this run)}. Recorded because "this bootstrap made the machine a swarm manager" is a change to
+     * the host, and a run that made one has to say so.
+     */
+    public String swarm;
     /** The idp's client secrets: given, kept or generated. */
     public final Map<String, String> secrets = new LinkedHashMap<>();
     /**

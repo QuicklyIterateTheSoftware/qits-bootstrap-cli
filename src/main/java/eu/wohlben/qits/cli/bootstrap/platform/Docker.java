@@ -29,6 +29,9 @@ public class Docker {
     /** Long enough for a cold GraalVM native build, which is what most of these are. */
     public static final Duration BUILD_TIMEOUT = Duration.ofHours(4);
 
+    /** The only driver a network of this platform has: see {@link #ensureNetwork}. */
+    public static final String OVERLAY = "overlay";
+
     /**
      * Where a container learns its own id. Docker sets the hostname to the container's short id
      * unless it is given another one, and both are names the daemon resolves.
@@ -66,14 +69,54 @@ public class Docker {
     }
 
     /**
-     * The daemon's swarm state — {@code active}, {@code inactive}, {@code pending}. The host half
-     * reports it and changes nothing: {@code swarm init} rewrites the networking of every container
-     * on the machine, which is a migration rather than a preflight repair.
+     * The daemon's swarm state, and whether this node is a MANAGER. Both halves decide something:
+     * {@code active} alone is a node that may be a worker, and a worker creates no overlay network
+     * and runs no service — every command this program issues needs the control plane.
+     *
+     * @param state {@code active}, {@code inactive}, {@code pending}, {@code locked}, {@code error}
+     *              or {@code unknown} when the daemon did not answer
      */
+    public record Swarm(String state, boolean manager) {
+
+        public boolean inactive() {
+            return "inactive".equals(state);
+        }
+
+        /** Active AND a manager: the only state this program can work in. */
+        public boolean ready() {
+            return "active".equals(state) && manager;
+        }
+    }
+
+    /** One {@code docker info} for both halves of the answer. */
+    public Swarm swarm() {
+        ProcessResult info = runner.run(Cmd.of("docker", "info", "--format",
+                "{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}}"), null);
+        String[] answer = info.ok() ? info.trimmed().split("\\s+") : new String[0];
+        String state = answer.length > 0 && !answer[0].isBlank() ? answer[0] : "unknown";
+        return new Swarm(state, answer.length > 1 && "true".equals(answer[1]));
+    }
+
+    /** The state alone, for the host half's one report line. */
     public String swarmState() {
-        ProcessResult state = runner.run(Cmd.of(
-                "docker", "info", "--format", "{{.Swarm.LocalNodeState}}"), null);
-        return state.ok() && !state.trimmed().isEmpty() ? state.trimmed() : "unknown";
+        return swarm().state();
+    }
+
+    public boolean swarmActive() {
+        return swarm().ready();
+    }
+
+    /**
+     * Puts this single-node machine in a swarm of its own. Called only when the daemon says
+     * {@code inactive} — every other state is somebody else's swarm, and initialising over it is a
+     * migration rather than a preflight repair.
+     * <p>
+     * No {@code --advertise-addr}: on a host with one route the daemon picks the address itself, and
+     * on a host with several this program cannot pick it — see {@link
+     * eu.wohlben.qits.cli.bootstrap.phases.SeedPhases#ensureSwarm}.
+     */
+    public ProcessResult initSwarm(Consumer<String> out) {
+        return runner.run(Cmd.of("docker", "swarm", "init"), out);
     }
 
     /** Whether an image reference is already on this daemon. */
@@ -154,14 +197,45 @@ public class Docker {
         return networks;
     }
 
-    public boolean networkExists(String name) {
-        return runner.run(Cmd.of("docker", "network", "inspect", name), null).ok();
+    /** The driver of a network, or an empty string when there is no network by that name. */
+    public String networkDriver(String name) {
+        ProcessResult driver = runner.run(Cmd.of(
+                "docker", "network", "inspect", "-f", "{{.Driver}}", name), null);
+        return driver.ok() ? driver.trimmed() : "";
     }
 
-    /** Creates the network unless it is there. The deployer and compose both adopt an existing one. */
+    /**
+     * Creates the network unless it is there, as an <b>attachable overlay</b>. The deployer and
+     * compose both adopt an existing one.
+     * <p>
+     * Overlay because a swarm service cannot attach a local bridge — measured: {@code service create
+     * --network qits-net} answers "network qits-net not found". Attachable because plain
+     * {@code docker run} containers live on the same network and must keep doing so: the ci steps,
+     * the workspace and agent containers, and this run itself. Both directions of DNS were measured
+     * to work there, which is what makes one network enough.
+     * <p>
+     * <b>A bridge of the same name is refused rather than adopted.</b> It cannot be converted in
+     * place, and the platform is re-bootstrapped rather than migrated — so the honest answer is to
+     * name the network and the way out, not to carry on and fail later at the first service.
+     */
     public void ensureNetwork(String name, Consumer<String> out) {
-        if (!networkExists(name)) {
-            runner.run(Cmd.of("docker", "network", "create", name), out);
+        String driver = networkDriver(name);
+        if (OVERLAY.equals(driver)) {
+            return;
+        }
+        if (!driver.isEmpty()) {
+            throw new IllegalStateException(name + " already exists as a " + driver + " network, and "
+                    + "a swarm service cannot attach one. It cannot be converted either: remove it "
+                    + "and let this run make it again — `unwrap` does that, or stop everything on it "
+                    + "and run `docker network rm " + name + "`");
+        }
+        ProcessResult created = runner.run(Cmd.of("docker", "network", "create",
+                "-d", OVERLAY, "--attachable", name), out);
+        // Two creators between the inspect and the create is the ordinary race here — ci and the
+        // deployer ensure this network too — and whoever won made the same one.
+        if (!created.ok() && !created.out().contains("already exists")) {
+            throw new IllegalStateException("the overlay network " + name + " could not be created: "
+                    + created.tailText(3));
         }
     }
 

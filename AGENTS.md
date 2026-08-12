@@ -91,6 +91,14 @@ forced. Add to that list rather than deviating quietly.
   every caller is a machine on qits-net, every route of the service is behind the machine gate, and a
   gateway entry would put a socket-holding service behind the platform's public door. This CLI only
   polls its health — it starts no workload through it.
+- **Every network this program creates is an ATTACHABLE OVERLAY, and preflight makes the daemon a
+  swarm manager.** A swarm service cannot attach a local bridge — measured — and an attachable
+  overlay carries plain `docker run` containers just as well: the ci steps, the workspace and agent
+  containers, and this run itself, with DNS answering both ways. So preflight initialises an
+  INACTIVE daemon with `docker swarm init` and stops on every other state with the state named
+  (`pending`, `locked`, a WORKER), because initialising over somebody else's swarm tears a machine
+  out of a cluster. An existing BRIDGE called `qits-net` stops the run too: it cannot be converted
+  in place, and the platform is re-bootstrapped rather than migrated — `unwrap` removes it.
 - **One binary, two halves, ONE configuration contract.** Outside a container the binary launches
   itself inside one; inside it, it runs the phases. The host half reads the same `BootstrapConfig`
   and re-interprets no `QITS_*` value: the container's working directory is the launcher's, so

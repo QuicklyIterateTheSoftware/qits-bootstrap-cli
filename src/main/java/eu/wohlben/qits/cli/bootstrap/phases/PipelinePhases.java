@@ -1096,6 +1096,9 @@ public class PipelinePhases {
                     PlatformModel.PLATFORM_SERVICES) + ") deploy");
             report.add("           from that same ref: one instance each, joined to every "
                     + "environment's networks.");
+            report.add("swarm:     " + boot.state.swarm + ". qits-net is an attachable overlay: "
+                    + "swarm services and");
+            report.add("           plain containers share it and resolve each other by name.");
             report.add("topology:  qits-deployments owns the environments, the services,");
             report.add("           the links AND the deployments — one component, at "
                     + boot.config.platformDeploymentsUrl());

@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * Unwrap: take the platform off this machine again.
@@ -314,7 +315,7 @@ public class UnwrapPhases {
                 ctx.skip("no qits networks");
             }
             ctx.log("  " + String.join(", ", names));
-            remove(ctx, new ArrayList<>(names), "network", "rm");
+            remove(ctx, new ArrayList<>(names), NETWORK_ATTEMPTS, "network", "rm");
             ctx.note(done(names.size()));
         });
     }
@@ -374,8 +375,32 @@ public class UnwrapPhases {
         return dryRun ? count + " would go" : count + " removed";
     }
 
+    /**
+     * <b>An overlay lets its endpoints go a moment after the containers do.</b> Measured: a network
+     * is removable about a second after the stack is down, and until then {@code network rm} answers
+     * "has active endpoints". So the network sweep asks a few times over a short window rather than
+     * reporting a failure that a person would only repeat by hand. Every attempt is a line.
+     */
+    static final int NETWORK_ATTEMPTS = 6;
+
+    static final Duration NETWORK_PAUSE = Duration.ofMillis(500);
+
+    /** Retries while the answer is a failure, up to {@code attempts} times, pausing between. */
+    static ProcessResult retrying(Supplier<ProcessResult> attempt, int attempts, Runnable pause) {
+        ProcessResult result = attempt.get();
+        for (int left = attempts - 1; left > 0 && !result.ok(); left--) {
+            pause.run();
+            result = attempt.get();
+        }
+        return result;
+    }
+
     /** Removal is best effort per item: one stubborn object must not hide the rest. */
     private void remove(PhaseContext ctx, List<String> items, String... command) {
+        remove(ctx, items, 1, command);
+    }
+
+    private void remove(PhaseContext ctx, List<String> items, int attempts, String... command) {
         int failed = 0;
         for (String item : items) {
             if (dryRun) {
@@ -384,8 +409,13 @@ public class UnwrapPhases {
             }
             List<String> args = new ArrayList<>(List.of(command));
             args.add(item);
-            ProcessResult result = boot.docker.exec(Duration.ofMinutes(5), null,
-                    args.toArray(String[]::new));
+            ProcessResult result = retrying(
+                    () -> boot.docker.exec(Duration.ofMinutes(5), null, args.toArray(String[]::new)),
+                    attempts,
+                    () -> {
+                        ctx.log("  " + item + " is not free yet; asking again");
+                        pause();
+                    });
             if (result.ok()) {
                 ctx.log("  removed " + item);
             } else {
@@ -395,6 +425,14 @@ public class UnwrapPhases {
         }
         if (failed > 0) {
             ctx.warn(failed + " of " + items.size() + " could not be removed");
+        }
+    }
+
+    private static void pause() {
+        try {
+            Thread.sleep(NETWORK_PAUSE);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 }

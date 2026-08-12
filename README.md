@@ -201,8 +201,16 @@ and the fourth names the clone of this CLI the run was started from — the wrap
 is where the image is built from when there is a wrapper, and a checkout of this repository at or
 above the working directory (or beside it) is what answers on a cold one.
 
-**Swarm is reported, not repaired.** `docker swarm init` rewrites the networking of every container
-on the machine, which is a migration and not a preflight's business.
+**Swarm is reported here and repaired inside.** The line above is the state this run started from;
+the payload's own preflight is what acts on it. An `inactive` daemon — one in nobody's swarm — is
+made a single-node swarm with `docker swarm init`. Every other state is somebody else's answer and
+stops the run with the state named: `pending` is a join in flight, `locked` needs its unlock key,
+and `active` without the control plane is a WORKER that takes its orders from a manager elsewhere.
+It matters because `qits-net` is an **attachable overlay** now: a swarm service cannot attach a
+bridge, and a machine that is not a manager can create no overlay. On a host with several
+interfaces `docker swarm init` refuses to choose an address to advertise, and the run says so with
+the command to run by hand — `docker swarm init --advertise-addr <ip>`. It cannot pick one itself:
+it is a container, so the routes it sees are docker's rather than the host's.
 
 **The image is addressed by its content** — a digest of `pom.xml`, `mvnw`, `.mvn/`, `src/main/` and
 the Dockerfile — so a rerun with an unchanged checkout finds it built and starts in a second, and a
@@ -240,7 +248,7 @@ The run itself, flag by flag:
 | `-e QITS_…` by NAME | docker copies each value across, so the postgres passwords and client secrets never reach a command line, the screen or the log |
 | `-e HOME=/tmp`, `-e TZ=…` | a uid with no `/etc/passwd` entry has no home, and a container with no `/etc/localtime` logs in UTC while the launcher logs local |
 | `-p [<host>:]<port>:<port>` | the browser view, unless `QITS_WEB=0`. `QITS_WEB_HOST` answers who may reach it, and inside a container that boundary is the publish |
-| no `--network` | `qits-net` may not exist yet on a cold machine. The run's second phase creates it and attaches this container itself |
+| no `--network` | `qits-net` may not exist yet on a cold machine. The run's second phase creates it — as an attachable overlay — and attaches this container itself |
 
 **Exit codes are a contract and pass through untouched**: 2 a phase failed, 1 a deployment never
 landed, 0 clean.
@@ -349,7 +357,7 @@ for 42. `QITS_DOMAIN` adds two more, marked below.
 
 | | phase |
 | --- | --- |
-| 1–5 | preflight (docker, buildx, git, where the wrapper is, and which domain — if any — this platform serves); join `qits-net`, which every address after it needs; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 40 platform repositories; read `.qits-bootstrap.env` |
+| 1–5 | preflight (docker, buildx, the swarm — initialised when the daemon is in none — git, where the wrapper is, and which domain — if any — this platform serves); join `qits-net`, the attachable overlay every address after it needs; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 40 platform repositories; read `.qits-bootstrap.env` |
 | 6 | seed the qits libraries the byte plane is built from — `qits-blobstore`, `qits-registries`, `qits-eventstream`, `qits-githost-events` (one module of qits-githost: the vocabulary its consumers need, not its service), `qits-auth-core` — into a temporary file repository served over HTTP, which is what breaks the first-boot cycle: three of the images below are built out of jars only this platform will ever publish. Its maven container, every publish container below and the ci-daemon build share one download cache — the `qits-maven-cache` volume, mounted at `/cache` and named by `-Dmaven.repo.local` — so Maven Central is read once per machine rather than once per phase. Each of those scripts starts by deleting `eu/wohlben/qits` out of it: third-party bytes are immutable at their version and ours are not, because seed builds reuse calvers across runs |
 | 7–14 | seed images `qits/gateway`, `qits/platform-edge`, `qits/platform-mirror`, `qits/artifacts`, `qits/githost`, `qits/oci-postgresql`, `qits/platform-dns`, `qits/events` — the eight that need nothing from a running platform |
 | 15 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC the twelve databases the seed stack needs: the deployer's own and its outbox's, qits-ci's own and its outbox's, qits-platform-idp's, qits-platform-dns', qits-events', qits-platform-mirror's, qits-githost's own and its outbox's, and qits-containers' own and its outbox's. Four are outboxes because the eventstream library keeps its own Flyway lineage and cannot share a database with its host. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |

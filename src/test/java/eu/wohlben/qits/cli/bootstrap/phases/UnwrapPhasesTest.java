@@ -1,6 +1,10 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
+import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -55,5 +59,64 @@ class UnwrapPhasesTest {
         assertThat(UnwrapPhases.isData("qits-something-else")).isFalse();
         assertThat(UnwrapPhases.isData("qits-maven-seed-extra")).isFalse();
         assertThat(UnwrapPhases.isData("postgres-data")).isFalse();
+    }
+
+    /**
+     * An overlay releases its endpoints a moment after the containers go, so the first
+     * {@code network rm} answers "has active endpoints" and the second or third takes it.
+     */
+    @Test
+    void aNetworkThatIsStillReleasingItsEndpointsIsAskedAgain() {
+        AtomicInteger tries = new AtomicInteger();
+        AtomicInteger pauses = new AtomicInteger();
+
+        ProcessResult result = UnwrapPhases.retrying(
+                () -> tries.incrementAndGet() < 3
+                        ? failed("Error response from daemon: network qits-net has active endpoints")
+                        : removed(),
+                UnwrapPhases.NETWORK_ATTEMPTS, pauses::incrementAndGet);
+
+        assertThat(result.ok()).isTrue();
+        assertThat(tries.get()).isEqualTo(3);
+        assertThat(pauses.get()).isEqualTo(2);
+    }
+
+    /** Bounded: an endpoint that never goes costs the window and is then reported, not waited on. */
+    @Test
+    void aRemovalThatKeepsFailingGivesUpAfterTheWindow() {
+        AtomicInteger tries = new AtomicInteger();
+
+        ProcessResult result = UnwrapPhases.retrying(
+                () -> {
+                    tries.incrementAndGet();
+                    return failed("has active endpoints");
+                },
+                UnwrapPhases.NETWORK_ATTEMPTS, () -> {
+                });
+
+        assertThat(result.ok()).isFalse();
+        assertThat(tries.get()).isEqualTo(UnwrapPhases.NETWORK_ATTEMPTS);
+    }
+
+    /** Everything else is removed once: only a network detaches after the thing on it is gone. */
+    @Test
+    void oneAttemptIsOneCommand() {
+        AtomicInteger tries = new AtomicInteger();
+
+        UnwrapPhases.retrying(() -> {
+            tries.incrementAndGet();
+            return failed("no such volume");
+        }, 1, () -> {
+        });
+
+        assertThat(tries.get()).isEqualTo(1);
+    }
+
+    private static ProcessResult removed() {
+        return new ProcessResult(0, List.of("qits-net"), List.of("qits-net"), false, false);
+    }
+
+    private static ProcessResult failed(String... output) {
+        return new ProcessResult(1, List.of(output), List.of(output), false, false);
     }
 }
