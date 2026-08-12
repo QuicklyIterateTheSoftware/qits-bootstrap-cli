@@ -108,11 +108,6 @@ public class OverridableConfig implements BootstrapConfig {
     }
 
     @Override
-    public int pgPort() {
-        return base.pgPort();
-    }
-
-    @Override
     public int dnsPort() {
         return base.dnsPort();
     }

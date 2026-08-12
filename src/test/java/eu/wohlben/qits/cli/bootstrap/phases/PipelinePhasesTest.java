@@ -1,5 +1,6 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
+import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 import org.junit.jupiter.api.Test;
 
@@ -144,5 +145,71 @@ class PipelinePhasesTest {
         assertThat(point.sha()).isEqualTo(overlay);
         assertThat(point.restored()).isFalse();
         assertThat(point.warn()).isFalse();
+    }
+
+    // --- what a rerun deploys ----------------------------------------------------------------------
+
+    private static final String ENV = "prod";
+
+    private static String alias(String app) {
+        return PlatformModel.wireAlias(app, ENV);
+    }
+
+    /** A cold machine: nothing is running, so the whole seed is this run's to deploy. */
+    @Test
+    void withNothingDeployedTheWholeSeedIsDeployed() {
+        PipelinePhases.SeedPlan plan = PipelinePhases.seedPlan(List.of(), List.of(), ENV);
+
+        assertThat(plan.deploy()).containsExactlyElementsOf(
+                PlatformModel.CORE.stream()
+                        .map(PipelinePhasesTest::alias).toList());
+        assertThat(plan.managed()).isEmpty();
+        assertThat(plan.stale()).isEmpty();
+    }
+
+    /** The rule the stack file has no depends_on for: never a seed service beside a deployment. */
+    @Test
+    void anApplicationWithADeployedContainerIsLeftAlone() {
+        PipelinePhases.SeedPlan plan = PipelinePhases.seedPlan(
+                List.of("qits-pd-prod-qits-ci-a1b2c3d4"), List.of(), ENV);
+
+        assertThat(plan.managed()).containsExactly(alias("ci"));
+        assertThat(plan.deploy()).doesNotContain(alias("ci")).contains(alias("events"));
+    }
+
+    /**
+     * And the seed SERVICE of that application goes, which is the half swarm added: a compose
+     * sibling stayed down once the deployer removed its container, while a service's task is
+     * restarted within seconds.
+     */
+    @Test
+    void thePredecessorServiceOfADeployedApplicationIsRemoved() {
+        PipelinePhases.SeedPlan plan = PipelinePhases.seedPlan(
+                List.of("qits-pd-prod-qits-ci-a1b2c3d4"),
+                List.of("qits_prod-qits-ci", "qits_prod-qits-events"), ENV);
+
+        assertThat(plan.stale()).containsExactly("qits_prod-qits-ci");
+    }
+
+    /** A platform service's container drops the tier segment, and the prefix has to match that. */
+    @Test
+    void aPlatformServiceIsRecognisedByItsOwnPrefix() {
+        PipelinePhases.SeedPlan plan = PipelinePhases.seedPlan(
+                List.of("qits-pd-qits-platform-idp-f325ef80"), List.of("qits-platform-idp"), ENV);
+
+        assertThat(plan.managed()).containsExactly("qits-platform-idp");
+        // Under the bare short name too: a stack service answers to both, so both are swept.
+        assertThat(plan.stale()).containsExactly("qits-platform-idp");
+        assertThat(plan.deploy()).doesNotContain("qits-platform-idp");
+    }
+
+    /** Everything deployed: there is nothing left for this phase to start. */
+    @Test
+    void aFullyDeployedPlatformDeploysNothing() {
+        List<String> running = PlatformModel.CORE.stream()
+                .map(app -> PlatformModel.pdNamePrefix(app, ENV) + "abcd1234")
+                .toList();
+
+        assertThat(PipelinePhases.seedPlan(running, List.of(), ENV).deploy()).isEmpty();
     }
 }

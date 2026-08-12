@@ -243,6 +243,68 @@ public class Docker {
         runner.run(Cmd.of("docker", "volume", "create", name), out);
     }
 
+    // --- the seed stack -----------------------------------------------------------------------
+
+    /** The seed's stack name, and the compose project name before it. */
+    public static final String STACK = "qits";
+
+    /**
+     * Deploys the seed stack.
+     * <p>
+     * <b>{@code --resolve-image never} is not optional here.</b> Every image in the file is a local
+     * tag this bootstrap built — {@code qits/ci:latest} and its neighbours — and the default
+     * ({@code always}) asks a registry to resolve each one to a digest, which no registry can do.
+     * The flag is spelled {@code --resolve-image never} on {@code stack deploy}; the same idea is
+     * {@code --no-resolve-image} on {@code service create}, and neither spelling works for the
+     * other command.
+     * <p>
+     * No {@code --prune}: a service the deployer has taken over is left out of the FILE, and prune
+     * would then remove it from the stack — which is a removal this program has no business making
+     * on a running platform. What the file names is updated; everything else is left alone.
+     */
+    public ProcessResult stackDeploy(Path file, String stack, Duration timeout,
+                                     Consumer<String> out) {
+        return runner.run(Cmd.of(List.of("docker", "stack", "deploy", "--resolve-image", "never",
+                "-c", file.toString(), stack)).timeout(timeout), out);
+    }
+
+    public ProcessResult stackRm(String stack, Consumer<String> out) {
+        return runner.run(Cmd.of("docker", "stack", "rm", stack), out);
+    }
+
+    /**
+     * The name of every swarm service on this node's swarm.
+     * <p>
+     * <b>This is what {@code docker ps} used to answer.</b> A stack ignores {@code container_name}
+     * and names the container {@code <stack>_<service>.<slot>.<taskid>}, so every check that asked
+     * for a container by the name a service answers to now asks here instead.
+     */
+    public List<String> serviceNames() {
+        return lines(runner.run(Cmd.of("docker", "service", "ls", "--format", "{{.Name}}"), null));
+    }
+
+    /** Service names carrying a label, which is how the deployer's own services are found. */
+    public List<String> serviceNames(String filter) {
+        return lines(runner.run(Cmd.of("docker", "service", "ls", "--filter", filter,
+                "--format", "{{.Name}}"), null));
+    }
+
+    /** Removes services, in one call: {@code service rm} takes as many names as it is given. */
+    public ProcessResult serviceRm(List<String> names, Consumer<String> out) {
+        List<String> command = new ArrayList<>(List.of("docker", "service", "rm"));
+        command.addAll(names);
+        return runner.run(Cmd.of(command), out);
+    }
+
+    /**
+     * The two names a stack service answers to, and both are addresses on the network: the
+     * qualified {@code <stack>_<service>} and the bare short name — measured, on an external
+     * network too. So a check for "is this alias already a service" has to ask for both.
+     */
+    public static String stackService(String stack, String service) {
+        return stack + "_" + service;
+    }
+
     /** Names of the running containers. */
     public List<String> runningNames() {
         return lines(runner.run(Cmd.of("docker", "ps", "--format", "{{.Names}}"), null));
@@ -317,6 +379,12 @@ public class Docker {
     }
 
     private static List<String> lines(ProcessResult result) {
+        // A COMMAND THAT FAILED LISTED NOTHING. Docker writes its refusal on the same stream the
+        // runner captures, so without this a `service ls` on a daemon in no swarm answers one
+        // "name" reading "This node is not a swarm manager" — and a sweep would try to remove it.
+        if (!result.ok()) {
+            return List.of();
+        }
         List<String> out = new ArrayList<>();
         for (String line : result.captured()) {
             if (!line.isBlank() && !line.startsWith("$ ")) {

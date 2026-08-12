@@ -3,6 +3,7 @@ package eu.wohlben.qits.cli.bootstrap.phases;
 import eu.wohlben.qits.cli.bootstrap.config.WrapperDir;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
+import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 
@@ -19,9 +20,14 @@ import java.util.function.Supplier;
  * Unwrap: take the platform off this machine again.
  * <p>
  * What is "qits-marked" is what the platform actually marks — the deployer's own container labels,
- * the compose project of the seed stack, the {@code qits-} name prefixes and the images published
- * under {@code qits/} or the local registry host. There is no single unified label to sweep by, and
- * inventing one here would only be true of the containers this program removed.
+ * the seed's stack namespace and the compose project before it, the {@code qits-} name prefixes and
+ * the images published under {@code qits/} or the local registry host. There is no single unified
+ * label to sweep by, and inventing one here would only be true of the containers this program
+ * removed.
+ * <p>
+ * <b>Services before containers.</b> The seed is a swarm stack, so removing a container removes
+ * nothing: swarm starts another one. Every sweep that took a container has a sibling that takes a
+ * service, and the service goes first.
  * <p>
  * <b>Two label namespaces, both forever.</b> {@code qits.platform.deployments.*} is what
  * qits-deployments writes; {@code qits.cd.*} is what the retired qits-cd wrote. Unwrap is how a
@@ -88,7 +94,9 @@ public class UnwrapPhases {
 
     public List<Phase> build() {
         List<Phase> phases = new ArrayList<>();
+        phases.add(stackDown());
         phases.add(composeDown());
+        phases.add(services());
         phases.add(containers());
         if (withVolumes) {
             phases.add(volumes());
@@ -103,9 +111,31 @@ public class UnwrapPhases {
         return List.copyOf(phases);
     }
 
-    /** The seed stack, through compose, so its own bookkeeping goes with it. */
+    /** The seed stack, through swarm, so its own bookkeeping goes with it. */
+    private Phase stackDown() {
+        return new Phase("stack-rm", "remove the seed stack", ctx -> {
+            if (dryRun) {
+                ctx.log("  would run: docker stack rm " + Docker.STACK);
+                return;
+            }
+            ProcessResult result = boot.docker.stackRm(Docker.STACK, ctx::log);
+            // "Nothing found in stack: qits" is the ordinary answer on a machine that never ran
+            // one, and it is not a failure — a pre-stack platform is exactly what the phase below
+            // is for. Anything else is worth the operator's eyes, and the sweeps after this one
+            // still run: what stack rm misses, the label and name sweeps take.
+            if (!result.ok()) {
+                ctx.warn("docker stack rm " + Docker.STACK + ": " + result.tailText(1));
+            }
+        });
+    }
+
+    /**
+     * The compose-era seed stack, which is what a platform bootstrapped before the swarm cutover
+     * has. Patterns are added here and never taken away: a machine still carrying that platform is
+     * the whole reason unwrap exists.
+     */
     private Phase composeDown() {
-        return new Phase("compose-down", "stop the compose seed stack", ctx -> {
+        return new Phase("compose-down", "stop a pre-swarm compose seed stack", ctx -> {
             WrapperDir.Resolved wrapper =
                     WrapperDir.resolve(boot.config.wrapperDir(), Path.of("").toAbsolutePath());
             ctx.log("  wrapper: " + wrapper.path() + "  (" + wrapper.how() + ")");
@@ -119,6 +149,39 @@ public class UnwrapPhases {
             }
             boot.docker.exec(Duration.ofMinutes(10), ctx::log,
                     "compose", "-p", "qits", "-f", compose.toString(), "down");
+        });
+    }
+
+    /**
+     * <b>Swarm services, and the sweep below cannot reach them.</b> Removing a task's container is
+     * not removing anything: swarm starts another one, and the container sweep would report a
+     * platform it left running. So services go first and by their own vocabulary.
+     * <p>
+     * Three ways in, for the same reason the container sweep has three: the seed stack's own
+     * namespace label, the deployer's two label namespaces — which is what a service created by a
+     * swarm deployment driver carries — and the name shapes this platform uses, {@code qits-…} at
+     * the start, {@code -qits-} anywhere and the {@code qits_} a stack prefixes its own with.
+     */
+    private Phase services() {
+        return new Phase("services", "remove the platform's swarm services", ctx -> {
+            Set<String> names = new LinkedHashSet<>();
+            for (String namespace : List.of("qits.platform.deployments", "qits.cd")) {
+                names.addAll(boot.docker.serviceNames("label=" + namespace + ".environment"));
+                names.addAll(boot.docker.serviceNames("label=" + namespace + ".app-name"));
+                names.addAll(boot.docker.serviceNames("label=" + namespace + ".target"));
+            }
+            names.addAll(boot.docker.serviceNames(
+                    "label=com.docker.stack.namespace=" + Docker.STACK));
+            names.addAll(boot.docker.serviceNames().stream()
+                    .filter(UnwrapPhases::isPlatformName).toList());
+            names.removeIf(String::isBlank);
+            if (names.isEmpty()) {
+                // Also what a daemon in no swarm answers, which is a machine with no services on it.
+                ctx.skip("no qits services");
+            }
+            ctx.log("  " + names.size() + " service(s)");
+            remove(ctx, new ArrayList<>(names), "service", "rm");
+            ctx.note(done(names.size()));
         });
     }
 
@@ -366,9 +429,18 @@ public class UnwrapPhases {
      * never heard of.
      */
     private List<String> namedQits() {
-        return boot.docker.allNames().stream()
-                .filter(name -> name.startsWith("qits-") || name.contains("-qits-"))
-                .toList();
+        return boot.docker.allNames().stream().filter(UnwrapPhases::isPlatformName).toList();
+    }
+
+    /**
+     * A name this platform gave something. Three shapes, and each is here because a machine can
+     * still be carrying it: {@code qits-…} (the seed's platform services, every {@code qits-pd-…}
+     * deployment, the retired {@code qits-cd-…} ones, this program's scratch containers),
+     * {@code <env>-qits-…} (a seed environment service, whatever the environment is called) and
+     * {@code qits_…} (what a stack or a compose project prefixes its own with).
+     */
+    static boolean isPlatformName(String name) {
+        return name.startsWith("qits-") || name.contains("-qits-") || name.startsWith("qits_");
     }
 
     private String done(int count) {

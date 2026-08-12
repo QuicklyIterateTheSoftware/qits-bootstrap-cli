@@ -45,9 +45,18 @@ public class Boot {
     public final IdpApi idp;
 
     public Boot(BootstrapConfig config, RunLog log) {
+        this(config, log, new ProcessRunner(log));
+    }
+
+    /**
+     * The same run with the process runner given rather than made — the seam a test drives the
+     * docker-shelling phases through, so what they put on a command line is provable without a
+     * daemon. Everything else is built exactly as the running program builds it.
+     */
+    Boot(BootstrapConfig config, RunLog log, ProcessRunner runner) {
         this.config = config;
         this.log = log;
-        this.runner = new ProcessRunner(log);
+        this.runner = runner;
         this.docker = new Docker(runner);
         this.git = new Git(runner);
         this.artifacts = new ArtifactsApi(http, config.artifactsUrl());
