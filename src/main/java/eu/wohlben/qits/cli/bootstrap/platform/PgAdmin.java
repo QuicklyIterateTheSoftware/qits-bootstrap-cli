@@ -10,6 +10,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
@@ -146,6 +148,50 @@ public final class PgAdmin {
             throw e;
         }
         return "created";
+    }
+
+    /**
+     * What the deployer's registry says the application roles log in with, by role name.
+     * <p>
+     * <b>From an application's first deploy on, {@code pd_resource} is the single authority for
+     * its credential</b> — the deployer's reconcile arm rotates the role and records what it set,
+     * and the value this CLI recorded at creation time is what the role WAS, not what it is.
+     * Measured on the first volumes-kept re-bootstrap after rotation landed: the seed mirror died
+     * on "password authentication failed" while the registry held the working value all along. So
+     * the seed phase asks the registry and starts the seed containers with what the rows say,
+     * exactly the way the deployer starts every successor.
+     * <p>
+     * Empty when there is nothing to ask: a fresh volume has no registry database yet, and a
+     * cluster the deployer never ran against has no table. Both mean the recorded values are
+     * still the truth, and both answer the same way.
+     */
+    public static Map<String, String> recordedPasswords(String jdbcUrl, String user,
+                                                        String password) {
+        try (Connection registry = connect(jdbcUrl, user, password)) {
+            return readRecordedPasswords(registry);
+        } catch (SQLException absent) {
+            return Map.of();
+        }
+    }
+
+    static Map<String, String> readRecordedPasswords(Connection registry) {
+        Map<String, String> recorded = new LinkedHashMap<>();
+        try (Statement statement = registry.createStatement();
+             ResultSet rows = statement.executeQuery(
+                     "select role_name, password from pd_resource")) {
+            while (rows.next()) {
+                String role = rows.getString(1);
+                String value = rows.getString(2);
+                // The same belt as everywhere in this class: nothing that is not a role name and
+                // a generated password may steer what a seed container is started with.
+                if (role != null && IDENTIFIER.matcher(role).matches() && isPassword(value)) {
+                    recorded.put(role, value);
+                }
+            }
+        } catch (SQLException absent) {
+            return Map.of();
+        }
+        return Map.copyOf(recorded);
     }
 
     /**

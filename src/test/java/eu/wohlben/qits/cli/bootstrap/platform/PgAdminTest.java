@@ -8,6 +8,8 @@ import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -15,6 +17,7 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.entry;
 
 /**
  * What can be tested without a server: the belt that stands between a name and a statement, and
@@ -133,6 +136,26 @@ class PgAdminTest {
                 .containsExactly(PgAdmin.alterRolePassword("qits_deployments", PASSWORD));
     }
 
+    @Test
+    void theRegistrysRowsAreReadBackAndTheBeltStillHolds() {
+        // A surviving cluster: the deployer rotated these roles and recorded what it set. The
+        // seed must use the rows — and the same belt as everywhere: a row that is not a role
+        // name and a generated password never steers what a seed container is started with.
+        FakeRegistry registry = new FakeRegistry(List.of(
+                new String[]{"qits_ci", "feedfacefeedface"},
+                new String[]{"qits_platform_mirror", "not-hex-at-all!"},
+                new String[]{"Robert'); drop", PASSWORD}));
+        assertThat(PgAdmin.readRecordedPasswords(registry.connection()))
+                .containsExactly(entry("qits_ci", "feedfacefeedface"));
+    }
+
+    @Test
+    void aClusterTheDeployerNeverRanAgainstAnswersNothing() {
+        // No pd_resource table — a fresh volume, or a pre-registry cluster. Then the recorded
+        // values are still the truth, and the caller hears "nothing" rather than an error.
+        assertThat(PgAdmin.readRecordedPasswords(new FakeRegistry(null).connection())).isEmpty();
+    }
+
     /**
      * A postgres that answers the only two things this class asks of one: whether a name is in
      * pg_catalog, and here is a statement. A proxy rather than a server, because the question is
@@ -181,6 +204,45 @@ class PgAdminTest {
         private Object rows() {
             return Proxy.newProxyInstance(getClass().getClassLoader(),
                     new Class<?>[]{ResultSet.class}, this);
+        }
+    }
+
+    /**
+     * The deployer's registry, as {@code readRecordedPasswords} sees it: a table of
+     * (role_name, password) rows — or no table at all, which is what {@code null} means here.
+     */
+    private static final class FakeRegistry implements InvocationHandler {
+
+        private final List<String[]> rows;
+        private int cursor = -1;
+
+        FakeRegistry(List<String[]> rows) {
+            this.rows = rows;
+        }
+
+        Connection connection() {
+            return (Connection) proxy(Connection.class);
+        }
+
+        private Object proxy(Class<?> type) {
+            return Proxy.newProxyInstance(getClass().getClassLoader(), new Class<?>[]{type}, this);
+        }
+
+        @Override
+        public Object invoke(Object proxy, Method method, Object[] args) throws SQLException {
+            return switch (method.getName()) {
+                case "createStatement" -> {
+                    if (rows == null) {
+                        throw new SQLException("relation \"pd_resource\" does not exist");
+                    }
+                    yield proxy(Statement.class);
+                }
+                case "executeQuery" -> proxy(ResultSet.class);
+                case "next" -> ++cursor < rows.size();
+                case "getString" -> rows.get(cursor)[(int) args[0] - 1];
+                case "toString" -> "fake registry";
+                default -> null;
+            };
         }
     }
 }

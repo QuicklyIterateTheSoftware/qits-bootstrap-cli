@@ -1254,6 +1254,56 @@ public class SeedPhases {
             PgAdmin.awaitReady(url, "postgres", superuser, boot.config.healthTimeout(), ctx);
             ctx.log("  postgres answering on " + pg + ":5432");
 
+            // A SURVIVING cluster's application roles are not on the recorded passwords any more:
+            // from an application's first deploy on, the deployer's pd_resource registry is the
+            // authority — its reconcile arm rotates each role to a fresh password and records what
+            // it set, while this file's value is what the role was CREATED with. Measured on the
+            // first volumes-kept re-bootstrap after rotation landed: the seed mirror died on
+            // "password authentication failed" while the registry knew the working value all
+            // along. So the seed containers are started with what the rows say, exactly the way
+            // the deployer starts every successor. The deployer's own two roles stay on the
+            // recorded values: its role is CONVERGED on them below, and its boot registration
+            // rewrites their rows from the environment this phase hands it.
+            Map<String, String> registry = PgAdmin.recordedPasswords(
+                    "jdbc:postgresql://" + pg + ":5432/qits_deployments", "postgres", superuser);
+            ci = registry.getOrDefault("qits_ci", ci);
+            ciEventstream = registry.getOrDefault("qits_ci_eventstream", ciEventstream);
+            platformIdp = registry.getOrDefault("qits_platform_idp", platformIdp);
+            platformDns = registry.getOrDefault("qits_platform_dns", platformDns);
+            events = registry.getOrDefault("qits_events", events);
+            platformMirror = registry.getOrDefault("qits_platform_mirror", platformMirror);
+            githost = registry.getOrDefault("qits_githost", githost);
+            githostEventstream =
+                    registry.getOrDefault("qits_githost_eventstream", githostEventstream);
+            containers = registry.getOrDefault("qits_containers", containers);
+            containersEventstream =
+                    registry.getOrDefault("qits_containers_eventstream", containersEventstream);
+            if (!registry.isEmpty()) {
+                boot.state.pgCiPassword = ci;
+                boot.state.pgCiEventstreamPassword = ciEventstream;
+                boot.state.pgPlatformIdpPassword = platformIdp;
+                boot.state.pgPlatformDnsPassword = platformDns;
+                boot.state.pgEventsPassword = events;
+                boot.state.pgPlatformMirrorPassword = platformMirror;
+                boot.state.pgGithostPassword = githost;
+                boot.state.pgGithostEventstreamPassword = githostEventstream;
+                boot.state.pgContainersPassword = containers;
+                boot.state.pgContainersEventstreamPassword = containersEventstream;
+                state.put("PG_CI_PASSWORD", ci);
+                state.put("PG_CI_EVENTSTREAM_PASSWORD", ciEventstream);
+                state.put("PG_PLATFORM_IDP_PASSWORD", platformIdp);
+                state.put("PG_PLATFORM_DNS_PASSWORD", platformDns);
+                state.put("PG_EVENTS_PASSWORD", events);
+                state.put("PG_PLATFORM_MIRROR_PASSWORD", platformMirror);
+                state.put("PG_GITHOST_PASSWORD", githost);
+                state.put("PG_GITHOST_EVENTSTREAM_PASSWORD", githostEventstream);
+                state.put("PG_CONTAINERS_PASSWORD", containers);
+                state.put("PG_CONTAINERS_EVENTSTREAM_PASSWORD", containersEventstream);
+                state.write();
+                ctx.log("  " + registry.size() + " credentials read back from the deployer's "
+                        + "registry — the seed uses what the rows say");
+            }
+
             // Role, database and username are one name throughout, and every database is owned by
             // its own role and closed to public.
             try (Connection admin = PgAdmin.connect(url, "postgres", superuser)) {
