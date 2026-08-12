@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -138,6 +139,56 @@ class SeedPhasesTest {
         // Still by module, and still deploying to the store.
         assertThat(script).contains(" -pl githost-events -am")
                 .contains("-DaltDeploymentRepository=qits::default::");
+    }
+
+    private static final List<String> TAGS = List.of("2026.812.153438", "2026.811.090000");
+
+    /**
+     * THE BOOT'S IDENTITY for a DEPLOYABLE, and the reason it exists: a seed built from main
+     * applies main's migrations, and the released successor the train deploys minutes later
+     * refuses to start against a schema ahead of it. qits-ci is both seeded and deployed, and it
+     * is the one this cost. Same answer as the deploy ref's, by construction — both go through
+     * PlatformModel.newestRelease.
+     */
+    @Test
+    void aDeployableStandsAtItsNewestRelease() {
+        assertThat(SeedPhases.bootIdentity(false, "ci", TAGS)).isEqualTo("2026.812.153438");
+    }
+
+    /** A release publisher's output is a coordinate consumers pin, so it follows its tag too. */
+    @Test
+    void aReleasePublisherStandsAtItsNewestRelease() {
+        assertThat(SeedPhases.bootIdentity(false, "eventstream", TAGS))
+                .isEqualTo("2026.812.153438");
+    }
+
+    /**
+     * SEEDED AND NOTHING ELSE: main, however many tags it has. qits-oci's step images are consumed
+     * by bare local tag and rebuilt every boot, so nothing pins a version of them and their tags go
+     * stale unnoticed — the one whose newest tag predated the `build` user the step sandbox needs.
+     */
+    @Test
+    void aSeededSourceWithNoVersionIdentityStaysOnMain() {
+        assertThat(SeedPhases.bootIdentity(false, "oci", TAGS)).isEmpty();
+        // The SPA seed sources are the same shape: a placeholder bundle, then the real client from
+        // the pipeline.
+        assertThat(SeedPhases.bootIdentity(false, "spa-home", TAGS)).isEmpty();
+    }
+
+    /** In scope but never released: main, which is what an empty answer means to the caller. */
+    @Test
+    void aRepositoryWithNoReleaseStaysOnMain() {
+        assertThat(SeedPhases.bootIdentity(false, "ci", List.of())).isEmpty();
+        // A stray tag is not a release.
+        assertThat(SeedPhases.bootIdentity(false, "ci", List.of("latest"))).isEmpty();
+    }
+
+    /** {@code --ship-mains}: every checkout stays on main and the tags are not even read. */
+    @Test
+    void shipMainsLeavesEveryCheckoutOnMain() {
+        assertThat(SeedPhases.bootIdentity(true, "ci", TAGS)).isEmpty();
+        assertThat(SeedPhases.bootIdentity(true, "eventstream", TAGS)).isEmpty();
+        assertThat(SeedPhases.bootIdentity(true, "oci", TAGS)).isEmpty();
     }
 
     @Test

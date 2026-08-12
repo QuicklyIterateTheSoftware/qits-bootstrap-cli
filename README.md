@@ -134,7 +134,7 @@ the same names `qits-local-up.sh` read:
 | `QITS_DNS_PORT` | `53` | what qits-platform-dns publishes, **on UDP and on TCP**. 53 because that is the port a registrar's delegation reaches; the service binds 8053 inside the container, since below 1024 needs privileges it should not hold. TCP is not the optional half — a truncated UDP answer carries zero records and the client's TCP retry is the only way it gets one. **Move it on a workstation that already holds 53**, which most do: measured on the WSL2 development host, systemd-resolved holds it, docker refuses the publish, and `compose up` then fails as a whole — the entire seed stack, not just the nameserver. `5353` there. A delegation cannot follow a port, so anything but 53 is for local testing |
 | `QITS_DOMAIN` | unset | **the domain this platform serves.** Unset is a full platform with no public names: the nameserver runs with no zones and the edge stays on plain HTTP. Set, this run gives the nameserver its identity (`ns1.<domain>`, `hostmaster.<domain>`), creates the zone row, and gives the edge ports 80, 443 and a loopback 9000 with a Let's Encrypt certificate slot on a volume. It writes no records and touches no registrar — both need this host's public IP. Lowercase, at least two labels, no trailing dot; a bad value stops the run before anything is built. `--domain` is the same knob for one run |
 | `QITS_SKIP_BUILD` | `0` | 1 = the seed images and the daemon binary exist; skip to compose and the pushes |
-| `QITS_SHIP_MAINS` | `0` | 1 = deploy the local mains instead of RESTORING each deployable's newest release tag. A boot restores by default: the deploy ref is moved to the release commit, so a main that is ahead deploys nothing. This is the dev loop's flag, and it is also why the 2026-08-08 accident cannot repeat — shipping unreleased code takes saying so. `--ship-mains` is the same knob for one run |
+| `QITS_SHIP_MAINS` | `0` | 1 = build and deploy the local mains instead of RESTORING each deployable's and publisher's newest release tag. A boot restores by default: the deploy ref is moved to the release commit, so a main that is ahead deploys nothing. This is the dev loop's flag, and it is also why the 2026-08-08 accident cannot repeat — shipping unreleased code takes saying so. `--ship-mains` is the same knob for one run |
 | `QITS_MACHINE_AUTH` | `1` | machine-token enforcement for ci, deployments and artifacts |
 | `QITS_PUSH_TOKEN` | `local-dev` | the git host's push token — the documented escape hatch, not a secret |
 | `QITS_DEPLOY_TIMEOUT` | `3600` | seconds to wait per application deployment |
@@ -358,7 +358,7 @@ for 42. `QITS_DOMAIN` adds two more, marked below.
 
 | | phase |
 | --- | --- |
-| 1–5 | preflight (docker, buildx, the swarm — initialised when the daemon is in none — git, where the wrapper is, and which domain — if any — this platform serves); join `qits-net`, the attachable overlay every address after it needs; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 40 platform repositories; read `.qits-bootstrap.env` |
+| 1–5 | preflight (docker, buildx, the swarm — initialised when the daemon is in none — git, where the wrapper is, and which domain — if any — this platform serves); join `qits-net`, the attachable overlay every address after it needs; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 40 platform repositories **and stand each one at this boot's identity** — its newest release tag in a restore, but only where the output CARRIES a version (a deployable or a release publisher); the step-image sources and the SPA seed sources stay on main, as does everything under `--ship-mains` and anything never released; read `.qits-bootstrap.env` |
 | 6 | seed the qits libraries the byte plane is built from — `qits-blobstore`, `qits-registries`, `qits-eventstream`, `qits-githost-events` (one module of qits-githost: the vocabulary its consumers need, not its service), `qits-auth-core` — into a temporary file repository served over HTTP, which is what breaks the first-boot cycle: three of the images below are built out of jars only this platform will ever publish. Its maven container, every publish container below and the ci-daemon build share one download cache — the `qits-maven-cache` volume, mounted at `/cache` and named by `-Dmaven.repo.local` — so Maven Central is read once per machine rather than once per phase. Each of those scripts starts by deleting `eu/wohlben/qits` out of it: third-party bytes are immutable at their version and ours are not, because seed builds reuse calvers across runs |
 | 7–14 | seed images `qits/gateway`, `qits/platform-edge`, `qits/platform-mirror`, `qits/artifacts`, `qits/githost`, `qits/oci-postgresql`, `qits/platform-dns`, `qits/events` — the eight that need nothing from a running platform |
 | 15 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC the twelve databases the seed stack needs: the deployer's own and its outbox's, qits-ci's own and its outbox's, qits-platform-idp's, qits-platform-dns', qits-events', qits-platform-mirror's, qits-githost's own and its outbox's, and qits-containers' own and its outbox's. Four are outboxes because the eventstream library keeps its own Flyway lineage and cannot share a database with its host. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |
@@ -424,6 +424,24 @@ A bootstrap points that ref at the commit of each deployable's **newest release 
 a RESTORE of the last released platform rather than a shipment of whatever your checkouts hold.
 `--ship-mains` points it at main's head instead; that is the dev loop, and it now has to be asked
 for.
+
+**The seed is built from that same commit**, and it has to be. A seed container is scaffolding, but
+it is scaffolding that touches the platform's data: a seed qits-ci built from main applies main's
+Flyway migrations, and the released successor the train deploys minutes later refuses to start
+against a schema ahead of it — `Detected applied migration not resolved locally`, measured on the
+first restore-default boot, where it crash-looped until it was unpicked by hand. So the `sources`
+phase stands the checkout at its release tag and every later phase reads that tree: one commit per
+repository per boot, seed and successor alike.
+
+**Only where the output carries a version, though**, and that scope is the other half of the rule. A
+deployable and a release publisher each have a last release the platform can state and consumers
+pin. Everything else that gets seeded — qits-oci's step images, the SPA sources behind the
+placeholder bundles, the ci-daemon binary published by digest — is rebuilt from source every boot
+and pinned by nobody, so its tags go stale without anyone noticing. Measured the next run: qits-oci's
+newest tag was three days behind main and predated the passwd-backed `build` user its step images
+grew when steps stopped running as root, so the seed maven-base built from it could not launch a
+step declaring `user: build` — "unable to find user build: no matching entries in passwd file".
+Those repositories stay on main in both modes.
 
 | plane | applications | wire alias | container |
 | --- | --- | --- | --- |

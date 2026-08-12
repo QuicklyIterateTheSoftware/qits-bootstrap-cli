@@ -36,6 +36,12 @@ import java.util.stream.Stream;
 /**
  * The hand-built part: everything the pipeline cannot make for itself on the first boot, plus the
  * files the seed stack is started from.
+ * <p>
+ * <b>Every one of these builds reads a checkout the {@code sources} phase has already stood at this
+ * boot's identity</b> — the newest release tag in a restore, main under {@code --ship-mains}. The
+ * seed containers are scaffolding and are replaced within the hour, but scaffolding that migrates a
+ * database or publishes a coordinate has to agree with the successor that replaces it, so there is
+ * one commit per repository per boot and no phase here picks its own.
  */
 public class SeedPhases {
 
@@ -385,9 +391,39 @@ public class SeedPhases {
      *       non-fast-forward is the ordinary cause and the ordinary cause is a rebase, so the stale
      *       copy is a commit that no longer exists anywhere.
      * </ul>
+     * <p>
+     * <b>This phase also decides WHICH COMMIT of each source the boot means</b>, and that is the
+     * second half of the same job: fetching the history and standing on the wrong part of it are
+     * one mistake. In a restore — the default — a checkout whose output carries VERSION IDENTITY is
+     * left detached at its newest release tag, which is the very commit the deploy phase will move
+     * the deploy ref to. {@code --ship-mains} leaves everything on main, as this program always did.
+     * <p>
+     * <b>Version identity is the scope, and it is narrower than "seeded".</b> A deployable and a
+     * release publisher each have a last release the platform can state and consumers pin;
+     * everything else in {@code SEEDED_REPOS} — qits-oci's step-image sources, the SPA seed sources
+     * — is rebuilt from source every boot and pinned by nobody, so its tags go stale unnoticed and
+     * main is its only meaningful identity. Measured: qits-oci's newest tag was three days behind
+     * main and predated the passwd-backed {@code build} user its step images grew when steps
+     * stopped running as root, so the seed maven-base built from it could not launch a step
+     * declaring {@code user: build} — phase 65 of the first scoped-boot run.
+     * <p>
+     * <b>ONE IDENTITY PER BOOT, and it is not a tidiness argument.</b> The seed containers are
+     * scaffolding, but they are scaffolding that TOUCHES THE PLATFORM'S DATA: a seed built from
+     * main applies main's Flyway migrations, and the released successor the train deploys minutes
+     * later refuses to start against a schema ahead of it — "Detected applied migration not
+     * resolved locally". Measured on the first restore-default boot: qits-ci's main carried V3 and
+     * its release tag stopped at V2, the seed applied V3, and the deployed ci crash-looped until it
+     * was unpicked by hand. Seed and successor must agree about the version, so they are built
+     * from one commit.
+     * <p>
+     * A repository in scope with no release tag stays on main too, and says so. The warning for
+     * that case belongs to the deploy phase, where the consequence is: unreleased code being
+     * DEPLOYED. Here it is a log line, so a boot whose sources are simply young is not a boot that
+     * exits nonzero for it.
      */
     public Phase sources() {
         return new Phase("sources", "clone or refresh the platform's sources", ctx -> {
+            int restored = 0;
             for (String name : PlatformModel.platformRepos()) {
                 String repo = PlatformModel.repo(name);
                 Path localSrc = boot.state.wrapperCheckout(name);
@@ -404,6 +440,19 @@ public class SeedPhases {
                         : boot.config.orgUrl() + "/" + repo + ".git";
                 Path target = boot.state.repoDir(name);
                 if (boot.git.isCheckout(target)) {
+                    if (boot.git.isDetached(target)) {
+                        // A previous restoring boot left this tree at a release tag, and a pull
+                        // there does NOT fail — measured: it fast-forwards the detached HEAD and
+                        // leaves refs/heads/main exactly where it was. The trunk would then go
+                        // stale run after run while every "main's head" read in the boot — the
+                        // replay wait's sha, the deploy fallback, the quiet push — answered from
+                        // it. Reattaching first is what refreshes the branch, and the identity
+                        // below is re-decided from it every run.
+                        ctx.status("putting " + repo + " back on main");
+                        Boot.must(boot.git.checkoutBranch(target, "main", ctx::log),
+                                repo + " is detached and will not go back onto main — delete "
+                                        + target + " and rerun");
+                    }
                     ctx.status("refreshing " + repo);
                     Boot.must(boot.git.pullFastForward(target, ctx::log),
                             "refresh of " + repo + " failed — " + target + " cannot fast-forward "
@@ -413,10 +462,45 @@ public class SeedPhases {
                     ctx.status("cloning " + repo + " from " + from);
                     Boot.must(boot.git.clone(from, target, ctx::log), "clone of " + repo + " failed");
                 }
-                ctx.log(String.format("  %-26s %s  (%s)", repo, boot.git.shortHead(target), from));
+                String identity = bootIdentity(boot.config.shipMains(), name,
+                        boot.git.tagsNewestFirst(target, "main"));
+                if (!identity.isEmpty()) {
+                    ctx.status("standing " + repo + " at " + identity);
+                    Boot.must(boot.git.checkoutDetached(target, identity, ctx::log),
+                            repo + " will not stand at " + identity + " — the tag is reachable "
+                                    + "from main but cannot be checked out, so this run cannot "
+                                    + "build the release it is restoring");
+                    restored++;
+                }
+                ctx.log(String.format("  %-26s %s  (%s)", repo, boot.git.shortHead(target),
+                        identity.isEmpty() ? from : identity));
             }
-            ctx.note(PlatformModel.platformRepos().size() + " repositories");
+            ctx.note(PlatformModel.platformRepos().size() + " repositories, " + restored
+                    + " at their release");
         });
+    }
+
+    /**
+     * THE BOOT'S IDENTITY for one checkout: the release tag it stands at, or empty for "stay on
+     * main".
+     * <p>
+     * The same answer the deploy phase's {@code deployPoint} builds on — {@link
+     * PlatformModel#newestRelease} is the one place that decides which tag is a release — so the
+     * seed image and the successor that replaces it are the same code. Empty means main, and three
+     * different things answer empty: {@code --ship-mains}, a repository that has never been
+     * released, and a repository whose output carries no version identity at all.
+     * <p>
+     * <b>That last one is the scope, and it was learned the hard way.</b> Only a deployable or a
+     * release publisher has a "last release" the platform can state — see
+     * {@link PlatformModel#carriesVersionIdentity}. The step-image sources and the SPA seed sources
+     * are rebuilt from source every boot and pinned by nobody, so their tags are stale by
+     * construction: qits-oci's newest tag predated the {@code build} user its step images grew, and
+     * a maven-base built from it could not launch a step that declares {@code user: build}.
+     */
+    static String bootIdentity(boolean shipMains, String name, List<String> tagsNewestFirst) {
+        return shipMains || !PlatformModel.carriesVersionIdentity(name)
+                ? ""
+                : PlatformModel.newestRelease(tagsNewestFirst);
     }
 
     /**
@@ -821,6 +905,12 @@ public class SeedPhases {
             // The checkouts publish their real calver, and the registry refuses to overwrite a
             // released version (403) — so probe the version this checkout would publish, parsed
             // from its root pom, before starting a container. Found by the third proving run.
+            //
+            // In a restore that version IS the released one, because the checkout stands at the
+            // release tag: the probe then answers "already published" on any platform whose store
+            // survived, and where it does not, the seed publishes the released bytes under the
+            // released version — which is the one publish this phase is allowed to make. The rule
+            // it must never break is below: unreleased work reaching a released coordinate.
             String version = checkedOutVersion(boot.state.repoDir(repoName));
             if (version != null
                     && boot.artifacts.mavenPublished("eu/wohlben/qits", artifactId, version, "jar")) {

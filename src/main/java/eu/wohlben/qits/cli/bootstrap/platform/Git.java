@@ -40,6 +40,34 @@ public class Git {
         return in(repo, out, "pull", "--ff-only", "--tags");
     }
 
+    /**
+     * Is this checkout standing on no branch? A restoring boot leaves every source tree detached at
+     * its release tag, and {@code git pull} on a detached HEAD fails — so the refresh asks this
+     * before it pulls, rather than reading the failure as an untrustworthy source and stopping the
+     * boot.
+     */
+    public boolean isDetached(Path repo) {
+        return !in(repo, null, "symbolic-ref", "-q", "HEAD").ok();
+    }
+
+    /**
+     * Put the checkout back on a branch. {@code -f} because this tree is the bootstrap's own — seed
+     * builds write a placeholder client into it and the pipeline overlay commits to it — so a
+     * modified file here is this program's leftover and never a person's work.
+     */
+    public ProcessResult checkoutBranch(Path repo, String branch, Consumer<String> out) {
+        return in(repo, out, "checkout", "-f", branch);
+    }
+
+    /**
+     * Stand the checkout at one commit, on no branch. THE BOOT'S IDENTITY is applied with this: the
+     * seed images, the seed publishes and the deployed successors are all built from the tree it
+     * leaves, so a repository's release tag becomes the one version this boot means by it.
+     */
+    public ProcessResult checkoutDetached(Path repo, String ref, Consumer<String> out) {
+        return in(repo, out, "checkout", "-f", "--detach", ref);
+    }
+
     public ProcessResult submodulesShallow(Path repo, Consumer<String> out) {
         return runner.run(Cmd.of(List.of("git", "-C", repo.toString(), "submodule", "update",
                 "--init", "--depth", "1")).timeout(Duration.ofMinutes(30)), out);

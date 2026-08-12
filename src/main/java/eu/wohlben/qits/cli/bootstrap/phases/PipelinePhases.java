@@ -20,7 +20,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeoutException;
-import java.util.regex.Pattern;
 
 /** From "the seed is up" to "the platform deployed itself". */
 public class PipelinePhases {
@@ -32,9 +31,6 @@ public class PipelinePhases {
      */
     private static final Map<String, String> PROBE_BEARER =
             Map.of("Authorization", "Bearer qits-bootstrap-auth-plane-probe");
-
-    /** A release version on this platform: CalVer, which is digits and dots. */
-    private static final Pattern CALVER = Pattern.compile("[0-9][0-9.]*");
 
     private final Boot boot;
 
@@ -374,7 +370,10 @@ public class PipelinePhases {
             // run that had already succeeded — the second bus-only proving run, phase 36. The
             // CONFIG PATH is what keeps a follow-up bump run (also at main's head) from answering
             // for a release.
-            String mainSha = boot.git.head(src);
+            // MAIN AS A BRANCH, never as HEAD: a restoring boot leaves this checkout detached at
+            // its release tag, and what ci records on an event run is the head of MAIN as the git
+            // host has it — which is the branch this run pushed, not the commit checked out here.
+            String mainSha = boot.git.commitOf(src, "main");
             if (!mainSha.isBlank() && boot.ci.greenReleaseRunAt(repo, mainSha)) {
                 ctx.skip("release " + version + " already ran green — the registry holds what "
                         + "this replay publishes");
@@ -594,6 +593,12 @@ public class PipelinePhases {
      * <p>
      * Local mains are still pushed, quietly. The repositories need their history and the wrapper's
      * catalog needs the shape, and main being ahead of the release deploys nothing now.
+     * <p>
+     * The commit chosen here is the one the {@code sources} phase already stood the checkout at, by
+     * construction — both ask {@link PlatformModel#newestRelease}. That is not a tidiness argument:
+     * the seed container this deployment replaces was built from that tree, and a seed that applied
+     * a migration its successor has never heard of leaves the successor crash-looping on Flyway
+     * validation.
      */
     public Phase deploy(String name) {
         String repo = PlatformModel.repo(name);
@@ -634,9 +639,13 @@ public class PipelinePhases {
 
             String quietRef = "main";
             ctx.status("pushing " + repo + " to " + quietRef + " (quietly)");
+            // THE BRANCH, NOT HEAD. A restoring boot leaves the checkout detached at the release
+            // tag, so HEAD:refs/heads/main would push the RELEASE onto main — a rewind of the trunk
+            // on the git host, refused as a non-fast-forward and wrong even where it was accepted.
+            // The trunk is the local main branch and goes up as itself.
             boot.push(ctx, repo + " to " + quietRef, src, boot.githost.gitUrl(repo),
                     List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
-                    "HEAD:refs/heads/" + quietRef);
+                    "main:refs/heads/" + quietRef);
 
             // WHICH COMMIT DEPLOYS, decided after main is up so the commit it names is already in
             // the store. Read here rather than in the plan: a tag is a fact about the checkout, and
@@ -665,14 +674,16 @@ public class PipelinePhases {
             }
 
             ctx.status("pushing " + repo + " to " + ref + " at " + point.why());
-            // FORCED WHEN RESTORING, and only then. The deploy ref is a pointer rather than a
+            // FORCED IN A RESTORE, never in the dev loop. The deploy ref is a pointer rather than a
             // history, and a restore may legitimately move it BACKWARDS: a machine whose last boot
             // shipped mains carries an env ref ahead of the release, and a plain push of the older
-            // commit is refused as a non-fast-forward. --ship-mains keeps the plain push, so the
-            // dev loop cannot rewind anything by accident.
+            // commit is refused as a non-fast-forward. The condition is the MODE rather than
+            // "did we pick a tag", because an overlaid repo's commit is off main too and rewinds
+            // the same way. --ship-mains keeps the plain push, so the dev loop cannot rewind
+            // anything by accident.
             ProcessResult push = boot.push(ctx, repo + " to " + ref, src,
                     boot.githost.gitUrl(repo), List.of("qits.token=" + boot.config.pushToken()),
-                    (point.restored() ? "+" : "") + sha + ":refs/heads/" + ref);
+                    (boot.config.shipMains() ? "" : "+") + sha + ":refs/heads/" + ref);
             boolean upToDate = upToDate(push);
 
             if (alreadyLive(ctx, name, repo, sha)) {
@@ -725,10 +736,16 @@ public class PipelinePhases {
      * The choice itself, with the git reads left outside it.
      * <ul>
      *   <li><b>{@code --ship-mains}: main's head.</b> The dev loop, said out loud.
-     *   <li><b>An overlaid pipeline config: main's head.</b> The config this run just wrote lives
-     *       on main and on no release, so a restored commit would be a commit qits-ci has no
-     *       pipeline for — a push that builds nothing and a wait that ends at its timeout.
-     *   <li><b>A release tag: its commit.</b> The restore.
+     *   <li><b>An overlaid pipeline config: THE TREE'S OWN HEAD.</b> That is the commit this run
+     *       just wrote the pipeline into, and the pipeline is the point — qits-ci reads it out of
+     *       the commit the deploy ref names, so a ref pointing anywhere else is a push that builds
+     *       nothing. In {@code --ship-mains} that commit sits on main and this is the same answer
+     *       as the first case; in a restore the checkout stands at the release tag, so it is the
+     *       release plus one bootstrap-authored commit, and the deploy ref is the only ref that
+     *       needs it.
+     *   <li><b>A release tag: its commit.</b> The restore, and the same tag the {@code sources}
+     *       phase already put the checkout at — one function answers both, so the seed image and
+     *       its deployed successor can never disagree.
      *   <li><b>No release tag: main's head, and WARN.</b> The honest cold-start answer — a
      *       repository nobody has released has no released state to come back as, and the run says
      *       so rather than pretending it restored something. Deliberately not the replay phases'
@@ -738,13 +755,12 @@ public class PipelinePhases {
      * </ul>
      */
     static DeployPoint deployPoint(boolean shipMains, boolean overlaid, String tag, String tagSha,
-            String mainSha) {
+            String treeSha, String mainSha) {
         if (shipMains) {
             return new DeployPoint(mainSha, "", "main's head (--ship-mains)", false);
         }
         if (overlaid) {
-            return new DeployPoint(mainSha, "", "main's head (the pipeline config is only there)",
-                    false);
+            return new DeployPoint(treeSha, "", "the overlaid pipeline config's commit", false);
         }
         if (tag.isBlank() || tagSha.isBlank()) {
             return new DeployPoint(mainSha, "", "main's head (no release tag)", true);
@@ -753,31 +769,21 @@ public class PipelinePhases {
     }
 
     /**
-     * A CALVER TAG: digits and dots, nothing else — the same shape the publishers' release steps
-     * check a tag against before they let it become a registry coordinate.
-     * <p>
-     * The filter is what keeps a stray tag off the deploy ref. Version sort orders by refname, so a
-     * {@code latest} or a {@code v2} would sort above every {@code 2026.812.101500} and a boot
-     * would deploy whatever commit it happened to name.
+     * The choice, with the checkout read. {@code main} is read as the BRANCH rather than as HEAD: a
+     * restoring boot leaves every checkout detached at its release tag, so HEAD is the release and
+     * the branch is the trunk, and the two questions have different answers from the {@code
+     * sources} phase onward.
      */
-    static String newestRelease(List<String> tagsNewestFirst) {
-        for (String tag : tagsNewestFirst) {
-            if (CALVER.matcher(tag).matches()) {
-                return tag;
-            }
-        }
-        return "";
-    }
-
-    /** The choice, with the checkout read. */
     private DeployPoint chooseDeployPoint(PhaseContext ctx, String name, Path src,
             boolean overlaid) {
+        String mainSha = boot.git.commitOf(src, "main");
         if (boot.config.shipMains() || overlaid) {
-            return deployPoint(boot.config.shipMains(), overlaid, "", "", boot.git.head(src));
+            return deployPoint(boot.config.shipMains(), overlaid, "", "", boot.git.head(src),
+                    mainSha);
         }
-        String tag = newestRelease(boot.git.tagsNewestFirst(src, "main"));
+        String tag = PlatformModel.newestRelease(boot.git.tagsNewestFirst(src, "main"));
         String tagSha = tag.isBlank() ? "" : boot.git.commitOf(src, tag);
-        DeployPoint point = deployPoint(false, false, tag, tagSha, boot.git.head(src));
+        DeployPoint point = deployPoint(false, false, tag, tagSha, boot.git.head(src), mainSha);
         if (point.restored()) {
             ctx.log("  " + PlatformModel.repo(name) + " restores " + tag + " ("
                     + SeedPhases.shortSha(point.sha()) + ")");
@@ -1189,8 +1195,10 @@ public class PipelinePhases {
                 ProcessResult result = boot.push(ctx, repo + " main", src,
                         boot.githost.gitUrl(repo),
                         List.of("qits.token=" + boot.config.pushToken()), "main");
+                // The BRANCH's sha, like the refspec above: this checkout may stand at a release
+                // tag, and what went up is main.
                 ctx.log("  " + repo + (upToDate(result) ? " already at main"
-                        : " pushed " + boot.git.shortHead(src)));
+                        : " pushed " + boot.git.shortRef(src, "main")));
             }
             ctx.note(PlatformModel.SEEDED_REPOS.size() + " repositories");
         });
@@ -1235,15 +1243,17 @@ public class PipelinePhases {
             report.add("           On qits-net it is " + boot.config.gitHostUrl()
                     + "/<repoId>, which is what every service dials.");
             if (boot.config.shipMains()) {
-                report.add("mode:      --ship-mains — every deployable was deployed from your "
-                        + "local main, released or not");
+                report.add("mode:      --ship-mains — every checkout was built and deployed from "
+                        + "your local main, released or not");
                 report.add("dev loop:  commit in a repo, rerun with QITS_SKIP_BUILD=1 "
                         + "--ship-mains — the push redeploys it");
             } else {
-                report.add("mode:      restore — every deployable was deployed at the commit of "
-                        + "its newest release tag.");
-                report.add("           Local mains were pushed and deploy nothing. --ship-mains "
-                        + "ships them instead.");
+                report.add("mode:      restore — every checkout was stood at its newest release "
+                        + "tag, and that is what the");
+                report.add("           seed images and the deployments were both built from. "
+                        + "Local mains were pushed");
+                report.add("           and deploy nothing. --ship-mains builds and ships them "
+                        + "instead.");
                 report.add("dev loop:  commit in a repo, rerun with QITS_SKIP_BUILD=1 "
                         + "--ship-mains — the push redeploys it.");
                 report.add("           Without --ship-mains a rerun restores the last release "

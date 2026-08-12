@@ -2,6 +2,8 @@ package eu.wohlben.qits.cli.bootstrap.platform;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class PlatformModelTest {
@@ -359,5 +361,52 @@ class PlatformModelTest {
         assertThat(PlatformModel.clientKey("prod-qits-ci")).isEqualTo("PROD_QITS_CI");
         assertThat(PlatformModel.clientKey("prod-qits-artifacts"))
                 .isEqualTo("PROD_QITS_ARTIFACTS");
+    }
+
+    /**
+     * WHO IS RESTORED, and it is narrower than "who is seeded". A deployable and a release
+     * publisher each have a last release the platform can state; a step-image source or an SPA seed
+     * source is rebuilt from source every boot and pinned by nobody, so its tags go stale unnoticed
+     * — qits-oci's newest one predated the `build` user its step images grew, and the seed built
+     * from it could not launch a step that declares `user: build`.
+     */
+    @Test
+    void onlyDeployablesAndPublishersCarryVersionIdentity() {
+        assertThat(PlatformModel.carriesVersionIdentity("ci")).isTrue();
+        assertThat(PlatformModel.carriesVersionIdentity("platform-idp")).isTrue();
+        assertThat(PlatformModel.carriesVersionIdentity("eventstream")).isTrue();
+        assertThat(PlatformModel.carriesVersionIdentity("oci-workspace")).isTrue();
+        // Seeded, and neither: the step images and the SPA seed sources.
+        assertThat(PlatformModel.carriesVersionIdentity("oci")).isFalse();
+        assertThat(PlatformModel.carriesVersionIdentity("spa-home")).isFalse();
+        assertThat(PlatformModel.carriesVersionIdentity("ci-daemon")).isFalse();
+        // Every entry of both sets, so a new deployable cannot be added without one.
+        assertThat(PlatformModel.DEPLOYABLES).allSatisfy(name ->
+                assertThat(PlatformModel.carriesVersionIdentity(name)).isTrue());
+        assertThat(PlatformModel.RELEASE_PUBLISHERS).allSatisfy(name ->
+                assertThat(PlatformModel.carriesVersionIdentity(name)).isTrue());
+    }
+
+    /**
+     * WHICH TAG IS THE RELEASE, asked by the boot twice — the commit each checkout stands at and
+     * the commit the deploy ref is moved to. git sorted the list newest-version-first; this picks
+     * the newest that is a version.
+     */
+    @Test
+    void theNewestCalverTagIsTheRelease() {
+        assertThat(PlatformModel.newestRelease(
+                List.of("2026.812.101500", "2026.811.090000"))).isEqualTo("2026.812.101500");
+    }
+
+    /**
+     * A stray tag sorts above every CalVer under {@code --sort=-v:refname} — letters beat digits —
+     * so without this filter a boot would build and deploy whatever commit it named.
+     */
+    @Test
+    void aStrayTagIsNotARelease() {
+        assertThat(PlatformModel.newestRelease(List.of("latest", "v2", "2026.812.101500")))
+                .isEqualTo("2026.812.101500");
+        assertThat(PlatformModel.newestRelease(List.of("latest", "nightly"))).isEmpty();
+        assertThat(PlatformModel.newestRelease(List.of())).isEmpty();
     }
 }
