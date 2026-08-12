@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -138,6 +139,33 @@ class SeedPhasesTest {
         // Still by module, and still deploying to the store.
         assertThat(script).contains(" -pl githost-events -am")
                 .contains("-DaltDeploymentRepository=qits::default::");
+    }
+
+    /**
+     * THE BOOT'S IDENTITY for one checkout, and the reason it exists: a seed built from main
+     * applies main's migrations, and the released successor the train deploys minutes later
+     * refuses to start against a schema ahead of it. Same answer as the deploy ref's, by
+     * construction — both go through PlatformModel.newestRelease.
+     */
+    @Test
+    void aRestoringBootStandsEveryCheckoutAtItsNewestRelease() {
+        assertThat(SeedPhases.bootIdentity(false,
+                List.of("2026.812.153438", "2026.811.090000"))).isEqualTo("2026.812.153438");
+    }
+
+    /** No release: main, which is what an empty answer means to the caller. */
+    @Test
+    void aRepositoryWithNoReleaseStaysOnMain() {
+        assertThat(SeedPhases.bootIdentity(false, List.of())).isEmpty();
+        // The SPA repos and qits-oci are seeded and released by nobody; a stray tag is not a
+        // release either.
+        assertThat(SeedPhases.bootIdentity(false, List.of("latest"))).isEmpty();
+    }
+
+    /** {@code --ship-mains}: the checkouts stay on main and the tags are not even read. */
+    @Test
+    void shipMainsLeavesEveryCheckoutOnMain() {
+        assertThat(SeedPhases.bootIdentity(true, List.of("2026.812.153438"))).isEmpty();
     }
 
     @Test

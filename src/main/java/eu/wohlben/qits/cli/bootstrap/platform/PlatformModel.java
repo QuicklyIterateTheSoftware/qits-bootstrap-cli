@@ -2,6 +2,7 @@ package eu.wohlben.qits.cli.bootstrap.platform;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * Which repositories the platform is made of, and what each one is to the bootstrap. Ported from
@@ -492,5 +493,27 @@ public final class PlatformModel {
     /** The env-var spelling of a client id: uppercase, dashes as underscores. */
     public static String clientKey(String clientId) {
         return clientId.toUpperCase().replace('-', '_');
+    }
+
+    /** A release version on this platform: CalVer, which is digits and dots. */
+    private static final Pattern CALVER = Pattern.compile("[0-9][0-9.]*");
+
+    /**
+     * THE NEWEST RELEASE in a list of tags git has already sorted newest-version-first — the one
+     * fact a restore is built on, asked by the boot in two places: which commit a checkout is put
+     * at, and which commit the deploy ref is moved to. One answer, so the seed and its successor
+     * can never disagree about what "the last release" is.
+     * <p>
+     * The CalVer filter is what keeps a stray tag out of both. Version sort orders by refname, so a
+     * {@code latest} or a {@code v2} sorts above every {@code 2026.812.101500} — letters beat
+     * digits — and a boot would build and deploy whatever commit it named.
+     */
+    public static String newestRelease(List<String> tagsNewestFirst) {
+        for (String tag : tagsNewestFirst) {
+            if (CALVER.matcher(tag).matches()) {
+                return tag;
+            }
+        }
+        return "";
     }
 }

@@ -2,6 +2,8 @@ package eu.wohlben.qits.cli.bootstrap.platform;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class PlatformModelTest {
@@ -359,5 +361,28 @@ class PlatformModelTest {
         assertThat(PlatformModel.clientKey("prod-qits-ci")).isEqualTo("PROD_QITS_CI");
         assertThat(PlatformModel.clientKey("prod-qits-artifacts"))
                 .isEqualTo("PROD_QITS_ARTIFACTS");
+    }
+
+    /**
+     * WHICH TAG IS THE RELEASE, asked by the boot twice — the commit each checkout stands at and
+     * the commit the deploy ref is moved to. git sorted the list newest-version-first; this picks
+     * the newest that is a version.
+     */
+    @Test
+    void theNewestCalverTagIsTheRelease() {
+        assertThat(PlatformModel.newestRelease(
+                List.of("2026.812.101500", "2026.811.090000"))).isEqualTo("2026.812.101500");
+    }
+
+    /**
+     * A stray tag sorts above every CalVer under {@code --sort=-v:refname} — letters beat digits —
+     * so without this filter a boot would build and deploy whatever commit it named.
+     */
+    @Test
+    void aStrayTagIsNotARelease() {
+        assertThat(PlatformModel.newestRelease(List.of("latest", "v2", "2026.812.101500")))
+                .isEqualTo("2026.812.101500");
+        assertThat(PlatformModel.newestRelease(List.of("latest", "nightly"))).isEmpty();
+        assertThat(PlatformModel.newestRelease(List.of())).isEmpty();
     }
 }
