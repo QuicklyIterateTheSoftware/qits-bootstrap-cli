@@ -54,6 +54,18 @@ public class Docker {
     }
 
     /**
+     * Whether this client has buildx. Asked because a client without it does not fail: it falls
+     * back to the legacy builder, which reads build flags differently and reports nothing.
+     * qits-deployments carries a scar from exactly that. The payload image ships the plugin, so a
+     * false here means the image was built wrong or the run is not the payload — both worth
+     * stopping for, because the alternative is images that differ from the ones the platform
+     * expects and no message saying so.
+     */
+    public boolean buildxPresent() {
+        return runner.run(Cmd.of("docker", "buildx", "version"), null).ok();
+    }
+
+    /**
      * The daemon's swarm state — {@code active}, {@code inactive}, {@code pending}. The host half
      * reports it and changes nothing: {@code swarm init} rewrites the networking of every container
      * on the machine, which is a migration rather than a preflight repair.

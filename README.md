@@ -213,6 +213,11 @@ has never run maven — which is the machine this program is for. Its repository
 deliberately outside `unwrap`'s `qits/` image sweep: it is the image a running `unwrap` is executing
 from, and keeping it is what makes the next bootstrap start in seconds.
 
+**Buildx is in the image, and preflight checks it is.** The builder is chosen by the CLIENT, and a
+client without buildx does not fail — it falls back to the legacy builder, which reads build flags
+differently and says nothing. That would make every seed image the product of a different builder
+with no line anywhere recording it, so preflight asks `docker buildx version` and stops the run.
+
 **The binary in it is fully static against musl**, and both halves of that are forced. A binary
 linked against this host's glibc starts on no alpine image at all, and a *statically* linked glibc
 binary resolves no names — glibc reaches the name services through `dlopen`, which a static binary
@@ -344,7 +349,7 @@ for 42. `QITS_DOMAIN` adds two more, marked below.
 
 | | phase |
 | --- | --- |
-| 1–5 | preflight (docker, git, where the wrapper is, and which domain — if any — this platform serves); join `qits-net`, which every address after it needs; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 40 platform repositories; read `.qits-bootstrap.env` |
+| 1–5 | preflight (docker, buildx, git, where the wrapper is, and which domain — if any — this platform serves); join `qits-net`, which every address after it needs; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 40 platform repositories; read `.qits-bootstrap.env` |
 | 6 | seed the qits libraries the byte plane is built from — `qits-blobstore`, `qits-registries`, `qits-eventstream`, `qits-githost-events` (one module of qits-githost: the vocabulary its consumers need, not its service), `qits-auth-core` — into a temporary file repository served over HTTP, which is what breaks the first-boot cycle: three of the images below are built out of jars only this platform will ever publish. Its maven container, every publish container below and the ci-daemon build share one download cache — the `qits-maven-cache` volume, mounted at `/cache` and named by `-Dmaven.repo.local` — so Maven Central is read once per machine rather than once per phase. Each of those scripts starts by deleting `eu/wohlben/qits` out of it: third-party bytes are immutable at their version and ours are not, because seed builds reuse calvers across runs |
 | 7–14 | seed images `qits/gateway`, `qits/platform-edge`, `qits/platform-mirror`, `qits/artifacts`, `qits/githost`, `qits/oci-postgresql`, `qits/platform-dns`, `qits/events` — the eight that need nothing from a running platform |
 | 15 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC the twelve databases the seed stack needs: the deployer's own and its outbox's, qits-ci's own and its outbox's, qits-platform-idp's, qits-platform-dns', qits-events', qits-platform-mirror's, qits-githost's own and its outbox's, and qits-containers' own and its outbox's. Four are outboxes because the eventstream library keeps its own Flyway lineage and cannot share a database with its host. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |
