@@ -60,6 +60,66 @@ class HostLauncherTest {
     }
 
     @Test
+    void anOrdinaryCheckoutHasNoLinkedGitDirectory() throws IOException {
+        // .git is a directory inside the wrapper, so the wrapper's own mount covers it.
+        Path wrapper = Files.createDirectories(temp.resolve("qits-qits"));
+        Files.createDirectories(wrapper.resolve(".git"));
+
+        assertThat(HostLauncher.linkedGitDir(wrapper)).isEmpty();
+    }
+
+    @Test
+    void aLinkedWorktreeResolvesToTheCommonGitDirectory() throws IOException {
+        // The layout `git worktree add` leaves behind: a pointer file in the checkout, a slice
+        // under <common>/worktrees/<name>, and `commondir` pointing back to the shared .git —
+        // which is the answer, because the submodules' git directories live under its modules/.
+        Path common = Files.createDirectories(temp.resolve("primary/.git"));
+        Path slice = Files.createDirectories(common.resolve("worktrees/qits-qits-swarm"));
+        Files.writeString(slice.resolve("commondir"), "../..\n", StandardCharsets.UTF_8);
+        Path wrapper = Files.createDirectories(temp.resolve("qits-qits-swarm"));
+        Files.writeString(wrapper.resolve(".git"), "gitdir: " + slice + "\n",
+                StandardCharsets.UTF_8);
+
+        assertThat(HostLauncher.linkedGitDir(wrapper)).contains(common);
+    }
+
+    @Test
+    void aPointerWithoutACommondirStillMountsWhatItNames() throws IOException {
+        // A submodule-style gitfile with no worktree bookkeeping: the target itself is the best
+        // available answer rather than nothing.
+        Path gitDir = Files.createDirectories(temp.resolve("elsewhere/.git/modules/thing"));
+        Path checkout = Files.createDirectories(temp.resolve("thing"));
+        Files.writeString(checkout.resolve(".git"), "gitdir: " + gitDir + "\n",
+                StandardCharsets.UTF_8);
+
+        assertThat(HostLauncher.linkedGitDir(checkout)).contains(gitDir);
+    }
+
+    @Test
+    void everySubmodulesPointerIsResolvedNotOnlyTheWrappersOwn() throws IOException {
+        // A worktree of a wrapper whose submodule carries an EMBEDDED .git: that submodule's
+        // slice lives under the embedded directory, beside the primary's .git rather than in it.
+        Path common = Files.createDirectories(temp.resolve("primary/.git"));
+        Path wrapperSlice = Files.createDirectories(common.resolve("worktrees/w"));
+        Files.writeString(wrapperSlice.resolve("commondir"), "../..\n", StandardCharsets.UTF_8);
+        Path embedded = Files.createDirectories(
+                temp.resolve("primary/services/qits-platform-edge/.git"));
+        Path embeddedSlice = Files.createDirectories(embedded.resolve("worktrees/w"));
+        Files.writeString(embeddedSlice.resolve("commondir"), "../..\n", StandardCharsets.UTF_8);
+
+        Path wrapper = Files.createDirectories(temp.resolve("w"));
+        Files.writeString(wrapper.resolve(".git"), "gitdir: " + wrapperSlice + "\n",
+                StandardCharsets.UTF_8);
+        Path sub = Files.createDirectories(wrapper.resolve("services/qits-platform-edge"));
+        Files.writeString(sub.resolve(".git"), "gitdir: " + embeddedSlice + "\n",
+                StandardCharsets.UTF_8);
+        // An ordinary submodule directory without a pointer file answers nothing.
+        Files.createDirectories(wrapper.resolve("services/qits-gateway"));
+
+        assertThat(HostLauncher.linkedGitDirs(wrapper)).containsExactly(common, embedded);
+    }
+
+    @Test
     void aWrapperWithUninitialisedSubmodulesIsNotOneAndSaysSoByFindingNothing()
             throws IOException {
         // The gitlink is there, the checkout is not, so there is no Dockerfile to build from. The

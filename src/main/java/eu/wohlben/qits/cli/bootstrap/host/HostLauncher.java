@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -80,6 +81,11 @@ public final class HostLauncher {
             WrapperDir.Resolved wrapper = WrapperDir.resolveOrClone(config.wrapperDir(), workDir);
             boolean wrapperOnHost = Files.isDirectory(wrapper.path());
             out.println("wrapper: " + wrapper.path() + "  (" + wrapper.how() + ")");
+            List<Path> gitDirs = wrapperOnHost ? linkedGitDirs(wrapper.path()) : List.of();
+            if (!gitDirs.isEmpty()) {
+                out.println("wrapper is a linked worktree — mounting the git directories it "
+                        + "points into (" + gitDirs.size() + ")");
+            }
             if (!wrapperOnHost && !wrapper.path().startsWith(workDir)) {
                 // Only the working directory and the paths below it are mounted, so a clone
                 // anywhere else would live in the container and die with it — a bootstrap that
@@ -115,7 +121,7 @@ public final class HostLauncher {
             Path logFile = workDir.resolve(config.logFile()).normalize();
 
             argv = ContainerRun.command(new ContainerRun.Plan(
-                    image, wrapper.path(), wrapperOnHost, workDir, sources, logFile,
+                    image, wrapper.path(), wrapperOnHost, gitDirs, workDir, sources, logFile,
                     user(runner), docker.socketGroupId(),
                     // The same test UiFactory uses to pick a display, asked on this side: the two
                     // must not disagree about whether there is a terminal.
@@ -148,6 +154,71 @@ public final class HostLauncher {
      * The marker is the Dockerfile, not the directory name: a checkout is what has one, whatever
      * anyone called the directory.
      */
+    /**
+     * The real git directories of a wrapper checked out as a LINKED WORKTREE, which live outside
+     * it. An ordinary clone keeps {@code .git} inside the wrapper and the wrapper's own mount
+     * covers everything; a worktree keeps pointer FILES instead — one for the wrapper, one per
+     * submodule — and every git command in the container, the source clones above all, dies with
+     * "not a git repository" unless the directories they point into are mounted too.
+     * <p>
+     * Most submodules point under the primary checkout's own {@code .git} (at
+     * {@code modules/<name>/worktrees/…}), so the wrapper's answer covers them and the mount
+     * set's dedup collapses the rest. Not all of them: a submodule that carries an EMBEDDED
+     * {@code .git} directory keeps its worktree slice under that, beside the primary's — which is
+     * why every submodule is asked rather than only the wrapper.
+     */
+    static List<Path> linkedGitDirs(Path wrapper) {
+        List<Path> dirs = new ArrayList<>();
+        linkedGitDir(wrapper).ifPresent(dirs::add);
+        // The submodules sit two levels down: <group>/<name>. A directory without a pointer file
+        // answers nothing and costs nothing.
+        try (var groups = Files.list(wrapper)) {
+            for (Path group : groups.filter(Files::isDirectory).sorted().toList()) {
+                try (var subs = Files.list(group)) {
+                    for (Path sub : subs.filter(Files::isDirectory).sorted().toList()) {
+                        linkedGitDir(sub).ifPresent(dirs::add);
+                    }
+                }
+            }
+        } catch (IOException unreadable) {
+            // preflight's own message is the better one when the wrapper cannot be read
+        }
+        return List.copyOf(dirs);
+    }
+
+    /**
+     * Where a checkout's {@code .git} pointer file leads: the COMMON git directory when the
+     * bookkeeping names one, else the pointer's target itself. Empty for an ordinary checkout,
+     * whose {@code .git} is a directory in place.
+     */
+    static Optional<Path> linkedGitDir(Path checkout) {
+        Path pointer = checkout.resolve(".git");
+        if (!Files.isRegularFile(pointer)) {
+            return Optional.empty();
+        }
+        String content;
+        try {
+            content = Files.readString(pointer).trim();
+        } catch (IOException unreadable) {
+            return Optional.empty();
+        }
+        if (!content.startsWith("gitdir:")) {
+            return Optional.empty();
+        }
+        Path gitDir = checkout.resolve(content.substring("gitdir:".length()).trim()).normalize();
+        // A linked worktree's slice is <common>/worktrees/<name>, and `commondir` inside it points
+        // back to the shared .git. Without the file, the pointer's target is all there is to mount.
+        Path commonDir = gitDir.resolve("commondir");
+        if (Files.isRegularFile(commonDir)) {
+            try {
+                gitDir = gitDir.resolve(Files.readString(commonDir).trim()).normalize();
+            } catch (IOException unreadable) {
+                // the slice still covers the wrapper's own refs
+            }
+        }
+        return Optional.of(gitDir);
+    }
+
     static Optional<Path> imageContext(Path wrapper, Path from) {
         Path start = from.toAbsolutePath().normalize();
         Path inWrapper = wrapper.resolve(CLI_PATH);

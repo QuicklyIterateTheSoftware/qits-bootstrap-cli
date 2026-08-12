@@ -31,7 +31,7 @@ class ContainerRunTest {
     private static ContainerRun.Plan plan(BootstrapConfig config, Map<String, String> environment,
                                           Path wrapper, boolean wrapperOnHost, Path workDir,
                                           Path sources, boolean tty, List<String> args) {
-        return new ContainerRun.Plan(IMAGE, wrapper, wrapperOnHost, workDir, sources,
+        return new ContainerRun.Plan(IMAGE, wrapper, wrapperOnHost, List.of(), workDir, sources,
                 workDir.resolve("qits-bootstrap-cli.log"), "1000:1000", "988", tty,
                 config, environment, args);
     }
@@ -150,6 +150,22 @@ class ContainerRunTest {
         // The ordinary shape: the working directory, the clones and the log all sit under the
         // wrapper, so one bind covers the lot.
         assertThat(ContainerRun.mounts(standard())).containsExactly(WRAPPER);
+    }
+
+    @Test
+    void aLinkedWorktreesGitDirectoriesAreMountedToo() {
+        // The wrapper checked out as a `git worktree`: its .git is a pointer file into the primary
+        // checkout, as is every submodule's, and phase 4 clones the sources through them. Most
+        // point under the primary's .git; a submodule with an embedded .git points beside it, and
+        // the duplicates collapse.
+        Path common = Path.of("/home/dev/primary/.git");
+        Path embedded = Path.of("/home/dev/primary/services/qits-platform-edge/.git");
+        ContainerRun.Plan plan = new ContainerRun.Plan(IMAGE, WRAPPER, true,
+                List.of(common, common, embedded), WRAPPER,
+                WRAPPER.resolve(".qits-bootstrap-src"), WRAPPER.resolve("qits-bootstrap-cli.log"),
+                "1000:1000", "988", true, TestConfig.from(Map.of()), Map.of(),
+                List.of("bootstrap"));
+        assertThat(ContainerRun.mounts(plan)).containsExactly(common, embedded, WRAPPER);
     }
 
     @Test

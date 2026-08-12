@@ -61,6 +61,10 @@ public final class ContainerRun {
      * @param wrapperOnHost whether that path is already there. A cold start's wrapper is cloned by
      *                      the run itself, inside the container, and an absent path is NOT mounted:
      *                      see {@link #mounts}
+     * @param gitDirs       the real git directories a wrapper checked out as a linked worktree
+     *                      points into — places OUTSIDE the wrapper that every git command in the
+     *                      container reads through — and empty for an ordinary checkout, whose
+     *                      {@code .git} the wrapper mount already covers
      * @param workDir       the directory the launcher was started in, which is where {@code .env}
      *                      is and what every relative {@code QITS_*} path resolves against
      * @param sources       {@code QITS_SRC}, resolved against {@code workDir} the way the payload
@@ -71,9 +75,10 @@ public final class ContainerRun {
      * @param tty           whether the launcher has a terminal to hand on
      * @param args          this program's own arguments, relayed verbatim
      */
-    public record Plan(String image, Path wrapper, boolean wrapperOnHost, Path workDir, Path sources,
-                       Path logFile, String user, String dockerGid, boolean tty,
-                       BootstrapConfig config, Map<String, String> environment, List<String> args) {
+    public record Plan(String image, Path wrapper, boolean wrapperOnHost, List<Path> gitDirs,
+                       Path workDir, Path sources, Path logFile, String user, String dockerGid,
+                       boolean tty, BootstrapConfig config, Map<String, String> environment,
+                       List<String> args) {
     }
 
     public static List<String> command(Plan plan) {
@@ -169,6 +174,13 @@ public final class ContainerRun {
         // would have docker create it as root, and the clone would fail on its own mount point.
         if (plan.wrapperOnHost()) {
             add(mounts, plan.wrapper());
+        }
+        // A linked worktree's real git directories. The wrapper's .git is then a pointer FILE, as
+        // is every submodule's, and phase 4's clones read the sources through them — outside these
+        // mounts they die with "not a git repository". Usually one directory after the dedup
+        // below; a submodule with an embedded .git adds its own.
+        for (Path gitDir : plan.gitDirs()) {
+            add(mounts, gitDir);
         }
         // .env, and whatever a relative QITS_* path hangs off.
         add(mounts, plan.workDir());
