@@ -78,4 +78,86 @@ class PipelinePhasesTest {
     private static ProcessResult push(String... lines) {
         return new ProcessResult(0, List.of(lines), List.of(lines), false, false);
     }
+
+    // --- where the deploy ref points ---------------------------------------------------------------
+
+    private static final String MAIN = "1111111111111111111111111111111111111111";
+    private static final String RELEASE = "2222222222222222222222222222222222222222";
+
+    /** The default: the platform comes back as its last released self. */
+    @Test
+    void aReleaseTagIsWhatTheDeployRefPointsAt() {
+        PipelinePhases.DeployPoint point =
+                PipelinePhases.deployPoint(false, false, "2026.812.101500", RELEASE, MAIN);
+
+        assertThat(point.sha()).isEqualTo(RELEASE);
+        assertThat(point.tag()).isEqualTo("2026.812.101500");
+        assertThat(point.restored()).isTrue();
+        assertThat(point.warn()).isFalse();
+        assertThat(point.why()).isEqualTo("release 2026.812.101500");
+    }
+
+    /** {@code --ship-mains}: the dev loop, and the tag is not even read. */
+    @Test
+    void shipMainsDeploysMainsHead() {
+        PipelinePhases.DeployPoint point = PipelinePhases.deployPoint(true, false, "", "", MAIN);
+
+        assertThat(point.sha()).isEqualTo(MAIN);
+        assertThat(point.restored()).isFalse();
+        assertThat(point.warn()).isFalse();
+        assertThat(point.why()).contains("--ship-mains");
+    }
+
+    /** Nothing released: main's head, and the run says it deployed unreleased code. */
+    @Test
+    void noReleaseTagFallsBackToMainsHeadAndWarns() {
+        PipelinePhases.DeployPoint point = PipelinePhases.deployPoint(false, false, "", "", MAIN);
+
+        assertThat(point.sha()).isEqualTo(MAIN);
+        assertThat(point.restored()).isFalse();
+        assertThat(point.warn()).isTrue();
+    }
+
+    /** A tag whose commit could not be read is a tag that cannot be deployed. */
+    @Test
+    void aTagWithNoReadableCommitFallsBackTheSameWay() {
+        PipelinePhases.DeployPoint point =
+                PipelinePhases.deployPoint(false, false, "2026.812.101500", "", MAIN);
+
+        assertThat(point.sha()).isEqualTo(MAIN);
+        assertThat(point.warn()).isTrue();
+    }
+
+    /**
+     * The pipeline this run just wrote lives on main, so a released commit that predates it is a
+     * commit qits-ci has no pipeline for — a build that never starts and a wait that never ends.
+     */
+    @Test
+    void anOverlaidPipelineConfigPinsTheRefToMain() {
+        PipelinePhases.DeployPoint point =
+                PipelinePhases.deployPoint(false, true, "2026.812.101500", RELEASE, MAIN);
+
+        assertThat(point.sha()).isEqualTo(MAIN);
+        assertThat(point.restored()).isFalse();
+        assertThat(point.warn()).isFalse();
+    }
+
+    /** git sorted them; this picks the newest that is a version. */
+    @Test
+    void theNewestCalverTagIsTheRelease() {
+        assertThat(PipelinePhases.newestRelease(
+                List.of("2026.812.101500", "2026.811.090000"))).isEqualTo("2026.812.101500");
+    }
+
+    /**
+     * A stray tag sorts above every CalVer under {@code --sort=-v:refname} — letters beat digits —
+     * so without this filter a boot would deploy whatever commit it named.
+     */
+    @Test
+    void aStrayTagIsNotARelease() {
+        assertThat(PipelinePhases.newestRelease(List.of("latest", "v2", "2026.812.101500")))
+                .isEqualTo("2026.812.101500");
+        assertThat(PipelinePhases.newestRelease(List.of("latest", "nightly"))).isEmpty();
+        assertThat(PipelinePhases.newestRelease(List.of())).isEmpty();
+    }
 }

@@ -134,6 +134,7 @@ the same names `qits-local-up.sh` read:
 | `QITS_DNS_PORT` | `53` | what qits-platform-dns publishes, **on UDP and on TCP**. 53 because that is the port a registrar's delegation reaches; the service binds 8053 inside the container, since below 1024 needs privileges it should not hold. TCP is not the optional half — a truncated UDP answer carries zero records and the client's TCP retry is the only way it gets one. **Move it on a workstation that already holds 53**, which most do: measured on the WSL2 development host, systemd-resolved holds it, docker refuses the publish, and `compose up` then fails as a whole — the entire seed stack, not just the nameserver. `5353` there. A delegation cannot follow a port, so anything but 53 is for local testing |
 | `QITS_DOMAIN` | unset | **the domain this platform serves.** Unset is a full platform with no public names: the nameserver runs with no zones and the edge stays on plain HTTP. Set, this run gives the nameserver its identity (`ns1.<domain>`, `hostmaster.<domain>`), creates the zone row, and gives the edge ports 80, 443 and a loopback 9000 with a Let's Encrypt certificate slot on a volume. It writes no records and touches no registrar — both need this host's public IP. Lowercase, at least two labels, no trailing dot; a bad value stops the run before anything is built. `--domain` is the same knob for one run |
 | `QITS_SKIP_BUILD` | `0` | 1 = the seed images and the daemon binary exist; skip to compose and the pushes |
+| `QITS_SHIP_MAINS` | `0` | 1 = deploy the local mains instead of RESTORING each deployable's newest release tag. A boot restores by default: the deploy ref is moved to the release commit, so a main that is ahead deploys nothing. This is the dev loop's flag, and it is also why the 2026-08-08 accident cannot repeat — shipping unreleased code takes saying so. `--ship-mains` is the same knob for one run |
 | `QITS_MACHINE_AUTH` | `1` | machine-token enforcement for ci, deployments and artifacts |
 | `QITS_PUSH_TOKEN` | `local-dev` | the git host's push token — the documented escape hatch, not a secret |
 | `QITS_DEPLOY_TIMEOUT` | `3600` | seconds to wait per application deployment |
@@ -153,8 +154,8 @@ the same names `qits-local-up.sh` read:
 | `QITS_EVENTS_FEED` | `1` | 0 = do not follow the platform's own events beside the step's output |
 | `QITS_LOG_FILE` | `qits-bootstrap-cli.log` | the full log of every command |
 
-`--wrapper-dir`, `--skip-build`, `--no-tui`, `--platform-env` and `--domain` answer the same
-questions for one run.
+`--wrapper-dir`, `--skip-build`, `--ship-mains`, `--no-tui`, `--platform-env` and `--domain` answer
+the same questions for one run.
 
 Two names in that spelling are **not yours to set**: `QITS_IN_CONTAINER` and `QITS_WEB_BIND`. The
 launcher sets them for the payload and nobody sets them by hand — see below.
@@ -363,19 +364,20 @@ for 42. `QITS_DOMAIN` adds two more, marked below.
 | 42–43 | create the 40 repositories on qits-githost; pre-seed the seeded histories with `-o qits.no-ci` |
 | 44–50 | replay each publisher the platform pins by **pushing its release tag**, and wait for the run the tag starts. The release recipes select on `SCMPublishTag`, so the push is the whole trigger — nothing is announced by hand, and in particular no `SCMRelease`: that word means "a version is NEW", and saying it here woke the release train against a platform whose qits-workspaces is still fifteen phases away. Four of the seven are the Maven and npm packages the wrapper's builds install; three are docker images — `qits/workspace-base`, then `qits/workspace` and `qits/projects-daemon` + `qits/project-agent`. **The base goes first and that order is load-bearing**: both daemon builds pull it at a pinned version, and the base's own replay is what puts it in the registry. A publisher with no release tag reachable from main STOPS the boot, which is right: a pin nobody has minted has nothing to dangle. A tag the git host already has moves no ref, so it announces nothing and the phase is SKIPPED — the registry holds that version from the boot that first pushed it |
 | 51 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
-| 52–68 | one phase per deployable: push `main` quietly and `environment/<name>` for real, then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-containers is immediately before qits-ci, because ci runs every pipeline step as a container it asks that service for. qits-platform-edge is second to last: it is the host port, so its cutover takes this program's own door away for a beat |
+| 52–68 | one phase per deployable: push `main` quietly, push the newest release tag, and move `environment/<name>` **to that tag's commit** — the boot RESTORES, so a main that is ahead of the release deploys nothing. `--ship-mains` points the deploy ref at main's head instead, which is what the boot always did and what shipped an unreleased stack by accident on 2026-08-08. A deployable with no release tag falls back to main's head and warns. Then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-containers is immediately before qits-ci, because ci runs every pipeline step as a container it asks that service for. qits-platform-edge is second to last: it is the host port, so its cutover takes this program's own door away for a beat |
 | 69–70 | push the seeded repositories; the closing report |
 
-Four things every deploy phase does that are easy to miss: it pushes `main` quietly
-(`-o qits.no-ci`) so a second cold native build is not queued for the same sha; it re-announces the
-push once when a real push has no CI run at its sha after a minute — the git host's announcement is
-fire-and-forget, and the first proving run lost qits-platform-idp's to the database cutover the
-qits-oci-postgresql deploy one phase earlier had just caused; it replays the `build-succeeded`
-event once when a run is green but no deployment row appeared after a minute — the same loss, one
-hop later; and when the push is up to date and the only run at that sha is RED, it re-announces the
-push to qits-ci once and waits for a run newer than the red one. A red run means there is no image,
-so replaying the build event would only buy an `IMAGE_MISSING` row — a rerun has to ask for the
-BUILD.
+Five things every deploy phase does that are easy to miss: it pushes `main` quietly
+(`-o qits.no-ci`) so a second cold native build is not queued for the same sha; it pushes the
+release tag quietly too, which starts nothing — a deployable's release recipe fires on `SCMRelease`,
+not on a tag — and stamps the commit the deploy ref is about to name; it FORCES the deploy-ref push
+when restoring, because a machine whose last boot shipped mains carries that ref ahead of the
+release and a rewind is a non-fast-forward (`--ship-mains` keeps the plain push, so the dev loop
+cannot rewind anything); it replays the `build-succeeded` event once when a run is green but no
+deployment row appeared after a minute — the announcement is fire-and-forget and has been lost for
+real; and when the push is up to date and the only run at that sha is RED, it says so and waits,
+because a red run means there is no image and replaying the build event would only buy an
+`IMAGE_MISSING` row.
 
 While a deploy phase waits it also talks: the CI run's own output is relayed under `ci|` (a poll of
 the run, not a feed — qits-ci serves none), and the deployer's account of this repository —
@@ -404,6 +406,11 @@ host, because a build runs with `--network host` against the host's daemon.
 `main` is the integration trunk of every repository and deploys nothing. What deploys is
 `environment/<name>` — for BOTH planes, because both ask a green build the same question: does an
 environment listen to this ref. `platform/main` is retired.
+
+A bootstrap points that ref at the commit of each deployable's **newest release tag**, so a boot is
+a RESTORE of the last released platform rather than a shipment of whatever your checkouts hold.
+`--ship-mains` points it at main's head instead; that is the dev loop, and it now has to be asked
+for.
 
 | plane | applications | wire alias | container |
 | --- | --- | --- | --- |

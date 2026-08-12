@@ -55,6 +55,19 @@ public class BootstrapCommand implements Callable<Integer> {
             description = "The seed images and the daemon binary exist; skip to compose and the pushes.")
     Boolean skipBuild;
 
+    /**
+     * The dev loop's flag, and the whole of what it changes is where the deploy ref points.
+     * <p>
+     * A bootstrap RESTORES: every deployable comes back at the commit of its newest release tag.
+     * Shipping the mains in your checkouts is the other thing a person may want — it is how this
+     * program was used daily — and it now takes saying so, which is the fix for the 2026-08-08
+     * accident at the root: an unreleased local main cannot deploy by not being noticed.
+     */
+    @CommandLine.Option(names = "--ship-mains",
+            description = "Deploy the local mains instead of restoring each deployable's newest "
+                    + "release tag. The dev loop (QITS_SHIP_MAINS).")
+    Boolean shipMains;
+
     @CommandLine.Option(names = "--no-tui",
             description = "Plain sequential output, even on a terminal that could take the live display.")
     boolean noTui;
@@ -91,6 +104,7 @@ public class BootstrapCommand implements Callable<Integer> {
         BootstrapConfig effective = new OverridableConfig(config)
                 .wrapperDir(wrapperDir)
                 .skipBuild(skipBuild)
+                .shipMains(shipMains)
                 .platformEnv(platformEnv)
                 .domain(domain)
                 .tui(noTui ? Boolean.FALSE : null);
