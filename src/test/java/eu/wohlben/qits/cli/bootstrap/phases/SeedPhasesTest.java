@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -147,5 +148,52 @@ class SeedPhasesTest {
         assertThat(SeedPhases.isEmptyDirectory(temp.resolve("nothing"))).isFalse();
         Files.writeString(temp.resolve("a-file"), "x", StandardCharsets.UTF_8);
         assertThat(SeedPhases.isEmptyDirectory(temp.resolve("a-file"))).isFalse();
+    }
+
+    // --- who already serves ------------------------------------------------------------------------
+
+    private static final String ARTIFACTS = "prod-qits-artifacts";
+
+    private static final String PD_ARTIFACTS = "qits-pd-prod-qits-artifacts-";
+
+    /** This run's own hand-started seed, or an earlier run's: a container under the wire alias. */
+    @Test
+    void aContainerUnderTheWireAliasIsServing() {
+        assertThat(SeedPhases.alreadyServing(ARTIFACTS, PD_ARTIFACTS,
+                List.of(ARTIFACTS), List.of())).contains(ARTIFACTS);
+    }
+
+    /** A deployed store publishes the same port from the same volume, and is strictly better. */
+    @Test
+    void aDeployedContainerIsServingToo() {
+        assertThat(SeedPhases.alreadyServing(ARTIFACTS, PD_ARTIFACTS,
+                List.of(PD_ARTIFACTS + "a1b2c3d4"), List.of()))
+                .contains(PD_ARTIFACTS + "a1b2c3d4");
+    }
+
+    /**
+     * THE ONE THE STACK ADDED. A seed service's task container is named
+     * {@code qits_prod-qits-artifacts.1.<taskid>}, so the container list answers nothing — and a
+     * phase that then starts a container by hand takes a port the service already holds.
+     */
+    @Test
+    void aSeedStackServiceIsServingAlthoughNoContainerCarriesTheName() {
+        assertThat(SeedPhases.alreadyServing(ARTIFACTS, PD_ARTIFACTS,
+                List.of("qits_prod-qits-artifacts.1.k3n1x9"), List.of("qits_" + ARTIFACTS)))
+                .contains("qits_" + ARTIFACTS);
+    }
+
+    /** Both names a stack service answers to, because both are addresses on the network. */
+    @Test
+    void theBareServiceNameCountsAsWell() {
+        assertThat(SeedPhases.alreadyServing("qits-platform-idp", "qits-pd-qits-platform-idp-",
+                List.of(), List.of("qits-platform-idp"))).contains("qits-platform-idp");
+    }
+
+    /** Nothing of this application anywhere: the phase starts its own. */
+    @Test
+    void anotherApplicationsServiceIsNotThisOne() {
+        assertThat(SeedPhases.alreadyServing(ARTIFACTS, PD_ARTIFACTS,
+                List.of("prod-qits-ci"), List.of("qits_prod-qits-ci"))).isEmpty();
     }
 }

@@ -96,20 +96,6 @@ public interface BootstrapConfig {
     int gitHostPort();
 
     /**
-     * Host port the platform's postgres publishes.
-     * <p>
-     * Nothing in this CLI dials it any more — the JDBC connection goes to the wire alias on 5432
-     * like every other consumer — and the knob stays because the GENERATED FILES carry it: the seed
-     * compose file publishes it and so does the deployer's run-arg for qits-oci-postgresql, which
-     * is what keeps a psql on the workstation working across the deployer's own cutover.
-     * <p>
-     * 5433 rather than 5432 so a postgres already installed on the workstation is not a bind
-     * conflict this program has to explain.
-     */
-    @WithDefault("5433")
-    int pgPort();
-
-    /**
      * Host port qits-platform-dns publishes — <b>on UDP and on TCP</b>.
      * <p>
      * 53, because this is the port a registrar's delegation ultimately reaches and a nameserver on

@@ -18,7 +18,7 @@ That changes what care means here:
 
 - **The operational knowledge is in these comments and nowhere else** — ordering constraints, the
   409/PATCH reconcile, the dual-ref pushes with `-o qits.no-ci`, the one deploy ref both planes
-  share, the wire aliases the seed containers are named after, the mirror-prefix rewrite, the
+  share, the wire aliases the seed services are named after, the mirror-prefix rewrite, the
   release replays, the lost-event self-heal, the machine-token minting. They were ported from the
   script on purpose, and the script is no longer there to check them against. Do not thin them out.
 - **A behaviour change is a change to the only bring-up path there is.** Prove it with a real
@@ -36,7 +36,7 @@ forced. Add to that list rather than deviating quietly.
                 EventFeed that follows the platform's own events beside the boot's output
     web/        the browser view's three routes and the one page they serve
     config/     BootstrapConfig (@ConfigMapping, read from .env) and its command-line overrides
-    platform/   what the platform is made of: PlatformModel, the generated compose and extras,
+    platform/   what the platform is made of: PlatformModel, the generated stack file and extras,
                 the seed-Dockerfile rewrite, the recorded state, thin Docker and Git facades
     api/        the platform's HTTP, with java.net.http, at the platform's own wire aliases
     phases/     the phases themselves and the plan that orders them
@@ -99,6 +99,22 @@ forced. Add to that list rather than deviating quietly.
   (`pending`, `locked`, a WORKER), because initialising over somebody else's swarm tears a machine
   out of a cluster. An existing BRIDGE called `qits-net` stops the run too: it cannot be converted
   in place, and the platform is re-bootstrapped rather than migrated — `unwrap` removes it.
+- **The seed is a docker STACK, and four compose words do not survive the move.** The generated
+  file carries no root `name:` and no `group_add:` — either one makes `docker stack deploy` refuse
+  it outright, measured — no `container_name:` (ignored; a task's container is
+  `qits_<service>.<slot>.<taskid>`) and no `restart:` (it is `deploy.restart_policy`). The two
+  socket-holding seed services take the socket's group as their PRIMARY group, `user:
+  "1001:<gid>"`, because a stack file has no way to say a supplementary one; their deployed
+  successors get `--group-add` from the extras, which does. **Every name-based check went with
+  it**: a seed service is found through `docker service ls`, under `qits_<alias>` or the bare
+  `<alias>`, never through `docker ps`. A container name is still the right question for a
+  DEPLOYMENT — the deployer runs `docker run` containers named `qits-pd-…` until phase 3 of the
+  swarm migration lands — so the two lists are asked together and neither replaced the other.
+- **Never a seed service beside a deployed container.** That is the rule the stack file has no
+  `depends_on` for, and swarm made its second half necessary: a compose sibling stayed down once a
+  cutover removed its container, while a SERVICE's task is restarted within seconds. So a rerun
+  leaves a deployer-managed application out of the FILE (a stack deploy takes no service list) and
+  removes any seed service of it outright.
 - **One binary, two halves, ONE configuration contract.** Outside a container the binary launches
   itself inside one; inside it, it runs the phases. The host half reads the same `BootstrapConfig`
   and re-interprets no `QITS_*` value: the container's working directory is the launcher's, so
@@ -226,7 +242,8 @@ alias on `qits-net`. A glibc-static payload would build clean and fail its first
 `./mvnw clean verify` must be green on a clone, with **no docker**. What is tested is what can be:
 the engine (ordering, failure, warnings, skips, timing), the process runner (streaming, bounded
 memory, exit codes, timeouts, masking), the configuration mapping from `.env` names, the plan's
-shape and order, the compose and extras generation, the seed-Dockerfile rewrite, the recorded
+shape and order, the stack-file and extras generation, the stack and service argv, the
+seed-Dockerfile rewrite, the recorded
 state file, the plain renderer's output, and **the launcher's `docker run` argv** — asserted whole,
 because a flag dropped there is a bootstrap that gets further than it should before it breaks.
 

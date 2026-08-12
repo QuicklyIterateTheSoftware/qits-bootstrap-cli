@@ -28,15 +28,18 @@ The same run is also served to a browser at `http://localhost:8480` while it run
     qits bootstrap     # bring the platform up (the default when no mode is given)
     qits unwrap        # take it off this machine again
 
-`unwrap` removes the qits-marked containers, images and networks. **The volumes stay** — they hold
-the databases, the registry's blobs and the git host's repositories. `unwrap --with-volumes` is the
-full clean slate; `unwrap --with-data-volumes` removes the `qits-*-data` volumes (and
-`qits-maven-seed`) while keeping every `qits-*-config` one, which is what a move onto another
-database needs and what keeps the push token, the client secrets and the deployer's config;
-`unwrap --dry-run` lists what would go and removes nothing. `qits-edge-letsencrypt` matches neither
-pattern and is therefore kept by `--with-data-volumes` — a certificate is rate-limited to re-issue,
-and a database reset is no reason to lose one. `qits-maven-cache` is kept by `--with-data-volumes`
-too, and named in the keep list rather than left to that rule: it is a cache of third-party jars
+`unwrap` removes the seed STACK, the qits-marked swarm services, containers, images and networks
+— services before containers, because removing a service task's container removes nothing: swarm
+starts another one. `docker stack rm qits` comes first and the compose-era `compose down` stays
+beside it, for a machine carrying a platform bootstrapped before the swarm cutover. **The volumes
+stay** — they hold the databases, the registry's blobs and the git host's repositories.
+`unwrap --with-volumes` is the full clean slate; `unwrap --with-data-volumes` removes the
+`qits-*-data` volumes (and `qits-maven-seed`) while keeping every `qits-*-config` one, which is
+what a move onto another database needs and what keeps the push token, the client secrets and the
+deployer's config; `unwrap --dry-run` lists what would go and removes nothing.
+`qits-edge-letsencrypt` matches neither pattern and is therefore kept by `--with-data-volumes` —
+a certificate is rate-limited to re-issue, and a database reset is no reason to lose one.
+`qits-maven-cache` is kept by `--with-data-volumes` too, and named in the keep list rather than left to that rule: it is a cache of third-party jars
 from Maven Central, not this platform's data, and re-fetching the dependency world on every
 re-bootstrap is what got this host throttled. `--with-volumes` still takes both.
 
@@ -107,8 +110,9 @@ that IS there is skipped, never refreshed: the sha it stands on is the operator'
 
 What it needs to run: a reachable docker daemon, roughly 4 GB of RAM free per native build it
 starts, and reach to quay.io, registry.access.redhat.com, docker.io and npm — a cold start cannot
-pull through the mirror it is starting. **Nothing else**: git, the compose plugin, `stty` and the
-CLI's own binary are in the payload image, which the run builds for itself. What it needs to build:
+pull through the mirror it is starting. **Nothing else**: git, the compose plugin (unwrap still
+takes a pre-swarm platform down with it), `stty` and the CLI's own binary are in the payload image,
+which the run builds for itself. What it needs to build:
 the GraalVM `.sdkmanrc` names for the binary, any JDK 25 for the tests.
 
 Cost, honestly: every seed image and every pipeline run is a cold GraalVM native build with no
@@ -123,17 +127,16 @@ the same names `qits-local-up.sh` read:
 
 | knob | default | what it is |
 | --- | --- | --- |
-| `QITS_WRAPPER_DIR` | detected | the wrapper repository whose checkouts are the sources, and where the compose file and `.qits-bootstrap.env` land — found by walking up when unset, and cloned into `<cwd>/qits-qits` when this machine has none |
+| `QITS_WRAPPER_DIR` | detected | the wrapper repository whose checkouts are the sources, and where the stack file and `.qits-bootstrap.env` land — found by walking up when unset, and cloned into `<cwd>/qits-qits` when this machine has none |
 | `QITS_SRC` | `.qits-bootstrap-src` | where those checkouts are cloned to |
 | `QITS_ORG_URL` | the GitHub org | where a repository with no local checkout is cloned from — the wrapper included, on a cold start. Read anonymously |
 | `QITS_PORT` | `8080` | the host's ONE published port, bound by qits-platform-edge. It is the door for a person's browser; the CLI dials the edge's alias instead |
 | `QITS_REGISTRY_PORT` | `8081` | qits-artifacts' host port, for the DOCKER DAEMON: seed builds run with `--network host` and resolve Maven through `localhost:<this>`, and publish steps push the platform's own images there. The HOSTED half of the two-endpoint topology. The CLI reads the registry API by alias |
 | `QITS_MIRROR_PORT` | `8082` | qits-platform-mirror's host port, and the THIRD-PARTY half: Docker Hub, quay.io, the Red Hat registry, npmjs and Maven Central, each behind a pull-through cache. Point dockerd's `registry-mirrors` at it, and note that every committed Dockerfile spells `localhost:8082/{hub,quay,redhat}/…` in its `FROM` lines — a seed build rewrites those back to the direct upstreams, because a cold start cannot pull through the mirror it is starting |
 | `QITS_GIT_HOST_PORT` | `8083` | qits-githost's host port, and what a PERSON clones and pushes through: `http://localhost:8083/git/<repo>`. The git host is a service of its own since the byte-plane split, so it needs a door of its own — it used to ride the registry's. Nothing in the CLI dials it; every phase that pushes runs inside a container on qits-net |
-| `QITS_PG_PORT` | `5433` | what the platform's postgres publishes on 127.0.0.1, for a person with a `psql`. The CLI connects to the wire alias on 5432 like every other consumer. 5433 so a postgres already on the workstation is not a bind conflict |
-| `QITS_DNS_PORT` | `53` | what qits-platform-dns publishes, **on UDP and on TCP**. 53 because that is the port a registrar's delegation reaches; the service binds 8053 inside the container, since below 1024 needs privileges it should not hold. TCP is not the optional half — a truncated UDP answer carries zero records and the client's TCP retry is the only way it gets one. **Move it on a workstation that already holds 53**, which most do: measured on the WSL2 development host, systemd-resolved holds it, docker refuses the publish, and `compose up` then fails as a whole — the entire seed stack, not just the nameserver. `5353` there. A delegation cannot follow a port, so anything but 53 is for local testing |
-| `QITS_DOMAIN` | unset | **the domain this platform serves.** Unset is a full platform with no public names: the nameserver runs with no zones and the edge stays on plain HTTP. Set, this run gives the nameserver its identity (`ns1.<domain>`, `hostmaster.<domain>`), creates the zone row, and gives the edge ports 80, 443 and a loopback 9000 with a Let's Encrypt certificate slot on a volume. It writes no records and touches no registrar — both need this host's public IP. Lowercase, at least two labels, no trailing dot; a bad value stops the run before anything is built. `--domain` is the same knob for one run |
-| `QITS_SKIP_BUILD` | `0` | 1 = the seed images and the daemon binary exist; skip to compose and the pushes |
+| `QITS_DNS_PORT` | `53` | what qits-platform-dns publishes, **on UDP and on TCP**. 53 because that is the port a registrar's delegation reaches; the service binds 8053 inside the container, since below 1024 needs privileges it should not hold. TCP is not the optional half — a truncated UDP answer carries zero records and the client's TCP retry is the only way it gets one. **Move it on a workstation that already holds 53**, which most do: measured on the WSL2 development host, systemd-resolved holds it, docker refuses the publish, and the whole stack deploy then fails — the entire seed, not just the nameserver. `5353` there. A delegation cannot follow a port, so anything but 53 is for local testing |
+| `QITS_DOMAIN` | unset | **the domain this platform serves.** Unset is a full platform with no public names: the nameserver runs with no zones and the edge stays on plain HTTP. Set, this run gives the nameserver its identity (`ns1.<domain>`, `hostmaster.<domain>`), creates the zone row, and gives the edge ports 80 and 443 with a Let's Encrypt certificate slot on a volume. The management port 9000 is NOT published: the challenge-management endpoint is unauthenticated and a swarm publish cannot be loopback-only, so it is reached on qits-net. It writes no records and touches no registrar — both need this host's public IP. Lowercase, at least two labels, no trailing dot; a bad value stops the run before anything is built. `--domain` is the same knob for one run |
+| `QITS_SKIP_BUILD` | `0` | 1 = the seed images and the daemon binary exist; skip to the stack deploy and the pushes |
 | `QITS_SHIP_MAINS` | `0` | 1 = deploy the local mains instead of RESTORING each deployable's newest release tag. A boot restores by default: the deploy ref is moved to the release commit, so a main that is ahead deploys nothing. This is the dev loop's flag, and it is also why the 2026-08-08 accident cannot repeat — shipping unreleased code takes saying so. `--ship-mains` is the same knob for one run |
 | `QITS_MACHINE_AUTH` | `1` | machine-token enforcement for ci, deployments and artifacts |
 | `QITS_PUSH_TOKEN` | `local-dev` | the git host's push token — the documented escape hatch, not a secret |
@@ -174,14 +177,15 @@ has to do, or anything that needs this host's public address — the closing rep
 and the staging issuance command:
 
     quarkus tls lets-encrypt issue-certificate --staging --domain=<domain> \
-      --email=<operator> --management-url=http://localhost:9000
+      --email=<operator> --management-url=http://qits-platform-edge:9000
 
-The ACME order is made from the host by that CLI, not by the platform: the edge's image carries the
-build-time flags and they stay inert until a keystore names files. Until the real certificate is
-issued the edge serves a self-signed placeholder — 443 answers, browsers refuse it. Renewal is
-`renew-certificate` with the same management URL; the PEMs land in the `qits-edge-letsencrypt`
-volume under the same two filenames and the TLS registry reloads within the hour, so neither is a
-redeploy.
+The ACME order is made by that CLI, not by the platform, and from a container on qits-net rather
+than from the host — the management port is unpublished, for the reason the knob table gives. The
+edge's image carries the build-time flags and they stay inert until a keystore names files. Until
+the real certificate is issued the edge serves a self-signed placeholder — 443 answers, browsers
+refuse it. Renewal is `renew-certificate` with the same management URL; the PEMs land in the
+`qits-edge-letsencrypt` volume under the same two filenames and the TLS registry reloads within the
+hour, so neither is a redeploy.
 
 ## Two halves, one binary
 
@@ -212,6 +216,33 @@ bridge, and a machine that is not a manager can create no overlay. On a host wit
 interfaces `docker swarm init` refuses to choose an address to advertise, and the run says so with
 the command to run by hand — `docker swarm init --advertise-addr <ip>`. It cannot pick one itself:
 it is a container, so the routes it sees are docker's rather than the host's.
+
+**The seed is a docker STACK**, deployed with
+`docker stack deploy --resolve-image never -c <file> qits` — `never` because every image in it is a
+local `qits/*:latest` tag no registry can resolve. Five things about the generated file follow from
+that, each measured on this host rather than assumed:
+
+- **No `name:` key and no `group_add:` key.** Either one refuses the whole file. The stack name is
+  the deploy command's argument, and the two socket-holding seed services — the deployer and the
+  container orchestrator — take the socket's group as their PRIMARY group (`user: "1001:<gid>"`,
+  1001 being the images' own user). Their deployed successors get `--group-add` from the extras,
+  which is where supplementary groups still work.
+- **No `container_name:`.** A stack ignores it and names the container
+  `qits_<service>.<slot>.<taskid>`. What answers a wire alias is the SERVICE, which resolves under
+  `qits_<alias>` and under the bare `<alias>` both — so every address in the file is unchanged, and
+  every check that asked `docker ps` for a name now asks `docker service ls`.
+- **`restart: unless-stopped` is `deploy.restart_policy`**, and no service asks for an
+  `update_config`: swarm's default update order is stop-first, which is the only order these
+  services can take — each holds a volume or a host port a second task would collide on.
+- **Every published port is `mode: host` and binds 0.0.0.0.** Neither publish mode has an ip field,
+  so the loopback binds this file used to carry cannot be expressed at all. **The platform's
+  postgres therefore publishes nothing**: its one consumer was this CLI's cold-boot DDL, which
+  dials the wire alias on 5432 like everything else. An operator with a `psql` goes in through
+  `docker exec`.
+- **A rerun deploys a SUBSET by leaving services out of the file**, because `docker stack deploy`
+  takes no service list. Nothing is pruned — what the file omits is the deployer's — and a seed
+  service whose application the deployer has taken over is removed outright: swarm restarts a task
+  whose container was removed, so leaving it standing is a second holder of the alias for good.
 
 **The image is addressed by its content** — a digest of `pom.xml`, `mvnw`, `.mvn/`, `src/main/` and
 the Dockerfile — so a rerun with an unchanged checkout finds it built and starts in a second, and a
@@ -369,9 +400,9 @@ for 42. `QITS_DOMAIN` adds two more, marked below.
 | 30–34 | the five step images from qits-oci |
 | 35 | the ci-daemon musl static binary, and its digest |
 | 36 | resolve the idp's client secrets (given, kept, generated) and record the run state |
-| 37–38 | generate the seed compose file; write the deployer's per-application extras onto its config volume |
+| 37–38 | generate the seed stack file; write the deployer's per-application extras onto its config volume |
 | — | **with `QITS_DOMAIN` only**: write a self-signed placeholder certificate onto the `qits-edge-letsencrypt` volume, unless one is already there. It is before the stack starts because the edge's keystore names those files and a keystore whose files are missing fails startup |
-| 39–40 | start the seed stack (only what the deployer does not already manage); wait for the idp, the edge, the gateway, the store, the mirror, the git host, the nameserver, ci, the deployer, the bus and the container orchestrator — all on qits-net. The orchestrator is polled at its own alias like the nameserver: it has no gateway route and must not have one, because every caller is a machine and a route would put a socket-holding service behind the platform's public door |
+| 39–40 | `docker stack deploy` the seed (only what the deployer does not already manage — the rest is left out of the FILE, since a stack deploy takes no service list, and any seed SERVICE of a deployer-managed application is removed); wait for the idp, the edge, the gateway, the store, the mirror, the git host, the nameserver, ci, the deployer, the bus and the container orchestrator — all on qits-net. The orchestrator is polled at its own alias like the nameserver: it has no gateway route and must not have one, because every caller is a machine and a route would put a socket-holding service behind the platform's public door |
 | — | **with `QITS_DOMAIN` only**: create the zone in qits-platform-dns (`POST /dns/api/zones`, 409 tolerated). No records: their values are this host's public address, which the run cannot know |
 | 41 | publish the ci-daemon binary, version-addressed by its digest |
 | 42–43 | create the 40 repositories on qits-githost; pre-seed the seeded histories with `-o qits.no-ci` |
@@ -436,8 +467,9 @@ CLI watches docker for it instead: a container under the prefix above running th
 the sha it pushed. An environment service is watched through its deployment row.
 
 The **wire alias** is the address peers dial and the name a cutover finds its predecessor by. The
-seed containers are named after it, which is what makes the generated compose file's own addresses
-right from the first second rather than from the first cutover.
+seed SERVICES are named after it — a stack ignores `container_name`, and a service resolves under
+`qits_<alias>` and under the bare alias both — which is what makes the generated stack file's own
+addresses right from the first second rather than from the first cutover.
 
 **qits-platform-edge binds the host's only published port** and hands each request to the gateway
 of the environment its Host name names. qits-gateway publishes nothing: it was on the platform
@@ -458,10 +490,10 @@ on `qits-net` too, so it reaches the platform at the same wire aliases the scrip
 deliberate difference is left, and it is the one the socket coming back did not undo:
 
 - **No `/out` mount and no worktree gitdir contortions.** The wrapper's checkouts are read where
-  they are, and the compose file and `.qits-bootstrap.env` are written back beside them. That holds
+  they are, and the stack file and `.qits-bootstrap.env` are written back beside them. That holds
   because every path this program puts on a docker command line is read by the CLIENT — a build
   context and a `-f -` Dockerfile are packed and sent, `docker cp` reads the source here, and
-  `docker compose -f` is parsed here.
+  `docker stack deploy -c` is parsed here.
 
 Two things about the addressing are worth stating plainly:
 
@@ -508,7 +540,7 @@ hand with raw API calls: a stale RED run was read as an outcome instead of a rea
 the push, the seed deployer kept the configuration it had cached at its boot and deployed a qits-ci
 without them, and nothing spelled `QITS_OBSERVABILITY_URL`, so every exporter dialled a name the
 rename had killed. The validation rerun of those three then stopped at phase 8 with `port is
-already allocated`: the seed store phases predate the skip-when-deployed rule the compose stack
+already allocated`: the seed store phases predate the skip-when-deployed rule the seed stack
 already had. All four are fixed above and `./mvnw clean verify` is green; the gate is the next
 rerun.
 

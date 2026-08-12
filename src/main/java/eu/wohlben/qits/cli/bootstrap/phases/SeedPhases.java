@@ -650,9 +650,8 @@ public class SeedPhases {
             boot.docker.ensureVolume("qits-platform-mirror-data", ctx::log);
             String mirror = PlatformModel.wireAlias("platform-mirror", boot.config.envName());
             String prefix = PlatformModel.pdNamePrefix("platform-mirror", boot.config.envName());
-            Optional<String> serving = boot.docker.runningNames().stream()
-                    .filter(name -> name.equals(mirror) || name.startsWith(prefix))
-                    .findFirst();
+            Optional<String> serving = alreadyServing(mirror, prefix,
+                    boot.docker.runningNames(), boot.docker.serviceNames());
             if (serving.isPresent()) {
                 ctx.log("  " + serving.get() + " already serves port " + boot.config.mirrorPort()
                         + " from the same volume — no seed mirror to start");
@@ -716,8 +715,10 @@ public class SeedPhases {
             // answers the same API, so it is strictly better than the seed this phase would have
             // started. This run's own seed container is asked for by name first, so a rerun still
             // reports it as itself rather than as the deployer's.
-            Optional<String> serving = boot.docker.runningNames().contains(artifacts)
-                    ? Optional.of(artifacts) : storeAlreadyServing();
+            Optional<String> serving = alreadyServing(artifacts,
+                    PlatformModel.pdNamePrefix("artifacts", boot.config.envName()),
+                    boot.docker.runningNames(), boot.docker.serviceNames())
+                    .or(this::storeAlreadyServing);
             if (serving.isPresent()) {
                 ctx.log("  " + serving.get() + " already serves port " + boot.config.registryPort()
                         + " from the same volume — no seed store to start");
@@ -767,6 +768,35 @@ public class SeedPhases {
                 .filter(name -> name.startsWith(prefix))
                 .findFirst()
                 .orElse(PlatformModel.wireAlias("artifacts", boot.config.envName())));
+    }
+
+    /**
+     * Who already serves this application, when anything does — and the two lists are asked in the
+     * one order that matters: a container first, then a SERVICE.
+     * <p>
+     * <b>This is the check the stack broke.</b> A seed service used to be a container answering to
+     * the wire alias, so {@code docker ps} could be asked for it by name. A stack ignores
+     * {@code container_name} and calls the container {@code <stack>_<service>.<slot>.<taskid>}, so
+     * the name test finds nothing and a phase that starts a container by hand takes a host port the
+     * service already holds — {@code port is already allocated}, exit 125, which is how the same
+     * class of bug stopped a boot on 2026-08-08.
+     * <p>
+     * A running container matches by the ALIAS (this run's or an earlier run's hand-started one) or
+     * by the deployer's {@code qits-pd-…} prefix; a service matches under either of the two names a
+     * stack service answers to.
+     */
+    static Optional<String> alreadyServing(String alias, String pdPrefix, List<String> running,
+                                           List<String> services) {
+        Optional<String> container = running.stream()
+                .filter(name -> name.equals(alias) || name.startsWith(pdPrefix))
+                .findFirst();
+        if (container.isPresent()) {
+            return container;
+        }
+        String qualified = Docker.stackService(Docker.STACK, alias);
+        return services.stream()
+                .filter(service -> service.equals(qualified) || service.equals(alias))
+                .findFirst();
     }
 
     // --- the publishes the seed builds need -------------------------------------------------------
@@ -1127,13 +1157,11 @@ public class SeedPhases {
             boot.docker.ensureVolume("qits-oci-postgresql-data", ctx::log);
             String pg = PlatformModel.wireAlias("oci-postgresql", boot.config.envName());
             // Whoever already serves, serves — the same posture as the seed artifacts store. A
-            // deployed postgres answers the same alias from this very volume, and a second server
-            // on it is two writers on one cluster. It publishes no host port of its own any more
-            // (the deployer's extras carry none), so the port below is this seed container's alone.
+            // deployed postgres, or the seed stack's own service, answers the same alias from this
+            // very volume, and a second server on it is two writers on one cluster.
             String prefix = PlatformModel.pdNamePrefix("oci-postgresql", boot.config.envName());
-            Optional<String> serving = boot.docker.runningNames().stream()
-                    .filter(name -> name.equals(pg) || name.startsWith(prefix))
-                    .findFirst();
+            Optional<String> serving = alreadyServing(pg, prefix,
+                    boot.docker.runningNames(), boot.docker.serviceNames());
             if (serving.isPresent()) {
                 ctx.log("  " + serving.get() + " already serves " + pg
                         + " from the same volume — no seed server to start");
@@ -1142,7 +1170,9 @@ public class SeedPhases {
                 Boot.must(boot.docker.run(Cmd.of(List.of(
                                 "docker", "run", "-d", "--name", pg,
                                 "--network", Boot.NETWORK,
-                                "-p", "127.0.0.1:" + boot.config.pgPort() + ":5432",
+                                // NO PUBLISHED PORT. Every consumer dials the alias on 5432 over
+                                // qits-net, this CLI included — it runs in a container on that
+                                // network. Nothing on the host has asked for this server since.
                                 // /var/lib/postgresql, NOT /var/lib/postgresql/data: postgres 18
                                 // keeps PGDATA at /var/lib/postgresql/18/docker, so the pre-18 path
                                 // mounts the volume BESIDE the cluster — every byte then goes into
@@ -1156,10 +1186,9 @@ public class SeedPhases {
             // Always waited for, whoever is behind it: the statements below need a server, and a
             // first boot spends its first seconds in initdb rather than listening.
             //
-            // The WIRE ALIAS on 5432, like every other consumer of this database — the published
-            // host port is for a person with a psql, not for this program. It is also the address
-            // that survives the deployer's own cutover of qits-oci-postgresql, because the alias is
-            // what the successor answers to.
+            // The WIRE ALIAS on 5432, which is the only address this server has: nothing publishes
+            // it any more. It is also the address that survives the deployer's own cutover of
+            // qits-oci-postgresql, because the alias is what the successor answers to.
             String url = "jdbc:postgresql://" + pg + ":5432/postgres";
             PgAdmin.awaitReady(url, "postgres", superuser, boot.config.healthTimeout(), ctx);
             ctx.log("  postgres answering on " + pg + ":5432");
@@ -1535,7 +1564,6 @@ public class SeedPhases {
         // images through the cache, and the git host's, for a person pushing from the workstation.
         values.put("MIRROR_PORT", String.valueOf(boot.config.mirrorPort()));
         values.put("GIT_HOST_PORT", String.valueOf(boot.config.gitHostPort()));
-        values.put("PG_PORT", String.valueOf(boot.config.pgPort()));
         values.put("DNS_PORT", String.valueOf(boot.config.dnsPort()));
         // Resolved by seed-postgres, which runs before both generated files are written.
         values.put("PG_SUPERUSER_PASSWORD", orEmpty(boot.state.pgSuperuserPassword));

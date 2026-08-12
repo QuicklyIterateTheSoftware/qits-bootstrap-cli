@@ -30,9 +30,8 @@ class BootstrapConfigTest {
         // host, which needs a door of its own since it stopped riding the registry's.
         assertThat(config.mirrorPort()).isEqualTo(8082);
         assertThat(config.gitHostPort()).isEqualTo(8083);
-        // 5433, not 5432: a postgres already installed on the workstation must not be a bind
-        // conflict this program has to explain.
-        assertThat(config.pgPort()).isEqualTo(5433);
+        // NO POSTGRES PORT KNOB. The platform's postgres publishes nothing: every consumer dials
+        // the wire alias on 5432, this CLI included.
         // 53, because a registrar's delegation reaches that port and no other. Both transports are
         // published from it; the service binds 8053 inside the container.
         assertThat(config.dnsPort()).isEqualTo(53);
@@ -62,7 +61,6 @@ class BootstrapConfigTest {
         env.put("QITS_REGISTRY_PORT", "9091");
         env.put("QITS_MIRROR_PORT", "9092");
         env.put("QITS_GIT_HOST_PORT", "9093");
-        env.put("QITS_PG_PORT", "5555");
         env.put("QITS_DNS_PORT", "5353");
         env.put("QITS_DOMAIN", "qits-dev.eu");
         env.put("QITS_PUSH_TOKEN", "not-local-dev");
@@ -81,7 +79,6 @@ class BootstrapConfigTest {
         assertThat(config.registryPort()).isEqualTo(9091);
         assertThat(config.mirrorPort()).isEqualTo(9092);
         assertThat(config.gitHostPort()).isEqualTo(9093);
-        assertThat(config.pgPort()).isEqualTo(5555);
         assertThat(config.dnsPort()).isEqualTo(5353);
         assertThat(config.domain()).contains("qits-dev.eu");
         assertThat(config.pushToken()).isEqualTo("not-local-dev");

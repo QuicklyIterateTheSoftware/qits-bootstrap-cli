@@ -7,9 +7,12 @@ import eu.wohlben.qits.cli.bootstrap.config.DomainName;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.engine.Waiter;
+import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
+import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -45,67 +48,124 @@ public class PipelinePhases {
     // --- the seed stack ---------------------------------------------------------------------------
 
     public Phase seedStackUp() {
-        return new Phase("seed-stack", "start the seed stack", ctx -> {
+        return new Phase("seed-stack", "deploy the seed stack", ctx -> {
             boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
             // The artifacts instance used while building seed images has no machine credentials:
-            // the idp did not exist yet. Replace it so compose starts the real service with the
+            // the idp did not exist yet. Replace it so the stack starts the real service with the
             // audience it validates against; otherwise every admin write reaches it unguarded.
             String artifacts = PlatformModel.wireAlias("artifacts", boot.config.envName());
             if (boot.docker.allNames().contains(artifacts)) {
                 ctx.log("  replacing the bootstrap artifact registry with the authenticated seed service");
                 boot.docker.removeContainer(artifacts, ctx::log);
             }
-            // The same hand-off for the mirror, which seed-mirror started by hand before any
-            // compose file existed. Its volume is the cache and survives the recreate; what it
-            // gains is the observability address and the deployer's adoption at the next cutover.
+            // The same hand-off for the mirror, which seed-mirror started by hand before any stack
+            // file existed. Its volume is the cache and survives the recreate; what it gains is the
+            // observability address and the deployer's adoption at the next cutover.
             String mirror = PlatformModel.wireAlias("platform-mirror", boot.config.envName());
             if (boot.docker.allNames().contains(mirror)) {
-                ctx.log("  handing the seed mirror over to compose, from the same volume");
+                ctx.log("  handing the seed mirror over to the stack, from the same volume");
                 boot.docker.removeContainer(mirror, ctx::log);
             }
-            // The same hand-off for postgres: seed-postgres started it by hand, and compose has to
-            // own the container it is about to declare or the two fight over the host port. The
+            // The same hand-off for postgres: seed-postgres started it by hand, and the stack has
+            // to own the server it is about to declare or two of them write one cluster. The
             // recreate keeps the data — the volume is the cluster — and it is env-safe, because
             // POSTGRES_PASSWORD applies at initdb only and this cluster is already initialised.
             //
-            // Asking for the ALIAS is what makes this leave a deployed postgres alone: the
-            // deployer names its own containers qits-pd-…, so a name this test matches was started
-            // by hand and by this run.
+            // Asking for the ALIAS is what makes this leave a deployed postgres alone: the deployer
+            // names its own containers qits-pd-…, and a stack names its own <stack>_<service>.<n>.…
+            // — so a container answering to the bare alias was started by hand and by this run.
             String postgres = PlatformModel.wireAlias("oci-postgresql", boot.config.envName());
             if (boot.docker.allNames().contains(postgres)) {
-                ctx.log("  handing the seed postgres over to compose, from the same volume");
+                ctx.log("  handing the seed postgres over to the stack, from the same volume");
                 boot.docker.removeContainer(postgres, ctx::log);
             }
-            // Only what the deployer does not already manage: a compose service whose application
-            // has a live deployed container must NOT be resurrected next to it — the deployer's own
-            // container included, once a self-update handoff has made it one of its own
-            // deployments.
-            //
-            // A compose service is keyed by its wire alias, so that is what is named on the command
-            // line — the same string the deployed container answers to.
-            List<String> running = boot.docker.runningNames();
-            List<String> up = new ArrayList<>();
-            for (String name : PlatformModel.CORE) {
-                String prefix = PlatformModel.pdNamePrefix(name, boot.config.envName());
-                String alias = PlatformModel.wireAlias(name, boot.config.envName());
-                if (running.stream().anyMatch(container -> container.startsWith(prefix))) {
-                    ctx.log("  " + alias + " is deployer-managed — compose leaves it alone");
-                } else {
-                    up.add(alias);
-                }
+            SeedPlan plan = seedPlan(boot.docker.runningNames(), boot.docker.serviceNames(),
+                    boot.config.envName());
+            plan.managed().forEach(alias ->
+                    ctx.log("  " + alias + " is deployer-managed — the stack leaves it alone"));
+            if (!plan.stale().isEmpty()) {
+                // AND REMOVING THEM IS THE SWARM-SHAPED HALF OF THAT RULE. A compose sibling stayed
+                // down once the deployer's cutover removed its container; a SERVICE's task is
+                // restarted by swarm within seconds, so a seed service left standing beside a
+                // deployed container is not idle — it is a second holder of the alias, for good.
+                ctx.log("  removing " + String.join(", ", plan.stale())
+                        + ": the deployer manages those applications now");
+                Boot.must(boot.docker.serviceRm(plan.stale(), ctx::log),
+                        "removing the superseded seed services failed");
             }
-            if (up.isEmpty()) {
-                ctx.log("  the whole seed is deployer-managed — compose has nothing to start");
+            if (plan.deploy().isEmpty()) {
+                ctx.log("  the whole seed is deployer-managed — nothing to deploy");
                 ctx.note("nothing to start");
                 return;
             }
-            List<String> command = new ArrayList<>(List.of("compose", "-p", "qits", "-f",
-                    boot.state.composeFile.toString(), "up", "-d"));
-            command.addAll(up);
-            Boot.must(boot.docker.exec(Duration.ofMinutes(30), ctx::log,
-                    command.toArray(String[]::new)), "compose up failed");
-            ctx.note(String.join(" ", up));
+            Boot.must(boot.docker.stackDeploy(stackFile(ctx, plan.deploy()), Docker.STACK,
+                    Duration.ofMinutes(30), ctx::log), "docker stack deploy failed");
+            ctx.note(String.join(" ", plan.deploy()));
         });
+    }
+
+    /**
+     * What this run deploys, what it leaves alone, and what it takes away — decided from the
+     * container list and the service list together, because the platform has both shapes on it.
+     *
+     * @param deploy  the wire aliases to deploy, which are the stack file's own service keys
+     * @param managed the applications a qits-pd-… container is already running
+     * @param stale   seed SERVICES of those same applications, which must go
+     */
+    record SeedPlan(List<String> deploy, List<String> managed, List<String> stale) {
+    }
+
+    /**
+     * <b>Never a seed service beside a deployed container.</b> That is the rule every
+     * {@code depends_on} was left out of the stack file for, and it is why this program asks what
+     * is running before it deploys anything.
+     * <p>
+     * The question is asked of the CONTAINER list, because a deployment is still a
+     * {@code docker run} container named {@code qits-pd-<env>-<app>-<id8>}, and answered into the
+     * SERVICE list, because the seed is a stack now and a service outlives the container it was
+     * asked about.
+     */
+    static SeedPlan seedPlan(List<String> running, List<String> services, String envName) {
+        List<String> deploy = new ArrayList<>();
+        List<String> managed = new ArrayList<>();
+        List<String> stale = new ArrayList<>();
+        for (String name : PlatformModel.CORE) {
+            String prefix = PlatformModel.pdNamePrefix(name, envName);
+            String alias = PlatformModel.wireAlias(name, envName);
+            if (running.stream().noneMatch(container -> container.startsWith(prefix))) {
+                deploy.add(alias);
+                continue;
+            }
+            managed.add(alias);
+            String qualified = Docker.stackService(Docker.STACK, alias);
+            services.stream()
+                    .filter(service -> service.equals(qualified) || service.equals(alias))
+                    .forEach(stale::add);
+        }
+        return new SeedPlan(List.copyOf(deploy), List.copyOf(managed), List.copyOf(stale));
+    }
+
+    /**
+     * The file this run deploys: the generated one when the whole seed is this run's to start, and
+     * a subset of it when some of the seed is the deployer's.
+     * <p>
+     * {@code docker stack deploy} takes no service list, so the choice is made in the file — see
+     * {@link eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate#only}. The whole file stays
+     * where it was written, because it is what the platform's seed IS; the subset is a working
+     * file of this phase and says so in its name.
+     */
+    private Path stackFile(PhaseContext ctx, List<String> deploy) throws IOException {
+        Path whole = boot.state.composeFile;
+        if (deploy.size() == PlatformModel.CORE.size()) {
+            return whole;
+        }
+        Path subset = whole.resolveSibling("docker-stack.qits.partial.yml");
+        Files.deleteIfExists(subset);
+        Files.writeString(subset, ComposeTemplate.only(
+                Files.readString(whole, StandardCharsets.UTF_8), deploy), StandardCharsets.UTF_8);
+        ctx.log("  " + subset.getFileName() + ": " + deploy.size() + " of "
+                + PlatformModel.CORE.size() + " services, the rest being deployer-managed");
+        return subset;
     }
 
     /**
@@ -1298,11 +1358,15 @@ public class PipelinePhases {
                         + "cannot know).");
                 report.add("tls:       the edge holds a PLACEHOLDER certificate — browsers reject "
                         + "it. Issue the real one");
-                report.add("           from this host, staging while we trial it:");
+                report.add("           from a container on qits-net, staging while we trial it:");
                 report.add("             quarkus tls lets-encrypt issue-certificate --staging "
                         + "--domain=" + domain + " \\");
                 report.add("               --email=<operator> "
-                        + "--management-url=http://localhost:9000");
+                        + "--management-url=http://qits-platform-edge:9000");
+                report.add("           The management port is NOT published: it is unauthenticated "
+                        + "and a publish cannot be");
+                report.add("           loopback-only under swarm, so it is reachable on qits-net "
+                        + "and nowhere else.");
                 report.add("           Renewal is renew-certificate with the same management URL. "
                         + "The PEMs land in the");
                 report.add("           qits-edge-letsencrypt volume under the same two filenames "

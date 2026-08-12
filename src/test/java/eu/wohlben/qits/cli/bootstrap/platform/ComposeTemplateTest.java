@@ -14,7 +14,7 @@ class ComposeTemplateTest {
     private static final String ENV = "prod";
     private static final String DOMAIN = "qits-dev.eu";
 
-    private static Map<String, String> tokens() {
+    static Map<String, String> tokens() {
         Map<String, String> values = new LinkedHashMap<>();
         values.put("ENV_NAME", ENV);
         values.put("ENV_KEY", PlatformModel.clientKey(ENV));
@@ -56,18 +56,40 @@ class ComposeTemplateTest {
     }
 
     /** The same values with a domain configured. */
-    private static Map<String, String> tokens(String domain) {
+    static Map<String, String> tokens(String domain) {
         Map<String, String> values = tokens();
         values.putAll(DomainTokens.of(Optional.of(domain)));
         return values;
     }
 
-    /** One service's own lines, so an assertion about what it does NOT carry means that service. */
-    private static String serviceBlock(String compose, String container) {
-        int start = compose.indexOf("container_name: " + container);
-        assertThat(start).isNotNegative();
-        int next = compose.indexOf("container_name: ", start + 1);
-        return next < 0 ? compose.substring(start) : compose.substring(start, next);
+    /**
+     * One service's own lines, so an assertion about what it does NOT carry means that service.
+     * <p>
+     * Keyed by the service NAME, which is all a stack file has: {@code container_name} is gone
+     * with the move off compose, and the key is the wire alias every peer dials anyway.
+     */
+    static String serviceBlock(String stack, String service) {
+        StringBuilder block = new StringBuilder();
+        boolean inside = false;
+        for (String line : stack.lines().toList()) {
+            if (isServiceKey(line)) {
+                if (inside) {
+                    break;
+                }
+                inside = line.equals("  " + service + ":");
+            }
+            if (inside) {
+                block.append(line).append('\n');
+            }
+        }
+        assertThat(block.toString()).as("the block of %s", service).isNotEmpty();
+        return block.toString();
+    }
+
+    /** Two spaces, a name, a colon and nothing after it. A comment is not one. */
+    private static boolean isServiceKey(String line) {
+        return line.startsWith("  ") && !line.startsWith("   ") && !line.startsWith("  #")
+                && line.endsWith(":");
     }
 
     private static final String EXTRAS = "qits.platform.deployments.extras.";
@@ -100,15 +122,14 @@ class ComposeTemplateTest {
     void fillsEveryPlaceholderOfTheComposeFile() {
         String compose = ComposeTemplate.compose(tokens());
 
-        assertThat(compose).contains("- \"8080:8080\"");
-        assertThat(compose).contains("- \"127.0.0.1:8081:8080\"");
+        assertThat(compose).contains("published: 8080");
+        assertThat(compose).contains("published: 8081");
         assertThat(compose).contains("QITS_IDP_ISSUER: http://qits-platform-idp:8080/idp");
         assertThat(compose).contains(
                 "QITS_IDP_CLIENT_PROD_QITS_CI_SECRET: \"secret-prod-qits-ci\"");
-        assertThat(compose).contains("group_add: [\"988\"]");
+        assertThat(compose).contains("user: \"1001:988\"");
         assertThat(compose).contains("QITS_CI_DAEMON_VERSION: \"abc123\"");
         assertThat(compose).doesNotContain("${PORT}");
-        assertThat(compose).doesNotContain("${PG_PORT}");
         assertThat(compose).doesNotContain("${DNS_PORT}");
         assertThat(compose).doesNotContain("${PG_SUPERUSER_PASSWORD}")
                 .doesNotContain("${PG_DEPLOYMENTS_PASSWORD}")
@@ -147,19 +168,20 @@ class ComposeTemplateTest {
     void everySeedServiceIsInTheStackUnderTheNameItsPeersDial() {
         String compose = ComposeTemplate.compose(tokens());
 
+        // The service KEY is the name now: a stack ignores container_name, and what a peer
+        // resolves is the service — under qits_<alias> and under the bare alias both.
         for (String name : PlatformModel.CORE) {
-            assertThat(compose)
-                    .contains("container_name: " + PlatformModel.wireAlias(name, ENV));
+            assertThat(compose).contains("\n  " + PlatformModel.wireAlias(name, ENV) + ":\n");
         }
         // One component replaced both: neither ancestor is in the seed any more.
-        assertThat(compose).doesNotContain("container_name: qits-cd")
-                .doesNotContain("container_name: qits-serviceregistry");
+        assertThat(compose).doesNotContain("\n  qits-cd:\n")
+                .doesNotContain("\n  qits-serviceregistry:\n");
         // And no seed carries a pre-rename name, which nothing would resolve.
-        assertThat(compose).doesNotContain("container_name: qits-idp")
-                .doesNotContain("container_name: qits-platform-deployments")
+        assertThat(compose).doesNotContain("\n  qits-idp:\n")
+                .doesNotContain("\n  qits-platform-deployments:\n")
                 // The byte-plane split retired this one: the store is an environment service, so a
-                // seed under the bare name is a container nothing on this platform dials.
-                .doesNotContain("container_name: qits-platform-artifacts");
+                // seed under the bare name is a service nothing on this platform dials.
+                .doesNotContain("\n  qits-platform-artifacts:\n");
     }
 
     @Test
@@ -168,7 +190,7 @@ class ComposeTemplateTest {
         String edge = serviceBlock(compose, "qits-platform-edge");
         String gateway = serviceBlock(compose, ENV + "-qits-gateway");
 
-        assertThat(edge).contains("- \"8080:8080\"");
+        assertThat(edge).contains("published: 8080").contains("mode: host");
         assertThat(edge).contains("QITS_EDGE_ENVIRONMENTS: prod")
                 .contains("QITS_EDGE_DEFAULT_ENVIRONMENT: prod")
                 .contains("QITS_EDGE_UPSTREAM_HOST_PATTERN: \"{env}-qits-gateway\"");
@@ -271,7 +293,7 @@ class ComposeTemplateTest {
         // The hosted store keeps the registry port and the file H2 it always had; only its name
         // and its plane moved.
         assertThat(compose).contains("image: qits/artifacts:latest");
-        assertThat(artifacts).contains("- \"127.0.0.1:8081:8080\"")
+        assertThat(artifacts).contains("published: 8081")
                 .contains("QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL: "
                         + "jdbc:h2:file:/data/artifacts/h2/artifacts")
                 .contains("- qits-artifacts-data:/data")
@@ -281,7 +303,7 @@ class ComposeTemplateTest {
 
         // The caches: a platform service, its own database, its own published door.
         assertThat(compose).contains("image: qits/platform-mirror:latest");
-        assertThat(mirror).contains("- \"127.0.0.1:8082:8080\"")
+        assertThat(mirror).contains("published: 8082")
                 .contains("QITS_RESOURCE_DB_URL: "
                         + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_platform_mirror")
                 .contains("QITS_RESOURCE_DB_PASSWORD: \"1234123412341234\"")
@@ -292,7 +314,7 @@ class ComposeTemplateTest {
 
         // The git host: two stores, because the outbox is a lineage of its own.
         assertThat(compose).contains("image: qits/githost:latest");
-        assertThat(githost).contains("- \"127.0.0.1:8083:8080\"")
+        assertThat(githost).contains("published: 8083")
                 .contains("QITS_RESOURCE_DB_URL: "
                         + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_githost")
                 .contains("QITS_RESOURCE_EVENTSTREAM_URL: "
@@ -495,9 +517,10 @@ class ComposeTemplateTest {
                 .contains("QITS_AUTH_MACHINE_REQUIRED: \"true\"")
                 .contains("QUARKUS_OIDC_AUTH_SERVER_URL: http://qits-platform-idp:8080/idp")
                 .doesNotContain("QUARKUS_OIDC_CLIENT_");
-        // The socket and the group, in the seed. No data volume: the store is the postgres beside
-        // it and nothing it writes outlives the container.
-        assertThat(block).contains("group_add: [\"988\"]")
+        // The socket and the group, in the seed — the group as the PRIMARY one, because
+        // group_add is a key a stack file refuses. No data volume: the store is the postgres
+        // beside it and nothing it writes outlives the container.
+        assertThat(block).contains("user: \"1001:988\"")
                 .contains("- /var/run/docker.sock:/var/run/docker.sock");
         assertThat(compose).doesNotContain("qits-containers-data:");
 
@@ -645,11 +668,11 @@ class ComposeTemplateTest {
         assertThat(extras("qits-artifacts")).contains(".publishes[0]=0.0.0.0:8081:8080");
         assertThat(extras("qits-platform-mirror")).contains(".publishes[0]=0.0.0.0:8082:8080");
         assertThat(extras("qits-githost")).contains(".publishes[0]=0.0.0.0:8083:8080");
-        // And the one whose only consumer was this CLI's cold-boot DDL, which dials the wire alias.
-        // The seed compose keeps its loopback bind; the deployed container publishes nothing.
+        // And the one whose only consumer was this CLI's cold-boot DDL, which dials the wire
+        // alias. Neither file publishes it any more, in the seed or in the deployment.
         assertThat(extras("qits-oci-postgresql")).doesNotContain(".publishes[");
         assertThat(ComposeTemplate.extras(tokens())).doesNotContain(":5433:5432");
-        assertThat(ComposeTemplate.compose(tokens())).contains("- \"127.0.0.1:5433:5432\"");
+        assertThat(ComposeTemplate.compose(tokens())).doesNotContain("5433");
     }
 
     /**
@@ -714,10 +737,11 @@ class ComposeTemplateTest {
         // The mount, not the comment beside it, which names the wrong path on purpose.
         assertThat(block).contains("- qits-oci-postgresql-data:/var/lib/postgresql\n")
                 .doesNotContain("- qits-oci-postgresql-data:/var/lib/postgresql/data");
-        assertThat(block).contains("- \"127.0.0.1:5433:5432\"");
+        // It publishes nothing: every consumer dials the alias on 5432, this CLI included.
+        assertThat(block).doesNotContain("ports:");
         assertThat(block).contains("POSTGRES_PASSWORD: \"0123456789abcdef\"");
         assertThat(block).contains("pg_isready -U postgres");
-        assertThat(block).contains("restart: unless-stopped");
+        assertThat(block).contains("restart_policy:");
         // No depends_on anywhere: a dependency would resurrect a compose sibling beside its
         // deployed replacement. The deployer's refuse-to-boot and restart policy are the retry.
         // The comments that say so are not one.
@@ -905,7 +929,8 @@ class ComposeTemplateTest {
         assertThat(compose).contains("image: qits/platform-dns:latest");
         // TCP is not the optional half: a truncated UDP answer carries ZERO records, so the client's
         // TCP retry is the only way it ever gets one.
-        assertThat(block).contains("- \"53:8053/udp\"").contains("- \"53:8053/tcp\"");
+        assertThat(block).contains("protocol: udp").contains("protocol: tcp")
+                .contains("published: 53").contains("mode: host");
         assertThat(block).contains("QITS_RESOURCE_DB_URL: "
                         + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_platform_dns")
                 .contains("QITS_RESOURCE_DB_USERNAME: qits_platform_dns")
@@ -990,12 +1015,13 @@ class ComposeTemplateTest {
         String edge = serviceBlock(compose, "qits-platform-edge");
         String edgeExtras = extras("qits-platform-edge", tokens(DOMAIN));
 
-        // The host's own port stays; 80 is the ACME challenge, 443 the TLS listener, and 9000 the
-        // management interface on LOOPBACK — the challenge-management endpoint is unauthenticated.
-        assertThat(edge).contains("- \"8080:8080\"")
-                .contains("- \"80:8080\"")
-                .contains("- \"443:8443\"")
-                .contains("- \"127.0.0.1:9000:9000\"");
+        // The host's own port stays; 80 is the ACME challenge and 443 the TLS listener. The
+        // management interface is NOT published: it is unauthenticated, and a swarm publish has no
+        // ip field to keep it on loopback with.
+        assertThat(edge).contains("published: 8080")
+                .contains("published: 80")
+                .contains("published: 443")
+                .doesNotContain("published: 9000");
         assertThat(edge).contains(
                         "QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT: /work/.letsencrypt/lets-encrypt.crt")
                 .contains("QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY: /work/.letsencrypt/lets-encrypt.key")
@@ -1026,7 +1052,7 @@ class ComposeTemplateTest {
         other.put("ENV_KEY", "PREPROD");
 
         assertThat(ComposeTemplate.compose(other))
-                .contains("container_name: preprod-qits-ci")
+                .contains("\n  preprod-qits-ci:\n")
                 .contains("QITS_EDGE_ENVIRONMENTS: preprod")
                 .contains("QITS_IDP_CLIENT_PREPROD_QITS_CI_SECRET");
         assertThat(ComposeTemplate.extras(other))
