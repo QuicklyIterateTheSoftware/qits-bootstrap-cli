@@ -306,9 +306,18 @@ public class SeedPhases {
      * <p>
      * <b>This phase also decides WHICH COMMIT of each source the boot means</b>, and that is the
      * second half of the same job: fetching the history and standing on the wrong part of it are
-     * one mistake. In a restore — the default — every checkout is left detached at its newest
-     * release tag, which is the very commit the deploy phase will move the deploy ref to.
-     * {@code --ship-mains} leaves them all on main, as this program always did.
+     * one mistake. In a restore — the default — a checkout whose output carries VERSION IDENTITY is
+     * left detached at its newest release tag, which is the very commit the deploy phase will move
+     * the deploy ref to. {@code --ship-mains} leaves everything on main, as this program always did.
+     * <p>
+     * <b>Version identity is the scope, and it is narrower than "seeded".</b> A deployable and a
+     * release publisher each have a last release the platform can state and consumers pin;
+     * everything else in {@code SEEDED_REPOS} — qits-oci's step-image sources, the SPA seed sources
+     * — is rebuilt from source every boot and pinned by nobody, so its tags go stale unnoticed and
+     * main is its only meaningful identity. Measured: qits-oci's newest tag was three days behind
+     * main and predated the passwd-backed {@code build} user its step images grew when steps
+     * stopped running as root, so the seed maven-base built from it could not launch a step
+     * declaring {@code user: build} — phase 65 of the first scoped-boot run.
      * <p>
      * <b>ONE IDENTITY PER BOOT, and it is not a tidiness argument.</b> The seed containers are
      * scaffolding, but they are scaffolding that TOUCHES THE PLATFORM'S DATA: a seed built from
@@ -319,11 +328,10 @@ public class SeedPhases {
      * was unpicked by hand. Seed and successor must agree about the version, so they are built
      * from one commit.
      * <p>
-     * A repository with no release tag stays on main and says so. Most of them are the SEEDED_REPOS
-     * that are nobody's deployable — the SPA repos, qits-oci — and a repository nobody has released
-     * has no released state to stand at. The warning for that case belongs to the deploy phase,
-     * where the consequence is: unreleased code being DEPLOYED. Here it is a log line, so a boot
-     * whose SPA repos have no tags is not a boot that exits nonzero for it.
+     * A repository in scope with no release tag stays on main too, and says so. The warning for
+     * that case belongs to the deploy phase, where the consequence is: unreleased code being
+     * DEPLOYED. Here it is a log line, so a boot whose sources are simply young is not a boot that
+     * exits nonzero for it.
      */
     public Phase sources() {
         return new Phase("sources", "clone or refresh the platform's sources", ctx -> {
@@ -366,7 +374,7 @@ public class SeedPhases {
                     ctx.status("cloning " + repo + " from " + from);
                     Boot.must(boot.git.clone(from, target, ctx::log), "clone of " + repo + " failed");
                 }
-                String identity = bootIdentity(boot.config.shipMains(),
+                String identity = bootIdentity(boot.config.shipMains(), name,
                         boot.git.tagsNewestFirst(target, "main"));
                 if (!identity.isEmpty()) {
                     ctx.status("standing " + repo + " at " + identity);
@@ -390,11 +398,21 @@ public class SeedPhases {
      * <p>
      * The same answer the deploy phase's {@code deployPoint} builds on — {@link
      * PlatformModel#newestRelease} is the one place that decides which tag is a release — so the
-     * seed image and the successor that replaces it are the same code. Empty means main, which is
-     * both {@code --ship-mains} and a repository that has never been released.
+     * seed image and the successor that replaces it are the same code. Empty means main, and three
+     * different things answer empty: {@code --ship-mains}, a repository that has never been
+     * released, and a repository whose output carries no version identity at all.
+     * <p>
+     * <b>That last one is the scope, and it was learned the hard way.</b> Only a deployable or a
+     * release publisher has a "last release" the platform can state — see
+     * {@link PlatformModel#carriesVersionIdentity}. The step-image sources and the SPA seed sources
+     * are rebuilt from source every boot and pinned by nobody, so their tags are stale by
+     * construction: qits-oci's newest tag predated the {@code build} user its step images grew, and
+     * a maven-base built from it could not launch a step that declares {@code user: build}.
      */
-    static String bootIdentity(boolean shipMains, List<String> tagsNewestFirst) {
-        return shipMains ? "" : PlatformModel.newestRelease(tagsNewestFirst);
+    static String bootIdentity(boolean shipMains, String name, List<String> tagsNewestFirst) {
+        return shipMains || !PlatformModel.carriesVersionIdentity(name)
+                ? ""
+                : PlatformModel.newestRelease(tagsNewestFirst);
     }
 
     /**

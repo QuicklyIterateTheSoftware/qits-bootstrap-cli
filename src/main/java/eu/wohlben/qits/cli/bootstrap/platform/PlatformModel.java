@@ -495,6 +495,31 @@ public final class PlatformModel {
         return clientId.toUpperCase().replace('-', '_');
     }
 
+    /**
+     * Does this repository's output carry VERSION IDENTITY on the platform? Only those are stood at
+     * a release tag by a restoring boot; every other source stays on main in both modes.
+     * <p>
+     * The two sets are the ones already declared above, and that is the whole rule: a
+     * {@link #DEPLOYABLES} entry becomes a deployed container the deploy ref names a commit for,
+     * and a {@link #RELEASE_PUBLISHERS} entry becomes a registry coordinate somebody pins. For both,
+     * "the last release" is a fact the platform can state, and a seed that disagrees with it breaks
+     * the successor — qits-ci's seed applied a migration its released binary had never heard of and
+     * left it crash-looping.
+     * <p>
+     * <b>Everything else in {@link #SEEDED_REPOS} has no such fact, and pinning it to a tag is
+     * actively wrong.</b> Measured on the first scoped-boot run: qits-oci's newest tag was three
+     * days old and predated the passwd-backed {@code build} user its step images grew when steps
+     * stopped running as root, so a maven-base seed-built from that tag could not launch a step
+     * declaring {@code user: build} — "unable to find user build: no matching entries in passwd
+     * file", phase 65. Step images are consumed by bare local tag and rebuilt from source every
+     * boot, so nothing pins a version of them and main is their only meaningful identity. The SPA
+     * sources are the same shape: they feed a placeholder bundle into a seed image, and the real
+     * client is built by the pipeline afterwards.
+     */
+    public static boolean carriesVersionIdentity(String name) {
+        return DEPLOYABLES.contains(name) || RELEASE_PUBLISHERS.contains(name);
+    }
+
     /** A release version on this platform: CalVer, which is digits and dots. */
     private static final Pattern CALVER = Pattern.compile("[0-9][0-9.]*");
 
