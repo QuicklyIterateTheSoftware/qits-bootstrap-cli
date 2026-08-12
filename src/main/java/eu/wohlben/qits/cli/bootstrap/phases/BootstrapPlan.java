@@ -133,7 +133,7 @@ public final class BootstrapPlan {
         // One placement per arm, each the earliest point that arm needs.
         phases.add(seed.idpSecrets());
         phases.add(seed.composeFile());
-        phases.add(seed.pdRunArgs());
+        phases.add(seed.pdExtras());
         // BEFORE the edge is started with a keystore, which is what the next phase does: a keystore
         // naming files that do not exist fails startup, so the volume has to hold a certificate
         // first. Only with a domain — without one the edge has no keystore at all.

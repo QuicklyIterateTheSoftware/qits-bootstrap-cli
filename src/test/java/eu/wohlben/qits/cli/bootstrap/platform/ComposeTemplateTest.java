@@ -70,22 +70,30 @@ class ComposeTemplateTest {
         return next < 0 ? compose.substring(start) : compose.substring(start, next);
     }
 
-    /** Every generated run-args line, without the comments that explain them. */
-    private static List<String> runArgsLines() {
-        return ComposeTemplate.runArgs(tokens()).lines()
-                .filter(line -> line.startsWith("qits.platform.deployments.run-args."))
+    private static final String EXTRAS = "qits.platform.deployments.extras.";
+
+    /** Every generated extras key, without the comments that explain them. */
+    private static List<String> extrasKeys() {
+        return extrasKeys(tokens());
+    }
+
+    private static List<String> extrasKeys(Map<String, String> values) {
+        return ComposeTemplate.extras(values).lines()
+                .filter(line -> line.startsWith(EXTRAS))
                 .toList();
     }
 
-    private static String runArgsLine(String application) {
-        return runArgsLine(application, tokens());
+    /** One application's own keys — the trailing dot is what keeps a sibling's out. */
+    private static String extras(String application) {
+        return extras(application, tokens());
     }
 
-    private static String runArgsLine(String application, Map<String, String> values) {
-        return ComposeTemplate.runArgs(values).lines()
-                .filter(line -> line.startsWith(
-                        "qits.platform.deployments.run-args." + application + "="))
-                .findFirst().orElseThrow();
+    private static String extras(String application, Map<String, String> values) {
+        String block = extrasKeys(values).stream()
+                .filter(line -> line.startsWith(EXTRAS + application + "."))
+                .reduce("", (all, line) -> all.isEmpty() ? line : all + "\n" + line);
+        assertThat(block).as("extras of %s", application).isNotEmpty();
+        return block;
     }
 
     @Test
@@ -166,8 +174,8 @@ class ComposeTemplateTest {
                 .contains("QITS_EDGE_UPSTREAM_HOST_PATTERN: \"{env}-qits-gateway\"");
         // Two binders for one port is a conflict that only shows up on the second cutover.
         assertThat(gateway).doesNotContain("ports:");
-        assertThat(runArgsLine("qits-platform-edge")).contains("-p 8080:8080");
-        assertThat(runArgsLine("qits-gateway")).doesNotContain("-p ");
+        assertThat(extras("qits-platform-edge")).contains(".publishes[0]=8080:8080");
+        assertThat(extras("qits-gateway")).doesNotContain(".publishes[");
     }
 
     @Test
@@ -230,21 +238,21 @@ class ComposeTemplateTest {
                 .contains("QITS_AUTH_MACHINE_AUDIENCE: prod-qits-artifacts")
                 .doesNotContain("QUARKUS_OIDC_CLIENT_");
 
-        assertThat(runArgsLine("qits-ci"))
-                .contains("-e QITS_AUTH_MACHINE_AUDIENCE=prod-qits-ci")
-                .contains("-e QUARKUS_OIDC_CLIENT_CLIENT_ID=prod-qits-ci")
-                .contains("-e QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE="
+        assertThat(extras("qits-ci"))
+                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-ci")
+                .contains("env.QUARKUS_OIDC_CLIENT_CLIENT_ID=prod-qits-ci")
+                .contains("env.QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE="
                         + "prod-qits-containers");
-        assertThat(runArgsLine("qits-deployments"))
-                .contains("-e QITS_AUTH_MACHINE_AUDIENCE=prod-qits-deployments");
-        assertThat(runArgsLine("qits-artifacts"))
-                .contains("-e QITS_AUTH_MACHINE_AUDIENCE=prod-qits-artifacts")
+        assertThat(extras("qits-deployments"))
+                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-deployments");
+        assertThat(extras("qits-artifacts"))
+                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-artifacts")
                 .doesNotContain("QUARKUS_OIDC_CLIENT_");
         // Neither new byte service holds an identity: the mirror has no auth surface at all, and
         // the git host validates a push option rather than a token.
-        assertThat(runArgsLine("qits-platform-mirror")).doesNotContain("QITS_AUTH_MACHINE_")
+        assertThat(extras("qits-platform-mirror")).doesNotContain("QITS_AUTH_MACHINE_")
                 .doesNotContain("QUARKUS_OIDC_");
-        assertThat(runArgsLine("qits-githost")).doesNotContain("QITS_AUTH_MACHINE_")
+        assertThat(extras("qits-githost")).doesNotContain("QITS_AUTH_MACHINE_")
                 .doesNotContain("QUARKUS_OIDC_");
     }
 
@@ -311,9 +319,9 @@ class ComposeTemplateTest {
     @Test
     void hostedContentIsTheStoreAndThirdPartyContentIsTheMirror() {
         String ci = serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-ci");
-        String runArgs = runArgsLine("qits-ci");
+        String ciExtras = extras("qits-ci");
 
-        for (String block : new String[]{ci.replace(": ", "="), runArgs}) {
+        for (String block : new String[]{ci.replace(": ", "="), ciExtras}) {
             assertThat(block).contains(
                             "QITS_ARTIFACTS_NPM_HOSTED_URL=http://prod-qits-artifacts:8080"
                                     + "/artifacts/npm/npm/")
@@ -326,10 +334,10 @@ class ComposeTemplateTest {
         }
         // The publish target is the HOSTED registry and never the mirror: a publish step pushes the
         // platform's own image, and the mirror takes no writes at all.
-        assertThat(runArgs).contains("-e QITS_ARTIFACTS_REGISTRY_HOST=localhost:8081");
+        assertThat(ciExtras).contains("env.QITS_ARTIFACTS_REGISTRY_HOST=localhost:8081");
         // The docs reader is handed the same address ci injects, so the two cannot disagree.
-        assertThat(runArgsLine("qits-docs")).contains(
-                "-e QITS_DOCS_ARTIFACTS_URL=http://prod-qits-artifacts:8080/artifacts/docs/docs");
+        assertThat(extras("qits-docs")).contains(
+                "env.QITS_DOCS_ARTIFACTS_URL=http://prod-qits-artifacts:8080/artifacts/docs/docs");
     }
 
     /**
@@ -346,24 +354,24 @@ class ComposeTemplateTest {
         assertThat(serviceBlock(compose, ENV + "-qits-ci"))
                 .contains("QITS_CI_GIT_HOST_URL: " + host)
                 .contains("QITS_CI_CONTAINER_GIT_URL: " + host);
-        assertThat(runArgsLine("qits-ci")).contains("-e QITS_CI_GIT_HOST_URL=" + host)
-                .contains("-e QITS_CI_CONTAINER_GIT_URL=" + host);
+        assertThat(extras("qits-ci")).contains("env.QITS_CI_GIT_HOST_URL=" + host)
+                .contains("env.QITS_CI_CONTAINER_GIT_URL=" + host);
         // The two services that push. Their key was renamed with the split — a deployment still
         // passing qits.artifacts.url configures nothing and silently takes the default.
-        assertThat(runArgsLine("qits-projects")).contains("-e QITS_GITHOST_URL=" + host)
-                .contains("-e QITS_PROJECTS_AGENT_GIT_BASE=" + host + "/git")
+        assertThat(extras("qits-projects")).contains("env.QITS_GITHOST_URL=" + host)
+                .contains("env.QITS_PROJECTS_AGENT_GIT_BASE=" + host + "/git")
                 .doesNotContain("QITS_ARTIFACTS_URL");
-        assertThat(runArgsLine("qits-workspaces")).contains("-e QITS_GITHOST_URL=" + host)
+        assertThat(extras("qits-workspaces")).contains("env.QITS_GITHOST_URL=" + host)
                 .doesNotContain("QITS_ARTIFACTS_URL");
         // The deployer's OWN address for the same host — a plain property, because this file is its
         // configuration. Its shipped default is the pre-split qits-platform-artifacts, and this read
         // is how a green build becomes a deployment: without the line every build-succeeded event
         // dies on a connect timeout and nothing deploys.
-        assertThat(ComposeTemplate.runArgs(tokens()))
+        assertThat(ComposeTemplate.extras(tokens()))
                 .contains("\nqits.platform.deployments.git-host-url=" + host + "\n");
-        // The LINES, not the comments: the git host's own line says in prose where its clone url
+        // The KEYS, not the comments: the git host's own block says in prose where its clone url
         // used to be, and that sentence is why the reader knows what moved.
-        assertThat(runArgsLines()).allSatisfy(line -> assertThat(line)
+        assertThat(extrasKeys()).allSatisfy(line -> assertThat(line)
                 .doesNotContain("/artifacts/git"));
     }
 
@@ -390,7 +398,7 @@ class ComposeTemplateTest {
         assertThat(compose).contains("QITS_GATEWAY_PROXY_HOSTS_MIRROR: qits-platform-mirror");
         assertThat(compose).doesNotContain("QITS_GATEWAY_PROXY_HOSTS_CD:")
                 .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_GIT:");
-        assertThat(runArgsLine("qits-gateway"))
+        assertThat(extras("qits-gateway"))
                 .contains("QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS=prod-qits-deployments")
                 .contains("QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=prod-qits-artifacts")
                 .contains("QITS_GATEWAY_PROXY_HOSTS_DOCS=prod-qits-docs")
@@ -415,13 +423,13 @@ class ComposeTemplateTest {
         String compose = ComposeTemplate.compose(tokens());
 
         assertThat(compose).doesNotContain("QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL:");
-        assertThat(runArgsLine("qits-ci")).doesNotContain("QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL");
-        assertThat(ComposeTemplate.runArgs(tokens()))
-                .doesNotContain("-e QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL=");
+        assertThat(extras("qits-ci")).doesNotContain("QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL");
+        assertThat(ComposeTemplate.extras(tokens()))
+                .doesNotContain("env.QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL=");
 
         assertThat(serviceBlock(compose, ENV + "-qits-ci"))
                 .contains("QITS_EVENTS_URL: http://prod-qits-events:8080");
-        assertThat(runArgsLine("qits-ci")).contains("-e QITS_EVENTS_URL=http://prod-qits-events:8080");
+        assertThat(extras("qits-ci")).contains("env.QITS_EVENTS_URL=http://prod-qits-events:8080");
     }
 
     /**
@@ -443,13 +451,13 @@ class ComposeTemplateTest {
                 .contains("QITS_RESOURCE_DB_USERNAME: qits_events")
                 .contains("QITS_RESOURCE_DB_PASSWORD: \"bbbbccccddddeeee\"");
         // No volume and no machine auth: the store is the postgres beside it, and this service
-        // enforces no gate — which is why its run-args line carries neither either.
+        // enforces no gate — which is why its extras carry neither either.
         assertThat(block).doesNotContain("volumes:")
                 .doesNotContain("QITS_AUTH_MACHINE_")
                 .doesNotContain("QUARKUS_OIDC_");
-        // The deployer injects the triple from `resources: postgresql:db`; a pin in the run-args
-        // would be appended after that injection and would outlive the next rotation.
-        assertThat(runArgsLine("qits-events")).doesNotContain("QITS_RESOURCE_");
+        // The deployer injects the triple from `resources: postgresql:db`; a pin here would be
+        // written after that injection and would outlive the next rotation.
+        assertThat(extras("qits-events")).doesNotContain("QITS_RESOURCE_");
     }
 
     /**
@@ -459,14 +467,14 @@ class ComposeTemplateTest {
      * deploy train.
      * <p>
      * The mount and the group have to be in BOTH files. The compose half is what the seed can do;
-     * the run-args half is what the deployer starts every successor with, and a socket missing there
+     * the extras half is what the deployer starts every successor with, and a socket missing there
      * is a cutover that leaves a service passing health and able to do nothing.
      */
     @Test
     void theOrchestratorIsInTheSeedWithItsTwoStoresAndKeepsTheSocketAcrossACutover() {
         String compose = ComposeTemplate.compose(tokens());
         String block = serviceBlock(compose, ENV + "-qits-containers");
-        String runArgs = runArgsLine("qits-containers");
+        String orchestrator = extras("qits-containers");
 
         assertThat(compose).contains("image: qits/containers:latest");
         // Two stores, two Flyway lineages: the registry of rows, and the eventstream outbox. Both
@@ -493,19 +501,22 @@ class ComposeTemplateTest {
                 .contains("- /var/run/docker.sock:/var/run/docker.sock");
         assertThat(compose).doesNotContain("qits-containers-data:");
 
-        // And in the run-args, which is the half that survives the first cutover.
-        assertThat(runArgs).contains("-v /var/run/docker.sock:/var/run/docker.sock")
-                .contains("--group-add 988")
-                .contains("-e QITS_EVENTS_URL=http://prod-qits-events:8080")
-                .contains("-e QITS_AUTH_MACHINE_AUDIENCE=prod-qits-containers")
-                .contains("-e QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp");
+        // And in the extras, which is the half that survives the first cutover. The mount says
+        // `bind` rather than leaving the kind to a leading slash: a mistyped path that fell back to
+        // a named volume would be an orchestrator with no socket and no error.
+        assertThat(orchestrator)
+                .contains(".mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock")
+                .contains(".groups[0]=988")
+                .contains("env.QITS_EVENTS_URL=http://prod-qits-events:8080")
+                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-containers")
+                .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp");
         // Both stores are declared in its deployments.yml, so the deployer injects the six
-        // variables — a pin here is appended after that injection and outlives the next rotation.
-        assertThat(runArgs).doesNotContain("QITS_RESOURCE_");
+        // variables — a pin here is written after that injection and outlives the next rotation.
+        assertThat(orchestrator).doesNotContain("QITS_RESOURCE_");
         // No gateway route, and there must not be one: every caller is a machine on qits-net, and a
         // route would put a socket-holding orchestrator behind the platform's public door.
         assertThat(compose).doesNotContain("QITS_GATEWAY_PROXY_HOSTS_CONTAINERS");
-        assertThat(runArgsLine("qits-gateway")).doesNotContain("CONTAINERS");
+        assertThat(extras("qits-gateway")).doesNotContain("CONTAINERS");
     }
 
     /**
@@ -524,23 +535,23 @@ class ComposeTemplateTest {
     void ciAsksTheOrchestratorForItsStepContainersAndHoldsNoSocket() {
         String compose = ComposeTemplate.compose(tokens());
         String ci = serviceBlock(compose, ENV + "-qits-ci");
-        String runArgs = runArgsLine("qits-ci");
+        String ciExtras = extras("qits-ci");
 
         // The wire alias, in both files: the image ships the unqualified qits-containers:8080,
         // which resolves to nothing on this network.
         assertThat(ci).contains("QITS_CONTAINERS_URL: http://prod-qits-containers:8080");
-        assertThat(runArgs).contains("-e QITS_CONTAINERS_URL=http://prod-qits-containers:8080");
+        assertThat(ciExtras).contains("env.QITS_CONTAINERS_URL=http://prod-qits-containers:8080");
 
         // And the grant that is gone. Not "no mount" alone — the socket group is the other half,
         // and either one without the other is a container that cannot use what it was given.
         assertThat(ci).doesNotContain("docker.sock").doesNotContain("group_add");
-        assertThat(runArgs).doesNotContain("docker.sock").doesNotContain("--group-add");
+        assertThat(ciExtras).doesNotContain("docker.sock").doesNotContain(".groups[");
 
         // The service that DOES hold it still does. This is a concentration, not a removal.
         assertThat(serviceBlock(compose, ENV + "-qits-containers"))
                 .contains("- /var/run/docker.sock:/var/run/docker.sock");
-        assertThat(runArgsLine("qits-containers"))
-                .contains("-v /var/run/docker.sock:/var/run/docker.sock");
+        assertThat(extras("qits-containers"))
+                .contains(".mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock");
     }
 
     /**
@@ -549,51 +560,96 @@ class ComposeTemplateTest {
      * It ships a default of {@code environment/prod}, so a platform bootstrapped under any other
      * name would silently promote every release onto a branch no environment listens to — the
      * release lands, CI never fires, nothing deploys, and no component reports an error. The
-     * run-arg is what stops that, and it is why the key belongs beside the env name rather than in
+     * generated key is what stops that, and it is why it belongs beside the env name rather than in
      * the image.
      */
     @Test
     void workspacesIsToldWhereAReleaseLands() {
-        assertThat(runArgsLine("qits-workspaces"))
-                .contains("-e QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/prod");
+        assertThat(extras("qits-workspaces"))
+                .contains("env.QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/prod");
 
         Map<String, String> staging = tokens();
         staging.put("ENV_NAME", "staging");
-        assertThat(ComposeTemplate.runArgs(staging))
-                .contains("-e QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/staging");
+        assertThat(ComposeTemplate.extras(staging))
+                .contains("env.QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/staging");
     }
 
     @Test
-    void runArgsCoverEveryApplicationThatNeedsMoreThanItsImage() {
-        String properties = ComposeTemplate.runArgs(tokens());
+    void theExtrasCoverEveryApplicationThatNeedsMoreThanItsImage() {
+        String properties = ComposeTemplate.extras(tokens());
 
         for (String application : new String[]{"qits-platform-edge", "qits-gateway",
                 "qits-artifacts", "qits-platform-mirror", "qits-githost", "qits-containers",
                 "qits-ci", "qits-deployments", "qits-platform-idp",
                 "qits-platform-dns", "qits-stt", "qits-projects", "qits-workspaces", "qits-events",
                 "qits-docs", "qits-observability", "qits-oci-postgresql"}) {
-            assertThat(properties).contains("qits.platform.deployments.run-args." + application + "=");
+            assertThat(properties).contains(EXTRAS + application + ".");
         }
+        // The free-form predecessor is gone from the KEYS — the header names it once, to say that a
+        // deployment still carrying it configures nothing.
+        assertThat(extrasKeys()).allSatisfy(line -> assertThat(line).startsWith(EXTRAS));
+        assertThat(properties).doesNotContain("run-args.qits-")
+                .doesNotContain("qits.cd.run-args.");
         // The retired pair is deployed by nothing, so it configures nothing.
-        assertThat(properties).doesNotContain("run-args.qits-cd=")
-                .doesNotContain("run-args.qits-serviceregistry=");
-        // A line under a pre-rename application name configures NOTHING: the deployment comes up
+        assertThat(properties).doesNotContain(EXTRAS + "qits-cd.")
+                .doesNotContain(EXTRAS + "qits-serviceregistry.");
+        // A key under a pre-rename application name configures NOTHING: the deployment comes up
         // with no volumes and no env, passes health, and has lost its database.
-        assertThat(properties).doesNotContain("run-args.qits-idp=")
-                .doesNotContain("run-args.qits-platform-deployments=")
+        assertThat(properties).doesNotContain(EXTRAS + "qits-idp.")
+                .doesNotContain(EXTRAS + "qits-platform-deployments.")
                 // The two the byte-plane split retired, on the same terms.
-                .doesNotContain("run-args.qits-platform-artifacts=")
-                .doesNotContain("run-args.qits-platform-docs=");
-        // The namespace moved with the merge-back; the old spelling configures nothing.
-        assertThat(properties).doesNotContain("qits.cd.run-args.");
-        assertThat(properties).contains("-e QITS_REPOSITORIES_GIT_PUSH_TOKEN=local-dev");
-        assertThat(properties).contains("--group-add 988");
+                .doesNotContain(EXTRAS + "qits-platform-artifacts.")
+                .doesNotContain(EXTRAS + "qits-platform-docs.");
+        assertThat(properties).contains("env.QITS_REPOSITORIES_GIT_PUSH_TOKEN=local-dev");
+        assertThat(properties).contains(".groups[0]=988");
         assertThat(properties).doesNotContain("${DOCKER_GID}")
                 .doesNotContain("${ENV_NAME}")
                 .doesNotContain("${ENV_KEY}");
         // {env} is the edge's own placeholder and is NOT a token of this file: it is read at
-        // runtime by the process the line configures.
+        // runtime by the process the key configures.
         assertThat(properties).contains("QITS_EDGE_UPSTREAM_HOST_PATTERN={env}-qits-gateway");
+    }
+
+    /**
+     * <b>Every generated key parses as the grammar the deployer reads</b>, because an unknown or
+     * malformed one is a REFUSED deployment now rather than a dropped flag. A typo in the template
+     * is therefore a platform that will not deploy, and this is where it is caught instead.
+     */
+    @Test
+    void everyGeneratedKeyIsOneTheDeployerCanRead() {
+        for (String line : extrasKeys(tokens(DOMAIN))) {
+            String element = line.substring(EXTRAS.length(), line.indexOf('='));
+            String value = line.substring(line.indexOf('=') + 1);
+            assertThat(element).as("key %s", line).containsPattern(
+                    "^[a-z0-9-]+\\.(env\\.[A-Za-z_][A-Za-z0-9_]*|(mounts|publishes|groups)\\[\\d+])$");
+            if (element.contains(".mounts[")) {
+                // The kind is stated rather than guessed from a leading slash.
+                assertThat(value).as("mount %s", line)
+                        .containsPattern("^(volume|bind):[^:]+:/[^:]*(:ro)?$");
+            }
+            if (element.contains(".publishes[")) {
+                assertThat(value).as("publish %s", line)
+                        .containsPattern("^(\\d+\\.\\d+\\.\\d+\\.\\d+:)?\\d+:\\d+(/(tcp|udp))?$");
+            }
+        }
+    }
+
+    /**
+     * <b>The two decisions swarm forced, in the file that makes them.</b> A service publish has no
+     * ip field in either mode, so a port that must not reach the network cannot be published at all
+     * — and one that is dialled by the HOST's docker daemon has to say so out loud.
+     */
+    @Test
+    void theHostFacingPublishesSayEveryInterfaceAndPostgresPublishesNothing() {
+        // The three doors the host's own daemon and a person on the workstation dial.
+        assertThat(extras("qits-artifacts")).contains(".publishes[0]=0.0.0.0:8081:8080");
+        assertThat(extras("qits-platform-mirror")).contains(".publishes[0]=0.0.0.0:8082:8080");
+        assertThat(extras("qits-githost")).contains(".publishes[0]=0.0.0.0:8083:8080");
+        // And the one whose only consumer was this CLI's cold-boot DDL, which dials the wire alias.
+        // The seed compose keeps its loopback bind; the deployed container publishes nothing.
+        assertThat(extras("qits-oci-postgresql")).doesNotContain(".publishes[");
+        assertThat(ComposeTemplate.extras(tokens())).doesNotContain(":5433:5432");
+        assertThat(ComposeTemplate.compose(tokens())).contains("- \"127.0.0.1:5433:5432\"");
     }
 
     /**
@@ -603,10 +659,10 @@ class ComposeTemplateTest {
      */
     @Test
     void theGitHostDialsProjectsForNameResolutionAndNobodyPostsAPushAnyMore() {
-        assertThat(runArgsLine("qits-githost")).contains("-e QITS_PROJECTS_NAME_RESOLVER_URL="
+        assertThat(extras("qits-githost")).contains("env.QITS_PROJECTS_NAME_RESOLVER_URL="
                 + "http://prod-qits-projects:8080/projects/api/projects");
-        assertThat(runArgsLine("qits-artifacts")).doesNotContain("QITS_PROJECTS_");
-        assertThat(runArgsLines()).allSatisfy(line -> assertThat(line)
+        assertThat(extras("qits-artifacts")).doesNotContain("QITS_PROJECTS_");
+        assertThat(extrasKeys()).allSatisfy(line -> assertThat(line)
                 .doesNotContain("QITS_PROJECTS_INTAKE_URL")
                 .doesNotContain("QITS_CI_INTAKE_URL"));
         assertThat(ComposeTemplate.compose(tokens()).lines()
@@ -617,29 +673,29 @@ class ComposeTemplateTest {
 
     @Test
     void theDeployersOwnDeploymentInheritsItsConfigVolume() {
-        // The self-update handoff: without this mount the successor comes up with no run-args at
-        // all and every later deployment loses its volumes and its datasource env.
-        String deployer = runArgsLine("qits-deployments");
+        // The self-update handoff: without this mount the successor comes up with no configuration
+        // at all and every later deployment loses its volumes and its datasource env.
+        String deployer = extras("qits-deployments");
 
-        assertThat(deployer).contains("-v qits-deployments-config:/work/config");
-        assertThat(deployer).contains("-v /var/run/docker.sock:/var/run/docker.sock");
-        assertThat(deployer).contains("-e QITS_RESOURCE_DB_URL="
+        assertThat(deployer).contains(".mounts[0]=volume:qits-deployments-config:/work/config");
+        assertThat(deployer).contains(".mounts[1]=bind:/var/run/docker.sock:/var/run/docker.sock");
+        assertThat(deployer).contains("env.QITS_RESOURCE_DB_URL="
                 + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_deployments");
-        assertThat(deployer).contains("-e QITS_RESOURCE_DB_USERNAME=qits_deployments");
-        assertThat(deployer).contains("-e QITS_RESOURCE_DB_PASSWORD=fedcba9876543210");
-        assertThat(deployer).contains("-e QITS_ENVIRONMENT=prod");
+        assertThat(deployer).contains("env.QITS_RESOURCE_DB_USERNAME=qits_deployments");
+        assertThat(deployer).contains("env.QITS_RESOURCE_DB_PASSWORD=fedcba9876543210");
+        assertThat(deployer).contains("env.QITS_ENVIRONMENT=prod");
         assertThat(deployer).contains(
-                "-e QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD=0123456789abcdef");
+                "env.QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD=0123456789abcdef");
         // The bus, and the ONLY thing the deployer's bus membership adds to this line: the wire
         // name. A subscriber pointed at the pre-rename qits-events:8080 receives nothing.
-        assertThat(deployer).contains("-e QITS_EVENTS_URL=http://prod-qits-events:8080");
+        assertThat(deployer).contains("env.QITS_EVENTS_URL=http://prod-qits-events:8080");
         // ONE TRIPLE, NOT TWO. The outbox is declared in the deployer's own deployments.yml, so a
         // running deployer provisions it for its successor and injects the triple from the registry
         // row that holds the current password — pinning it here would outlive the next rotation.
         assertThat(deployer).doesNotContain("QITS_RESOURCE_EVENTSTREAM_");
         // The store moved off the file H2, and its volume went with it: /data held nothing else.
         assertThat(deployer).doesNotContain("QUARKUS_DATASOURCE_PLATFORMDEPLOYMENTS_JDBC_URL=")
-                .doesNotContain("-v qits-deployments-data:/data");
+                .doesNotContain("qits-deployments-data:/data");
     }
 
     /**
@@ -652,7 +708,7 @@ class ComposeTemplateTest {
     void postgresIsSeededAndDeployedWithItsVolumeAtTheOnePathThatKeepsTheData() {
         String compose = ComposeTemplate.compose(tokens());
         String block = serviceBlock(compose, ENV + "-qits-oci-postgresql");
-        String runArgs = runArgsLine("qits-oci-postgresql");
+        String postgres = extras("qits-oci-postgresql");
 
         assertThat(compose).contains("image: qits/oci-postgresql:latest");
         // The mount, not the comment beside it, which names the wrong path on purpose.
@@ -668,22 +724,22 @@ class ComposeTemplateTest {
         assertThat(compose.lines().map(String::strip).filter(line -> line.startsWith("depends_on"))
                 .toList()).isEmpty();
 
-        assertThat(runArgs).contains("-v qits-oci-postgresql-data:/var/lib/postgresql ")
-                .doesNotContain("-v qits-oci-postgresql-data:/var/lib/postgresql/data");
-        // The host publish survives the cutover, so this CLI can reconnect to the same server
-        // after the deployer replaces the seed container.
-        assertThat(runArgs).contains("-p 127.0.0.1:5433:5432");
-        assertThat(runArgs).contains("-e POSTGRES_PASSWORD=0123456789abcdef");
+        assertThat(postgres).contains(".mounts[0]=volume:qits-oci-postgresql-data:/var/lib/postgresql")
+                .doesNotContain("/var/lib/postgresql/data");
+        // The host publish does NOT survive the cutover any more: its only consumer was this CLI's
+        // cold-boot DDL, which dials the wire alias, and a swarm service cannot bind it to loopback.
+        assertThat(postgres).doesNotContain(".publishes[");
+        assertThat(postgres).contains("env.POSTGRES_PASSWORD=0123456789abcdef");
     }
 
     @Test
     void theIdpsDeploymentCarriesEverySecretAndTheClientListItself() {
-        String idp = runArgsLine("qits-platform-idp");
+        String idp = extras("qits-platform-idp");
 
         // No volume and no datasource: the store is a database the deployer provisions from
         // `resources: postgresql:db` and injects. The signing key is in it, so pinning the triple
         // here would outlive a rotation and take every token in flight down with it.
-        assertThat(idp).doesNotContain("-v qits-platform-idp-data:/data")
+        assertThat(idp).doesNotContain(".mounts[")
                 .doesNotContain("QUARKUS_DATASOURCE_IDP_JDBC_URL")
                 .doesNotContain("QITS_RESOURCE_");
         for (String app : PlatformModel.IDP_CLIENT_APPS) {
@@ -765,40 +821,39 @@ class ComposeTemplateTest {
      */
     @Test
     void onlyArtifactsStillCarriesAFileDatabase() {
-        List<String> h2 = ComposeTemplate.runArgs(tokens()).lines()
-                .filter(line -> line.startsWith("qits.platform.deployments.run-args."))
+        List<String> h2 = extrasKeys().stream()
                 .filter(line -> line.contains("jdbc:h2"))
                 .toList();
 
         assertThat(h2).singleElement().asString()
-                .startsWith("qits.platform.deployments.run-args.qits-artifacts=")
-                .contains("-e QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL=jdbc:h2:file:/data/artifacts"
-                        + "/h2/artifacts")
-                .contains("-v qits-artifacts-data:/data");
+                .isEqualTo(EXTRAS + "qits-artifacts.env.QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL="
+                        + "jdbc:h2:file:/data/artifacts/h2/artifacts");
+        assertThat(extras("qits-artifacts")).contains(".mounts[0]=volume:qits-artifacts-data:/data");
         // The two new byte services declare their stores instead, so the deployer injects the
         // triples and a pin here would outlive the next rotation.
-        assertThat(runArgsLine("qits-platform-mirror")).doesNotContain("QITS_RESOURCE_")
-                .contains("-v qits-platform-mirror-data:/data");
-        assertThat(runArgsLine("qits-githost")).doesNotContain("QITS_RESOURCE_")
-                .contains("-v qits-githost-data:/data");
+        assertThat(extras("qits-platform-mirror")).doesNotContain("QITS_RESOURCE_")
+                .contains(".mounts[0]=volume:qits-platform-mirror-data:/data");
+        assertThat(extras("qits-githost")).doesNotContain("QITS_RESOURCE_")
+                .contains(".mounts[0]=volume:qits-githost-data:/data");
 
-        // No run-args line pins a resource triple either: the deployer's injection comes first and
-        // docker keeps the last -e, so a line here would win and never be rotated.
-        assertThat(ComposeTemplate.runArgs(tokens())).doesNotContain("-e QITS_RESOURCE_DB_URL=jdbc:"
+        // No application pins a resource triple either: the deployer's injection comes first and
+        // the last assignment of a key wins, so a pin here would win and never be rotated.
+        assertThat(ComposeTemplate.extras(tokens())).doesNotContain("env.QITS_RESOURCE_DB_URL=jdbc:"
                 + "postgresql://prod-qits-oci-postgresql:5432/qits_ci");
-        assertThat(runArgsLine("qits-ci")).doesNotContain("QITS_RESOURCE_")
-                .doesNotContain("-v qits-ci-data:/data");
-        assertThat(runArgsLine("qits-events")).doesNotContain("QITS_RESOURCE_")
-                .doesNotContain("-v qits-events-data:/data");
+        assertThat(extras("qits-ci")).doesNotContain("QITS_RESOURCE_")
+                .doesNotContain(".mounts[");
+        assertThat(extras("qits-events")).doesNotContain("QITS_RESOURCE_")
+                .doesNotContain(".mounts[");
         // The orchestrator declares two stores and keeps no volume: the socket is the only thing
-        // its line mounts.
-        assertThat(runArgsLine("qits-containers")).doesNotContain("QITS_RESOURCE_")
-                .doesNotContain("-v qits-containers-data:/data");
+        // it mounts.
+        assertThat(extras("qits-containers")).doesNotContain("QITS_RESOURCE_")
+                .doesNotContain("qits-containers-data");
         // The two that keep a volume: /data is their own tree of files, not a database.
-        assertThat(runArgsLine("qits-projects")).contains("-v qits-projects-data:/data")
-                .contains("-e QITS_PROJECTS_DATA_DIR=/data/mirrors")
+        assertThat(extras("qits-projects")).contains(".mounts[0]=volume:qits-projects-data:/data")
+                .contains("env.QITS_PROJECTS_DATA_DIR=/data/mirrors")
                 .doesNotContain("QITS_RESOURCE_");
-        assertThat(runArgsLine("qits-workspaces")).contains("-v qits-workspaces-data:/data")
+        assertThat(extras("qits-workspaces"))
+                .contains(".mounts[0]=volume:qits-workspaces-data:/data")
                 .doesNotContain("QITS_RESOURCE_");
     }
 
@@ -822,19 +877,19 @@ class ComposeTemplateTest {
                     .as("seed service %s", name)
                     .contains("QITS_OBSERVABILITY_URL: " + url);
         }
-        assertThat(ComposeTemplate.runArgs(tokens()).lines()
-                .filter(line -> line.startsWith("qits.platform.deployments.run-args."))
-                .filter(line -> !line.startsWith(
-                        "qits.platform.deployments.run-args.qits-oci-postgresql="))
+        assertThat(extrasKeys().stream()
+                .map(line -> line.substring(EXTRAS.length()).split("\\.")[0])
+                .distinct()
+                .filter(application -> !application.equals("qits-oci-postgresql"))
                 .toList())
                 .isNotEmpty()
-                .allSatisfy(line -> assertThat(line)
-                        .contains("-e QITS_OBSERVABILITY_URL=" + url));
+                .allSatisfy(application -> assertThat(extras(application))
+                        .as("deployed %s", application)
+                        .contains("env.QITS_OBSERVABILITY_URL=" + url));
         // The receiver is an ordinary OTLP client of itself. Consistent rather than clever: the
         // alternative leaves exactly one container spamming retries at a dead name.
-        assertThat(runArgsLine("qits-observability"))
-                .isEqualTo("qits.platform.deployments.run-args.qits-observability="
-                        + "-e QITS_OBSERVABILITY_URL=" + url);
+        assertThat(extras("qits-observability"))
+                .isEqualTo(EXTRAS + "qits-observability.env.QITS_OBSERVABILITY_URL=" + url);
     }
 
     /**
@@ -845,7 +900,7 @@ class ComposeTemplateTest {
     void theNameserverPublishesBothTransportsAndIsHandedItsDatabase() {
         String compose = ComposeTemplate.compose(tokens());
         String block = serviceBlock(compose, "qits-platform-dns");
-        String runArgs = runArgsLine("qits-platform-dns");
+        String dns = extras("qits-platform-dns");
 
         assertThat(compose).contains("image: qits/platform-dns:latest");
         // TCP is not the optional half: a truncated UDP answer carries ZERO records, so the client's
@@ -858,10 +913,10 @@ class ComposeTemplateTest {
         // No volume: the store is postgres and this service writes nothing that outlives it.
         assertThat(block).doesNotContain("volumes:");
 
-        assertThat(runArgs).contains("-p 53:8053/udp").contains("-p 53:8053/tcp");
+        assertThat(dns).contains(".publishes[0]=53:8053/udp").contains(".publishes[1]=53:8053/tcp");
         // The deployer injects the triple from `resources: postgresql:db`; a pin here would outlive
         // a rotation and break the deployment it looks like it is configuring.
-        assertThat(runArgs).doesNotContain("QITS_RESOURCE_");
+        assertThat(dns).doesNotContain("QITS_RESOURCE_");
     }
 
     /**
@@ -873,22 +928,22 @@ class ComposeTemplateTest {
     @Test
     void aDomainAddsItsFragmentsAndChangesNothingElse() {
         String compose = ComposeTemplate.compose(tokens(DOMAIN));
-        String runArgs = ComposeTemplate.runArgs(tokens(DOMAIN));
+        String extras = ComposeTemplate.extras(tokens(DOMAIN));
         for (String fragment : DomainTokens.of(Optional.of(DOMAIN)).values()) {
             assertThat(fragment).isNotEmpty();
             compose = compose.replace(fragment, "");
-            runArgs = runArgs.replace(fragment, "");
+            extras = extras.replace(fragment, "");
         }
 
         assertThat(compose).isEqualTo(ComposeTemplate.compose(tokens()));
-        assertThat(runArgs).isEqualTo(ComposeTemplate.runArgs(tokens()));
+        assertThat(extras).isEqualTo(ComposeTemplate.extras(tokens()));
     }
 
     /** With no domain, not one trace of the zone, the TLS ports or the certificate volume. */
     @Test
     void withNoDomainThereIsNoTlsAndNoNameserverIdentity() {
         String compose = ComposeTemplate.compose(tokens());
-        String runArgs = ComposeTemplate.runArgs(tokens());
+        String extras = ComposeTemplate.extras(tokens());
 
         assertThat(compose).doesNotContain("letsencrypt")
                 .doesNotContain("QITS_DNS_NS_NAMES")
@@ -896,11 +951,12 @@ class ComposeTemplateTest {
                 .doesNotContain("QUARKUS_TLS_")
                 .doesNotContain("443:8443")
                 .doesNotContain("127.0.0.1:9000");
-        assertThat(runArgs).doesNotContain("letsencrypt")
+        assertThat(extras).doesNotContain("letsencrypt")
                 .doesNotContain("QITS_DNS_NS_NAMES")
                 .doesNotContain("QUARKUS_TLS_");
-        // The edge keeps the one port it always published.
-        assertThat(runArgsLine("qits-platform-edge")).contains("-p 8080:8080");
+        // The edge keeps the one port it always published, and nothing asks for an ip.
+        assertThat(extras("qits-platform-edge")).contains(".publishes[0]=8080:8080")
+                .doesNotContain(".publishes[1]");
     }
 
     /**
@@ -911,24 +967,28 @@ class ComposeTemplateTest {
     @Test
     void aDomainGivesTheNameserverItsIdentityInBothFiles() {
         String block = serviceBlock(ComposeTemplate.compose(tokens(DOMAIN)), "qits-platform-dns");
-        String runArgs = runArgsLine("qits-platform-dns", tokens(DOMAIN));
+        String dns = extras("qits-platform-dns", tokens(DOMAIN));
 
         assertThat(block).contains("QITS_DNS_NS_NAMES: ns1.qits-dev.eu")
                 .contains("QITS_DNS_HOSTMASTER: hostmaster.qits-dev.eu");
-        assertThat(runArgs).contains("-e QITS_DNS_NS_NAMES=ns1.qits-dev.eu")
-                .contains("-e QITS_DNS_HOSTMASTER=hostmaster.qits-dev.eu");
+        assertThat(dns).contains("env.QITS_DNS_NS_NAMES=ns1.qits-dev.eu")
+                .contains("env.QITS_DNS_HOSTMASTER=hostmaster.qits-dev.eu");
     }
 
     /**
-     * The edge's TLS wiring, in both files. The run-args half is the one that is easy to forget and
+     * The edge's TLS wiring, in both files. The extras half is the one that is easy to forget and
      * expensive to: it is what the deployer starts the successor with, so a piece missing there is a
      * cutover that takes 443 and the certificate away while health goes on passing on 8080.
+     * <p>
+     * The management port keeps its loopback ip, which a swarm service cannot express — so a domain
+     * on a swarm platform is a REFUSED deployment saying so, rather than an unauthenticated ACME
+     * endpoint on every interface. That refusal is the feature, and the generated comment says it.
      */
     @Test
     void aDomainGivesTheEdgeItsCertificateSlotInBothFiles() {
         String compose = ComposeTemplate.compose(tokens(DOMAIN));
         String edge = serviceBlock(compose, "qits-platform-edge");
-        String runArgs = runArgsLine("qits-platform-edge", tokens(DOMAIN));
+        String edgeExtras = extras("qits-platform-edge", tokens(DOMAIN));
 
         // The host's own port stays; 80 is the ACME challenge, 443 the TLS listener, and 9000 the
         // management interface on LOOPBACK — the challenge-management endpoint is unauthenticated.
@@ -946,14 +1006,17 @@ class ComposeTemplateTest {
         // insecure-requests stays at its default: every health poll in the boot speaks plain HTTP.
         assertThat(compose).doesNotContain("INSECURE_REQUESTS");
 
-        assertThat(runArgs).contains("-p 8080:8080")
-                .contains("-p 80:8080")
-                .contains("-p 443:8443")
-                .contains("-p 127.0.0.1:9000:9000")
-                .contains("-v qits-edge-letsencrypt:/work/.letsencrypt")
-                .contains("-e QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT=/work/.letsencrypt/lets-encrypt.crt")
-                .contains("-e QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY=/work/.letsencrypt/lets-encrypt.key")
-                .contains("-e QUARKUS_TLS_RELOAD_PERIOD=1h");
+        assertThat(edgeExtras).contains(".publishes[0]=8080:8080")
+                .contains(".publishes[1]=80:8080")
+                .contains(".publishes[2]=443:8443")
+                .contains(".publishes[3]=127.0.0.1:9000:9000")
+                .contains(".mounts[0]=volume:qits-edge-letsencrypt:/work/.letsencrypt")
+                .contains("env.QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT=/work/.letsencrypt/lets-encrypt.crt")
+                .contains("env.QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY=/work/.letsencrypt/lets-encrypt.key")
+                .contains("env.QUARKUS_TLS_RELOAD_PERIOD=1h");
+        // The refusal the loopback publish buys, said where the operator reads it.
+        assertThat(ComposeTemplate.extras(tokens(DOMAIN)))
+                .contains("9000 STAYS ON LOOPBACK, and under swarm that REFUSES the deployment");
     }
 
     @Test
@@ -966,9 +1029,9 @@ class ComposeTemplateTest {
                 .contains("container_name: preprod-qits-ci")
                 .contains("QITS_EDGE_ENVIRONMENTS: preprod")
                 .contains("QITS_IDP_CLIENT_PREPROD_QITS_CI_SECRET");
-        assertThat(ComposeTemplate.runArgs(other))
-                .contains("-e QITS_AUTH_MACHINE_AUDIENCE=preprod-qits-ci")
+        assertThat(ComposeTemplate.extras(other))
+                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=preprod-qits-ci")
                 .contains("QITS_GATEWAY_PROXY_HOSTS_CI=preprod-qits-ci")
-                .contains("-e QITS_OBSERVABILITY_URL=http://preprod-qits-observability:8080");
+                .contains("env.QITS_OBSERVABILITY_URL=http://preprod-qits-observability:8080");
     }
 }

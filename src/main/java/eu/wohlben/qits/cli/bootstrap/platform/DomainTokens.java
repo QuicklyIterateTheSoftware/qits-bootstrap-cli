@@ -11,7 +11,7 @@ import java.util.Optional;
  * <p>
  * <b>Every fragment here is APPENDED to the end of a line the template already has, and that is
  * deliberate.</b> With no domain each one is the empty string, so the rendered compose file and the
- * rendered run-args are byte for byte what a platform without a domain always had — no blank line,
+ * rendered extras are byte for byte what a platform without a domain always had — no blank line,
  * no orphan comment about a feature that is off, nothing for the next reader to wonder about. With a
  * domain the fragment carries its own newlines, its own indentation and its own comments, so the
  * generated file explains itself exactly where the lines appear.
@@ -57,10 +57,15 @@ public final class DomainTokens {
                 + "      QITS_DNS_HOSTMASTER: " + DomainName.hostmaster(domain);
     }
 
+    /** The nameserver's two variables, as extras keys appended after its last one. */
     private static String dnsIdentityArgs(String domain) {
-        return " -e QITS_DNS_NS_NAMES=" + DomainName.nsName(domain)
-                + " -e QITS_DNS_HOSTMASTER=" + DomainName.hostmaster(domain);
+        return "\n" + DNS + "env.QITS_DNS_NS_NAMES=" + DomainName.nsName(domain)
+                + "\n" + DNS + "env.QITS_DNS_HOSTMASTER=" + DomainName.hostmaster(domain);
     }
+
+    private static final String EDGE = "qits.platform.deployments.extras.qits-platform-edge.";
+
+    private static final String DNS = "qits.platform.deployments.extras.qits-platform-dns.";
 
     private static final String LETSENCRYPT_VOLUME = "\n"
             + "  # THE EDGE'S TLS MATERIAL, and it is declared only because a domain is configured.\n"
@@ -100,20 +105,30 @@ public final class DomainTokens {
             + "      - qits-edge-letsencrypt:/work/.letsencrypt";
 
     /**
-     * The comment above the edge's run-args line. A properties line carries no comment of its own,
-     * so the note is a fragment at the START of the line rather than part of the arguments.
+     * The comment above the edge's first extras key. A properties line carries no comment of its
+     * own, so the note is a fragment at the START of the line rather than part of the keys.
      */
     private static final String EDGE_TLS_NOTE =
             "# THE DEPLOYED EDGE KEEPS THE TLS WIRING, and every part of it belongs here: the\n"
-            + "# run-args are what the deployer starts the successor container with, so a piece\n"
-            + "# missing from this line is a cutover that quietly takes 443 and the certificate away\n"
-            + "# while health goes on passing on 8080. 9000 stays on loopback for the reason the seed\n"
-            + "# block gives, and the volume is what carries the PEMs across the cutover.\n";
+            + "# extras are what the deployer starts the successor container with, so a piece\n"
+            + "# missing from them is a cutover that quietly takes 443 and the certificate away\n"
+            + "# while health goes on passing on 8080. The volume is what carries the PEMs across the\n"
+            + "# cutover.\n"
+            + "#\n"
+            + "# 9000 STAYS ON LOOPBACK, and under swarm that REFUSES the deployment rather than\n"
+            + "# widening it: a service publish has no ip field, so the only thing an orchestrator\n"
+            + "# could do with this line is put an unauthenticated ACME challenge-management endpoint\n"
+            + "# on every interface of the host. A domain on a swarm platform needs this port fronted\n"
+            + "# some other way; a refused deployment is how that decision gets made deliberately.\n";
 
     private static final String EDGE_TLS_ARGS =
-            " -p 80:8080 -p 443:8443 -p 127.0.0.1:9000:9000"
-                    + " -v qits-edge-letsencrypt:/work/.letsencrypt"
-                    + " -e QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT=/work/.letsencrypt/lets-encrypt.crt"
-                    + " -e QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY=/work/.letsencrypt/lets-encrypt.key"
-                    + " -e QUARKUS_TLS_RELOAD_PERIOD=1h";
+            "\n" + EDGE + "publishes[1]=80:8080"
+                    + "\n" + EDGE + "publishes[2]=443:8443"
+                    + "\n" + EDGE + "publishes[3]=127.0.0.1:9000:9000"
+                    + "\n" + EDGE + "mounts[0]=volume:qits-edge-letsencrypt:/work/.letsencrypt"
+                    + "\n" + EDGE
+                    + "env.QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT=/work/.letsencrypt/lets-encrypt.crt"
+                    + "\n" + EDGE
+                    + "env.QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY=/work/.letsencrypt/lets-encrypt.key"
+                    + "\n" + EDGE + "env.QUARKUS_TLS_RELOAD_PERIOD=1h";
 }

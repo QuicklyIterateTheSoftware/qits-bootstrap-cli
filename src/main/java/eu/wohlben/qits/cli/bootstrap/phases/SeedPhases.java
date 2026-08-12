@@ -1127,8 +1127,9 @@ public class SeedPhases {
             boot.docker.ensureVolume("qits-oci-postgresql-data", ctx::log);
             String pg = PlatformModel.wireAlias("oci-postgresql", boot.config.envName());
             // Whoever already serves, serves — the same posture as the seed artifacts store. A
-            // deployed postgres answers the same alias and publishes the same host port from this
-            // very volume, and a second bind is "port is already allocated" and the end of the run.
+            // deployed postgres answers the same alias from this very volume, and a second server
+            // on it is two writers on one cluster. It publishes no host port of its own any more
+            // (the deployer's extras carry none), so the port below is this seed container's alone.
             String prefix = PlatformModel.pdNamePrefix("oci-postgresql", boot.config.envName());
             Optional<String> serving = boot.docker.runningNames().stream()
                     .filter(name -> name.equals(pg) || name.startsWith(prefix))
@@ -1276,7 +1277,7 @@ public class SeedPhases {
         return value;
     }
 
-    // --- secrets, compose, run-args ---------------------------------------------------------------
+    // --- secrets, compose, extras ----------------------------------------------------------------
 
     /**
      * Every static client ships without a secret and is unusable until a deployment gives it one.
@@ -1329,14 +1330,14 @@ public class SeedPhases {
     }
 
     /**
-     * The deployer's per-application run arguments, as a config file on a named volume: quarkus
-     * reads config/application.properties next to the binary, and a self-update's successor mounts
-     * the same volume — which is the whole reason this is a file and not compose env.
+     * The deployer's per-application extras, as a config file on a named volume: quarkus reads
+     * config/application.properties next to the binary, and a self-update's successor mounts the
+     * same volume — which is the whole reason this is a file and not compose env.
      */
-    public Phase pdRunArgs() {
-        return new Phase("pd-run-args", "write the deployer's run-args config volume", ctx -> {
+    public Phase pdExtras() {
+        return new Phase("pd-extras", "write the deployer's extras config volume", ctx -> {
             boot.docker.ensureVolume("qits-deployments-config", ctx::log);
-            String properties = ComposeTemplate.runArgs(tokens());
+            String properties = ComposeTemplate.extras(tokens());
             // What the volume held BEFORE this write, as a DIGEST rather than as text: the file
             // carries the push token and every client secret, and reading it back would put both
             // on the screen and in the log.
@@ -1357,7 +1358,7 @@ public class SeedPhases {
                     .mask(orEmpty(boot.state.pgDeploymentsPassword))
                     // The seed services' credentials are NOT in this file — the deployer injects
                     // their triples from its own registry, its own outbox included. Masked anyway:
-                    // a line each, against the day one of them is pinned here by hand.
+                    // one each, against the day one of them is pinned here by hand.
                     .mask(orEmpty(boot.state.pgDeploymentsEventstreamPassword))
                     .mask(orEmpty(boot.state.pgCiPassword))
                     .mask(orEmpty(boot.state.pgCiEventstreamPassword))
@@ -1367,8 +1368,11 @@ public class SeedPhases {
                     .mask(orEmpty(boot.state.pgPlatformMirrorPassword))
                     .mask(orEmpty(boot.state.pgGithostPassword))
                     .mask(orEmpty(boot.state.pgGithostEventstreamPassword)), ctx::log);
-            Boot.must(result, "writing the deployer's run-args failed");
-            ctx.log("  " + properties.lines().filter(l -> l.startsWith("qits.platform.deployments.run-args")).count()
+            Boot.must(result, "writing the deployer's extras failed");
+            ctx.log("  " + properties.lines()
+                    .filter(l -> l.startsWith("qits.platform.deployments.extras."))
+                    .map(l -> l.substring("qits.platform.deployments.extras.".length()).split("\\.")[0])
+                    .distinct().count()
                     + " applications configured on the qits-deployments-config volume");
             if (!sha256(properties).equals(before)) {
                 restartSeedDeployer(ctx);
@@ -1377,7 +1381,7 @@ public class SeedPhases {
     }
 
     /**
-     * The digest of the run-args file already on the volume, or empty when there is none. Computed
+     * The digest of the config file already on the volume, or empty when there is none. Computed
      * inside a container because the volume has no path on the host, and with the same image the
      * write above uses so nothing extra is pulled.
      */
@@ -1398,7 +1402,7 @@ public class SeedPhases {
     }
 
     /**
-     * <b>The deployer reads its run-args ONCE, at its own boot.</b> A rerun that changes the file
+     * <b>The deployer reads its config ONCE, at its own boot.</b> A rerun that changes the file
      * therefore changes nothing for a deployer that is already running: it goes on deploying from
      * the previous boot's arguments, and compose will not help — the volume is unchanged as far as
      * it is concerned, so {@code up -d} leaves the container alone. That is how a qits-ci was
@@ -1413,15 +1417,15 @@ public class SeedPhases {
     private void restartSeedDeployer(PhaseContext ctx) {
         String name = PlatformModel.wireAlias("deployments", boot.config.envName());
         if (!boot.docker.runningNames().contains(name)) {
-            ctx.log("  the run-args changed; no seed deployer is running, so none is holding "
+            ctx.log("  the extras changed; no seed deployer is running, so none is holding "
                     + "the old ones");
             return;
         }
-        ctx.log("  the run-args changed and " + name + " is older than the change — restarting it "
+        ctx.log("  the extras changed and " + name + " is older than the change — restarting it "
                 + "so it deploys from the new ones");
         Boot.must(boot.docker.exec(Duration.ofMinutes(5), ctx::log, "restart", name),
-                "restarting " + name + " after its run-args changed failed");
-        ctx.note("run-args changed, " + name + " restarted");
+                "restarting " + name + " after its extras changed failed");
+        ctx.note("extras changed, " + name + " restarted");
     }
 
     // --- what a domain adds -----------------------------------------------------------------------
@@ -1441,13 +1445,13 @@ public class SeedPhases {
      * platform, every time somebody reran the boot. The existence test and the write are one
      * container so nothing can happen between them.
      * <p>
-     * <b>The image is alpine/git with openssl added</b> — the same image the run-args write uses one
+     * <b>The image is alpine/git with openssl added</b> — the same image the extras write uses one
      * phase earlier, so the boot pulls nothing new. It carries git and not openssl (measured, on
      * 2026-08-09), and the platform's other already-present images carry neither: nginx:alpine and
      * the qits service images have no openssl binary either. {@code apk add} is what the two npm
      * publish phases already do, so it adds no dependency the boot did not have.
      * <p>
-     * {@code chown 1001:0} for the same reason the run-args write has it: the edge runs as that
+     * {@code chown 1001:0} for the same reason the extras write has it: the edge runs as that
      * unprivileged uid and cannot read a root-owned key.
      */
     public Phase placeholderCertificate(String domain) {

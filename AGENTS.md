@@ -36,7 +36,7 @@ forced. Add to that list rather than deviating quietly.
                 EventFeed that follows the platform's own events beside the boot's output
     web/        the browser view's three routes and the one page they serve
     config/     BootstrapConfig (@ConfigMapping, read from .env) and its command-line overrides
-    platform/   what the platform is made of: PlatformModel, the generated compose and run-args,
+    platform/   what the platform is made of: PlatformModel, the generated compose and extras,
                 the seed-Dockerfile rewrite, the recorded state, thin Docker and Git facades
     api/        the platform's HTTP, with java.net.http, at the platform's own wire aliases
     phases/     the phases themselves and the plan that orders them
@@ -226,7 +226,7 @@ alias on `qits-net`. A glibc-static payload would build clean and fail its first
 `./mvnw clean verify` must be green on a clone, with **no docker**. What is tested is what can be:
 the engine (ordering, failure, warnings, skips, timing), the process runner (streaming, bounded
 memory, exit codes, timeouts, masking), the configuration mapping from `.env` names, the plan's
-shape and order, the compose and run-args generation, the seed-Dockerfile rewrite, the recorded
+shape and order, the compose and extras generation, the seed-Dockerfile rewrite, the recorded
 state file, the plain renderer's output, and **the launcher's `docker run` argv** — asserted whole,
 because a flag dropped there is a bootstrap that gets further than it should before it breaks.
 

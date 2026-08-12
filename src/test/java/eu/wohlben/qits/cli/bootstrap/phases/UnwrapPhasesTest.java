@@ -11,7 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * The re-bootstrap's sweep, which is the one place unwrap deletes data on purpose. What it must
  * never take with it is a config volume: those hold the push token, the client secrets and the
- * deployer's run-args, and losing them turns a migration into a re-issue of every credential on
+ * deployer's extras, and losing them turns a migration into a re-issue of every credential on
  * the machine.
  */
 class UnwrapPhasesTest {

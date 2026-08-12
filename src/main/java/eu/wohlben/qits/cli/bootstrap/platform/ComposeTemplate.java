@@ -3,7 +3,7 @@ package eu.wohlben.qits.cli.bootstrap.platform;
 import java.util.Map;
 
 /**
- * The seed stack and qits-deployments' run-args, generated. Both are ports of the heredocs in
+ * The seed stack and qits-deployments' per-application extras, generated. Both are ports of the heredocs in
  * {@code qits-local-up.sh}, comments and all: the comments are where the reasons live, and a
  * generated file nobody can read is a file nobody can fix.
  * <p>
@@ -12,7 +12,7 @@ import java.util.Map;
  * {@link PlatformModel#wireAlias} derives and exactly what the deployer will give the container
  * that replaces it. A container's own name resolves on a user-defined network the way an alias
  * does, so naming the seed after the alias is what makes the addresses in this very file — and in
- * the run-args beside it — right from the first second rather than from the first cutover. It is
+ * the extras beside it — right from the first second rather than from the first cutover. It is
  * also how the deployer finds its predecessor: it searches the qualified alias AND the bare
  * application name, so a seed under either spelling is adopted rather than left running beside its
  * replacement.
@@ -26,8 +26,9 @@ public final class ComposeTemplate {
         return Tokens.apply(COMPOSE, values);
     }
 
-    public static String runArgs(Map<String, String> values) {
-        return Tokens.apply(RUN_ARGS, values);
+    /** The deployer's per-application extras — {@code qits.platform.deployments.extras.<app>.*}. */
+    public static String extras(Map<String, String> values) {
+        return Tokens.apply(EXTRAS, values);
     }
 
     private static final String COMPOSE = """
@@ -56,8 +57,8 @@ public final class ComposeTemplate {
                 external: true
 
             volumes:
-              # Every volume is keyed by the APPLICATION it belongs to, because the deployer's run-args
-              # reference them by name and an application's run-args are looked up by that same name.
+              # Every volume is keyed by the APPLICATION it belongs to, because the deployer's extras
+              # reference them by name and an application's extras are looked up by that same name.
               #
               # THERE IS NO VOLUME PER DATABASE ANY MORE. Six services kept a file H2 under /data and
               # moved to the postgres below: the deployer, qits-ci (twice), qits-platform-idp,
@@ -95,7 +96,7 @@ public final class ComposeTemplate {
               # every byte is written into the container's own layer and lost on the next recreate.
               qits-oci-postgresql-data:
                 name: qits-oci-postgresql-data
-              # Mounted by DEPLOYED containers via qits.platform.deployments.run-args, not by any service
+              # Mounted by DEPLOYED containers via qits.platform.deployments.extras, not by any service
               # below. Each one holds FILES that no database replaced: qits-projects' git mirrors and the
               # credentials beside them, qits-workspaces' per-repository trees, qits-stt's models.
               qits-projects-data:
@@ -104,7 +105,7 @@ public final class ComposeTemplate {
                 name: qits-workspaces-data
               qits-stt-data:
                 name: qits-stt-data
-              # The deployer's run-args config (config/application.properties, written by the bootstrap). A
+              # The deployer's own config (config/application.properties, written by the bootstrap). A
               # volume rather than env so a self-update's successor inherits it — env cannot nest these
               # values.
               qits-deployments-config:
@@ -134,7 +135,7 @@ public final class ComposeTemplate {
                   # exists, so the bootstrap creates the role and the database over JDBC and hands the
                   # credential over itself. Every deployment after this one gets the same three variables
                   # from qits-platform-deployments, which reads `resources: postgresql:db` in this
-                  # repository's deployments.yml — which is why the run-args line beside this file carries
+                  # repository's deployments.yml — which is why the extras beside this file carry
                   # no datasource env at all.
                   QITS_RESOURCE_DB_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_platform_idp
                   QITS_RESOURCE_DB_USERNAME: qits_platform_idp
@@ -249,7 +250,7 @@ public final class ComposeTemplate {
                   # the database over JDBC and hands the credential over itself. Every deployment
                   # after this one is handed the same three by qits-platform-deployments, from
                   # `resources: postgresql:db` in this repository's deployments.yml — which is why
-                  # the run-args line beside this file carries no datasource env either.
+                  # the extras beside this file carry no datasource env either.
                   #
                   # It REFUSES TO BOOT without them, and for this service that is the failure worth
                   # having: a nameserver that came up on an empty store would answer NXDOMAIN for
@@ -284,7 +285,8 @@ public final class ComposeTemplate {
                   # For a PERSON with a psql, bound to loopback like the registry port. Not for this
                   # CLI: it runs on qits-net and dials the wire alias on 5432 like every other
                   # consumer, so nothing in the platform breaks if this line is deleted. Kept as an
-                  # operator affordance, and it is the one publish swarm cannot keep on loopback.
+                  # operator affordance HERE ONLY: the deployed postgres publishes nothing, because a
+                  # swarm service cannot bind an ip and this port must not reach the network.
                   - "127.0.0.1:${PG_PORT}:5432"
                 environment:
                   # Generated by this bootstrap and recorded in .qits-bootstrap.env BEFORE the server
@@ -339,7 +341,7 @@ public final class ComposeTemplate {
                   # exists, so the bootstrap created both roles and databases over JDBC. Every
                   # deployment after this one is handed the same six variables by a RUNNING deployer,
                   # from `resources: postgresql:db, postgresql:eventstream:qits_deployments_eventstream`
-                  # in this repository's deployments.yml — which is why the run-args line beside this
+                  # in this repository's deployments.yml — which is why the extras beside this
                   # file carries the first triple only, as the deployer's own bootstrap credential, and
                   # never the second.
                   QITS_RESOURCE_DB_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_deployments
@@ -363,7 +365,7 @@ public final class ComposeTemplate {
                   QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD: "${PG_SUPERUSER_PASSWORD}"
                   # It pulls through the HOST daemon — same reasoning as ci's registry host.
                   QITS_ARTIFACTS_REGISTRY_HOST: localhost:${REGISTRY_PORT}
-                  # Per-application run-args live in the qits-deployments-config volume
+                  # Per-application extras live in the qits-deployments-config volume
                   # (config/application.properties, written by the bootstrap), NOT here: a self-update's
                   # successor must inherit them, and env cannot nest those values.
                   # Machine auth, INBOUND ONLY. The build-succeeded intake and the topology writes demand a
@@ -380,7 +382,7 @@ public final class ComposeTemplate {
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
                 volumes:
                   # No data volume any more: the store is the postgres above, and /data held the H2 files
-                  # and nothing else. The config volume stays — it is the run-args a self-update's
+                  # and nothing else. The config volume stays — it is the extras a self-update's
                   # successor inherits.
                   - qits-deployments-config:/work/config
                   - /var/run/docker.sock:/var/run/docker.sock
@@ -500,7 +502,7 @@ public final class ComposeTemplate {
                   # this container before any deployer exists, so the bootstrap created the role and the
                   # database over JDBC and hands the credential over itself. Every deployment after this
                   # one is handed the same three by qits-platform-deployments, from `resources:
-                  # postgresql:db` in this repository's deployments.yml — which is why the run-args line
+                  # postgresql:db` in this repository's deployments.yml — which is why the extras
                   # beside this file carries no datasource env either.
                   QITS_RESOURCE_DB_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_platform_mirror
                   QITS_RESOURCE_DB_USERNAME: qits_platform_mirror
@@ -662,7 +664,7 @@ public final class ComposeTemplate {
                   # The event bus. The eventstream jar's shipped default is the pre-rename
                   # `qits-events:8080`, which resolves to nothing on this network — measured: every
                   # outbox delivery of the seed ci dialled it, got ConnectException, and gave up
-                  # after its five attempts. The deployed ci gets this same value from its run-args;
+                  # after its five attempts. The deployed ci gets this same value from its extras;
                   # the seed has to be told here, like every other wire name in this block.
                   QITS_EVENTS_URL: http://${ENV_NAME}-qits-events:8080
                   # The binary every step container downloads and execs — uploaded by this bootstrap, digest
@@ -736,7 +738,7 @@ public final class ComposeTemplate {
                   # SPELLED HERE, AND ONLY HERE: compose starts this container before any deployer
                   # exists. Later deployments are handed the same six by qits-platform-deployments,
                   # from `resources: postgresql:db, postgresql:eventstream:qits_containers_eventstream`
-                  # in this repository's deployments.yml — which is why the run-args line beside this
+                  # in this repository's deployments.yml — which is why the extras beside this
                   # file carries no datasource env either.
                   #
                   # It REFUSES TO BOOT without them, and for this service that is the failure worth
@@ -794,7 +796,7 @@ public final class ComposeTemplate {
                   # the role and the database over JDBC and hands the credential over itself. Every
                   # deployment after this one is handed the same three by qits-platform-deployments, from
                   # `resources: postgresql:db` in this repository's deployments.yml — which is why the
-                  # run-args line beside this file carries no datasource env either.
+                  # extras beside this file carry no datasource env either.
                   #
                   # The database name is the deployer's own default derivation, not a choice made here:
                   # the application name with `qits-` dropped, dashes underscored, under `qits_`. So the
@@ -810,64 +812,100 @@ public final class ComposeTemplate {
                 # No volume: the store is the postgres above, /data held the H2 and nothing else, and the
                 # image has no mount point left for it.
                 #
-                # No machine auth: this service enforces none, which is why its run-args line carries
+                # No machine auth: this service enforces none, which is why its extras carry
                 # none either. Publishing to the bus is an ordinary PUT from qits-net.
                 networks: [qits-net]
                 restart: unless-stopped
             """;
 
-    private static final String RUN_ARGS = """
-            # Generated by qits-cli-bootstrap — qits.platform.deployments.run-args.<application>: what each deployed container
-            # needs beyond its image. Whitespace-split, appended verbatim between the deployer's flags and the
-            # image. The namespace was qits.cd.run-args before the merge-back; a deployment carrying the old
-            # spelling configures nothing.
+    private static final String EXTRAS = """
+            # Generated by qits-cli-bootstrap — qits.platform.deployments.extras.<application>.*: what each
+            # deployed container needs beyond its image, stated rather than spelled in one orchestrator's argv:
             #
-            # An <application> is a REPOSITORY NAME, and six of them were renamed on 2026-08-08: a line under
+            #   ...<application>.mounts[<i>]    = volume:<name>:<target>[:ro] | bind:<host-path>:<target>[:ro]
+            #   ...<application>.publishes[<i>] = [<ip>:]<host-port>:<port>[/tcp|/udp]
+            #   ...<application>.groups[<i>]    = <gid>
+            #   ...<application>.env.<KEY>      = <value>
+            #
+            # THE DEPLOYER RENDERS THESE IN ITS ORCHESTRATOR'S WORDS: `docker run -v/-p/--group-add/--env`, or
+            # `docker service create --mount/--publish …,mode=host/--group/--env`. That is why this is not a
+            # docker argv any more — one spelling cannot be two orchestrators' vocabulary. It replaces
+            # qits.platform.deployments.run-args.<application>, which was one whitespace-split `docker run`
+            # line per application; a deployment still carrying that key configures NOTHING.
+            #
+            # AN UNKNOWN OR MALFORMED KEY REFUSES THE DEPLOYMENT, naming the key. Nothing here is dropped with
+            # a warning: a dropped mount is a container that boots, passes its health gate and has lost its
+            # database. The index orders a list and means nothing else.
+            #
+            # An <application> is a REPOSITORY NAME, and six of them were renamed on 2026-08-08: a key under
             # a retired name configures nothing and the deployment comes up with no volumes and no env, which
             # is a container that boots, passes health and has lost its database.
             #
             # Every hostname in every value below is a WIRE ALIAS: ${ENV_NAME}-qits-<app> for a service of
             # this environment, the bare repository name for one of the four platform services.
             #
-            # NO LINE BELOW CARRIES A DATASOURCE, with two exceptions that say why on themselves:
+            # NO APPLICATION BELOW CARRIES A DATASOURCE, with two exceptions that say why on themselves:
             # qits-artifacts, the one service still on a file H2, and qits-deployments, whose
             # own store is the one credential the bootstrap issues and the deployer then registers as
             # its own. Every other store is DECLARED rather than configured: a
             # repository writes `resources: postgresql:<name>` in its .config/qits/deployments.yml, and
             # qits-platform-deployments creates the role and the database on this tier's postgres and
             # injects QITS_RESOURCE_<NAME>_URL / _USERNAME / _PASSWORD before the container starts. Those
-            # variables are injected BEFORE the arguments here, and docker keeps the last -e — so a
+            # variables are injected BEFORE the ones here, and the last assignment of a key wins — so a
             # datasource line here is an operator PIN that outlives a password rotation and breaks the
             # deployment it looks like it is configuring. The seed compose file spells the triples for
             # qits-ci, qits-platform-idp, qits-platform-dns, qits-events, qits-containers and the
             # deployer's OWN OUTBOX for the one reason that does not apply here: it starts them
             # before any deployer exists.
             #
-            # EVERY LINE OF A QITS APPLICATION CARRIES QITS_OBSERVABILITY_URL, for the same reason the seed
+            # EVERY QITS APPLICATION CARRIES env.QITS_OBSERVABILITY_URL, for the same reason the seed
             # compose spells it on every service: the images ship the bare qits-observability, and that
             # name died with the 2026-08-08 rename. An OTLP exporter dialling a name that does not resolve
             # drops every trace and every log AND retries, so the platform goes dark while each container
             # fills its own log with the attempts. qits-oci-postgresql is the one exception and says so on
-            # its own line: it is upstream postgres, which has no exporter to point anywhere.
+            # its own block: it is upstream postgres, which has no exporter to point anywhere.
             #
-            # WHERE THE DEPLOYER READS A DEPLOYMENT SPEC — a plain property, not a run-args line, because
+            # WHERE THE DEPLOYER READS A DEPLOYMENT SPEC — a plain property, not an extras key, because
             # this file is the deployer's own configuration. The image still ships the pre-split
             # qits-platform-artifacts, a name that resolves to nothing; the spec read is how a green build
             # becomes a deployment, so a deployer without this line deploys nothing and says only "timeout".
             qits.platform.deployments.git-host-url=http://${ENV_NAME}-qits-githost:8080
-            # THE HOST PORT IS THE EDGE'S. qits-gateway carries no -p at all any more; publishing it from two
-            # applications is a bind conflict that only shows up on the second cutover.
-            ${EDGE_TLS_NOTE}qits.platform.deployments.run-args.qits-platform-edge=-p ${PORT}:8080${EDGE_TLS_ARGS} -e QITS_EDGE_ENVIRONMENTS=${ENV_NAME} -e QITS_EDGE_DEFAULT_ENVIRONMENT=${ENV_NAME} -e QITS_EDGE_UPSTREAM_HOST_PATTERN={env}-qits-gateway -e QITS_EDGE_UPSTREAM_PORT=8080 -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
-            qits.platform.deployments.run-args.qits-gateway=-e QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=${ENV_NAME}-qits-artifacts -e QITS_GATEWAY_PROXY_HOSTS_MIRROR=qits-platform-mirror -e QITS_GATEWAY_PROXY_HOSTS_CI=${ENV_NAME}-qits-ci -e QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS=${ENV_NAME}-qits-deployments -e QITS_GATEWAY_PROXY_HOSTS_OBSERVABILITY=${ENV_NAME}-qits-observability -e QITS_GATEWAY_PROXY_HOSTS_PROJECTS=${ENV_NAME}-qits-projects -e QITS_GATEWAY_PROXY_HOSTS_WORKSPACES=${ENV_NAME}-qits-workspaces -e QITS_GATEWAY_PROXY_HOSTS_STT=${ENV_NAME}-qits-stt -e QITS_GATEWAY_PROXY_HOSTS_EVENTS=${ENV_NAME}-qits-events -e QITS_GATEWAY_PROXY_HOSTS_DOCS=${ENV_NAME}-qits-docs -e QITS_GATEWAY_PROXY_HOSTS_GITHOST=${ENV_NAME}-qits-githost -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # THE HOST PORT IS THE EDGE'S. qits-gateway publishes nothing at all any more; publishing it from
+            # two applications is a bind conflict that only shows up on the second cutover.
+            ${EDGE_TLS_NOTE}qits.platform.deployments.extras.qits-platform-edge.publishes[0]=${PORT}:8080
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_ENVIRONMENTS=${ENV_NAME}
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_DEFAULT_ENVIRONMENT=${ENV_NAME}
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_UPSTREAM_HOST_PATTERN={env}-qits-gateway
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_UPSTREAM_PORT=8080
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080${EDGE_TLS_ARGS}
+            # THE ROUTE TABLE. Every value is a wire alias, and the image's defaults cannot carry the tier.
+            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=${ENV_NAME}-qits-artifacts
+            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_MIRROR=qits-platform-mirror
+            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_CI=${ENV_NAME}-qits-ci
+            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS=${ENV_NAME}-qits-deployments
+            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_OBSERVABILITY=${ENV_NAME}-qits-observability
+            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_PROJECTS=${ENV_NAME}-qits-projects
+            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_WORKSPACES=${ENV_NAME}-qits-workspaces
+            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_STT=${ENV_NAME}-qits-stt
+            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_EVENTS=${ENV_NAME}-qits-events
+            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_DOCS=${ENV_NAME}-qits-docs
+            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_GITHOST=${ENV_NAME}-qits-githost
+            qits.platform.deployments.extras.qits-gateway.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE HOSTED HALF OF THE BYTE PLANE, and the one deployment here still carrying a file
             # database: /data is the H2 and the blob store both, which is why the volume stays.
             #
-            # QITS_AUTH_MACHINE_AUDIENCE is new and is not decoration. The image ships the bare
+            # THE PUBLISH SAYS 0.0.0.0 ON PURPOSE. It is dialled by the HOST's docker daemon — every ci
+            # publish step pushes to localhost:${REGISTRY_PORT} and the deployer pulls from it — so it cannot
+            # be private to the platform's network. It used to say 127.0.0.1, which a swarm service cannot
+            # express at all (there is no ip field in either publish mode), so the exposure is written out
+            # here where it can be reviewed rather than discovered.
+            #
+            # QITS_AUTH_MACHINE_AUDIENCE is not decoration. The image ships the bare
             # qits-platform-artifacts, and the byte-plane split made this an environment service whose
             # alias carries the tier — an unspelled audience is a 401 on every admin write.
             #
             # GONE WITH THE SPLIT, and each absence is a service that owns it now:
-            #   QITS_REPOSITORIES_GIT_*      the git host is qits-githost, four lines down.
+            #   QITS_REPOSITORIES_GIT_*      the git host is qits-githost, two blocks down.
             #   QITS_CI_INTAKE_URL           there is no post-receive HTTP fan-out; pushes are events.
             #   QITS_PROJECTS_*              both were the git host's dials and went with it.
             #   QUARKUS_OIDC_CLIENT_*        this service mints nothing any more. The announcement was
@@ -876,22 +914,39 @@ public final class ComposeTemplate {
             # The two GC pin sources stay: a pin source that cannot be reached makes the sweep abort
             # fail-closed rather than delete a live artifact — so every sweep stops and the cleanup banner
             # hangs on its timeout instead.
-            qits.platform.deployments.run-args.qits-artifacts=-p 127.0.0.1:${REGISTRY_PORT}:8080 -v qits-artifacts-data:/data -e QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL=jdbc:h2:file:/data/artifacts/h2/artifacts -e QITS_ARTIFACTS_BLOBS_DIR=/data/artifacts/blobs -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-artifacts -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QITS_ARTIFACTS_GC_PINS_CD_BASE_URL=http://${ENV_NAME}-qits-deployments:8080/platform-deployments/api -e QITS_ARTIFACTS_GC_PINS_CI_BASE_URL=http://${ENV_NAME}-qits-ci:8080/ci/api -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.platform.deployments.extras.qits-artifacts.publishes[0]=0.0.0.0:${REGISTRY_PORT}:8080
+            qits.platform.deployments.extras.qits-artifacts.mounts[0]=volume:qits-artifacts-data:/data
+            qits.platform.deployments.extras.qits-artifacts.env.QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL=jdbc:h2:file:/data/artifacts/h2/artifacts
+            qits.platform.deployments.extras.qits-artifacts.env.QITS_ARTIFACTS_BLOBS_DIR=/data/artifacts/blobs
+            qits.platform.deployments.extras.qits-artifacts.env.QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-artifacts
+            qits.platform.deployments.extras.qits-artifacts.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
+            qits.platform.deployments.extras.qits-artifacts.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-artifacts.env.QITS_ARTIFACTS_GC_PINS_CD_BASE_URL=http://${ENV_NAME}-qits-deployments:8080/platform-deployments/api
+            qits.platform.deployments.extras.qits-artifacts.env.QITS_ARTIFACTS_GC_PINS_CI_BASE_URL=http://${ENV_NAME}-qits-ci:8080/ci/api
+            qits.platform.deployments.extras.qits-artifacts.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE CACHE HALF. One published port, one volume, one address to say — and no datasource,
             # because `resources: postgresql:db` in its own deployments.yml is what gets it a store and the
             # deployer injects the triple before the successor starts. The seed compose block spells that
             # triple for the one reason that does not apply here: it starts this container before any
             # deployer exists.
             #
+            # The publish is 0.0.0.0 for the reason the registry's is: dockerd's registry-mirrors names
+            # localhost:${MIRROR_PORT}, and that is the HOST's docker daemon rather than anything on this
+            # platform's network.
+            #
             # No machine auth of any kind: this service serves cached third-party bytes to anonymous
             # clients and mints nothing, so it holds no client and validates no audience. The blobs dir is
             # spelled because the jar's default sits under ${user.home}, which this image's passwd-less UID
             # resolves to the literal "?".
-            qits.platform.deployments.run-args.qits-platform-mirror=-p 127.0.0.1:${MIRROR_PORT}:8080 -v qits-platform-mirror-data:/data -e QITS_ARTIFACTS_BLOBS_DIR=/data/mirror/blobs -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.platform.deployments.extras.qits-platform-mirror.publishes[0]=0.0.0.0:${MIRROR_PORT}:8080
+            qits.platform.deployments.extras.qits-platform-mirror.mounts[0]=volume:qits-platform-mirror-data:/data
+            qits.platform.deployments.extras.qits-platform-mirror.env.QITS_ARTIFACTS_BLOBS_DIR=/data/mirror/blobs
+            qits.platform.deployments.extras.qits-platform-mirror.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE GIT HOST. The published port is the door a PERSON pushes through — the workstation is not
             # on qits-net, and the clone url moved from localhost:${REGISTRY_PORT}/artifacts/git/<repo> to
-            # localhost:${GIT_HOST_PORT}/git/<repo> when the routes left the artifacts store. A -p missing
-            # here is that door closing at the first cutover.
+            # localhost:${GIT_HOST_PORT}/git/<repo> when the routes left the artifacts store. A publish
+            # missing here is that door closing at the first cutover, and 0.0.0.0 is what a swarm service
+            # can bind — the same trade the registry's port makes one block up.
             #
             # NO DATASOURCE ENV: both stores are declared (`resources: postgresql:db,
             # postgresql:eventstream:qits_githost_eventstream`) and injected by the deployer. The volume
@@ -900,7 +955,14 @@ public final class ComposeTemplate {
             # QITS_EVENTS_URL is what makes a push visible to the platform at all: SCMPublishCommit,
             # SCMPublishTag and the two deletes ride the outbox to the bus, where ci's listener queues the
             # run. The eventstream jar's baked default is the pre-rename qits-events:8080.
-            qits.platform.deployments.run-args.qits-githost=-p 127.0.0.1:${GIT_HOST_PORT}:8080 -v qits-githost-data:/data -e QITS_ARTIFACTS_BLOBS_DIR=/data/githost/blobs -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_PROJECTS_NAME_RESOLVER_URL=http://${ENV_NAME}-qits-projects:8080/projects/api/projects -e QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN} -e QITS_REPOSITORIES_GIT_PROTECT_DEFAULT_BRANCH=true -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.platform.deployments.extras.qits-githost.publishes[0]=0.0.0.0:${GIT_HOST_PORT}:8080
+            qits.platform.deployments.extras.qits-githost.mounts[0]=volume:qits-githost-data:/data
+            qits.platform.deployments.extras.qits-githost.env.QITS_ARTIFACTS_BLOBS_DIR=/data/githost/blobs
+            qits.platform.deployments.extras.qits-githost.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
+            qits.platform.deployments.extras.qits-githost.env.QITS_PROJECTS_NAME_RESOLVER_URL=http://${ENV_NAME}-qits-projects:8080/projects/api/projects
+            qits.platform.deployments.extras.qits-githost.env.QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN}
+            qits.platform.deployments.extras.qits-githost.env.QITS_REPOSITORIES_GIT_PROTECT_DEFAULT_BRANCH=true
+            qits.platform.deployments.extras.qits-githost.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE FOUR STEP-CONTAINER ROOTS, split across the two byte services exactly as the seed block
             # above splits them: hosted npm, maven and docs at this tier's qits-artifacts, the npmjs cache
             # at qits-platform-mirror. ci's shipped defaults all name qits-platform-artifacts:8080, which
@@ -917,8 +979,8 @@ public final class ComposeTemplate {
             # reading it, and qits-containers compares it to the token's `sub` on every route — so it
             # is what keeps two tiers sharing one docker daemon out of each other's step containers.
             #
-            # NO SOCKET AND NO --group-add, AND THAT IS THE POINT OF THIS CUTOVER. This line used to
-            # start every ci successor with the host's docker socket and the socket's group: root on
+            # NO SOCKET MOUNT AND NO GROUP, AND THAT IS THE POINT OF THIS CUTOVER. This application used
+            # to start every ci successor with the host's docker socket and the socket's group: root on
             # the host, held by the one service that executes repo-controlled pipelines. ci starts no
             # container itself now — it asks ${ENV_NAME}-qits-containers, which is the only service
             # granted that socket — so the grant is gone from here and the platform's most exposed
@@ -930,47 +992,85 @@ public final class ComposeTemplate {
             # `resources: postgresql:db, postgresql:eventstream:qits_ci_eventstream`, so the deployer
             # creates both databases before the successor container starts and injects the six
             # QITS_RESOURCE_* variables itself, from the registry row that holds the current password.
-            # A line here would be an operator PIN — run-args are appended after the injected env and
-            # docker keeps the last -e — so it would survive the deployer rotating that password and
-            # break the deployment it looks like it is configuring. The seed block spells the same
-            # variables because at that moment no deployer exists to inject anything. The /data volume
-            # went with the H2: the image has no mount point for it any more.
-            qits.platform.deployments.run-args.qits-ci=-e QITS_CI_GIT_HOST_URL=http://${ENV_NAME}-qits-githost:8080 -e QITS_CI_CONTAINER_GIT_URL=http://${ENV_NAME}-qits-githost:8080 -e QITS_CI_NETWORK=qits-net -e QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080 -e QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT} -e QITS_ARTIFACTS_NPM_HOSTED_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/ -e QITS_ARTIFACTS_NPM_PROXY_URL=http://qits-platform-mirror:8080/artifacts/npm/npmjs/ -e QITS_ARTIFACTS_MAVEN_REGISTRY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven -e QITS_ARTIFACTS_DOCS_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/docs/docs -e QITS_CI_DAEMON_VERSION=${DAEMON_SHA} -e QITS_CI_DAEMON_BINARY_URL_TEMPLATE=http://${ENV_NAME}-qits-artifacts:8080/artifacts/daemons/qits-ci-daemon/{version} -e QITS_CI_CONTAINER_DAEMON_URL=ws://${ENV_NAME}-qits-ci:8080/ci/daemon -e QITS_CI_WORKSPACES_URL=http://${ENV_NAME}-qits-workspaces:8080 -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-ci -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT} -e QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL=${IDP} -e QUARKUS_OIDC_CLIENT_CLIENT_ID=${ENV_NAME}-qits-ci -e QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-containers -e QUARKUS_OIDC_CLIENT_CREDENTIALS_SECRET=${IDP_SECRET_CI} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # A line here would be an operator PIN — the deployment's own variables are written after
+            # the injected ones and the last assignment wins — so it would survive the deployer
+            # rotating that password and break the deployment it looks like it is configuring. The seed
+            # block spells the same variables because at that moment no deployer exists to inject
+            # anything. The /data volume went with the H2: the image has no mount point for it any more.
+            qits.platform.deployments.extras.qits-ci.env.QITS_CI_GIT_HOST_URL=http://${ENV_NAME}-qits-githost:8080
+            qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_URL=http://${ENV_NAME}-qits-githost:8080
+            qits.platform.deployments.extras.qits-ci.env.QITS_CI_NETWORK=qits-net
+            qits.platform.deployments.extras.qits-ci.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
+            qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT}
+            qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_HOSTED_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/
+            qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_PROXY_URL=http://qits-platform-mirror:8080/artifacts/npm/npmjs/
+            qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_MAVEN_REGISTRY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven
+            qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_DOCS_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/docs/docs
+            qits.platform.deployments.extras.qits-ci.env.QITS_CI_DAEMON_VERSION=${DAEMON_SHA}
+            qits.platform.deployments.extras.qits-ci.env.QITS_CI_DAEMON_BINARY_URL_TEMPLATE=http://${ENV_NAME}-qits-artifacts:8080/artifacts/daemons/qits-ci-daemon/{version}
+            qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_DAEMON_URL=ws://${ENV_NAME}-qits-ci:8080/ci/daemon
+            qits.platform.deployments.extras.qits-ci.env.QITS_CI_WORKSPACES_URL=http://${ENV_NAME}-qits-workspaces:8080
+            qits.platform.deployments.extras.qits-ci.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
+            qits.platform.deployments.extras.qits-ci.env.QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-ci
+            qits.platform.deployments.extras.qits-ci.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
+            qits.platform.deployments.extras.qits-ci.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-ci.env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT}
+            qits.platform.deployments.extras.qits-ci.env.QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-ci.env.QUARKUS_OIDC_CLIENT_CLIENT_ID=${ENV_NAME}-qits-ci
+            qits.platform.deployments.extras.qits-ci.env.QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-containers
+            qits.platform.deployments.extras.qits-ci.env.QUARKUS_OIDC_CLIENT_CREDENTIALS_SECRET=${IDP_SECRET_CI}
+            qits.platform.deployments.extras.qits-ci.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE CONTAINER ORCHESTRATOR, and the SOCKET IS THE LINE. Every successor of this
             # application has to be started with /var/run/docker.sock and the socket's group, because
             # starting containers is the whole component — a cutover that dropped either would deploy
-            # a service that passes health and can do nothing. Same mount and same --group-add as
+            # a service that passes health and can do nothing. Same mount and same group as
             # the deployer below, on the same terms: it is root-equivalent control of the host
-            # daemon, and this line IS the deliberate act of granting it — to ONE service now, which
+            # daemon, and this block IS the deliberate act of granting it — to ONE service now, which
             # is what the grant just removed from ci above bought.
+            #
+            # The mount says `bind` rather than leaving it to a leading slash: the kind is what each
+            # orchestrator asks for by name, and a mistyped path that fell back to a named volume would
+            # be an orchestrator with no socket and no error.
             #
             # NO DATASOURCE ENV AND NO VOLUME: both stores are declared (`resources: postgresql:db,
             # postgresql:eventstream:qits_containers_eventstream`) and injected by the deployer before
             # the successor starts. The seed compose block spells the same six for the one reason
             # that does not apply here — it starts this container before any deployer exists — and a
-            # pin here would be appended after the injection, where docker keeps the last -e, and
+            # pin here would be written after the injection, where the last assignment wins, and
             # would outlive the rotation the first deployment performs.
             #
             # QITS_EVENTS_URL is where the outbox drains to. The audience is this tier's alias, which
             # the image cannot ship: the default is the bare name, so a token minted for
             # ${ENV_NAME}-qits-containers would be refused on every guarded route — which is all of
             # them.
-            qits.platform.deployments.run-args.qits-containers=-v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-containers -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
-            # The platform's PostgreSQL, deployed like everything else. The host publish is kept for a
-            # PERSON with a psql, not for this CLI — the CLI is on qits-net and dials the wire alias on
-            # 5432 — and it is repeated here because the seed's port would otherwise go with the seed
-            # when the deployer replaces that container with its own. The mount path is
-            # /var/lib/postgresql and not /var/lib/postgresql/data: postgres 18 keeps PGDATA at
-            # /var/lib/postgresql/18/docker, and the old path mounts the volume BESIDE the cluster, which
-            # writes every byte into the container layer and loses it on the next recreate.
+            qits.platform.deployments.extras.qits-containers.mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock
+            qits.platform.deployments.extras.qits-containers.groups[0]=${DOCKER_GID}
+            qits.platform.deployments.extras.qits-containers.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
+            qits.platform.deployments.extras.qits-containers.env.QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-containers
+            qits.platform.deployments.extras.qits-containers.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
+            qits.platform.deployments.extras.qits-containers.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-containers.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # The platform's PostgreSQL, deployed like everything else.
+            #
+            # AND IT PUBLISHES NOTHING. The seed compose file still binds 127.0.0.1:${PG_PORT} for the
+            # bootstrap's own cold-boot DDL — that is the only consumer the port ever had — and every
+            # service dials the wire alias on 5432 instead. Keeping the publish here would hand the
+            # deployed container a port that nothing dials, and under swarm it could not even be a
+            # loopback one: a service publish has no ip field, so 127.0.0.1 would silently become every
+            # interface on the host.
+            #
+            # The mount path is /var/lib/postgresql and not /var/lib/postgresql/data: postgres 18 keeps
+            # PGDATA at /var/lib/postgresql/18/docker, and the old path mounts the volume BESIDE the
+            # cluster, which writes every byte into the container layer and loses it on the next recreate.
             #
             # POSTGRES_PASSWORD applies at initdb only, so on this cutover it is inert — the volume
-            # already holds an initialised cluster. It is spelled anyway, because the run-args are also
+            # already holds an initialised cluster. It is spelled anyway, because these keys are also
             # what a cold deployment on a fresh volume would use. One superuser password for the whole
             # platform until there is per-tier configuration to hold more than one.
-            qits.platform.deployments.run-args.qits-oci-postgresql=-p 127.0.0.1:${PG_PORT}:5432 -v qits-oci-postgresql-data:/var/lib/postgresql -e POSTGRES_PASSWORD=${PG_SUPERUSER_PASSWORD}
-            # The deployer's own deployment — the self-update handoff. Two mounts and a socket, all
-            # load-bearing: the config volume holds this very file so the successor inherits every line of
+            qits.platform.deployments.extras.qits-oci-postgresql.mounts[0]=volume:qits-oci-postgresql-data:/var/lib/postgresql
+            qits.platform.deployments.extras.qits-oci-postgresql.env.POSTGRES_PASSWORD=${PG_SUPERUSER_PASSWORD}
+            # The deployer's own deployment — the self-update handoff. Two mounts and a group, all
+            # load-bearing: the config volume holds this very file so the successor inherits every key of
             # it, and the docker socket is what makes it a deployer at all. There is no data volume: the
             # topology, the deployment history and the resource credentials live in postgres now, and the
             # QITS_RESOURCE_DB_* triple is how this component consumes the same contract it hands every
@@ -990,7 +1090,20 @@ public final class ComposeTemplate {
             # QITS_EVENTS_URL is the wire-name override and belongs here, not in the resources: the
             # eventstream jar's baked default is the pre-rename `qits-events:8080`, and this deployer
             # SUBSCRIBES — a BuildSuccessful it never receives is a deployment that never happens.
-            qits.platform.deployments.run-args.qits-deployments=-v qits-deployments-config:/work/config -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QITS_RESOURCE_DB_URL=jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_deployments -e QITS_RESOURCE_DB_USERNAME=qits_deployments -e QITS_RESOURCE_DB_PASSWORD=${PG_DEPLOYMENTS_PASSWORD} -e QITS_ENVIRONMENT=${ENV_NAME} -e QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD=${PG_SUPERUSER_PASSWORD} -e QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT} -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-deployments -e QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED} -e QUARKUS_OIDC_AUTH_SERVER_URL=${IDP} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.platform.deployments.extras.qits-deployments.mounts[0]=volume:qits-deployments-config:/work/config
+            qits.platform.deployments.extras.qits-deployments.mounts[1]=bind:/var/run/docker.sock:/var/run/docker.sock
+            qits.platform.deployments.extras.qits-deployments.groups[0]=${DOCKER_GID}
+            qits.platform.deployments.extras.qits-deployments.env.QITS_RESOURCE_DB_URL=jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_deployments
+            qits.platform.deployments.extras.qits-deployments.env.QITS_RESOURCE_DB_USERNAME=qits_deployments
+            qits.platform.deployments.extras.qits-deployments.env.QITS_RESOURCE_DB_PASSWORD=${PG_DEPLOYMENTS_PASSWORD}
+            qits.platform.deployments.extras.qits-deployments.env.QITS_ENVIRONMENT=${ENV_NAME}
+            qits.platform.deployments.extras.qits-deployments.env.QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD=${PG_SUPERUSER_PASSWORD}
+            qits.platform.deployments.extras.qits-deployments.env.QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT}
+            qits.platform.deployments.extras.qits-deployments.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
+            qits.platform.deployments.extras.qits-deployments.env.QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-deployments
+            qits.platform.deployments.extras.qits-deployments.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
+            qits.platform.deployments.extras.qits-deployments.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-deployments.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The idp's own deployment. NO DATASOURCE ENV AND NO VOLUME: `resources: postgresql:db` in its
             # deployments.yml is what gets it a store, and the deployer injects the triple from the
             # registry row before the successor starts. That row is what keeps the SIGNING KEY across
@@ -1004,12 +1117,22 @@ public final class ComposeTemplate {
             # QITS_IDP_CLIENTS and both audience lists are restated in full, because each key REPLACES the
             # shipped list rather than extending it — and every id in them is a wire alias, so they move with
             # the environment name while the image's defaults cannot.
-            qits.platform.deployments.run-args.qits-platform-idp=-e QITS_IDP_ISSUER=${IDP} -e QITS_IDP_CLIENTS=${IDP_CLIENTS} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_SECRET=${IDP_SECRET_CI} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_SECRET=${IDP_SECRET_ARTIFACTS} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_SECRET=${IDP_SECRET_WORKSPACES} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_GATEWAY_SECRET=${IDP_SECRET_GATEWAY} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_AUDIENCES=${IDP_AUDIENCES} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_AUDIENCES=${IDP_AUDIENCES} -e QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_CLAIMS_PROJECT=* -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_ISSUER=${IDP}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENTS=${IDP_CLIENTS}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_SECRET=${IDP_SECRET_CI}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_SECRET=${IDP_SECRET_ARTIFACTS}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_SECRET=${IDP_SECRET_WORKSPACES}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_GATEWAY_SECRET=${IDP_SECRET_GATEWAY}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_AUDIENCES=${IDP_AUDIENCES}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_AUDIENCES=${IDP_AUDIENCES}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_CLAIMS_PROJECT=*
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The nameserver's own deployment. TWO PUBLISHES, BOTH PROTOCOLS: the deployed container
-            # is what answers a registrar's delegation, so a -p missing here is a domain that stops
+            # is what answers a registrar's delegation, so a publish missing here is a domain that stops
             # resolving at the first cutover, and a missing /tcp loses every answer too big for a UDP
             # packet. The port is the same knob the seed publishes (QITS_DNS_PORT), because a
-            # delegation cannot follow a port that moved.
+            # delegation cannot follow a port that moved. Neither publish names an ip: this one is
+            # meant to be reachable from the internet.
             #
             # NO DATASOURCE ENV AND NO VOLUME: `resources: postgresql:db` in its deployments.yml is
             # what gets it a store, and the deployer injects the triple from its registry row before
@@ -1019,8 +1142,12 @@ public final class ComposeTemplate {
             #
             # No machine auth: the record API's write guard is qits.dns.token, which this platform
             # leaves blank, and there is no gateway route to reach it from outside qits-net.
-            qits.platform.deployments.run-args.qits-platform-dns=-p ${DNS_PORT}:8053/udp -p ${DNS_PORT}:8053/tcp -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080${DNS_IDENTITY_ARGS}
-            qits.platform.deployments.run-args.qits-stt=-v qits-stt-data:/data -e QITS_SPEECH_HOME=/data/speech -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.platform.deployments.extras.qits-platform-dns.publishes[0]=${DNS_PORT}:8053/udp
+            qits.platform.deployments.extras.qits-platform-dns.publishes[1]=${DNS_PORT}:8053/tcp
+            qits.platform.deployments.extras.qits-platform-dns.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080${DNS_IDENTITY_ARGS}
+            qits.platform.deployments.extras.qits-stt.mounts[0]=volume:qits-stt-data:/data
+            qits.platform.deployments.extras.qits-stt.env.QITS_SPEECH_HOME=/data/speech
+            qits.platform.deployments.extras.qits-stt.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE VOLUME STAYS AND THE DATASOURCE ENV IS GONE, which is the whole shape of this service's
             # move to postgres. /data is not the database's — it is QITS_PROJECTS_DATA_DIR below, the git
             # mirrors this service clones and the credentials beside them, files that no database
@@ -1030,11 +1157,11 @@ public final class ComposeTemplate {
             # rotation and break the deployment it looks like it is configuring.
             #
             # projects no longer mounts the shared repositories volume at all — it clones its own git mirrors
-            # over the wire, through qits.artifacts.url, into its own data dir. QITS_PROJECTS_DATA_DIR is
+            # over the wire, through QITS_GITHOST_URL, into its own data dir. QITS_PROJECTS_DATA_DIR is
             # spelled here rather than left to the image default (${user.home}/...), which resolves to the
             # literal "?" under this image's passwd-less UID 1001.
             #
-            # QITS_REPOSITORIES_GIT_PUSH_TOKEN is the SAME token qits-githost's hook checks, three lines
+            # QITS_REPOSITORIES_GIT_PUSH_TOKEN is the SAME token qits-githost's hook checks, three blocks
             # above. projects advances refs on the git host by pushing now, and the default branch is
             # protected here, so without the token every pull that fast-forwards main is refused. A branch
             # delete deliberately sends no token.
@@ -1045,13 +1172,13 @@ public final class ComposeTemplate {
             # exist. qits-projects-daemon's release pipeline publishes qits/project-agent:<version>
             # now, and qits-projects ships the registry-qualified pin, which a release train moves. An
             # override here would freeze that pin at whatever this file last said. Same reason
-            # qits-workspaces' run-args do not name QITS_WORKSPACE_IMAGE.
+            # qits-workspaces' block does not name QITS_WORKSPACE_IMAGE.
             #
-            # The docker socket, on the same terms qits-ci and qits-workspaces have it: DockerAgentRuntime
+            # The docker socket, on the same terms qits-workspaces has it: DockerAgentRuntime
             # shells `docker run` to create a project's agent container, so without the socket every agent
             # start fails at the runtime rather than at a config check. The mount hands this container
             # control of the host daemon, which is root-equivalent — the service's own docs call supplying
-            # it a deliberate deployment act rather than an image default, and this line IS that act.
+            # it a deliberate deployment act rather than an image default, and this block IS that act.
             #
             # QITS_PROJECTS_OWN_HOST and QITS_PROJECTS_AGENT_GIT_BASE are the two addresses an agent
             # container is handed at creation: this service's own wire name, and the git host it clones
@@ -1064,7 +1191,15 @@ public final class ComposeTemplate {
             # gone from the image, so a deployment still passing it configures NOTHING and the service
             # falls back to a default — which is exactly the silence the rename was made to break.
             # Scheme, host and port only; the /git/<repoId> path is the caller's.
-            qits.platform.deployments.run-args.qits-projects=-v qits-projects-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QITS_PROJECTS_DATA_DIR=/data/mirrors -e QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080 -e QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN} -e QITS_PROJECTS_OWN_HOST=${ENV_NAME}-qits-projects -e QITS_PROJECTS_AGENT_GIT_BASE=http://${ENV_NAME}-qits-githost:8080/git -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.platform.deployments.extras.qits-projects.mounts[0]=volume:qits-projects-data:/data
+            qits.platform.deployments.extras.qits-projects.mounts[1]=bind:/var/run/docker.sock:/var/run/docker.sock
+            qits.platform.deployments.extras.qits-projects.groups[0]=${DOCKER_GID}
+            qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_DATA_DIR=/data/mirrors
+            qits.platform.deployments.extras.qits-projects.env.QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080
+            qits.platform.deployments.extras.qits-projects.env.QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN}
+            qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_OWN_HOST=${ENV_NAME}-qits-projects
+            qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_AGENT_GIT_BASE=http://${ENV_NAME}-qits-githost:8080/git
+            qits.platform.deployments.extras.qits-projects.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The volume stays for the same reason qits-projects' does: /data is this service's own tree of
             # per-repository files, not a database. Both its stores — its own and the eventstream outbox —
             # are declared in its deployments.yml and injected by the deployer, so no datasource env is
@@ -1084,8 +1219,16 @@ public final class ComposeTemplate {
             # the one name on qits-net that fronts a WHOLE environment. Not the edge either — a workspace
             # belongs to a tier, and the gateway is the tier's own front door, while the edge exists to pick
             # between tiers for traffic that arrived from outside.
-            qits.platform.deployments.run-args.qits-workspaces=-v qits-workspaces-data:/data -v /var/run/docker.sock:/var/run/docker.sock --group-add ${DOCKER_GID} -e QITS_PROJECTS_URL=http://${ENV_NAME}-qits-projects:8080 -e QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080 -e QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080 -e QITS_WORKSPACE_GIT_HOST=${ENV_NAME}-qits-gateway -e QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/${ENV_NAME} -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
-            # The reading surface over qits-artifacts' docs repository. ONE line and no volume, because
+            qits.platform.deployments.extras.qits-workspaces.mounts[0]=volume:qits-workspaces-data:/data
+            qits.platform.deployments.extras.qits-workspaces.mounts[1]=bind:/var/run/docker.sock:/var/run/docker.sock
+            qits.platform.deployments.extras.qits-workspaces.groups[0]=${DOCKER_GID}
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_PROJECTS_URL=http://${ENV_NAME}-qits-projects:8080
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_GIT_HOST=${ENV_NAME}-qits-gateway
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/${ENV_NAME}
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # The reading surface over qits-artifacts' docs repository. Two variables and no volume, because
             # this service stores nothing — `latest` is a query over the store's rows rather than a
             # pointer it holds, so a redeploy loses nothing and there is no datasource URL to spell.
             #
@@ -1094,21 +1237,22 @@ public final class ComposeTemplate {
             # front door onto whichever tier's shelf it was pointed at. The address is this tier's own,
             # and it is the SAME value qits-ci injects into a publishing step as $QITS_DOCS_URL, so the
             # publisher and the reader cannot disagree about where documentation lives.
-            qits.platform.deployments.run-args.qits-docs=-e QITS_DOCS_ARTIFACTS_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/docs/docs -e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
-            # THE BUS. One line and no volume: this service's log is a database it declares
+            qits.platform.deployments.extras.qits-docs.env.QITS_DOCS_ARTIFACTS_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/docs/docs
+            qits.platform.deployments.extras.qits-docs.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # THE BUS. One variable and no volume: this service's log is a database it declares
             # (`resources: postgresql:db`) and is handed by the deployer, and its image dropped the /data
             # mount point with the H2 — it writes nothing that outlives the container.
             #
-            # The seed compose block spells the triple this line must not, and the asymmetry is the usual
-            # one: compose starts the bus before any deployer exists, while a pin here would be appended
-            # after the deployer's own injection — docker keeps the last -e — and would outlive the
-            # rotation that first deployment performs.
-            qits.platform.deployments.run-args.qits-events=-e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # The seed compose block spells the triple this block must not, and the asymmetry is the usual
+            # one: compose starts the bus before any deployer exists, while a pin here would be written
+            # after the deployer's own injection — the last assignment of a key wins — and would outlive
+            # the rotation that first deployment performs.
+            qits.platform.deployments.extras.qits-events.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The receiver's own telemetry, addressed to itself. That is the consistent answer rather than
             # the clever one: qits-observability is an ordinary OTLP client like every application above,
             # and leaving it on the dead default would keep exactly one container spamming retries. This
             # application needed nothing beyond its image until the address had to be spelled, which is why
-            # it had no line at all.
-            qits.platform.deployments.run-args.qits-observability=-e QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # it had nothing at all here.
+            qits.platform.deployments.extras.qits-observability.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             """;
 }

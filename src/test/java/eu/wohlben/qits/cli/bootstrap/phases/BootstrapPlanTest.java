@@ -92,14 +92,14 @@ class BootstrapPlanTest {
         // The bus is in the first half too: qits-events declares no qits Maven dependency, so it
         // waits on none of the publishes below it.
         assertThat(ids).containsSubsequence("seed-image-events", "seed-artifacts");
-        // The daemon digest is written into the compose file and the deployer's run-args, so it is
+        // The daemon digest is written into the compose file and the deployer's extras, so it is
         // measured before either is generated.
         assertThat(ids).containsSubsequence("ci-daemon", "idp-secrets", "compose-file",
-                "pd-run-args", "seed-stack", "seed-health");
+                "pd-extras", "seed-stack", "seed-health");
         // postgres before every file that addresses it: the deployer refuses to boot without the
         // database, and seed-stack is what starts the deployer.
         assertThat(ids).containsSubsequence("seed-image-oci-postgresql", "seed-postgres",
-                "idp-secrets", "compose-file", "pd-run-args", "seed-stack");
+                "idp-secrets", "compose-file", "pd-extras", "seed-stack");
         // The git host is in the seed stack rather than started by hand: nothing needs it before
         // compose brings it up, and git-repos — the first phase that PUTs against it — is after
         // the health wait.
@@ -166,7 +166,7 @@ class BootstrapPlanTest {
     void aDomainAddsTheCertificateBeforeTheStackAndTheZoneAfterIt() {
         List<String> ids = ids(plan(Map.of("QITS_DOMAIN", "qits-dev.eu")));
 
-        assertThat(ids).containsSubsequence("pd-run-args", "edge-cert", "seed-stack", "seed-health",
+        assertThat(ids).containsSubsequence("pd-extras", "edge-cert", "seed-stack", "seed-health",
                 "dns-zone");
     }
 

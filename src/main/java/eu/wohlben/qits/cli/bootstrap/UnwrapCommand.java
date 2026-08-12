@@ -25,7 +25,7 @@ import java.util.concurrent.Callable;
  * repositories live, so removing them is the one decision this command asks for out loud. There
  * are three answers, and the middle one is the re-bootstrap's: {@code --with-data-volumes} resets
  * every database and keeps the config volumes, so the push token, the client secrets and the
- * deployer's run-args survive a migration that only needs the data gone.
+ * deployer's extras survive a migration that only needs the data gone.
  */
 @CommandLine.Command(
         name = "unwrap",
@@ -100,7 +100,7 @@ public class UnwrapCommand implements Callable<Integer> {
             if (withDataVolumes) {
                 System.out.println();
                 System.out.println("the qits-*-config volumes are still there — they hold the push "
-                        + "token, the client secrets and the deployer's run-args");
+                        + "token, the client secrets and the deployer's extras");
             } else if (!withVolumes) {
                 System.out.println();
                 System.out.println("the qits-* volumes are still there — unwrap "

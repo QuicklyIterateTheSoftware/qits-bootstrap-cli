@@ -32,7 +32,7 @@ The same run is also served to a browser at `http://localhost:8480` while it run
 the databases, the registry's blobs and the git host's repositories. `unwrap --with-volumes` is the
 full clean slate; `unwrap --with-data-volumes` removes the `qits-*-data` volumes (and
 `qits-maven-seed`) while keeping every `qits-*-config` one, which is what a move onto another
-database needs and what keeps the push token, the client secrets and the deployer's run-args;
+database needs and what keeps the push token, the client secrets and the deployer's config;
 `unwrap --dry-run` lists what would go and removes nothing. `qits-edge-letsencrypt` matches neither
 pattern and is therefore kept by `--with-data-volumes` — a certificate is rate-limited to re-issue,
 and a database reset is no reason to lose one. `qits-maven-cache` is kept by `--with-data-volumes`
@@ -368,7 +368,7 @@ for 42. `QITS_DOMAIN` adds two more, marked below.
 | 30–34 | the five step images from qits-oci |
 | 35 | the ci-daemon musl static binary, and its digest |
 | 36 | resolve the idp's client secrets (given, kept, generated) and record the run state |
-| 37–38 | generate the seed compose file; write the deployer's run-args onto its config volume |
+| 37–38 | generate the seed compose file; write the deployer's per-application extras onto its config volume |
 | — | **with `QITS_DOMAIN` only**: write a self-signed placeholder certificate onto the `qits-edge-letsencrypt` volume, unless one is already there. It is before the stack starts because the edge's keystore names those files and a keystore whose files are missing fails startup |
 | 39–40 | start the seed stack (only what the deployer does not already manage); wait for the idp, the edge, the gateway, the store, the mirror, the git host, the nameserver, ci, the deployer, the bus and the container orchestrator — all on qits-net. The orchestrator is polled at its own alias like the nameserver: it has no gateway route and must not have one, because every caller is a machine and a route would put a socket-holding service behind the platform's public door |
 | — | **with `QITS_DOMAIN` only**: create the zone in qits-platform-dns (`POST /dns/api/zones`, 409 tolerated). No records: their values are this host's public address, which the run cannot know |
@@ -396,7 +396,7 @@ registered, deployed, failed — is relayed from its container log under `pd|`. 
 prints git's own output inline. Silence during a wait is therefore always the platform being
 silent, never the display.
 
-Phase 38 restarts the seed deployer when the run-args it just wrote differ from what the volume
+Phase 38 restarts the seed deployer when the extras it just wrote differ from what the volume
 held. The deployer reads that file once, at its own boot, so a rerun that changes it changes
 nothing for a container that is already running.
 
@@ -498,7 +498,7 @@ front of this CLI.
 **The 2026-08-08 rerun fixes are NOT yet proven by a real bootstrap.** The first prod bootstrap ran
 that day and found three places where the CLI warned and moved on and a person finished the job by
 hand with raw API calls: a stale RED run was read as an outcome instead of a reason to re-announce
-the push, the seed deployer kept the run-args it had cached at its boot and deployed a qits-ci
+the push, the seed deployer kept the configuration it had cached at its boot and deployed a qits-ci
 without them, and nothing spelled `QITS_OBSERVABILITY_URL`, so every exporter dialled a name the
 rename had killed. The validation rerun of those three then stopped at phase 8 with `port is
 already allocated`: the seed store phases predate the skip-when-deployed rule the compose stack
