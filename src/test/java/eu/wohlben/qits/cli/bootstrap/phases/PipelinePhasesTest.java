@@ -198,9 +198,28 @@ class PipelinePhasesTest {
                 List.of("qits-pd-qits-platform-idp-f325ef80"), List.of("qits-platform-idp"), ENV);
 
         assertThat(plan.managed()).containsExactly("qits-platform-idp");
-        // Under the bare short name too: a stack service answers to both, so both are swept.
-        assertThat(plan.stale()).containsExactly("qits-platform-idp");
+        // The bare-alias service is the DEPLOYER'S OWN — the swarm driver deploys under the wire
+        // alias — so it is never swept. Only the qits_-qualified twin is a seed leftover.
+        assertThat(plan.stale()).isEmpty();
         assertThat(plan.deploy()).doesNotContain("qits-platform-idp");
+    }
+
+    /**
+     * The swarm driver's shape: the deployed application is a SERVICE under the bare wire alias,
+     * and its task containers carry swarm's own names — no qits-pd- container anywhere. The
+     * container test alone would call this application undeployed and stack a seed twin over it,
+     * which then holds the alias and the host ports against the next deployment.
+     */
+    @Test
+    void aSwarmDeployedApplicationIsManagedByItsServiceName() {
+        PipelinePhases.SeedPlan plan = PipelinePhases.seedPlan(
+                List.of("prod-qits-ci.1.x8x1yz"),
+                List.of("prod-qits-ci", "qits_prod-qits-ci"), ENV);
+
+        assertThat(plan.managed()).contains(alias("ci"));
+        assertThat(plan.deploy()).doesNotContain(alias("ci"));
+        // And the seed twin left beside it from an interrupted boot is still reaped.
+        assertThat(plan.stale()).containsExactly("qits_prod-qits-ci");
     }
 
     /** Everything deployed: there is nothing left for this phase to start. */

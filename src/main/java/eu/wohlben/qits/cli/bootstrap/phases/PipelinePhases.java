@@ -128,15 +128,22 @@ public class PipelinePhases {
         for (String name : PlatformModel.CORE) {
             String prefix = PlatformModel.pdNamePrefix(name, envName);
             String alias = PlatformModel.wireAlias(name, envName);
-            if (running.stream().noneMatch(container -> container.startsWith(prefix))) {
+            // Deployer-managed shows up two ways: a SERVICE under the bare wire alias (the swarm
+            // driver's shape — its task containers carry swarm's own names, so the qits-pd-
+            // container test would miss every one of them and this run would stack a seed twin
+            // over each), or a qits-pd- container (the docker driver's shape, and what a platform
+            // from before the flip still runs).
+            if (!services.contains(alias)
+                    && running.stream().noneMatch(container -> container.startsWith(prefix))) {
                 deploy.add(alias);
                 continue;
             }
             managed.add(alias);
+            // Only the STACK-qualified twin is stale. The bare-alias service is the deployer's
+            // own — sweeping it would take down the deployed application this run just decided
+            // not to touch.
             String qualified = Docker.stackService(Docker.STACK, alias);
-            services.stream()
-                    .filter(service -> service.equals(qualified) || service.equals(alias))
-                    .forEach(stale::add);
+            services.stream().filter(qualified::equals).forEach(stale::add);
         }
         return new SeedPlan(List.copyOf(deploy), List.copyOf(managed), List.copyOf(stale));
     }
