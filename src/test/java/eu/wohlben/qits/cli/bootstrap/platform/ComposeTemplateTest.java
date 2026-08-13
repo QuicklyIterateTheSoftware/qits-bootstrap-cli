@@ -286,9 +286,9 @@ class ComposeTemplateTest {
      * own store and its own door — and the split runs through every client's configuration, which is
      * what the rest of this class checks one consumer at a time.
      * <p>
-     * Two of the three stores are a DATABASE now and the third is still a volume, so the two shapes
-     * are pinned side by side: a stateless container has no {@code volumes:} key and no blobs
-     * directory at all, while qits-githost keeps both until its own cutover.
+     * All three stores are a DATABASE now, so all three services are pinned to the same shape: no
+     * {@code volumes:} key and no blobs directory anywhere. The negative is asserted per service
+     * rather than once over the file, because a mount that came back would come back under one name.
      */
     @Test
     void theByteplaneIsThreeServicesWithThreeStoresAndThreeDoors() {
@@ -322,17 +322,17 @@ class ComposeTemplateTest {
                 .doesNotContain("QITS_ARTIFACTS_BLOBS_DIR")
                 .doesNotContain("volumes:");
 
-        // The git host: two databases, because the outbox is a lineage of its own — and the blob
-        // store that is still a DIRECTORY, which is what proves the sweep above took the two
-        // services it was aimed at and not one more. It moves in its own work package.
+        // The git host: two databases, because the outbox is a lineage of its own — and the packs
+        // and reftables are rows in the first of them, so this container is stateless as well. It
+        // was the last blob store on a volume.
         assertThat(compose).contains("image: qits/githost:latest");
         assertThat(githost).contains("published: 8083")
                 .contains("QITS_RESOURCE_DB_URL: "
                         + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_githost")
                 .contains("QITS_RESOURCE_EVENTSTREAM_URL: "
                         + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_githost_eventstream")
-                .contains("QITS_ARTIFACTS_BLOBS_DIR: /data/githost/blobs")
-                .contains("- qits-githost-data:/data")
+                .doesNotContain("QITS_ARTIFACTS_BLOBS_DIR")
+                .doesNotContain("volumes:")
                 // A push is a durable event now, not an HTTP call to two consumers.
                 .contains("QITS_EVENTS_URL: http://prod-qits-events:8080")
                 .doesNotContain("QITS_CI_INTAKE_URL")
@@ -831,22 +831,22 @@ class ComposeTemplateTest {
                 .doesNotContain("- qits-platform-idp-data:/data");
 
         // A volume declaration with no mount is a volume nothing ever fills, and the next reader
-        // has to work out which. Exactly the three that lost their only mount are gone.
+        // has to work out which. Every service that lost its only mount lost its declaration too.
         assertThat(compose).doesNotContain("qits-ci-data:")
                 .doesNotContain("qits-platform-idp-data:")
                 .doesNotContain("qits-events-data:")
                 .doesNotContain("qits-deployments-data:")
-                // The two byte stores that moved into postgres: no mount left, so no declaration
-                // either.
+                // THE WHOLE BYTE PLANE. All three stores are databases now, so none of the three
+                // declares or mounts anything.
                 .doesNotContain("qits-artifacts-data")
-                .doesNotContain("qits-platform-mirror-data");
+                .doesNotContain("qits-platform-mirror-data")
+                .doesNotContain("qits-githost-data");
+        // What is left is FILES that no database replaced, plus the postgres those databases are in
+        // — which is what proves the sweep took the byte plane and not every volume in the file.
         assertThat(compose).contains("qits-projects-data:")
                 .contains("qits-workspaces-data:")
                 .contains("qits-stt-data:")
-                .contains("qits-oci-postgresql-data:")
-                // The one byte store still on files, and never a shared volume: a reclaim sweep
-                // counts every file it did not put there as unreferenced.
-                .contains("qits-githost-data:");
+                .contains("qits-oci-postgresql-data:");
     }
 
     /**
@@ -878,7 +878,9 @@ class ComposeTemplateTest {
      * own deployments.yml, so the deployer injects the triple and a datasource line here would be an
      * operator pin that outlives the next password rotation.
      * <p>
-     * NO FILE DATABASE IS LEFT: qits-artifacts was the last one and moved with the byte stores.
+     * NO FILE STORE IS LEFT EITHER. qits-artifacts was the last file database and the git host the
+     * last blob directory, so the whole byte plane deploys stateless and the only mounts in this
+     * file are qits-projects' and qits-workspaces' trees of files.
      */
     @Test
     void noDeploymentCarriesAFileDatabase() {
@@ -895,11 +897,13 @@ class ComposeTemplateTest {
         assertThat(extras("qits-platform-mirror")).doesNotContain("QITS_RESOURCE_")
                 .doesNotContain(".mounts[")
                 .doesNotContain("QITS_ARTIFACTS_BLOBS_DIR");
-        // THE COUNTER-EXAMPLE. The git host's blobs are still files on a volume, which is what
-        // proves the two above lost theirs on purpose rather than by a sweep that went too far.
+        // The git host, the last of the three to move: packs and reftables are rows in qits_githost,
+        // so it has no mount either. Its two triples stay declared rather than pinned.
         assertThat(extras("qits-githost")).doesNotContain("QITS_RESOURCE_")
-                .contains(".mounts[0]=volume:qits-githost-data:/data")
-                .contains("env.QITS_ARTIFACTS_BLOBS_DIR=/data/githost/blobs");
+                .doesNotContain(".mounts[")
+                .doesNotContain("QITS_ARTIFACTS_BLOBS_DIR");
+        // No application anywhere is told where to put blobs any more: not one store is a directory.
+        assertThat(ComposeTemplate.extras(tokens())).doesNotContain("QITS_ARTIFACTS_BLOBS_DIR");
 
         // No application pins a resource triple either: the deployer's injection comes first and
         // the last assignment of a key wins, so a pin here would win and never be rotated.
@@ -913,7 +917,9 @@ class ComposeTemplateTest {
         // it mounts.
         assertThat(extras("qits-containers")).doesNotContain("QITS_RESOURCE_")
                 .doesNotContain("qits-containers-data");
-        // The two that keep a volume: /data is their own tree of files, not a database.
+        // THE COUNTER-EXAMPLE, and the only mounts left in this file: /data is these two services'
+        // own tree of files, which no database replaced. They are what proves the sweep above took
+        // the byte plane on purpose rather than every mount it could reach.
         assertThat(extras("qits-projects")).contains(".mounts[0]=volume:qits-projects-data:/data")
                 .contains("env.QITS_PROJECTS_DATA_DIR=/data/mirrors")
                 .doesNotContain("QITS_RESOURCE_");

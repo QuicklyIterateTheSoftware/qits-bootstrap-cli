@@ -132,21 +132,18 @@ public final class ComposeTemplate {
               # images have no mount point left to give it. Where /data holds files as well, the volume
               # stays and only the datasource left it.
               #
-              # THE BYTE PLANE HAS ONE VOLUME LEFT, and it used to have three. qits-artifacts and
-              # qits-platform-mirror keep their blob bytes in postgres now — rows in qits_artifacts and
-              # qits_platform_mirror — so both are stateless containers with nothing to mount. What each
-              # one stores is unchanged: the platform's OWN packages (npm, maven, OCI, the daemon
-              # binaries, the docs bundles) and what the caches pulled from upstream.
+              # THE BYTE PLANE HAS NO VOLUME AT ALL, and it used to have three. All three stores keep
+              # their blob bytes in postgres now — qits-artifacts in qits_artifacts,
+              # qits-platform-mirror in qits_platform_mirror, qits-githost in qits_githost — so all
+              # three are stateless containers with nothing to mount. What each one stores is
+              # unchanged: the platform's OWN packages (npm, maven, OCI, the daemon binaries, the docs
+              # bundles), what the caches pulled from upstream, and the repositories as packs and
+              # reftables — a git repository on this platform was never a directory anywhere, and now
+              # neither are its bytes.
               #
-              # qits-githost is the one still holding files, and it stays on this volume until its own
-              # cutover: the repositories are packs and reftables, which are ordinary blobs — a git
-              # repository on this platform is not a directory anywhere.
-              #
-              # NO TWO STORES SHARE A DIRECTORY, which is why this was three volumes and never one: each
-              # service's reclaim sweep counts every file it did not put there as unreferenced and
-              # deletes it. The rule survives the move — the two in postgres own a database each.
-              qits-githost-data:
-                name: qits-githost-data
+              # NO TWO STORES SHARE A STORE, which is why this was three volumes and never one: each
+              # service's reclaim sweep counts every blob it did not put there as unreferenced and
+              # deletes it. The rule survives the move — the three own a database each.
               # THE PLATFORM'S TOPOLOGY, ITS DEPLOYMENT HISTORY AND EVERY DATABASE THIS PLATFORM RUNS
               # LIVE HERE — every environment, every service, every link, every deployment row and the
               # rollback pins read off them, the credentials of every database the deployer provisions,
@@ -702,10 +699,10 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_EVENTSTREAM_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_githost_eventstream
                   QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_githost_eventstream
                   QITS_RESOURCE_EVENTSTREAM_PASSWORD: "${PG_GITHOST_EVENTSTREAM_PASSWORD}"
-                  # WHERE THE REPOSITORIES LIVE, and it has to be spelled for the reason the mirror's is:
-                  # the jar's default sits under ${user.home}, which this image's passwd-less UID cannot
-                  # resolve.
-                  QITS_ARTIFACTS_BLOBS_DIR: /data/githost/blobs
+                  # WHERE THE REPOSITORIES LIVE: the first of those two databases, and nowhere else.
+                  # Packs, pack indexes and reftables are rows in qits_githost, so there is no blobs
+                  # directory to spell and no volume to mount — this container is stateless like the
+                  # other two byte services.
                   # WHAT A PUSH BECOMES. SCMPublishCommit, SCMPublishTag and the two deletes go through
                   # the eventstream outbox to the bus, where qits-ci's durable listener turns a commit
                   # into a run and qits-projects' turns it into a backup. It REPLACES the post-receive
@@ -727,8 +724,6 @@ public final class ComposeTemplate {
                   # FALSE, because it is the git host that serves its own redeploy.
                   QITS_REPOSITORIES_GIT_PROTECT_DEFAULT_BRANCH: "true"
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
-                volumes:
-                  - qits-githost-data:/data
                 networks: [qits-net]
                 deploy:
                   replicas: 1
@@ -1113,15 +1108,14 @@ public final class ComposeTemplate {
             # can bind — the same trade the registry's port makes one block up.
             #
             # NO DATASOURCE ENV: both stores are declared (`resources: postgresql:db,
-            # postgresql:eventstream:qits_githost_eventstream`) and injected by the deployer. The volume
-            # stays, because a repository's packs and reftables are blobs on it.
+            # postgresql:eventstream:qits_githost_eventstream`) and injected by the deployer. NO MOUNT
+            # EITHER, and that is the last of the byte plane's volumes: a repository's packs and
+            # reftables are rows in qits_githost now, so this deployment is stateless like the two above.
             #
             # QITS_EVENTS_URL is what makes a push visible to the platform at all: SCMPublishCommit,
             # SCMPublishTag and the two deletes ride the outbox to the bus, where ci's listener queues the
             # run. The eventstream jar's baked default is the pre-rename qits-events:8080.
             qits.platform.deployments.extras.qits-githost.publishes[0]=0.0.0.0:${GIT_HOST_PORT}:8080
-            qits.platform.deployments.extras.qits-githost.mounts[0]=volume:qits-githost-data:/data
-            qits.platform.deployments.extras.qits-githost.env.QITS_ARTIFACTS_BLOBS_DIR=/data/githost/blobs
             qits.platform.deployments.extras.qits-githost.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
             qits.platform.deployments.extras.qits-githost.env.QITS_PROJECTS_NAME_RESOLVER_URL=http://${ENV_NAME}-qits-projects:8080/projects/api/projects
             qits.platform.deployments.extras.qits-githost.env.QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN}

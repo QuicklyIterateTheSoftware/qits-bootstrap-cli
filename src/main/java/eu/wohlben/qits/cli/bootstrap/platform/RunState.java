@@ -58,11 +58,10 @@ public class RunState {
     public String pgPlatformDnsPassword;
     public String pgEventsPassword;
     /**
-     * The byte plane's three stores, on the same terms as the five above. qits-artifacts and
-     * qits-platform-mirror each keep a whole store — catalog rows and blob bytes both — in one
-     * database; qits-githost keeps the pack catalog in its own and the eventstream outbox in a
-     * second, because two Flyway lineages cannot share one — the same pair qits-ci and the deployer
-     * carry.
+     * The byte plane's three stores, on the same terms as the five above. Every one of them keeps a
+     * whole store — catalog rows and blob bytes both — in one database; qits-githost takes a second
+     * for the eventstream outbox, because two Flyway lineages cannot share one, which is the same
+     * pair qits-ci and the deployer carry.
      */
     public String pgArtifactsPassword;
     public String pgPlatformMirrorPassword;
