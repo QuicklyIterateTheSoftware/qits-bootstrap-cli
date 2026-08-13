@@ -949,16 +949,30 @@ public class PipelinePhases {
      */
     private Optional<String[]> platformContainerAtSha(String name, String sha) {
         String prefix = PlatformModel.pdNamePrefix(name, boot.config.envName());
+        // The swarm driver deploys a SERVICE under the wire alias, and swarm names its task
+        // containers <service>.<slot>.<taskid> — no qits-pd- prefix anywhere. Matching only the
+        // docker driver's names left this wait blind while the deployer's log said "Deployed …
+        // into the platform": measured on the third flip boot, 44 minutes staring at a healthy
+        // dns task.
+        String alias = PlatformModel.wireAlias(name, boot.config.envName());
         String[] notServing = null;
         // A pipe separator, deliberately: the process pipeline strips control characters — tabs
         // become spaces before a line reaches this loop (Ansi.clean), so a tab-separated format
         // parses as one field and no container ever matches. Found by the v3 proving run.
         for (String line : boot.docker.ps("{{.Names}}|{{.Image}}|{{.Status}}")) {
             String[] parts = line.split("\\|");
-            if (parts.length < 3 || !parts[0].startsWith(prefix)) {
+            if (parts.length < 3
+                    || !(parts[0].startsWith(prefix) || parts[0].startsWith(alias + "."))) {
                 continue;
             }
-            if (!parts[1].endsWith(":" + sha)) {
+            // A swarm task's image carries the manifest digest after the tag; the sha this wait
+            // matches is the TAG.
+            String image = parts[1];
+            int digest = image.indexOf('@');
+            if (digest >= 0) {
+                image = image.substring(0, digest);
+            }
+            if (!image.endsWith(":" + sha)) {
                 continue;
             }
             String[] container = {parts[0], parts[2]};
