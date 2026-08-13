@@ -396,12 +396,10 @@ public final class PlatformModel {
     public static String seedUiPath(String name) {
         return switch (name) {
             case "gateway" -> "src/main/webui/dist/qits-spa-home/browser";
-            // The REPOSITORY is qits-spa-artifacts since the byte-plane split; the Angular PROJECT
-            // inside it is still qits-platform-spa-artifacts, and the project key is what names the
-            // dist directory the service's Dockerfile tests for. The two move separately, so this
-            // path follows the project and not the repository.
-            case "artifacts" ->
-                    "service/src/main/webui/dist/qits-platform-spa-artifacts/browser";
+            // The Angular PROJECT key names this directory, not the repository. The two agreed
+            // again on 2026-08-13, when the project inside qits-spa-artifacts took the repository's
+            // post-split name; they still move separately, so this path follows the project.
+            case "artifacts" -> "service/src/main/webui/dist/qits-spa-artifacts/browser";
             case "deployments" -> "service/src/main/webui/dist/qits-spa-deployments/browser";
             case "ci" -> "service/src/main/webui/dist/qits-spa-ci/browser";
             case "events" -> "service/src/main/webui/dist/qits-spa-events/browser";

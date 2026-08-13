@@ -190,11 +190,10 @@ class PlatformModelTest {
         // A bundle directory is the Angular project key, so it moves when the client is renamed —
         // and the service's Dockerfile checks this exact path with `test -f`. A stale spelling here
         // fails the seed build minutes in, which is how the deployments client's rename was found.
-        // The REPOSITORY is qits-spa-artifacts; the Angular PROJECT inside it is still
-        // qits-platform-spa-artifacts, and the project key is what names the dist directory the
-        // Dockerfile tests for.
+        // The artifacts client is the second rename this assertion has caught: its project key
+        // followed the repository to qits-spa-artifacts on 2026-08-13.
         assertThat(PlatformModel.seedUiPath("artifacts"))
-                .isEqualTo("service/src/main/webui/dist/qits-platform-spa-artifacts/browser");
+                .isEqualTo("service/src/main/webui/dist/qits-spa-artifacts/browser");
         assertThat(PlatformModel.seedUiPath("deployments"))
                 .isEqualTo("service/src/main/webui/dist/qits-spa-deployments/browser");
         assertThat(PlatformModel.seedUiPath("gateway"))
