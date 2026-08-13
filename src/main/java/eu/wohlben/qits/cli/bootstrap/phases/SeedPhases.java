@@ -1149,6 +1149,23 @@ public class SeedPhases {
     // --- postgres ---------------------------------------------------------------------------------
 
     /**
+     * Every database {@link #seedPostgres} creates, in the order it creates them.
+     * <p>
+     * <b>It is here so a test can hold it against the generated seed stack.</b> A seed container is
+     * handed its credential by the file that starts it, and a database nobody created is not a
+     * misconfiguration a person sees — it is a container that dies at Flyway's first connect, tens
+     * of phases into a boot. So the list is declared once and checked against every
+     * {@code QITS_RESOURCE_*_URL} the seed spells.
+     */
+    public static final List<String> SEED_DATABASES = List.of(
+            "qits_deployments", "qits_deployments_eventstream",
+            "qits_ci", "qits_ci_eventstream",
+            "qits_platform_idp", "qits_platform_dns", "qits_events",
+            "qits_artifacts", "qits_platform_mirror",
+            "qits_githost", "qits_githost_eventstream",
+            "qits_containers", "qits_containers_eventstream");
+
+    /**
      * The platform's postgres, running with a password of this bootstrap's choosing from its very
      * first boot, and every database a seed container boots against.
      * <p>
@@ -1423,7 +1440,7 @@ public class SeedPhases {
                 provision(ctx, admin, "qits_containers", containers, false);
                 provision(ctx, admin, "qits_containers_eventstream", containersEventstream, false);
             }
-            ctx.note("13 databases ready on " + pg);
+            ctx.note(SEED_DATABASES.size() + " databases ready on " + pg);
         });
     }
 

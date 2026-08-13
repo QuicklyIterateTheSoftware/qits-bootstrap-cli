@@ -1,5 +1,6 @@
 package eu.wohlben.qits.cli.bootstrap.platform;
 
+import eu.wohlben.qits.cli.bootstrap.phases.SeedPhases;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
@@ -33,6 +34,7 @@ class ComposeTemplateTest {
         values.put("PG_PLATFORM_IDP_PASSWORD", "2222333344445555");
         values.put("PG_PLATFORM_DNS_PASSWORD", "66667777888899aa");
         values.put("PG_EVENTS_PASSWORD", "bbbbccccddddeeee");
+        values.put("PG_ARTIFACTS_PASSWORD", "cafecafecafecafe");
         values.put("PG_PLATFORM_MIRROR_PASSWORD", "1234123412341234");
         values.put("PG_GITHOST_PASSWORD", "5678567856785678");
         values.put("PG_GITHOST_EVENTSTREAM_PASSWORD", "9abc9abc9abc9abc");
@@ -139,6 +141,7 @@ class ComposeTemplateTest {
                 .doesNotContain("${PG_PLATFORM_IDP_PASSWORD}")
                 .doesNotContain("${PG_PLATFORM_DNS_PASSWORD}")
                 .doesNotContain("${PG_EVENTS_PASSWORD}")
+                .doesNotContain("${PG_ARTIFACTS_PASSWORD}")
                 .doesNotContain("${PG_PLATFORM_MIRROR_PASSWORD}")
                 .doesNotContain("${PG_GITHOST_PASSWORD}")
                 .doesNotContain("${PG_GITHOST_EVENTSTREAM_PASSWORD}")
@@ -280,8 +283,12 @@ class ComposeTemplateTest {
 
     /**
      * <b>THE BYTE PLANE, in the seed stack.</b> Three services where there was one, each with its
-     * own store, its own volume and its own door — and the split runs through every client's
-     * configuration, which is what the rest of this class checks one consumer at a time.
+     * own store and its own door — and the split runs through every client's configuration, which is
+     * what the rest of this class checks one consumer at a time.
+     * <p>
+     * Two of the three stores are a DATABASE now and the third is still a volume, so the two shapes
+     * are pinned side by side: a stateless container has no {@code volumes:} key and no blobs
+     * directory at all, while qits-githost keeps both until its own cutover.
      */
     @Test
     void theByteplaneIsThreeServicesWithThreeStoresAndThreeDoors() {
@@ -290,29 +297,34 @@ class ComposeTemplateTest {
         String mirror = serviceBlock(compose, "qits-platform-mirror");
         String githost = serviceBlock(compose, ENV + "-qits-githost");
 
-        // The hosted store keeps the registry port and the file H2 it always had; only its name
-        // and its plane moved.
+        // The hosted store keeps the registry port it always had. Its store is one database —
+        // metadata and blob bytes both — so the container mounts nothing.
         assertThat(compose).contains("image: qits/artifacts:latest");
         assertThat(artifacts).contains("published: 8081")
-                .contains("QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL: "
-                        + "jdbc:h2:file:/data/artifacts/h2/artifacts")
-                .contains("- qits-artifacts-data:/data")
+                .contains("QITS_RESOURCE_DB_URL: "
+                        + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_artifacts")
+                .contains("QITS_RESOURCE_DB_USERNAME: qits_artifacts")
+                .contains("QITS_RESOURCE_DB_PASSWORD: \"cafecafecafecafe\"")
+                .doesNotContain("QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL")
+                .doesNotContain("QITS_ARTIFACTS_BLOBS_DIR")
+                .doesNotContain("volumes:")
                 // The git host left, and every knob it owned left with it.
                 .doesNotContain("QITS_REPOSITORIES_GIT_")
                 .doesNotContain("QITS_CI_INTAKE_URL");
 
-        // The caches: a platform service, its own database, its own published door.
+        // The caches: a platform service, its own database, its own published door — and the cached
+        // bytes are rows in that same database, so this container is stateless too.
         assertThat(compose).contains("image: qits/platform-mirror:latest");
         assertThat(mirror).contains("published: 8082")
                 .contains("QITS_RESOURCE_DB_URL: "
                         + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_platform_mirror")
                 .contains("QITS_RESOURCE_DB_PASSWORD: \"1234123412341234\"")
-                // Without it the process writes its cache where ${user.home} resolves for a
-                // passwd-less uid, which is the literal "?".
-                .contains("QITS_ARTIFACTS_BLOBS_DIR: /data/mirror/blobs")
-                .contains("- qits-platform-mirror-data:/data");
+                .doesNotContain("QITS_ARTIFACTS_BLOBS_DIR")
+                .doesNotContain("volumes:");
 
-        // The git host: two stores, because the outbox is a lineage of its own.
+        // The git host: two databases, because the outbox is a lineage of its own — and the blob
+        // store that is still a DIRECTORY, which is what proves the sweep above took the two
+        // services it was aimed at and not one more. It moves in its own work package.
         assertThat(compose).contains("image: qits/githost:latest");
         assertThat(githost).contains("published: 8083")
                 .contains("QITS_RESOURCE_DB_URL: "
@@ -823,16 +835,42 @@ class ComposeTemplateTest {
         assertThat(compose).doesNotContain("qits-ci-data:")
                 .doesNotContain("qits-platform-idp-data:")
                 .doesNotContain("qits-events-data:")
-                .doesNotContain("qits-deployments-data:");
+                .doesNotContain("qits-deployments-data:")
+                // The two byte stores that moved into postgres: no mount left, so no declaration
+                // either.
+                .doesNotContain("qits-artifacts-data")
+                .doesNotContain("qits-platform-mirror-data");
         assertThat(compose).contains("qits-projects-data:")
                 .contains("qits-workspaces-data:")
                 .contains("qits-stt-data:")
                 .contains("qits-oci-postgresql-data:")
-                // One volume per byte store, and never a shared one: each service's reclaim sweep
+                // The one byte store still on files, and never a shared volume: a reclaim sweep
                 // counts every file it did not put there as unreferenced.
-                .contains("qits-artifacts-data:")
-                .contains("qits-platform-mirror-data:")
                 .contains("qits-githost-data:");
+    }
+
+    /**
+     * <b>THE SEED CANNOT DIAL A DATABASE NOBODY CREATED.</b> Every service in this file is started
+     * before any deployer exists, so its credential is spelled here and its role and database are
+     * created by the {@code seed-postgres} phase. A store missing from that phase's list is not a
+     * misconfiguration a person sees — it is a container that dies at Flyway's first connect, tens
+     * of phases into a boot.
+     * <p>
+     * The two lists are the same SET, in both directions: a database nothing dials would be
+     * provisioned forever after the service that wanted it left.
+     */
+    @Test
+    void everyDatabaseTheSeedDialsIsOneTheSeedCreates() {
+        List<String> dialled = ComposeTemplate.compose(tokens()).lines()
+                .map(String::strip)
+                .filter(line -> line.startsWith("QITS_RESOURCE_") && line.contains("_URL:"))
+                .map(line -> line.substring(line.lastIndexOf('/') + 1))
+                .distinct()
+                .toList();
+
+        assertThat(dialled).contains("qits_artifacts", "qits_platform_mirror");
+        assertThat(dialled)
+                .containsExactlyInAnyOrderElementsOf(SeedPhases.SEED_DATABASES);
     }
 
     /**
@@ -840,25 +878,28 @@ class ComposeTemplateTest {
      * own deployments.yml, so the deployer injects the triple and a datasource line here would be an
      * operator pin that outlives the next password rotation.
      * <p>
-     * qits-platform-artifacts is the one service still on a file H2, and its line must keep saying
-     * so: it is what proves the sweep took the services it was aimed at and not one more.
+     * NO FILE DATABASE IS LEFT: qits-artifacts was the last one and moved with the byte stores.
      */
     @Test
-    void onlyArtifactsStillCarriesAFileDatabase() {
-        List<String> h2 = extrasKeys().stream()
-                .filter(line -> line.contains("jdbc:h2"))
-                .toList();
+    void noDeploymentCarriesAFileDatabase() {
+        assertThat(extrasKeys().stream().filter(line -> line.contains("jdbc:h2")).toList())
+                .isEmpty();
 
-        assertThat(h2).singleElement().asString()
-                .isEqualTo(EXTRAS + "qits-artifacts.env.QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL="
-                        + "jdbc:h2:file:/data/artifacts/h2/artifacts");
-        assertThat(extras("qits-artifacts")).contains(".mounts[0]=volume:qits-artifacts-data:/data");
-        // The two new byte services declare their stores instead, so the deployer injects the
-        // triples and a pin here would outlive the next rotation.
+        // The hosted store is stateless: one database holds the catalog and the blob bytes both, so
+        // there is no mount and no blobs directory — and no triple either, because the deployer
+        // injects it from `resources: postgresql:db`.
+        assertThat(extras("qits-artifacts")).doesNotContain("QITS_RESOURCE_")
+                .doesNotContain(".mounts[")
+                .doesNotContain("QITS_ARTIFACTS_BLOBS_DIR");
+        // The cache half, on exactly the same terms.
         assertThat(extras("qits-platform-mirror")).doesNotContain("QITS_RESOURCE_")
-                .contains(".mounts[0]=volume:qits-platform-mirror-data:/data");
+                .doesNotContain(".mounts[")
+                .doesNotContain("QITS_ARTIFACTS_BLOBS_DIR");
+        // THE COUNTER-EXAMPLE. The git host's blobs are still files on a volume, which is what
+        // proves the two above lost theirs on purpose rather than by a sweep that went too far.
         assertThat(extras("qits-githost")).doesNotContain("QITS_RESOURCE_")
-                .contains(".mounts[0]=volume:qits-githost-data:/data");
+                .contains(".mounts[0]=volume:qits-githost-data:/data")
+                .contains("env.QITS_ARTIFACTS_BLOBS_DIR=/data/githost/blobs");
 
         // No application pins a resource triple either: the deployer's injection comes first and
         // the last assignment of a key wins, so a pin here would win and never be rotated.
