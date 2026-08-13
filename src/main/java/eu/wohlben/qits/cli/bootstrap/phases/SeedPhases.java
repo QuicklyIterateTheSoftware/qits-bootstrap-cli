@@ -73,14 +73,17 @@ public class SeedPhases {
      * <p>
      * Every pair here is forced by a pom:
      * <ul>
-     *   <li>qits-registries is written against qits-blobstore's entities, so the blob store is
-     *       first.
-     *   <li>qits-eventstream is written against qits-db-core, a module of qits-integrations-quarkus,
-     *       so the integrations come BEFORE it. This is the edge that broke the 2026-08-11 proving
-     *       run: the integrations used to be last, every earlier green run had an eventstream with
-     *       no qits dependency at all, and the day it grew one the seed resolved qits-db-core
-     *       against a registry that does not exist yet — "Connection refused" on localhost:8081,
-     *       minutes into the phase.
+     *   <li>qits-blobstore is written against qits-db-core, a module of qits-integrations-quarkus,
+     *       since its DbRetry release (2026.813.161828) — so the integrations come FIRST. The same
+     *       class of break as the 2026-08-11 one below, bought a second time on 2026-08-13: every
+     *       earlier green run had a blobstore with no qits dependency at all, and the day it grew
+     *       one the seed resolved qits-db-core against a registry that does not exist yet —
+     *       "Connection refused" on localhost:8081, seconds into the phase.
+     *   <li>qits-registries is written against qits-blobstore's entities and follows it.
+     *   <li>qits-eventstream is written against qits-db-core too, so the integrations come BEFORE
+     *       it as well. This is the edge that broke the 2026-08-11 proving run: the integrations
+     *       used to be last, and the day eventstream grew the dependency the seed died the same
+     *       way, minutes into the phase.
      *   <li>qits-githost-events is written against qits-eventstream and follows it.
      *   <li>qits-containers' two libraries are written against qits-db-core and qits-eventstream,
      *       so the orchestrator is last.
@@ -90,7 +93,7 @@ public class SeedPhases {
      * PlatformModel#mavenModule} says which modules and why.
      */
     static final List<String> SEED_LIBRARIES = List.of(
-            "blobstore", "registries", "integrations-quarkus", "eventstream", "githost",
+            "integrations-quarkus", "blobstore", "registries", "eventstream", "githost",
             "containers");
 
     /**

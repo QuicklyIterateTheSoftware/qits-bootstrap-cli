@@ -56,13 +56,15 @@ class SeedPhasesTest {
     @Test
     void theSeedLibrariesAreEveryJarASeedImageResolves() {
         assertThat(SeedPhases.SEED_LIBRARIES).containsExactly(
-                "blobstore", "registries", "integrations-quarkus", "eventstream", "githost",
+                "integrations-quarkus", "blobstore", "registries", "eventstream", "githost",
                 "containers");
-        // Dependency order, and every pair is forced by a pom: qits-registries is written against
-        // qits-blobstore's entities, qits-eventstream against qits-db-core (a module of
-        // qits-integrations-quarkus), qits-githost-events against qits-eventstream, and the
-        // orchestrator's two libraries against qits-db-core and qits-eventstream both.
-        assertThat(SeedPhases.SEED_LIBRARIES).containsSubsequence("blobstore", "registries");
+        // Dependency order, and every pair is forced by a pom: qits-blobstore is written against
+        // qits-db-core (a module of qits-integrations-quarkus) since its DbRetry release,
+        // qits-registries against qits-blobstore's entities, qits-eventstream against qits-db-core
+        // too, qits-githost-events against qits-eventstream, and the orchestrator's two libraries
+        // against qits-db-core and qits-eventstream both.
+        assertThat(SeedPhases.SEED_LIBRARIES)
+                .containsSubsequence("integrations-quarkus", "blobstore", "registries");
         assertThat(SeedPhases.SEED_LIBRARIES)
                 .containsSubsequence("integrations-quarkus", "eventstream", "githost");
         assertThat(SeedPhases.SEED_LIBRARIES)
