@@ -125,7 +125,10 @@ public class Docker {
                 null).ok();
     }
 
-    /** The docker socket's group. The deployer and ci join it rather than running as root. */
+    /**
+     * The docker socket's group. The deployer and the orchestrator join it rather than running as
+     * root, and they are the only two services that hold the socket at all.
+     */
     public String socketGroupId() {
         Path socket = Path.of("/var/run/docker.sock");
         try {

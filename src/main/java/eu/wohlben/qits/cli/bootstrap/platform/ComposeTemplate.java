@@ -1335,12 +1335,6 @@ public final class ComposeTemplate {
             # override here would freeze that pin at whatever this file last said. Same reason
             # qits-workspaces' block does not name QITS_WORKSPACE_IMAGE.
             #
-            # The docker socket, on the same terms qits-workspaces has it: DockerAgentRuntime
-            # shells `docker run` to create a project's agent container, so without the socket every agent
-            # start fails at the runtime rather than at a config check. The mount hands this container
-            # control of the host daemon, which is root-equivalent — the service's own docs call supplying
-            # it a deliberate deployment act rather than an image default, and this block IS that act.
-            #
             # QITS_PROJECTS_OWN_HOST and QITS_PROJECTS_AGENT_GIT_BASE are the two addresses an agent
             # container is handed at creation: this service's own wire name, and the git host it clones
             # from. The image ships pre-rename defaults (qits-projects, qits-artifacts), which resolve to
@@ -1352,9 +1346,11 @@ public final class ComposeTemplate {
             # gone from the image, so a deployment still passing it configures NOTHING and the service
             # falls back to a default — which is exactly the silence the rename was made to break.
             # Scheme, host and port only; the /git/<repoId> path is the caller's.
+            #
             # NO SOCKET AND NO SOCKET GROUP any more: agent containers start through
             # qits-containers (orchestration round 2), so this service holds a machine-token
-            # client instead of the host daemon.
+            # client instead of the host daemon. What the mount used to grant was root-equivalent
+            # control of that daemon, and only the orchestrator is granted it now.
             qits.platform.deployments.extras.qits-projects.mounts[0]=volume:qits-projects-data:/data
             qits.platform.deployments.extras.qits-projects.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT}
