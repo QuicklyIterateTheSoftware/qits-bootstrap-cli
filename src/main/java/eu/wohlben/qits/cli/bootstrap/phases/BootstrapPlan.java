@@ -78,19 +78,20 @@ public final class BootstrapPlan {
             // not a slow publish but a failed one.
             phases.add(seed.seedMirrorStart());
             phases.add(seed.seedArtifactsStart());
-            // The byte-plane libraries first and in dependency order, for the reason
+            // The integrations FIRST: qits-blobstore is written against qits-db-core — one of this
+            // repository's three modules — since its DbRetry release (2026-08-13), and
+            // qits-eventstream since 2026-08-11. A publish resolves its qits half from the store it
+            // is deploying into, so the order here is the same order the maven seed runs in and for
+            // the same reason.
+            phases.add(seed.mavenPublish("integrations-quarkus", "qits-auth-core",
+                    "publish qits-auth-core into seed artifacts"));
+            // Then the byte-plane libraries in dependency order, for the reason
             // PlatformModel.RELEASE_PUBLISHERS spells: qits-registries is written against
             // qits-blobstore's entities.
             phases.add(seed.mavenPublish("blobstore", "qits-blobstore",
                     "publish qits-blobstore into seed artifacts"));
             phases.add(seed.mavenPublish("registries", "qits-registries-oci",
                     "publish qits-registries into seed artifacts"));
-            // The integrations BEFORE qits-eventstream, because qits-eventstream is written against
-            // qits-db-core — one of this repository's three modules — since 2026-08-11. A publish
-            // resolves its qits half from the store it is deploying into, so the order here is the
-            // same order the maven seed runs in and for the same reason.
-            phases.add(seed.mavenPublish("integrations-quarkus", "qits-auth-core",
-                    "publish qits-auth-core into seed artifacts"));
             phases.add(seed.mavenPublish("eventstream", "qits-eventstream",
                     "publish qits-eventstream into seed artifacts"));
             // The git host's event vocabulary, AFTER qits-eventstream because that is its only qits
