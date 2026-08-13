@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.TimeoutException;
 
 /** From "the seed is up" to "the platform deployed itself". */
@@ -34,6 +35,28 @@ public class PipelinePhases {
      */
     private static final Map<String, String> PROBE_BEARER =
             Map.of("Authorization", "Bearer qits-bootstrap-auth-plane-probe");
+
+    /**
+     * THE DEPLOYER'S TERMINAL VOCABULARY, minus the one good word. A row in any of these states is
+     * finished: no later row for this sha is coming, so the wait ends and warns.
+     * <p>
+     * The list comes from qits-deployments' status refinement, and this CLI has to know a word
+     * BEFORE the deployer starts writing it: an unknown status reads as "still working", so the
+     * wait sits on a finished row for its whole timeout — measured cost, one hour per repository.
+     * <ul>
+     *   <li>{@code FAILED} — the deploy did not come up.
+     *   <li>{@code IMAGE_MISSING} — there was nothing to deploy at that sha.
+     *   <li>{@code ROLLED_BACK} — the swarm manager restored the predecessor. The SERVICE kept
+     *       serving, which is why this is not a catastrophe, but it is not serving THIS commit and
+     *       the boot must say so.
+     *   <li>{@code SUPERSEDED} — an in-flight row overtaken by a newer deployment. Nothing further
+     *       will happen to it.
+     *   <li>{@code GONE} — an observer demoting a row that was active and is not any more.
+     * </ul>
+     * ACTIVE is deliberately absent: it is the wait's success and is answered on its own.
+     */
+    static final Set<String> TERMINAL_DEPLOYMENT_STATUSES =
+            Set.of("FAILED", "IMAGE_MISSING", "ROLLED_BACK", "SUPERSEDED", "GONE");
 
     private final Boot boot;
 
@@ -1028,6 +1051,26 @@ public class PipelinePhases {
         return text.contains("up to date") || text.contains("up-to-date");
     }
 
+    /**
+     * WHAT A DEPLOYMENT ROW AT THE PUSHED SHA SAYS, or null while it says nothing yet and the wait
+     * goes on. Kept pure so the deployer's status vocabulary can be read without a deployer.
+     * <p>
+     * The shape of the answer carries its meaning: the wait notes an outcome that starts with
+     * ACTIVE and WARNS about every other one, so a terminal row reads
+     * {@code DEPLOY <status>: <detail>} and ends the boot's wait as a warning. That is this
+     * program's posture — a deployment that did not land does not abandon the applications behind
+     * it — and it is the same answer for all five terminal words.
+     */
+    static String deploymentVerdict(String status, String containerName, String detail) {
+        if ("ACTIVE".equals(status)) {
+            return "ACTIVE " + containerName;
+        }
+        if (TERMINAL_DEPLOYMENT_STATUSES.contains(status)) {
+            return "DEPLOY " + status + ": " + (detail.isBlank() ? "no detail" : detail);
+        }
+        return null;
+    }
+
     private void awaitDeployment(PhaseContext ctx, String name, String repo, String sha,
             String ref, String baselineRowId, String baselineRunId, boolean pushed) {
         boolean platformService = PlatformModel.isPlatformService(name);
@@ -1068,18 +1111,18 @@ public class PipelinePhases {
                                 deploymentState = status.isBlank() ? "PENDING" : status;
                                 boolean stale = Json.text(row.get(), "id").equals(baselineRowId);
                                 if (sha.equals(Json.text(row.get(), "commitSha")) && !stale) {
-                                    if ("ACTIVE".equals(status)) {
-                                        return Waiter.Poll.done(
-                                                "ACTIVE " + Json.text(row.get(), "containerName"),
-                                                "ACTIVE");
-                                    }
-                                    if ("FAILED".equals(status) || "IMAGE_MISSING".equals(status)) {
-                                        String detail = Json.text(row.get(), "detail");
-                                        return Waiter.Poll.done("DEPLOY " + status + ": "
-                                                + (detail.isBlank() ? "no detail" : detail), status);
+                                    String verdict = deploymentVerdict(status,
+                                            Json.text(row.get(), "containerName"),
+                                            Json.text(row.get(), "detail"));
+                                    if (verdict != null) {
+                                        return Waiter.Poll.done(verdict, status);
                                     }
                                 }
                                 if (stale) {
+                                    // Whatever the word is. A stale row is tolerated by its ID, not
+                                    // by its status, so every terminal status gets the same
+                                    // "an earlier run left this" reading and none of them ends this
+                                    // phase's wait.
                                     deploymentState = "stale " + deploymentState
                                             + " row from an earlier run";
                                 }

@@ -80,6 +80,59 @@ class PipelinePhasesTest {
         return new ProcessResult(0, List.of(lines), List.of(lines), false, false);
     }
 
+    // --- what a deployment row says ----------------------------------------------------------------
+    //
+    // The wait itself needs a deployer, a ci and a docker, so what is tested is the sentence it
+    // reads a row by: ACTIVE ends the wait as a success, every terminal word ends it as a warning,
+    // and anything else keeps it going. The outcome's SHAPE is the warning — the wait notes an
+    // outcome starting with ACTIVE and warns about the rest — so these assertions read it that way.
+
+    @Test
+    void anActiveRowEndsTheWaitWithItsContainer() {
+        assertThat(PipelinePhases.deploymentVerdict("ACTIVE", "qits-pd-qits-ci-f325ef80", ""))
+                .isEqualTo("ACTIVE qits-pd-qits-ci-f325ef80");
+    }
+
+    @Test
+    void aFailedRowEndsTheWaitAsAWarning() {
+        assertThat(PipelinePhases.deploymentVerdict("FAILED", "", "the container never got healthy"))
+                .isEqualTo("DEPLOY FAILED: the container never got healthy")
+                .doesNotStartWith("ACTIVE");
+    }
+
+    /**
+     * The deployer's refined words, and the reason this list leads rather than follows: a status
+     * this program does not know reads as "still working" and costs the wait its whole timeout.
+     * A rolled-back deployment left the SERVICE serving, but not this commit — same warning.
+     */
+    @Test
+    void theRefinedTerminalWordsEndTheWaitTheSameWay() {
+        assertThat(PipelinePhases.deploymentVerdict("ROLLED_BACK", "", "restored the predecessor"))
+                .isEqualTo("DEPLOY ROLLED_BACK: restored the predecessor")
+                .doesNotStartWith("ACTIVE");
+        assertThat(PipelinePhases.deploymentVerdict("SUPERSEDED", "", "a newer deployment took over"))
+                .isEqualTo("DEPLOY SUPERSEDED: a newer deployment took over")
+                .doesNotStartWith("ACTIVE");
+        assertThat(PipelinePhases.deploymentVerdict("GONE", "", "no container answers for this row"))
+                .isEqualTo("DEPLOY GONE: no container answers for this row")
+                .doesNotStartWith("ACTIVE");
+    }
+
+    /** A terminal row with nothing to say still says something. */
+    @Test
+    void aTerminalRowWithoutADetailStillReads() {
+        assertThat(PipelinePhases.deploymentVerdict("IMAGE_MISSING", "", ""))
+                .isEqualTo("DEPLOY IMAGE_MISSING: no detail");
+    }
+
+    /** Everything the deployer is still working on keeps the wait waiting. */
+    @Test
+    void anUnfinishedRowIsNoVerdict() {
+        assertThat(PipelinePhases.deploymentVerdict("PENDING", "", "")).isNull();
+        assertThat(PipelinePhases.deploymentVerdict("DEPLOYING", "", "")).isNull();
+        assertThat(PipelinePhases.deploymentVerdict("", "", "")).isNull();
+    }
+
     // --- where the deploy ref points ---------------------------------------------------------------
 
     private static final String MAIN = "1111111111111111111111111111111111111111";
