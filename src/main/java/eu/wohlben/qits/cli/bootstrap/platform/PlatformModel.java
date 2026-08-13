@@ -462,7 +462,7 @@ public final class PlatformModel {
      * nothing.
      */
     public static final List<String> IDP_CLIENT_APPS =
-            List.of("ci", "artifacts", "workspaces", "gateway");
+            List.of("ci", "artifacts", "workspaces", "gateway", "projects");
 
     /**
      * The {@code aud} values the platform's clients may ask for: every client above plus the

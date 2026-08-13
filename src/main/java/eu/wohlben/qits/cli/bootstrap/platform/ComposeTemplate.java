@@ -226,11 +226,14 @@ public final class ComposeTemplate {
                   # qits-artifacts' id carries the tier since the byte-plane split made it an
                   # environment service again. The key embeds the id, so this line moved with it.
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_SECRET: "${IDP_SECRET_ARTIFACTS}"
-                  # Unused in phase 1 (qits-workspaces' agents are phase 2, the gateway's user flows phase 3).
-                  # Seeded anyway: the cost is a config line, and the cost of the omission is invalid_client on
-                  # a path nobody was looking at.
+                  # The gateway's user flows are a later phase; seeded anyway: the cost is a config
+                  # line, and the cost of the omission is invalid_client on a path nobody was
+                  # looking at.
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_SECRET: "${IDP_SECRET_WORKSPACES}"
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_GATEWAY_SECRET: "${IDP_SECRET_GATEWAY}"
+                  # qits-projects mints since it starts its agent containers through
+                  # qits-containers (orchestration round 2).
+                  QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_SECRET: "${IDP_SECRET_PROJECTS}"
                   # The audiences each minting client may ask for. Restated in full, because the key replaces
                   # the shipped list rather than extending it — and an audience a client may not ask for is
                   # invalid_target, not a silent bare call. qits-ci is the one client that writes to the
@@ -239,6 +242,11 @@ public final class ComposeTemplate {
                   # deployer itself needs no client and no list: it mints nothing, it only validates.
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_AUDIENCES: "${IDP_AUDIENCES}"
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_AUDIENCES: "${IDP_AUDIENCES}"
+                  # workspaces and projects mint against qits-containers (orchestration round 2);
+                  # the list is the same platform-wide one, restated because the key replaces the
+                  # shipped list rather than extending it.
+                  QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_AUDIENCES: "${IDP_AUDIENCES}"
+                  QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_AUDIENCES: "${IDP_AUDIENCES}"
                   # The one wildcard grant, and it is kept for a PERSON. qits-ci's manual trigger names
                   # no repository, so it demands them all — a token granted project=*. This bootstrap
                   # used to present one, for the release replays; they push the release tag now and
@@ -1273,8 +1281,11 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_SECRET=${IDP_SECRET_ARTIFACTS}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_SECRET=${IDP_SECRET_WORKSPACES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_GATEWAY_SECRET=${IDP_SECRET_GATEWAY}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_SECRET=${IDP_SECRET_PROJECTS}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_AUDIENCES=${IDP_AUDIENCES}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_AUDIENCES=${IDP_AUDIENCES}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_CLAIMS_PROJECT=*
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The nameserver's own deployment. TWO PUBLISHES, BOTH PROTOCOLS: the deployed container
@@ -1341,9 +1352,16 @@ public final class ComposeTemplate {
             # gone from the image, so a deployment still passing it configures NOTHING and the service
             # falls back to a default — which is exactly the silence the rename was made to break.
             # Scheme, host and port only; the /git/<repoId> path is the caller's.
+            # NO SOCKET AND NO SOCKET GROUP any more: agent containers start through
+            # qits-containers (orchestration round 2), so this service holds a machine-token
+            # client instead of the host daemon.
             qits.platform.deployments.extras.qits-projects.mounts[0]=volume:qits-projects-data:/data
-            qits.platform.deployments.extras.qits-projects.mounts[1]=bind:/var/run/docker.sock:/var/run/docker.sock
-            qits.platform.deployments.extras.qits-projects.groups[0]=${DOCKER_GID}
+            qits.platform.deployments.extras.qits-projects.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT}
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_CLIENT_ID=${ENV_NAME}-qits-projects
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-containers
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_CREDENTIALS_SECRET=${IDP_SECRET_PROJECTS}
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_DATA_DIR=/data/mirrors
             qits.platform.deployments.extras.qits-projects.env.QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080
             qits.platform.deployments.extras.qits-projects.env.QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN}
@@ -1369,9 +1387,16 @@ public final class ComposeTemplate {
             # the one name on qits-net that fronts a WHOLE environment. Not the edge either — a workspace
             # belongs to a tier, and the gateway is the tier's own front door, while the edge exists to pick
             # between tiers for traffic that arrived from outside.
+            # NO SOCKET AND NO SOCKET GROUP any more: workspace containers start through
+            # qits-containers (orchestration round 2), so this service holds a machine-token
+            # client instead of the host daemon.
             qits.platform.deployments.extras.qits-workspaces.mounts[0]=volume:qits-workspaces-data:/data
-            qits.platform.deployments.extras.qits-workspaces.mounts[1]=bind:/var/run/docker.sock:/var/run/docker.sock
-            qits.platform.deployments.extras.qits-workspaces.groups[0]=${DOCKER_GID}
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
+            qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT}
+            qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_CLIENT_CLIENT_ID=${ENV_NAME}-qits-workspaces
+            qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-containers
+            qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_CLIENT_CREDENTIALS_SECRET=${IDP_SECRET_WORKSPACES}
             qits.platform.deployments.extras.qits-workspaces.env.QITS_PROJECTS_URL=http://${ENV_NAME}-qits-projects:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080

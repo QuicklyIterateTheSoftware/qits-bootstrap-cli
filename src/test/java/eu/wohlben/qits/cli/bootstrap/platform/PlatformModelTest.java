@@ -336,20 +336,20 @@ class PlatformModelTest {
 
     @Test
     void aClientIdIsAWireAliasSoItFollowsTheEnvironment() {
-        // These four are exactly what qits-platform-idp ships as its defaults for the default
-        // environment name. The id is part of the config KEY, so a client the deployment spells
-        // differently from the token request is invalid_client and nothing says it was a typo.
+        // The id is part of the config KEY, so a client the deployment spells differently from
+        // the token request is invalid_client and nothing says it was a typo. qits-projects
+        // joined for orchestration round 2: its agent containers start through qits-containers.
         assertThat(PlatformModel.idpClients("prod")).containsExactly(
                 "prod-qits-ci", "prod-qits-artifacts", "prod-qits-workspaces",
-                "prod-qits-gateway");
+                "prod-qits-gateway", "prod-qits-projects");
         assertThat(PlatformModel.idpAudiences("prod")).isEqualTo(
                 "prod-qits-ci,prod-qits-artifacts,prod-qits-workspaces,prod-qits-gateway,"
-                        + "prod-qits-deployments,prod-qits-containers");
+                        + "prod-qits-projects,prod-qits-deployments,prod-qits-containers");
         // Every one of them follows the environment now: the artifacts client was the one platform
         // id in this list, and the byte-plane split made that service a tier's again.
         assertThat(PlatformModel.idpClients("preprod")).containsExactly(
                 "preprod-qits-ci", "preprod-qits-artifacts", "preprod-qits-workspaces",
-                "preprod-qits-gateway");
+                "preprod-qits-gateway", "preprod-qits-projects");
         // The two new byte services hold no client at all: the mirror has no auth surface, and the
         // git host validates a push option rather than a token.
         assertThat(PlatformModel.idpClients("prod"))
