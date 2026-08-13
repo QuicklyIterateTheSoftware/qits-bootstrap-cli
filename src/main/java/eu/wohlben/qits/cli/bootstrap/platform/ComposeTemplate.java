@@ -125,27 +125,26 @@ public final class ComposeTemplate {
               # Every volume is keyed by the APPLICATION it belongs to, because the deployer's extras
               # reference them by name and an application's extras are looked up by that same name.
               #
-              # THERE IS NO VOLUME PER DATABASE ANY MORE. Six services kept a file H2 under /data and
+              # THERE IS NO VOLUME PER DATABASE ANY MORE. Seven services kept a file H2 under /data and
               # moved to the postgres below: the deployer, qits-ci (twice), qits-platform-idp,
-              # qits-projects, qits-workspaces and qits-events. Where /data held the H2 and nothing else
-              # — ci, the idp, events, the deployer — the volume is gone with it and the images have no
-              # mount point left to give it. Where /data holds files as well, the volume stays and only
-              # the datasource left it.
+              # qits-projects, qits-workspaces, qits-events and qits-artifacts. Where /data held the H2
+              # and nothing else — ci, the idp, events, the deployer — the volume is gone with it and the
+              # images have no mount point left to give it. Where /data holds files as well, the volume
+              # stays and only the datasource left it.
               #
-              # THE BYTE PLANE'S THREE STORES, one volume each, and the split is why there are three.
-              # Every one of them is a content-addressed blob store, and no two of them may share a
-              # directory: the stores would not corrupt each other, but each one's reclaim sweep counts
-              # every file it did not put there as unreferenced and deletes it.
+              # THE BYTE PLANE HAS ONE VOLUME LEFT, and it used to have three. qits-artifacts and
+              # qits-platform-mirror keep their blob bytes in postgres now — rows in qits_artifacts and
+              # qits_platform_mirror — so both are stateless containers with nothing to mount. What each
+              # one stores is unchanged: the platform's OWN packages (npm, maven, OCI, the daemon
+              # binaries, the docs bundles) and what the caches pulled from upstream.
               #
-              # qits-artifacts holds the platform's OWN packages — npm, maven, OCI, the daemon binaries
-              # and the docs bundles — and is the one service still on a file H2, so its /data carries the
-              # database too. qits-platform-mirror holds what it cached from upstream, which is why it can
-              # start cold and warm up. qits-githost holds the repositories, as packs and reftables that
-              # are ordinary blobs — a git repository on this platform is not a directory anywhere.
-              qits-artifacts-data:
-                name: qits-artifacts-data
-              qits-platform-mirror-data:
-                name: qits-platform-mirror-data
+              # qits-githost is the one still holding files, and it stays on this volume until its own
+              # cutover: the repositories are packs and reftables, which are ordinary blobs — a git
+              # repository on this platform is not a directory anywhere.
+              #
+              # NO TWO STORES SHARE A DIRECTORY, which is why this was three volumes and never one: each
+              # service's reclaim sweep counts every file it did not put there as unreferenced and
+              # deletes it. The rule survives the move — the two in postgres own a database each.
               qits-githost-data:
                 name: qits-githost-data
               # THE PLATFORM'S TOPOLOGY, ITS DEPLOYMENT HISTORY AND EVERY DATABASE THIS PLATFORM RUNS
@@ -584,8 +583,19 @@ public final class ComposeTemplate {
                     protocol: tcp
                     mode: host
                 environment:
-                  QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL: jdbc:h2:file:/data/artifacts/h2/artifacts
-                  QITS_ARTIFACTS_BLOBS_DIR: /data/artifacts/blobs
+                  # THE WHOLE STORE, and there is nothing beside it to mount. Metadata and blob bytes are
+                  # both rows in qits_artifacts, so this container is stateless: a restart loses in-flight
+                  # upload sessions and nothing else.
+                  #
+                  # SPELLED HERE, AND ONLY HERE, exactly as the mirror's and the git host's are: the seed
+                  # stack starts this container before any deployer exists, so the bootstrap created the
+                  # role and the database over JDBC and hands the credential over itself. Every
+                  # deployment after this one is handed the same three by qits-platform-deployments, from
+                  # `resources: postgresql:db` in this repository's deployments.yml — which is why the
+                  # extras beside this file carries no datasource env either.
+                  QITS_RESOURCE_DB_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_artifacts
+                  QITS_RESOURCE_DB_USERNAME: qits_artifacts
+                  QITS_RESOURCE_DB_PASSWORD: "${PG_ARTIFACTS_PASSWORD}"
                   # Machine auth, INBOUND ONLY. The admin writes under /artifacts/api demand a bearer
                   # addressed to this service; every read stays open. There is no oidc-client and no
                   # secret any more: the one thing this service ever minted a token for was the git
@@ -600,8 +610,6 @@ public final class ComposeTemplate {
                   QITS_AUTH_MACHINE_REQUIRED: "${MACHINE_REQUIRED}"
                   QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP}
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
-                volumes:
-                  - qits-artifacts-data:/data
                 networks: [qits-net]
                 deploy:
                   replicas: 1
@@ -643,13 +651,10 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_DB_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_platform_mirror
                   QITS_RESOURCE_DB_USERNAME: qits_platform_mirror
                   QITS_RESOURCE_DB_PASSWORD: "${PG_PLATFORM_MIRROR_PASSWORD}"
-                  # WHERE THE CACHED BYTES LAND, and it has to be spelled: the jar's default is under
-                  # ${user.home}, which this image's passwd-less UID resolves to the literal "?" — the
-                  # process comes up and writes its cache into a directory nobody can find.
-                  QITS_ARTIFACTS_BLOBS_DIR: /data/mirror/blobs
+                  # AND THE CACHED BYTES ARE IN THERE TOO. There is no blobs directory and no volume:
+                  # what this service pulled from upstream is rows in the same database, so the
+                  # container is stateless and a cold start is the ordinary one anyway.
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
-                volumes:
-                  - qits-platform-mirror-data:/data
                 networks: [qits-net]
                 deploy:
                   replicas: 1
@@ -1002,19 +1007,18 @@ public final class ComposeTemplate {
             # Every hostname in every value below is a WIRE ALIAS: ${ENV_NAME}-qits-<app> for a service of
             # this environment, the bare repository name for one of the four platform services.
             #
-            # NO APPLICATION BELOW CARRIES A DATASOURCE, with two exceptions that say why on themselves:
-            # qits-artifacts, the one service still on a file H2, and qits-deployments, whose
-            # own store is the one credential the bootstrap issues and the deployer then registers as
-            # its own. Every other store is DECLARED rather than configured: a
+            # NO APPLICATION BELOW CARRIES A DATASOURCE, with one exception that says why on itself:
+            # qits-deployments, whose own store is the one credential the bootstrap issues and the
+            # deployer then registers as its own. Every other store is DECLARED rather than configured: a
             # repository writes `resources: postgresql:<name>` in its .config/qits/deployments.yml, and
             # qits-platform-deployments creates the role and the database on this tier's postgres and
             # injects QITS_RESOURCE_<NAME>_URL / _USERNAME / _PASSWORD before the container starts. Those
             # variables are injected BEFORE the ones here, and the last assignment of a key wins — so a
             # datasource line here is an operator PIN that outlives a password rotation and breaks the
             # deployment it looks like it is configuring. The seed stack file spells the triples for
-            # qits-ci, qits-platform-idp, qits-platform-dns, qits-events, qits-containers and the
-            # deployer's OWN OUTBOX for the one reason that does not apply here: it starts them
-            # before any deployer exists.
+            # qits-ci, qits-platform-idp, qits-platform-dns, qits-events, qits-containers, qits-artifacts,
+            # qits-platform-mirror, qits-githost and the deployer's OWN OUTBOX for the one reason that
+            # does not apply here: it starts them before any deployer exists.
             #
             # EVERY QITS APPLICATION CARRIES env.QITS_OBSERVABILITY_URL, for the same reason the seed
             # the seed stack file spells it on every service: the images ship the bare qits-observability, and that
@@ -1049,8 +1053,16 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_DOCS=${ENV_NAME}-qits-docs
             qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_GITHOST=${ENV_NAME}-qits-githost
             qits.platform.deployments.extras.qits-gateway.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
-            # THE HOSTED HALF OF THE BYTE PLANE, and the one deployment here still carrying a file
-            # database: /data is the H2 and the blob store both, which is why the volume stays.
+            # THE HOSTED HALF OF THE BYTE PLANE, and a stateless deployment: metadata and blob bytes are
+            # both rows in qits_artifacts, so there is no mount and no /data left to give it.
+            #
+            # NO DATASOURCE ENV. `resources: postgresql:db` in its own deployments.yml is what gets it a
+            # store, and the deployer injects QITS_RESOURCE_DB_URL / _USERNAME / _PASSWORD before the
+            # successor starts. A line here would be an operator PIN — the deployment's own variables are
+            # written after the injected ones and the last assignment wins — so it would survive the
+            # deployer rotating that password and break the deployment it looks like it is configuring.
+            # The seed stack block spells the triple for the one reason that does not apply here: it
+            # starts the container before any deployer exists.
             #
             # THE PUBLISH SAYS 0.0.0.0 ON PURPOSE. It is dialled by the HOST's docker daemon — every ci
             # publish step pushes to localhost:${REGISTRY_PORT} and the deployer pulls from it — so it cannot
@@ -1073,32 +1085,26 @@ public final class ComposeTemplate {
             # fail-closed rather than delete a live artifact — so every sweep stops and the cleanup banner
             # hangs on its timeout instead.
             qits.platform.deployments.extras.qits-artifacts.publishes[0]=0.0.0.0:${REGISTRY_PORT}:8080
-            qits.platform.deployments.extras.qits-artifacts.mounts[0]=volume:qits-artifacts-data:/data
-            qits.platform.deployments.extras.qits-artifacts.env.QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL=jdbc:h2:file:/data/artifacts/h2/artifacts
-            qits.platform.deployments.extras.qits-artifacts.env.QITS_ARTIFACTS_BLOBS_DIR=/data/artifacts/blobs
             qits.platform.deployments.extras.qits-artifacts.env.QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-artifacts
             qits.platform.deployments.extras.qits-artifacts.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
             qits.platform.deployments.extras.qits-artifacts.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
             qits.platform.deployments.extras.qits-artifacts.env.QITS_ARTIFACTS_GC_PINS_CD_BASE_URL=http://${ENV_NAME}-qits-deployments:8080/platform-deployments/api
             qits.platform.deployments.extras.qits-artifacts.env.QITS_ARTIFACTS_GC_PINS_CI_BASE_URL=http://${ENV_NAME}-qits-ci:8080/ci/api
             qits.platform.deployments.extras.qits-artifacts.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
-            # THE CACHE HALF. One published port, one volume, one address to say — and no datasource,
-            # because `resources: postgresql:db` in its own deployments.yml is what gets it a store and the
-            # deployer injects the triple before the successor starts. The seed stack block spells that
-            # triple for the one reason that does not apply here: it starts this container before any
-            # deployer exists.
+            # THE CACHE HALF. One published port and one address to say — no mount, because the cached
+            # bytes are rows in qits_platform_mirror, and no datasource, because `resources:
+            # postgresql:db` in its own deployments.yml is what gets it that store and the deployer
+            # injects the triple before the successor starts. The seed stack block spells that triple for
+            # the one reason that does not apply here: it starts this container before any deployer
+            # exists.
             #
             # The publish is 0.0.0.0 for the reason the registry's is: dockerd's registry-mirrors names
             # localhost:${MIRROR_PORT}, and that is the HOST's docker daemon rather than anything on this
             # platform's network.
             #
             # No machine auth of any kind: this service serves cached third-party bytes to anonymous
-            # clients and mints nothing, so it holds no client and validates no audience. The blobs dir is
-            # spelled because the jar's default sits under ${user.home}, which this image's passwd-less UID
-            # resolves to the literal "?".
+            # clients and mints nothing, so it holds no client and validates no audience.
             qits.platform.deployments.extras.qits-platform-mirror.publishes[0]=0.0.0.0:${MIRROR_PORT}:8080
-            qits.platform.deployments.extras.qits-platform-mirror.mounts[0]=volume:qits-platform-mirror-data:/data
-            qits.platform.deployments.extras.qits-platform-mirror.env.QITS_ARTIFACTS_BLOBS_DIR=/data/mirror/blobs
             qits.platform.deployments.extras.qits-platform-mirror.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE GIT HOST. The published port is the door a PERSON pushes through — the workstation is not
             # on qits-net, and the clone url moved from localhost:${REGISTRY_PORT}/artifacts/git/<repo> to

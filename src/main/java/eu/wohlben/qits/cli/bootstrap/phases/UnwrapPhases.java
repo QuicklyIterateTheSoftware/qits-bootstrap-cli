@@ -42,8 +42,13 @@ import java.util.function.Supplier;
  * covers both shapes and every environment name, not only the one this run is configured with. A
  * name is added here; none is ever taken away.
  * <p>
- * Volumes are the one guarded decision: they hold the platform's databases, the registry's blobs
- * and the git host's repositories. They stay unless {@code --with-volumes} says otherwise.
+ * Volumes are the one guarded decision: they hold the platform's databases — the registry's blobs
+ * among them since qits-artifacts moved its store into postgres — and the git host's repositories.
+ * They stay unless {@code --with-volumes} says otherwise.
+ * <p>
+ * <b>Nothing here names a volume, and that is what makes a retired one harmless.</b> The sweeps
+ * match {@code qits-*-data} rather than a list, so a volume a service stopped mounting is simply not
+ * there to remove, and a volumes-kept run counts what stands rather than what it expected.
  * <p>
  * <b>{@code --with-data-volumes} is the middle answer, and it exists for the re-bootstrap.</b>
  * Moving a service onto another database is a cold boot of that service's data and nothing else,
@@ -295,8 +300,8 @@ public class UnwrapPhases {
     private Phase volumesKept() {
         return new Phase("volumes-kept", "keep the qits-* volumes", ctx -> {
             List<String> names = volumeNames();
-            ctx.log("  " + names.size() + " volume(s) kept: databases, registry blobs, the git host"
-                    + " and the maven download cache");
+            ctx.log("  " + names.size() + " volume(s) kept: databases (registry blobs included), the"
+                    + " git host and the maven download cache");
             ctx.log("  add --with-data-volumes to reset the databases and keep the config volumes"
                     + " and the maven cache");
             ctx.log("  add --with-volumes for the full clean slate");

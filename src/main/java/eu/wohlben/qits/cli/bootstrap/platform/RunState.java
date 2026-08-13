@@ -58,14 +58,13 @@ public class RunState {
     public String pgPlatformDnsPassword;
     public String pgEventsPassword;
     /**
-     * The byte plane's two new stores, on the same terms as the five above. qits-platform-mirror
-     * keeps its cache catalog in one database; qits-githost keeps the pack catalog in its own and
-     * the eventstream outbox in a second, because two Flyway lineages cannot share one — the same
-     * pair qits-ci and the deployer carry.
-     * <p>
-     * qits-artifacts is deliberately absent: it is the one service still on a file H2, and its
-     * store is a path on a volume rather than a role on this server.
+     * The byte plane's three stores, on the same terms as the five above. qits-artifacts and
+     * qits-platform-mirror each keep a whole store — catalog rows and blob bytes both — in one
+     * database; qits-githost keeps the pack catalog in its own and the eventstream outbox in a
+     * second, because two Flyway lineages cannot share one — the same pair qits-ci and the deployer
+     * carry.
      */
+    public String pgArtifactsPassword;
     public String pgPlatformMirrorPassword;
     public String pgGithostPassword;
     public String pgGithostEventstreamPassword;

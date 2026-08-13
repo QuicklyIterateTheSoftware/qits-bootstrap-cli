@@ -724,21 +724,20 @@ public class SeedPhases {
      * <p>
      * Started by hand rather than by compose, under the wire alias the compose service will claim,
      * so the two never run side by side on the published port. Whoever already serves, serves: a
-     * deployed mirror publishes the same port from the same volume and is strictly better than the
+     * deployed mirror publishes the same port from the same database and is strictly better than the
      * seed this phase would have started.
      */
     public Phase seedMirrorStart() {
         return new Phase("seed-mirror",
                 "have qits-platform-mirror serving before anything resolves through it", ctx -> {
             boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
-            boot.docker.ensureVolume("qits-platform-mirror-data", ctx::log);
             String mirror = PlatformModel.wireAlias("platform-mirror", boot.config.envName());
             String prefix = PlatformModel.pdNamePrefix("platform-mirror", boot.config.envName());
             Optional<String> serving = alreadyServing(mirror, prefix,
                     boot.docker.runningNames(), boot.docker.serviceNames());
             if (serving.isPresent()) {
                 ctx.log("  " + serving.get() + " already serves port " + boot.config.mirrorPort()
-                        + " from the same volume — no seed mirror to start");
+                        + " from the same database — no seed mirror to start");
             } else {
                 boot.docker.removeContainer(mirror, null);
                 Boot.must(boot.docker.run(Cmd.of(List.of(
@@ -749,6 +748,9 @@ public class SeedPhases {
                                 // bus's: this container starts before any deployer exists, so the
                                 // role and the database were created by seed-postgres and handed
                                 // over here. It refuses to boot without the triple.
+                                //
+                                // The whole store, cached bytes included: there is no blobs
+                                // directory and no volume any more, so this container is stateless.
                                 "-e", "QITS_RESOURCE_DB_URL=jdbc:postgresql://"
                                         + PlatformModel.wireAlias("oci-postgresql",
                                                 boot.config.envName())
@@ -756,10 +758,6 @@ public class SeedPhases {
                                 "-e", "QITS_RESOURCE_DB_USERNAME=qits_platform_mirror",
                                 "-e", "QITS_RESOURCE_DB_PASSWORD="
                                         + orEmpty(boot.state.pgPlatformMirrorPassword),
-                                // Spelled because the jar's default sits under ${user.home}, which
-                                // this image's passwd-less UID resolves to the literal "?".
-                                "-e", "QITS_ARTIFACTS_BLOBS_DIR=/data/mirror/blobs",
-                                "-v", "qits-platform-mirror-data:/data",
                                 "qits/platform-mirror:latest"))
                         .mask(orEmpty(boot.state.pgPlatformMirrorPassword)), ctx::log),
                         "the seed " + mirror + " did not start");
@@ -787,7 +785,6 @@ public class SeedPhases {
             boot.docker.removeContainer(AUTH_SEED_HTTP, ctx::log);
             boot.state.authSeedContainer = null;
             boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
-            boot.docker.ensureVolume("qits-artifacts-data", ctx::log);
             // Named after its wire alias, like every other seed container: this one is started by
             // hand rather than by compose, and the name it takes has to be the same one the compose
             // service would have claimed, or the two run side by side on the registry port.
@@ -795,8 +792,8 @@ public class SeedPhases {
             // Whoever already holds the port, holds it. A seed beside a store that is up is
             // impossible — the bind answers "port is already allocated", exit 125, and the boot
             // stopped exactly there on the 2026-08-08 validation rerun — and pointless: a DEPLOYED
-            // store publishes this very port from the same qits-platform-artifacts-data volume and
-            // answers the same API, so it is strictly better than the seed this phase would have
+            // store publishes this very port over the same qits_artifacts database and answers the
+            // same API, so it is strictly better than the seed this phase would have
             // started. This run's own seed container is asked for by name first, so a rerun still
             // reports it as itself rather than as the deployer's.
             Optional<String> serving = alreadyServing(artifacts,
@@ -805,19 +802,31 @@ public class SeedPhases {
                     .or(this::storeAlreadyServing);
             if (serving.isPresent()) {
                 ctx.log("  " + serving.get() + " already serves port " + boot.config.registryPort()
-                        + " from the same volume — no seed store to start");
+                        + " from the same database — no seed store to start");
                 ctx.note(serving.get() + " serves :" + boot.config.registryPort());
             } else {
                 boot.docker.removeContainer(artifacts, null);
                 // No git env any more, and no ci intake: this service hosts no repositories and
                 // announces nothing since the byte-plane split. What is left is the store.
-                Boot.must(boot.docker.exec(ctx::log, "run", "-d", "--name", artifacts,
+                //
+                // The store is the whole of it: metadata AND blob bytes are rows in qits_artifacts,
+                // so this container mounts nothing and a restart loses only in-flight uploads. The
+                // credential comes from seed-postgres on the same terms as the mirror's — this
+                // container starts before any deployer exists, so the CLI created the role and the
+                // database and hands the triple over itself.
+                Boot.must(boot.docker.run(Cmd.of(List.of(
+                                "docker", "run", "-d", "--name", artifacts,
                                 "--network", Boot.NETWORK,
                                 "-p", "127.0.0.1:" + boot.config.registryPort() + ":8080",
-                                "-e", "QUARKUS_DATASOURCE_ARTIFACTS_JDBC_URL=jdbc:h2:file:/data/artifacts/h2/artifacts",
-                                "-e", "QITS_ARTIFACTS_BLOBS_DIR=/data/artifacts/blobs",
-                                "-v", "qits-artifacts-data:/data",
-                                "qits/artifacts:latest"),
+                                "-e", "QITS_RESOURCE_DB_URL=jdbc:postgresql://"
+                                        + PlatformModel.wireAlias("oci-postgresql",
+                                                boot.config.envName())
+                                        + ":5432/qits_artifacts",
+                                "-e", "QITS_RESOURCE_DB_USERNAME=qits_artifacts",
+                                "-e", "QITS_RESOURCE_DB_PASSWORD="
+                                        + orEmpty(boot.state.pgArtifactsPassword),
+                                "qits/artifacts:latest"))
+                        .mask(orEmpty(boot.state.pgArtifactsPassword)), ctx::log),
                         "the seed " + artifacts + " did not start");
             }
             // Always waited for, whoever is behind the alias: every publish after this phase — the
@@ -841,7 +850,7 @@ public class SeedPhases {
      * then read only to name who it is, which is what makes the phase log readable.
      * <p>
      * Both phases that bind the registry port ask this before they bind it. Neither can win that
-     * bind, and neither needs to: the store on the other end has the same volume.
+     * bind, and neither needs to: the store on the other end reads the same database.
      */
     private Optional<String> storeAlreadyServing() {
         if (!boot.artifacts.ready()) {
@@ -1157,8 +1166,9 @@ public class SeedPhases {
      * <b>Which databases are here, and which are deliberately not.</b> This phase provisions what
      * the SEED STACK needs: the deployer's own store AND ITS OUTBOX, and the stores of the core
      * services that come up beside it — qits-ci (its database and its outbox), qits-platform-idp,
-     * qits-platform-dns, qits-events, qits-platform-mirror, qits-githost (its database and its
-     * outbox) and qits-containers (the same pair). Four of the twelve are outboxes because the
+     * qits-platform-dns, qits-events, qits-artifacts, qits-platform-mirror, qits-githost (its
+     * database and its outbox) and qits-containers (the same pair). Four of the thirteen are
+     * outboxes because the
      * eventstream library keeps its own Flyway lineage and cannot share a database with its host; ci
      * carried one from the start, the deployer joined the bus on 2026-08-10, and the git host and
      * the orchestrator are the newest publishers on it.
@@ -1191,6 +1201,8 @@ public class SeedPhases {
             String platformDns = pgPassword(ctx, state, "PG_PLATFORM_DNS_PASSWORD",
                     "qits.pg.platform-dns-password");
             String events = pgPassword(ctx, state, "PG_EVENTS_PASSWORD", "qits.pg.events-password");
+            String artifacts = pgPassword(ctx, state, "PG_ARTIFACTS_PASSWORD",
+                    "qits.pg.artifacts-password");
             String platformMirror = pgPassword(ctx, state, "PG_PLATFORM_MIRROR_PASSWORD",
                     "qits.pg.platform-mirror-password");
             String githost = pgPassword(ctx, state, "PG_GITHOST_PASSWORD",
@@ -1210,6 +1222,7 @@ public class SeedPhases {
             boot.state.pgPlatformIdpPassword = platformIdp;
             boot.state.pgPlatformDnsPassword = platformDns;
             boot.state.pgEventsPassword = events;
+            boot.state.pgArtifactsPassword = artifacts;
             boot.state.pgPlatformMirrorPassword = platformMirror;
             boot.state.pgGithostPassword = githost;
             boot.state.pgGithostEventstreamPassword = githostEventstream;
@@ -1233,6 +1246,7 @@ public class SeedPhases {
             state.put("PG_PLATFORM_IDP_PASSWORD", platformIdp);
             state.put("PG_PLATFORM_DNS_PASSWORD", platformDns);
             state.put("PG_EVENTS_PASSWORD", events);
+            state.put("PG_ARTIFACTS_PASSWORD", artifacts);
             state.put("PG_PLATFORM_MIRROR_PASSWORD", platformMirror);
             state.put("PG_GITHOST_PASSWORD", githost);
             state.put("PG_GITHOST_EVENTSTREAM_PASSWORD", githostEventstream);
@@ -1300,6 +1314,7 @@ public class SeedPhases {
             platformIdp = registry.getOrDefault("qits_platform_idp", platformIdp);
             platformDns = registry.getOrDefault("qits_platform_dns", platformDns);
             events = registry.getOrDefault("qits_events", events);
+            artifacts = registry.getOrDefault("qits_artifacts", artifacts);
             platformMirror = registry.getOrDefault("qits_platform_mirror", platformMirror);
             githost = registry.getOrDefault("qits_githost", githost);
             githostEventstream =
@@ -1313,6 +1328,7 @@ public class SeedPhases {
                 boot.state.pgPlatformIdpPassword = platformIdp;
                 boot.state.pgPlatformDnsPassword = platformDns;
                 boot.state.pgEventsPassword = events;
+                boot.state.pgArtifactsPassword = artifacts;
                 boot.state.pgPlatformMirrorPassword = platformMirror;
                 boot.state.pgGithostPassword = githost;
                 boot.state.pgGithostEventstreamPassword = githostEventstream;
@@ -1323,6 +1339,7 @@ public class SeedPhases {
                 state.put("PG_PLATFORM_IDP_PASSWORD", platformIdp);
                 state.put("PG_PLATFORM_DNS_PASSWORD", platformDns);
                 state.put("PG_EVENTS_PASSWORD", events);
+                state.put("PG_ARTIFACTS_PASSWORD", artifacts);
                 state.put("PG_PLATFORM_MIRROR_PASSWORD", platformMirror);
                 state.put("PG_GITHOST_PASSWORD", githost);
                 state.put("PG_GITHOST_EVENTSTREAM_PASSWORD", githostEventstream);
@@ -1376,18 +1393,25 @@ public class SeedPhases {
                 // exactly what ci, the idp and the nameserver already go through; the CLI only
                 // opens the door and never alters the role again.
                 provision(ctx, admin, "qits_events", events, false);
-                // THE BYTE PLANE'S THREE, on the same terms as everything above: all three
-                // containers boot from the seed compose file before any deployer exists, and each
-                // one dies at Flyway's first connect without its database.
+                // THE BYTE PLANE'S THREE SERVICES, FOUR DATABASES, on the same terms as everything
+                // above: every one of these containers boots before any deployer exists, and each
+                // dies at Flyway's first connect without its database.
                 //
-                // The mirror is the earliest consumer of any of them — it is started by hand,
-                // before the compose file is even written, because every publish after it resolves
-                // through it. The git host takes two, because the eventstream library keeps its
-                // outbox in a lineage of its own and a push that publishes no event is a push no
-                // consumer ever learns about.
+                // The mirror and the hosted store are the earliest consumers of any database here —
+                // both are started BY HAND, before the compose file is even written, because every
+                // publish after them resolves through the one and lands in the other. The git host
+                // takes two, because the eventstream library keeps its outbox in a lineage of its
+                // own and a push that publishes no event is a push no consumer ever learns about.
                 //
-                // qits-artifacts is deliberately not here: it is the one service still on a file
-                // H2, and its store is a path on its volume rather than a role on this server.
+                // CREATE-IF-MISSING, NEVER ALTER. That is the `false` arm every line below is on,
+                // and qits_artifacts is the newest to need it said: from the first pipeline deploy
+                // of qits-artifacts on, its `resources: postgresql:db` line runs and the deployer's
+                // pd_resource row is the AUTHORITY on this password. A rerun of this CLI that
+                // ALTERed the role would rotate a credential the registry owns and lock out the
+                // running deployment. Nothing is repaired here either: a mismatch self-heals on the
+                // next artifacts deploy, where the deployer's reconcile arm rotates the role and
+                // records what it set. The CLI opens the door once and never touches it again.
+                provision(ctx, admin, "qits_artifacts", artifacts, false);
                 provision(ctx, admin, "qits_platform_mirror", platformMirror, false);
                 provision(ctx, admin, "qits_githost", githost, false);
                 provision(ctx, admin, "qits_githost_eventstream", githostEventstream, false);
@@ -1399,7 +1423,7 @@ public class SeedPhases {
                 provision(ctx, admin, "qits_containers", containers, false);
                 provision(ctx, admin, "qits_containers_eventstream", containersEventstream, false);
             }
-            ctx.note("12 databases ready on " + pg);
+            ctx.note("13 databases ready on " + pg);
         });
     }
 
@@ -1534,6 +1558,7 @@ public class SeedPhases {
                     .mask(orEmpty(boot.state.pgPlatformIdpPassword))
                     .mask(orEmpty(boot.state.pgPlatformDnsPassword))
                     .mask(orEmpty(boot.state.pgEventsPassword))
+                    .mask(orEmpty(boot.state.pgArtifactsPassword))
                     .mask(orEmpty(boot.state.pgPlatformMirrorPassword))
                     .mask(orEmpty(boot.state.pgGithostPassword))
                     .mask(orEmpty(boot.state.pgGithostEventstreamPassword)), ctx::log);
@@ -1715,6 +1740,7 @@ public class SeedPhases {
         values.put("PG_PLATFORM_IDP_PASSWORD", orEmpty(boot.state.pgPlatformIdpPassword));
         values.put("PG_PLATFORM_DNS_PASSWORD", orEmpty(boot.state.pgPlatformDnsPassword));
         values.put("PG_EVENTS_PASSWORD", orEmpty(boot.state.pgEventsPassword));
+        values.put("PG_ARTIFACTS_PASSWORD", orEmpty(boot.state.pgArtifactsPassword));
         values.put("PG_PLATFORM_MIRROR_PASSWORD", orEmpty(boot.state.pgPlatformMirrorPassword));
         values.put("PG_GITHOST_PASSWORD", orEmpty(boot.state.pgGithostPassword));
         values.put("PG_GITHOST_EVENTSTREAM_PASSWORD",
