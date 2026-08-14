@@ -824,6 +824,20 @@ public final class ComposeTemplate {
                   # all. A PUSH is not a read, so it carries a bearer — anonymous stops at GET and
                   # HEAD.
                   QITS_ARTIFACTS_REGISTRY_HOST: registry.${ENV_NAME}.localhost:${PORT}
+                  # WHAT A PUBLISH STEP PUSHES WITH, and without it the first pipeline of a cold boot
+                  # fails: the edge answers a registry WRITE with a 401 Bearer challenge, docker
+                  # exchanges a client id and secret at the edge's /token, and a step container with no
+                  # credential has nothing to exchange. Set as a PAIR — ci writes a DOCKER_CONFIG for
+                  # its docker-enabled steps only when it holds both — and the credential is the
+                  # STORE'S OWN client, ${ENV_NAME}-qits-artifacts: the identity that may write to the
+                  # registry is the registry's, and ci borrows it the way this bootstrap borrows
+                  # identities for the calls it makes by hand.
+                  #
+                  # THE SAME SECRET THE IDP BLOCK ABOVE IS HANDED, never a second one. Both lines read
+                  # one generated value, recorded once in .qits-bootstrap.env; a credential minted
+                  # twice is a client that authenticates against one half of its own configuration.
+                  QITS_CI_REGISTRY_AUTH_CLIENT_ID: ${ENV_NAME}-qits-artifacts
+                  QITS_CI_REGISTRY_AUTH_CLIENT_SECRET: "${IDP_SECRET_ARTIFACTS}"
                   # THE FOUR ROOTS EVERY STEP CONTAINER IS HANDED, and the byte-plane split is why they are
                   # spelled here at all. ci ships them defaulted to qits-platform-artifacts:8080, one
                   # service that answered for hosted packages and cached ones alike; there are two services
@@ -1193,6 +1207,12 @@ public final class ComposeTemplate {
             # 2026-08-10 and the key it read is gone with it: a green build is announced on the bus,
             # ci -> outbox -> ${ENV_NAME}-qits-events -> the deployer's durable subscriber, which is what
             # QITS_EVENTS_URL below configures. A line naming a key nothing reads outlives the reader.
+            # QITS_CI_REGISTRY_AUTH_* IS WHAT A PUBLISH STEP PUSHES WITH, and it is a PAIR: ci writes a
+            # DOCKER_CONFIG for its docker-enabled steps only when it holds both halves. The registry is
+            # behind the edge now, and the edge answers a WRITE with a 401 Bearer challenge — so a step
+            # without this credential fails the first publish of a boot, on a push that used to need
+            # nothing. The identity is the STORE'S OWN client, and the secret is the very one the idp
+            # block below is handed for it: one generated value, recorded once, never minted twice.
             # QITS_AUTH_MACHINE_AUDIENCE and QUARKUS_OIDC_CLIENT_CLIENT_ID are both this tier's alias: ci
             # ships the unqualified qits-ci for each, and the idp knows neither name. THE CLIENT ID IS
             # ALSO CI'S OWNER STRING at the orchestrator — qits.ci.containers.owner defaults to
@@ -1222,6 +1242,8 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_NETWORK=qits-net
             qits.platform.deployments.extras.qits-ci.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_REGISTRY_HOST=registry.${ENV_NAME}.localhost:${PORT}
+            qits.platform.deployments.extras.qits-ci.env.QITS_CI_REGISTRY_AUTH_CLIENT_ID=${ENV_NAME}-qits-artifacts
+            qits.platform.deployments.extras.qits-ci.env.QITS_CI_REGISTRY_AUTH_CLIENT_SECRET=${IDP_SECRET_ARTIFACTS}
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_HOSTED_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_PROXY_URL=http://qits-platform-mirror:8080/artifacts/npm/npmjs/
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_MAVEN_REGISTRY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven

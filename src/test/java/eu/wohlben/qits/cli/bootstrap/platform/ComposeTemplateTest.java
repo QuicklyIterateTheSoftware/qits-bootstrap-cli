@@ -440,6 +440,41 @@ class ComposeTemplateTest {
     }
 
     /**
+     * <b>WHAT A PUBLISH STEP PUSHES WITH, in both files.</b> The registry is behind the edge, which
+     * answers a WRITE with a 401 Bearer challenge, so a step container without a credential fails
+     * the first publish of a boot on a push that used to need nothing. ci writes a DOCKER_CONFIG
+     * only when it holds BOTH halves, which is why the pair is asserted together.
+     * <p>
+     * The secret is the ARTIFACTS client's own, and it is the same value the idp block is handed
+     * for that client — one generated secret, read twice. A second one would be a client that
+     * authenticates against half of its own configuration.
+     */
+    @Test
+    void ciPushesToTheRegistryAsTheStoresOwnClient() {
+        String compose = ComposeTemplate.compose(tokens());
+        String ci = serviceBlock(compose, ENV + "-qits-ci");
+        String idp = serviceBlock(compose, "qits-platform-idp");
+        String secret = "secret-prod-qits-artifacts";
+
+        assertThat(ci).contains("QITS_CI_REGISTRY_AUTH_CLIENT_ID: prod-qits-artifacts")
+                .contains("QITS_CI_REGISTRY_AUTH_CLIENT_SECRET: \"" + secret + "\"");
+        assertThat(extras("qits-ci"))
+                .contains("env.QITS_CI_REGISTRY_AUTH_CLIENT_ID=prod-qits-artifacts")
+                .contains("env.QITS_CI_REGISTRY_AUTH_CLIENT_SECRET=" + secret);
+        // The same secret the idp is told to expect, in both files: one value, never minted twice.
+        assertThat(idp).contains(
+                "QITS_IDP_CLIENT_PROD_QITS_ARTIFACTS_SECRET: \"" + secret + "\"");
+        assertThat(extras("qits-platform-idp")).contains(
+                "env.QITS_IDP_CLIENT_PROD_QITS_ARTIFACTS_SECRET=" + secret);
+        // The client id is a wire alias, so it moves with the environment name.
+        Map<String, String> other = tokens();
+        other.put("ENV_NAME", "preprod");
+        other.put("ENV_KEY", "PREPROD");
+        assertThat(ComposeTemplate.extras(other))
+                .contains("env.QITS_CI_REGISTRY_AUTH_CLIENT_ID=preprod-qits-artifacts");
+    }
+
+    /**
      * <b>Every git address is qits-githost's, and none of them carries {@code /artifacts}.</b> The
      * git host is a service of its own since the byte-plane split, so a value still pointing at the
      * store is a clone of nothing.

@@ -1617,7 +1617,7 @@ public class SeedPhases {
             // carries the push token and every client secret, and reading it back would put both
             // on the screen and in the log.
             String before = configDigest();
-            ProcessResult result = boot.docker.run(Cmd.of(List.of(
+            Cmd write = Cmd.of(List.of(
                             "docker", "run", "--rm", "-i",
                             "-v", "qits-deployments-config:/cfg",
                             "--entrypoint", "sh", "alpine/git",
@@ -1625,8 +1625,6 @@ public class SeedPhases {
                                     + "&& chown 1001:0 /cfg/application.properties"))
                     .stdin(properties)
                     .mask(boot.config.pushToken())
-                    .mask(boot.state.secrets.getOrDefault(
-                            PlatformModel.wireAlias("ci", boot.config.envName()), ""))
                     // Both postgres passwords are in this file too: the deployer's own credential
                     // and the admin one it provisions every other application's database with.
                     .mask(orEmpty(boot.state.pgSuperuserPassword))
@@ -1643,7 +1641,17 @@ public class SeedPhases {
                     .mask(orEmpty(boot.state.pgArtifactsPassword))
                     .mask(orEmpty(boot.state.pgPlatformMirrorPassword))
                     .mask(orEmpty(boot.state.pgGithostPassword))
-                    .mask(orEmpty(boot.state.pgGithostEventstreamPassword)), ctx::log);
+                    .mask(orEmpty(boot.state.pgGithostEventstreamPassword));
+            // EVERY IDP CLIENT SECRET, and the loop is what keeps the list honest. ci's used to be
+            // the one spelled here, because ci's was the one value in the file. It is not: the
+            // idp's own block carries a secret per client, and ci now carries the ARTIFACTS
+            // client's a second time — the credential its publish steps push to the registry
+            // with. A mask that has to be remembered per key is a secret on the screen the first
+            // time somebody adds one.
+            for (String client : PlatformModel.idpClients(boot.config.envName())) {
+                write.mask(boot.state.secrets.getOrDefault(client, ""));
+            }
+            ProcessResult result = boot.docker.run(write, ctx::log);
             Boot.must(result, "writing the deployer's extras failed");
             ctx.log("  " + properties.lines()
                     .filter(l -> l.startsWith("qits.platform.deployments.extras."))
