@@ -885,6 +885,13 @@ public class PipelinePhases {
      * Older checkouts get the standard publish step overlaid, so no push triggers nothing. Answers
      * whether it wrote one, because a repository whose pipeline exists only on main cannot be
      * deployed from a release commit that predates it.
+     *
+     * <p>The step below must stay the shape the committed recipes have — one {@code -t} on the
+     * build and no {@code docker rmi}. It is written into a repository that has no recipe of its
+     * own, so it is the doctrine's only copy there, and it is graded by the same builder: the step
+     * images run BuildKit, whose exporter does not reliably leave every alias of a multi-tag build
+     * in the local store, on a daemon whose containerd image store makes a delete a live reference
+     * drop. When the committed recipes change shape, change this one with them.
      */
     private boolean overlayPipelineConfig(PhaseContext ctx, String name, Path src) throws Exception {
         Path config = src.resolve(".config/qits/ci-post-receive.yml");
@@ -900,10 +907,17 @@ public class PipelinePhases {
                     docker: true
                     timeout-seconds: 3600
                     script: |
+                      # ONE TAG PER BUILD. BuildKit's exporter does not reliably leave every alias
+                      # of a multi-tag build in the local image store, so a second `-t` becomes a
+                      # push that answers "tag does not exist".
                       ref="$QITS_REGISTRY/$QITS_IMAGE_REPOSITORY/%s:$QITS_CI_SHA"
                       docker build -t "$ref" -f docker/Dockerfile .
                       docker push "$ref"
-                      docker rmi "$ref" || true
+                      # NO `docker rmi "$ref"`: on a CI host it frees nothing — the layers stay in
+                      # the builder's cache either way — while under the containerd image store it
+                      # drops the last reference to content a concurrent build of this same
+                      # Dockerfile may still be resolving, which is the race that broke the release
+                      # of 2026-08-11.
                 """.formatted(repo), StandardCharsets.UTF_8);
         boot.git.add(src, ".config/qits/ci-post-receive.yml", ctx::log);
         boot.git.commitAsBootstrap(src,
