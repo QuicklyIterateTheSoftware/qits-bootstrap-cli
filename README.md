@@ -259,8 +259,12 @@ that, each measured on this host rather than assumed:
   pull goes through it. The nameserver's is `mode: host`, per node, because a delegation reaches
   one machine. **The byte plane publishes nothing**: qits-artifacts, qits-platform-mirror and
   qits-githost are reached from the host at `<app>.<env>.localhost:<QITS_PORT>` through the edge,
-  which authenticates by method — GET and HEAD anonymous on the two registry names, a bearer for
-  everything else. **The platform's postgres publishes nothing either**: its one consumer was this
+  which authenticates EVERY method on all three names, reads included, since the flip landed on
+  2026-08-14. docker does the Distribution spec's Bearer dance — a 401 naming a realm, HTTP Basic
+  to that realm, `Authorization: Bearer` back — while maven, npm and git send Basic and nothing
+  else, which the edge validates against the same issuer. A machine presents its own service
+  client; a person's workstation credential is COMMISSIONED from the idp, and the closing report
+  prints the one-liner that asks for one. **The platform's postgres publishes nothing either**: its one consumer was this
   CLI's cold-boot DDL, which dials the wire alias on 5432 like everything else. An operator with a
   `psql` goes in through `docker exec`. No publish binds loopback — neither mode has an ip field.
 - **A rerun deploys a SUBSET by leaving services out of the file**, because `docker stack deploy`

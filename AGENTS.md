@@ -80,8 +80,12 @@ forced. Add to that list rather than deviating quietly.
   addresses is what keeps the branching out of the code. The host's own addresses are still
   configured, and they are now TWO ports and three NAMES: `QITS_PORT` is the edge, which every
   browser and every host-side client arrives at, and the byte plane is reached through it at
-  `registry.<env>.localhost`, `mirror.<env>.localhost` and `githost.<env>.localhost` — the
-  registry names anonymous for GET and HEAD, everything else behind a bearer. The 8081/8082 knobs
+  `registry.<env>.localhost`, `mirror.<env>.localhost` and `githost.<env>.localhost` — **every
+  method on all three behind a credential since 2026-08-14, reads included.** docker does the
+  Distribution spec's Bearer dance (a 401 naming a realm, HTTP Basic to it, Bearer back); maven,
+  npm and git send Basic and nothing else, and the edge validates it against the same issuer. What
+  a machine presents is its own service client; what a PERSON presents is COMMISSIONED from the
+  idp per workstation, and the closing report prints the one-liner that asks for one. The 8081/8082 knobs
   are SEED-ONLY now: a container the CLI starts for the daemon's benefit needs both a publish and a
   network alias, the temporary Maven registry and the two seed byte services are exactly that case,
   and all of them are gone by the first cutover. No deployed service of the byte plane publishes
