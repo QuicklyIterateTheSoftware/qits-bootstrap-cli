@@ -1342,16 +1342,44 @@ public class PipelinePhases {
             String env = boot.config.envName();
             report.add("");
             report.add("edge:      http://localhost:" + boot.config.port()
-                    + "/            the host's one port, in front of every environment");
+                    + "/            the host's one HTTP port, in front of every environment");
+            report.add("           It is the door of the byte plane too: the registry, the mirror "
+                    + "and the git host");
+            report.add("           publish no port of their own and are reached by NAME through "
+                    + "this one. GET and");
+            report.add("           HEAD are anonymous on the two registry names; every other "
+                    + "method needs a bearer.");
             report.add("gateway:   " + env + "-qits-gateway on qits-net "
                     + "(variant: local, UNAUTHENTICATED) — no host port of its own");
-            report.add("registry:  localhost:" + boot.config.registryPort()
+            report.add("registry:  " + boot.config.registryVhost()
                     + " — the platform's OWN images and packages (" + env + "-qits-artifacts)");
-            report.add("mirror:    localhost:" + boot.config.mirrorPort()
+            report.add("mirror:    " + boot.config.mirrorVhost()
                     + " — everything third-party, cached (qits-platform-mirror).");
             report.add("           Point dockerd's registry-mirrors at it: "
-                    + "\"registry-mirrors\": [\"http://localhost:"
-                    + boot.config.mirrorPort() + "\"]");
+                    + "\"registry-mirrors\": [\"http://" + boot.config.mirrorVhost() + "\"]");
+            report.add("daemon:    BOTH names are plain HTTP, so /etc/docker/daemon.json needs "
+                    + "them listed or every");
+            report.add("           push and pull fails on TLS. Add, then restart the daemon:");
+            report.add("             \"insecure-registries\": [\"" + boot.config.registryVhost()
+                    + "\", \"" + boot.config.mirrorVhost() + "\"]");
+            report.add("           A *.localhost name resolves to the loopback address by itself "
+                    + "(systemd-resolved");
+            report.add("           synthesises it) — no hosts-file entry to make.");
+            report.add("ipv6:      ONE STANDING HOST RULE, and without it every vhost client "
+                    + "HANGS rather than fails:");
+            report.add("             sudo ip6tables -I INPUT -i lo -p tcp --dport "
+                    + boot.config.port() + " -j REJECT \\");
+            report.add("               --reject-with tcp-reset");
+            report.add("           The resolver answers ::1 first for a *.localhost name and "
+                    + "swarm's routing mesh is");
+            report.add("           IPv4-only: the ingress listener ACCEPTS the v6 connection and "
+                    + "never serves it, so");
+            report.add("           curl, docker, git, maven and npm all sit there. The reset "
+                    + "makes each one fall back");
+            report.add("           to IPv4 at once. A host-mode publish never had this — "
+                    + "docker-proxy bound both");
+            report.add("           families — so it arrives with ingress. The rule does NOT "
+                    + "survive a reboot.");
             report.add("dns:       qits-platform-dns, published on " + boot.config.dnsPort()
                     + " udp AND tcp — a sibling of the edge, never a route behind it.");
             report.add("           Zones and records are ROWS: " + boot.config.dnsUrl()
@@ -1362,8 +1390,20 @@ public class PipelinePhases {
                     + "is a machine");
             report.add("           on this network, and every route of it is behind the machine "
                     + "gate.");
-            report.add("git host:  http://localhost:" + boot.config.gitHostPort()
-                    + "/git/<repoId> — qits-githost, its own service and its own port.");
+            report.add("git host:  http://" + boot.config.gitHostVhost()
+                    + "/git/<repoId> — qits-githost, through the edge.");
+            report.add("           EVERY method needs a bearer here, reads included: it is not a "
+                    + "registry, so the");
+            report.add("           anonymous-read list does not name it. Mint one and clone with "
+                    + "it:");
+            report.add("             curl -u <client>:<secret> http://"
+                    + boot.config.gitHostVhost() + "/token        (the access_token is in the "
+                    + "answer)");
+            report.add("             git -c http.extraHeader=\"Authorization: Bearer <token>\" "
+                    + "clone \\");
+            report.add("               http://" + boot.config.gitHostVhost() + "/git/<repoId>");
+            report.add("           The clients and where their secrets are recorded are on the "
+                    + "machines: line below.");
             report.add("           On qits-net it is " + boot.config.gitHostUrl()
                     + "/<repoId>, which is what every service dials.");
             if (boot.config.shipMains()) {

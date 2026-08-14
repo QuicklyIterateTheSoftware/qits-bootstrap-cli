@@ -215,7 +215,7 @@ class SeedPhasesTest {
                 List.of(ARTIFACTS), List.of())).contains(ARTIFACTS);
     }
 
-    /** A deployed store publishes the same port from the same volume, and is strictly better. */
+    /** A deployed store reads the same database and answers the same API: strictly better. */
     @Test
     void aDeployedContainerIsServingToo() {
         assertThat(SeedPhases.alreadyServing(ARTIFACTS, PD_ARTIFACTS,
@@ -226,7 +226,7 @@ class SeedPhasesTest {
     /**
      * THE ONE THE STACK ADDED. A seed service's task container is named
      * {@code qits_prod-qits-artifacts.1.<taskid>}, so the container list answers nothing — and a
-     * phase that then starts a container by hand takes a port the service already holds.
+     * phase that then starts a container by hand puts a second store under one wire alias.
      */
     @Test
     void aSeedStackServiceIsServingAlthoughNoContainerCarriesTheName() {

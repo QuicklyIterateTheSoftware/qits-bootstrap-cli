@@ -133,28 +133,31 @@ class StackFileTest {
     }
 
     /**
-     * The four host doors, in the long syntax with {@code mode: host} — per node, like a plain
-     * {@code docker run -p}, rather than claimed across the swarm through the routing mesh.
+     * <b>The two host doors that are left, and they take different modes.</b> The edge's publish is
+     * INGRESS — the swarm holds the port, so an edge cutover is start-first and its successor can
+     * pull its own image through the predecessor. The nameserver stays {@code mode: host}: it is
+     * per node, like a plain {@code docker run -p}, and a delegation reaches one machine.
+     * <p>
+     * The byte plane's three publishes are gone: registry, mirror and git host are reached through
+     * the edge by name.
      */
     @Test
-    void everyPublishedPortIsAHostModePublish() {
+    void theEdgePublishesThroughIngressAndTheNameserverThroughTheHost() {
         String stack = stack();
 
         assertThat(block(stack, alias("platform-edge"))).contains("""
                       - target: 8080
                         published: 8080
                         protocol: tcp
-                        mode: host
+                        mode: ingress
                 """.stripTrailing());
-        assertThat(block(stack, alias("artifacts"))).contains("published: 8081")
-                .contains("mode: host");
-        assertThat(block(stack, alias("platform-mirror"))).contains("published: 8082")
-                .contains("mode: host");
-        assertThat(block(stack, alias("githost"))).contains("published: 8083")
-                .contains("mode: host");
+        for (String app : List.of("artifacts", "platform-mirror", "githost")) {
+            assertThat(block(stack, alias(app))).as("the ports of %s", app)
+                    .doesNotContain("ports:");
+        }
         // Both transports, and a nameserver needs both: a truncated UDP answer carries no records.
         assertThat(block(stack, alias("platform-dns"))).contains("protocol: udp")
-                .contains("protocol: tcp");
+                .contains("protocol: tcp").contains("mode: host");
     }
 
     /** No publish can say 127.0.0.1 any more: neither publish mode has an ip field. */

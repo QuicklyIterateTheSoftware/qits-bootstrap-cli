@@ -44,53 +44,58 @@ public interface BootstrapConfig {
     String src();
 
     /**
-     * The host's one published port, bound by qits-platform-edge. It is what a PERSON types into a
-     * browser and what the generated compose file publishes; this CLI dials the edge's wire alias
-     * instead, because it runs on qits-net. qits-gateway publishes nothing itself any more.
+     * <b>The host's one HTTP port, bound by qits-platform-edge, and now the door of the whole
+     * platform.</b> It is what a PERSON types into a browser, what the host's docker daemon dials
+     * at {@link #registryVhost()} and {@link #mirrorVhost()}, and what a clone of
+     * {@link #gitHostVhost()} arrives on. This CLI dials the edge's wire alias instead, because it
+     * runs on qits-net. qits-gateway publishes nothing itself any more, and neither does the byte
+     * plane.
      */
     @WithDefault("8080")
     int port();
 
     /**
-     * Host port qits-artifacts publishes for the DOCKER DAEMON's pulls and pushes of the platform's
-     * OWN images. localhost registries are HTTP-allowed by docker without daemon config, which is
-     * the whole trick — and the daemon is the host's, so this is the number a seed build resolves
-     * through. This CLI reads the registry API by wire alias, not through here.
+     * <b>A SEED-ONLY port now, and the break-glass' default.</b> The temporary Maven registry of
+     * the {@code maven-seed} phase and the seed qits-artifacts container publish it on 127.0.0.1
+     * for one consumer: the seed image builds, which run {@code --network host} before any edge
+     * exists. Both containers are gone by the first cutover and nothing has to close the port.
      * <p>
-     * It is the HOSTED half of the two-endpoint topology; {@link #mirrorPort()} is the other. The
-     * number did not move with the byte-plane split, deliberately: every committed pipeline config
-     * and every {@code QITS_ARTIFACTS_REGISTRY_HOST} on this platform says 8081, and what changed
-     * behind it is which service answers.
+     * <b>The PLATFORM publishes nothing here.</b> The deployed store is reached at
+     * {@link #registryVhost()} through the edge — one door, method-scoped authentication — and the
+     * only thing that binds this port on a running platform is the wrapper's
+     * {@code qits-registry-break-glass.sh}, which opens it while a wedged edge is repaired and
+     * closes it after.
+     * <p>
+     * This CLI reads the registry API by wire alias, not through here.
      */
     @WithDefault("8081")
     int registryPort();
 
     /**
-     * Host port qits-platform-mirror publishes, and the THIRD-PARTY half of the two-endpoint
-     * topology: Docker Hub, quay.io, the Red Hat registry, npmjs and Maven Central, each behind a
-     * pull-through cache.
+     * The same seed-only story for qits-platform-mirror, which caches everything third-party a
+     * build resolves: Docker Hub, quay.io, the Red Hat registry, npmjs and Maven Central.
      * <p>
-     * It is published for the same consumer the registry port is — the HOST's docker daemon, which
-     * cannot resolve a qits-net alias — and it is a second port rather than a path on the first
-     * because both services answer the same literal prefixes ({@code /artifacts/npm},
-     * {@code /artifacts/maven}, {@code /v2}). Two services cannot share one prefix behind one
-     * gateway entry, so the client's configuration is what picks between them.
+     * The seed container publishes it on 127.0.0.1 so the seed image builds resolve their base
+     * layers and their Maven plugins before an edge exists. The deployed mirror publishes nothing:
+     * the host reaches it at {@link #mirrorVhost()}, which is also what every committed Dockerfile
+     * spells in its {@code FROM} lines and what dockerd's {@code registry-mirrors} names.
      */
     @WithDefault("8082")
     int mirrorPort();
 
     /**
-     * Host port qits-githost publishes, and the reason it publishes one at all: <b>a person pushes
-     * from the host.</b>
+     * qits-githost's old host port. <b>Nothing publishes it any more</b> — neither the seed, which
+     * comes up inside the stack, nor the deployment.
      * <p>
-     * The git host used to be inside qits-platform-artifacts and rode its published port —
-     * {@code localhost:8081/artifacts/git/<repo>} was the clone url a developer typed. The split
-     * moved the routes to a service of its own, so without a port of its own that door closes: the
-     * wire alias resolves on qits-net and nowhere else, and a workstation is not on qits-net.
+     * The url a person clones has moved twice: it was
+     * {@code localhost:8081/artifacts/git/<repo>} while the git routes lived inside
+     * qits-platform-artifacts, then this port after the byte-plane split gave the git host a
+     * service of its own, and it is {@link #gitHostVhost()} through the edge now — where every
+     * method, reads included, needs a bearer.
      * <p>
-     * Nothing in this CLI dials it. Every phase that pushes runs INSIDE the payload container,
-     * which joins qits-net in its second phase, so it uses the alias like every other member. This
-     * port exists for the person and for anything else on the host.
+     * The knob stays because the number is the one to reopen by hand while an edge is being
+     * repaired, and because nothing else names it. Nothing in this CLI dials it: every phase that
+     * pushes runs INSIDE the payload container, which joins qits-net in its second phase.
      */
     @WithDefault("8083")
     int gitHostPort();
@@ -251,8 +256,8 @@ public interface BootstrapConfig {
     boolean web();
 
     /**
-     * The browser view's port. Away from the four this platform publishes on purpose: 8080 (the
-     * edge), 8081 (qits-artifacts), 8082 (qits-platform-mirror) and 8083 (qits-githost).
+     * The browser view's port. Away from 8080, which is the edge and the whole platform's door,
+     * and away from 8081 to 8083, which the seed containers and the break-glass still use.
      */
     @WithDefault("8480")
     int webPort();
@@ -392,5 +397,32 @@ public interface BootstrapConfig {
      */
     default String dnsUrl() {
         return "http://qits-platform-dns:8080/dns";
+    }
+
+    /**
+     * <b>The three names the HOST reaches this platform's byte plane by, and the one address shape
+     * in this file that is not a wire alias.</b> Each is {@code <app>.<env>.localhost:<edge port>}:
+     * every {@code *.localhost} name resolves to the loopback address (systemd-resolved synthesises
+     * it), so a client on the workstation arrives at the edge, which routes by the NAME rather than
+     * by a path — a docker client and a git client own their own roots ({@code /v2}, {@code /git})
+     * and cannot be given a prefix.
+     * <p>
+     * <b>Nothing in this CLI dials them.</b> The run is a container on qits-net and reaches all
+     * three at their aliases. They are here for the two things that speak to a person: the
+     * preflight warning about the docker daemon's {@code insecure-registries}, and the closing
+     * report's host-side steps.
+     */
+    default String registryVhost() {
+        return "registry." + envName() + ".localhost:" + port();
+    }
+
+    /** The pull-through caches, at the name dockerd's {@code registry-mirrors} points to. */
+    default String mirrorVhost() {
+        return "mirror." + envName() + ".localhost:" + port();
+    }
+
+    /** The git host, where a clone needs a bearer for every method — there is no anonymous half. */
+    default String gitHostVhost() {
+        return "githost." + envName() + ".localhost:" + port();
     }
 }

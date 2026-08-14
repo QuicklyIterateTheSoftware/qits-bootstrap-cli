@@ -77,11 +77,15 @@ forced. Add to that list rather than deviating quietly.
   alias on 5432, `qits-platform-idp:8080`, and ci and
   the deployer through `qits-platform-edge:8080` — the edge rather than the service, so the run
   keeps exercising the gateway's route table. Do NOT add a host-addressed mode beside it: one set of
-  addresses is what keeps the branching out of the code. The published ports are still configured,
-  because the GENERATED FILES and a person's browser use them, and because the host's docker daemon
-  resolves `localhost:<registry port>` during seed builds — a container the CLI starts for the
-  daemon's benefit needs both a publish and a network alias, and the temporary Maven registry is
-  exactly that case.
+  addresses is what keeps the branching out of the code. The host's own addresses are still
+  configured, and they are now TWO ports and three NAMES: `QITS_PORT` is the edge, which every
+  browser and every host-side client arrives at, and the byte plane is reached through it at
+  `registry.<env>.localhost`, `mirror.<env>.localhost` and `githost.<env>.localhost` — the
+  registry names anonymous for GET and HEAD, everything else behind a bearer. The 8081/8082 knobs
+  are SEED-ONLY now: a container the CLI starts for the daemon's benefit needs both a publish and a
+  network alias, the temporary Maven registry and the two seed byte services are exactly that case,
+  and all of them are gone by the first cutover. No deployed service of the byte plane publishes
+  anything.
   **Two services are dialled at their own alias rather than through the edge**, and neither is an
   inconsistency to tidy away — both are deliberately off the gateway's route table.
   `qits-platform-dns:8080/dns` is the record API's only address: the gateway proxies HTTP and there
@@ -99,6 +103,17 @@ forced. Add to that list rather than deviating quietly.
   (`pending`, `locked`, a WORKER), because initialising over somebody else's swarm tears a machine
   out of a cluster. An existing BRIDGE called `qits-net` stops the run too: it cannot be converted
   in place, and the platform is re-bootstrapped rather than migrated — `unwrap` removes it.
+- **The edge publishes in swarm INGRESS mode, and that is what lets it redeploy itself.** Under
+  `mode: host` a cutover is stop-first — the old task gives the port up before the new one takes it
+  — and the successor's image is now pulled THROUGH the edge, so it would have to be down to come
+  up. Ingress puts the port on the swarm rather than the task, so the predecessor keeps answering
+  while its successor pulls, starts and passes health. Two host settings follow from it and neither
+  is this program's to make: the daemon needs the two registry names in `insecure-registries`
+  (preflight asks the daemon and WARNS), and the host needs
+  `ip6tables … --dport <edge port> -j REJECT --reject-with tcp-reset` on `lo`, because a
+  `*.localhost` name resolves to `::1` first and the ingress mesh is IPv4-only — the listener
+  accepts and never answers, so clients hang instead of failing over. The launcher probes
+  `[::1]:<edge port>` and warns; the closing report prints both steps.
 - **The seed is a docker STACK, and four compose words do not survive the move.** The generated
   file carries no root `name:` and no `group_add:` — either one makes `docker stack deploy` refuse
   it outright, measured — no `container_name:` (ignored; a task's container is

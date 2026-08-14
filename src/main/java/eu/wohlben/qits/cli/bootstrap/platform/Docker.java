@@ -102,6 +102,31 @@ public class Docker {
         return swarm().state();
     }
 
+    /**
+     * <b>The registry names this daemon will speak plain HTTP to.</b> Asked of the DAEMON rather
+     * than read out of {@code /etc/docker/daemon.json}: the file is on the host and this program is
+     * a container, the path is not the only place the setting can come from, and a daemon that has
+     * not been restarted since the file changed would answer differently from it — which is exactly
+     * the state worth catching.
+     * <p>
+     * The platform's registry and mirror are reached at {@code <app>.<env>.localhost} over HTTP
+     * now, and a name is not a loopback ADDRESS: docker's built-in exemption covers 127.0.0.0/8 and
+     * ::1 only, so without an entry here every push and pull fails with "http: server gave HTTP
+     * response to HTTPS client".
+     */
+    public List<String> insecureRegistries() {
+        ProcessResult info = runner.run(Cmd.of("docker", "info", "--format",
+                "{{range $name, $index := .RegistryConfig.IndexConfigs}}"
+                        + "{{if not $index.Secure}}{{$name}} {{end}}{{end}}"), null);
+        if (!info.ok()) {
+            return List.of();
+        }
+        return Arrays.stream(info.trimmed().split("\\s+"))
+                .map(String::trim)
+                .filter(name -> !name.isBlank())
+                .toList();
+    }
+
     public boolean swarmActive() {
         return swarm().ready();
     }

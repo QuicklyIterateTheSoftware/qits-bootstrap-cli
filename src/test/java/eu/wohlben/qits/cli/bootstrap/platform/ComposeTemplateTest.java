@@ -125,7 +125,6 @@ class ComposeTemplateTest {
         String compose = ComposeTemplate.compose(tokens());
 
         assertThat(compose).contains("published: 8080");
-        assertThat(compose).contains("published: 8081");
         assertThat(compose).contains("QITS_IDP_ISSUER: http://qits-platform-idp:8080/idp");
         assertThat(compose).contains(
                 "QITS_IDP_CLIENT_PROD_QITS_CI_SECRET: \"secret-prod-qits-ci\"");
@@ -187,20 +186,81 @@ class ComposeTemplateTest {
                 .doesNotContain("\n  qits-platform-artifacts:\n");
     }
 
+    /**
+     * <b>The edge's publish is INGRESS, and the mode is what makes it able to redeploy itself.</b>
+     * Under {@code mode: host} a cutover is stop-first — the old task gives the port up before the
+     * new one takes it — and the successor's image is pulled through the edge now, so it would have
+     * to be down to come up. Ingress is start-first: the predecessor keeps answering.
+     */
     @Test
-    void theEdgeBindsTheHostPortAndTheGatewayNoLongerDoes() {
+    void theEdgeBindsTheHostPortInIngressModeAndTheGatewayNoLongerDoes() {
         String compose = ComposeTemplate.compose(tokens());
         String edge = serviceBlock(compose, "qits-platform-edge");
         String gateway = serviceBlock(compose, ENV + "-qits-gateway");
 
-        assertThat(edge).contains("published: 8080").contains("mode: host");
+        // The publish itself, whole: the comment above it names the mode it is NOT, so the port
+        // block is what has to be read rather than the word.
+        assertThat(edge).contains("""
+                      - target: 8080
+                        published: 8080
+                        protocol: tcp
+                        mode: ingress
+                """.stripTrailing());
         assertThat(edge).contains("QITS_EDGE_ENVIRONMENTS: prod")
                 .contains("QITS_EDGE_DEFAULT_ENVIRONMENT: prod")
                 .contains("QITS_EDGE_UPSTREAM_HOST_PATTERN: \"{env}-qits-gateway\"");
         // Two binders for one port is a conflict that only shows up on the second cutover.
         assertThat(gateway).doesNotContain("ports:");
+        // The extras name no mode: it is the edge's own deployment spec (publish_mode: ingress),
+        // because it is a property of the service rather than of one port.
         assertThat(extras("qits-platform-edge")).contains(".publishes[0]=8080:8080");
         assertThat(extras("qits-gateway")).doesNotContain(".publishes[");
+    }
+
+    /**
+     * <b>The three names that closed three host ports.</b> registry, mirror and githost are matched
+     * by HOST NAME rather than by path prefix — a docker client and a git client own their own
+     * roots — and the anonymous-read list covers the two registry names only, because a pull is GET
+     * and HEAD and the puller holds no credential yet.
+     */
+    @Test
+    void theEdgeRoutesTheByteplaneByNameInBothFiles() {
+        String edge = serviceBlock(ComposeTemplate.compose(tokens()), "qits-platform-edge");
+        String edgeExtras = extras("qits-platform-edge");
+
+        assertThat(edge).contains("QITS_EDGE_APPS_REGISTRY_HOST_PATTERN: \"{env}-qits-artifacts\"")
+                .contains("QITS_EDGE_APPS_MIRROR_HOST_PATTERN: \"qits-platform-mirror\"")
+                .contains("QITS_EDGE_APPS_GITHOST_HOST_PATTERN: \"{env}-qits-githost\"")
+                .contains("QITS_EDGE_AUTH_ANONYMOUS_READ_APPS: \"registry,mirror\"");
+        assertThat(edgeExtras)
+                .contains("env.QITS_EDGE_APPS_REGISTRY_HOST_PATTERN={env}-qits-artifacts")
+                .contains("env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN=qits-platform-mirror")
+                .contains("env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost")
+                .contains("env.QITS_EDGE_AUTH_ANONYMOUS_READ_APPS=registry,mirror");
+    }
+
+    /**
+     * <b>The byte plane publishes nothing, in the seed and in the deployment alike.</b> Three host
+     * ports went with unify-ingress: the host reaches all three services through the edge, by name.
+     * A publish that came back would be an unauthenticated door beside the authenticated one.
+     */
+    @Test
+    void theByteplanePublishesNoHostPortAnywhere() {
+        String compose = ComposeTemplate.compose(tokens());
+
+        for (String service : List.of(ENV + "-qits-artifacts", "qits-platform-mirror",
+                ENV + "-qits-githost")) {
+            assertThat(serviceBlock(compose, service)).as("ports of %s", service)
+                    .doesNotContain("ports:");
+        }
+        assertThat(compose).doesNotContain("published: 8081")
+                .doesNotContain("published: 8082")
+                .doesNotContain("published: 8083");
+        for (String application : List.of("qits-artifacts", "qits-platform-mirror",
+                "qits-githost")) {
+            assertThat(extras(application)).as("publishes of %s", application)
+                    .doesNotContain(".publishes[");
+        }
     }
 
     @Test
@@ -283,8 +343,9 @@ class ComposeTemplateTest {
 
     /**
      * <b>THE BYTE PLANE, in the seed stack.</b> Three services where there was one, each with its
-     * own store and its own door — and the split runs through every client's configuration, which is
-     * what the rest of this class checks one consumer at a time.
+     * own store and none with a door of its own — the edge is the door for all three — and the split
+     * runs through every client's configuration, which is what the rest of this class checks one
+     * consumer at a time.
      * <p>
      * All three stores are a DATABASE now, so all three services are pinned to the same shape: no
      * {@code volumes:} key and no blobs directory anywhere. The negative is asserted per service
@@ -297,10 +358,11 @@ class ComposeTemplateTest {
         String mirror = serviceBlock(compose, "qits-platform-mirror");
         String githost = serviceBlock(compose, ENV + "-qits-githost");
 
-        // The hosted store keeps the registry port it always had. Its store is one database —
-        // metadata and blob bytes both — so the container mounts nothing.
+        // The hosted store, behind the edge like the other two: no port of its own since
+        // unify-ingress. Its store is one database — metadata and blob bytes both — so the
+        // container mounts nothing either.
         assertThat(compose).contains("image: qits/artifacts:latest");
-        assertThat(artifacts).contains("published: 8081")
+        assertThat(artifacts).doesNotContain("ports:")
                 .contains("QITS_RESOURCE_DB_URL: "
                         + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_artifacts")
                 .contains("QITS_RESOURCE_DB_USERNAME: qits_artifacts")
@@ -312,10 +374,11 @@ class ComposeTemplateTest {
                 .doesNotContain("QITS_REPOSITORIES_GIT_")
                 .doesNotContain("QITS_CI_INTAKE_URL");
 
-        // The caches: a platform service, its own database, its own published door — and the cached
-        // bytes are rows in that same database, so this container is stateless too.
+        // The caches: a platform service with its own database, reached at mirror.<env>.localhost
+        // through the edge — and the cached bytes are rows in that same database, so this container
+        // is stateless too.
         assertThat(compose).contains("image: qits/platform-mirror:latest");
-        assertThat(mirror).contains("published: 8082")
+        assertThat(mirror).doesNotContain("ports:")
                 .contains("QITS_RESOURCE_DB_URL: "
                         + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_platform_mirror")
                 .contains("QITS_RESOURCE_DB_PASSWORD: \"1234123412341234\"")
@@ -326,7 +389,7 @@ class ComposeTemplateTest {
         // and reftables are rows in the first of them, so this container is stateless as well. It
         // was the last blob store on a volume.
         assertThat(compose).contains("image: qits/githost:latest");
-        assertThat(githost).contains("published: 8083")
+        assertThat(githost).doesNotContain("ports:")
                 .contains("QITS_RESOURCE_DB_URL: "
                         + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_githost")
                 .contains("QITS_RESOURCE_EVENTSTREAM_URL: "
@@ -367,8 +430,10 @@ class ComposeTemplateTest {
                             + "/artifacts/docs/docs");
         }
         // The publish target is the HOSTED registry and never the mirror: a publish step pushes the
-        // platform's own image, and the mirror takes no writes at all.
-        assertThat(ciExtras).contains("env.QITS_ARTIFACTS_REGISTRY_HOST=localhost:8081");
+        // platform's own image, and the mirror takes no writes at all. It is dialled by the HOST's
+        // docker daemon, which resolves the name to the loopback address and arrives at the edge.
+        assertThat(ciExtras).contains(
+                "env.QITS_ARTIFACTS_REGISTRY_HOST=registry.prod.localhost:8080");
         // The docs reader is handed the same address ci injects, so the two cannot disagree.
         assertThat(extras("qits-docs")).contains(
                 "env.QITS_DOCS_ARTIFACTS_URL=http://prod-qits-artifacts:8080/artifacts/docs/docs");
@@ -670,21 +735,49 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>The two decisions swarm forced, in the file that makes them.</b> A service publish has no
-     * ip field in either mode, so a port that must not reach the network cannot be published at all
-     * — and one that is dialled by the HOST's docker daemon has to say so out loud.
+     * <b>WHAT IS PUBLISHED, AND IT IS TWO THINGS.</b> The edge's HTTP port and the nameserver's DNS
+     * one — everything else on this platform is reached through the first or dialled at a wire
+     * alias. A service publish has no ip field in either mode, so a port that must not reach the
+     * network cannot be published at all.
      */
     @Test
-    void theHostFacingPublishesSayEveryInterfaceAndPostgresPublishesNothing() {
-        // The three doors the host's own daemon and a person on the workstation dial.
-        assertThat(extras("qits-artifacts")).contains(".publishes[0]=0.0.0.0:8081:8080");
-        assertThat(extras("qits-platform-mirror")).contains(".publishes[0]=0.0.0.0:8082:8080");
-        assertThat(extras("qits-githost")).contains(".publishes[0]=0.0.0.0:8083:8080");
-        // And the one whose only consumer was this CLI's cold-boot DDL, which dials the wire
-        // alias. Neither file publishes it any more, in the seed or in the deployment.
-        assertThat(extras("qits-oci-postgresql")).doesNotContain(".publishes[");
+    void onlyTheEdgeAndTheNameserverPublishAHostPort() {
+        List<String> publishing = extrasKeys().stream()
+                .filter(line -> line.contains(".publishes["))
+                .map(line -> line.substring(EXTRAS.length(), line.indexOf('.', EXTRAS.length())))
+                .distinct()
+                .toList();
+
+        assertThat(publishing)
+                .containsExactlyInAnyOrder("qits-platform-edge", "qits-platform-dns");
+        // The database whose only consumer was this CLI's cold-boot DDL, which dials the wire
+        // alias. Neither file publishes it, in the seed or in the deployment.
         assertThat(ComposeTemplate.extras(tokens())).doesNotContain(":5433:5432");
         assertThat(ComposeTemplate.compose(tokens())).doesNotContain("5433");
+    }
+
+    /**
+     * <b>The one address the HOST's docker daemon dials, in all four places that spell it.</b> Both
+     * the seed and the deployment of ci and of the deployer carry it, and it is a NAME behind the
+     * edge rather than a loopback port: {@code *.localhost} resolves to the loopback address, the
+     * edge routes on the name, and a pull is anonymous while a push carries a bearer.
+     */
+    @Test
+    void everyRegistryHostIsTheEdgesRegistryName() {
+        String compose = ComposeTemplate.compose(tokens());
+        String vhost = "registry.prod.localhost:8080";
+
+        assertThat(serviceBlock(compose, ENV + "-qits-ci"))
+                .contains("QITS_ARTIFACTS_REGISTRY_HOST: " + vhost);
+        assertThat(serviceBlock(compose, ENV + "-qits-deployments"))
+                .contains("QITS_ARTIFACTS_REGISTRY_HOST: " + vhost);
+        assertThat(extras("qits-ci")).contains("env.QITS_ARTIFACTS_REGISTRY_HOST=" + vhost);
+        assertThat(extras("qits-deployments")).contains("env.QITS_ARTIFACTS_REGISTRY_HOST=" + vhost);
+        // The retired spelling is nowhere in either file: a value still naming the closed port is a
+        // push to nothing.
+        assertThat(compose).doesNotContain("QITS_ARTIFACTS_REGISTRY_HOST: localhost:");
+        assertThat(ComposeTemplate.extras(tokens()))
+                .doesNotContain("QITS_ARTIFACTS_REGISTRY_HOST=localhost:");
     }
 
     /**
@@ -1101,8 +1194,11 @@ class ComposeTemplateTest {
         assertThat(ComposeTemplate.compose(other))
                 .contains("\n  preprod-qits-ci:\n")
                 .contains("QITS_EDGE_ENVIRONMENTS: preprod")
-                .contains("QITS_IDP_CLIENT_PREPROD_QITS_CI_SECRET");
+                .contains("QITS_IDP_CLIENT_PREPROD_QITS_CI_SECRET")
+                // The registry name carries the tier too: one edge, one door, a name per tier.
+                .contains("QITS_ARTIFACTS_REGISTRY_HOST: registry.preprod.localhost:8080");
         assertThat(ComposeTemplate.extras(other))
+                .contains("env.QITS_ARTIFACTS_REGISTRY_HOST=registry.preprod.localhost:8080")
                 .contains("env.QITS_AUTH_MACHINE_AUDIENCE=preprod-qits-ci")
                 .contains("QITS_GATEWAY_PROXY_HOSTS_CI=preprod-qits-ci")
                 .contains("env.QITS_OBSERVABILITY_URL=http://preprod-qits-observability:8080");

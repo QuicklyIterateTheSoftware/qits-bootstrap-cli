@@ -11,6 +11,8 @@ import eu.wohlben.qits.cli.bootstrap.ui.UiFactory;
 
 import java.io.IOException;
 import java.io.PrintStream;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -74,6 +76,7 @@ public final class HostLauncher {
             // daemon and refuses every other state that is not an active manager. This line stays
             // because it is the state the run started from, printed before anything changes it.
             out.println("swarm: " + docker.swarmState());
+            warnAboutIpv6Loopback(config, out);
 
             // A wrapper that is not here yet is a COLD START, not a failure: the run clones it,
             // inside the container, into the working directory. This half only has to agree with
@@ -135,6 +138,45 @@ public final class HostLauncher {
         // JLine has a real tty to repaint, and so the exit code arrives unaltered.
         Process payload = new ProcessBuilder(argv).inheritIO().start();
         return payload.waitFor();
+    }
+
+    /**
+     * <b>The one host check the payload cannot make, and it is a warning rather than a refusal:
+     * whether the edge's port ACCEPTS an IPv6 connection on this host's loopback.</b>
+     * <p>
+     * The byte plane is reached at {@code <app>.<env>.localhost}, and a resolver answers
+     * {@code ::1} for such a name FIRST. The edge publishes its port in swarm INGRESS mode now, and
+     * the routing mesh is IPv4-only: the v6 listener accepts the connection and then serves
+     * nothing, so curl, docker, git, maven and npm all hang instead of failing over to IPv4. A
+     * host-mode publish never showed this — docker-proxy bound both families — which is why it
+     * arrives with the mode.
+     * <p>
+     * The fix is one standing host rule, and it does not survive a reboot:
+     * <pre>ip6tables -I INPUT -i lo -p tcp --dport &lt;edge port&gt; -j REJECT --reject-with tcp-reset</pre>
+     * The reset is what makes every client fall back at once; a DROP would leave them hanging just
+     * as the accept does.
+     * <p>
+     * <b>Asked here rather than in the preflight PHASE, because only this half is on the host.</b>
+     * The payload is a container: {@code ::1} inside it is its own loopback, and the host's is not
+     * reachable from there at all. What is asked is the effect and not the rule — a connect to
+     * {@code [::1]:<port>} that SUCCEEDS is the broken state, whatever produced it. Refused is the
+     * good answer and so is nothing listening, which is every cold boot, so this stays quiet unless
+     * there is something to say.
+     */
+    static void warnAboutIpv6Loopback(BootstrapConfig config, PrintStream out) {
+        try (Socket probe = new Socket()) {
+            probe.connect(new InetSocketAddress("::1", config.port()), 2000);
+        } catch (IOException e) {
+            // Refused, unreachable or timed out: nothing is accepting v6 on that port, which is
+            // what the rule produces and what an empty host looks like.
+            return;
+        }
+        out.println("WARNING: [::1]:" + config.port() + " accepts connections. Every "
+                + "*.localhost name resolves to ::1 first, and swarm's ingress mesh serves IPv4 "
+                + "only — so a client reaching the edge by name will HANG rather than fail over. "
+                + "One host rule fixes it, and it does not survive a reboot:");
+        out.println("  sudo ip6tables -I INPUT -i lo -p tcp --dport " + config.port()
+                + " -j REJECT --reject-with tcp-reset");
     }
 
     /**

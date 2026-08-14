@@ -161,6 +161,7 @@ public class SeedPhases {
             ctx.log("  docker buildx: present");
             boot.state.swarm = ensureSwarm(boot.docker, ctx::log);
             ctx.log("  swarm: " + boot.state.swarm);
+            warnAboutInsecureRegistries(ctx);
             if (!boot.git.available()) {
                 throw new IllegalStateException("no git on PATH");
             }
@@ -214,6 +215,44 @@ public class SeedPhases {
                     + "come from " + boot.config.orgUrl());
             ctx.note(local + "/" + total + " local checkouts");
         });
+    }
+
+    /**
+     * <b>A WARNING, never a refusal: the docker daemon's own list of registries it will speak plain
+     * HTTP to.</b>
+     * <p>
+     * The platform's registry and its mirror are reached from the host at
+     * {@code <app>.<env>.localhost:<edge port>} now, and both speak HTTP. Docker's built-in
+     * exemption is for the loopback ADDRESSES and not for names that resolve to them, so a daemon
+     * without these two entries fails every push and every pull with "http: server gave HTTP
+     * response to HTTPS client" — a message about TLS, several phases into a boot, for a
+     * configuration line on the host.
+     * <p>
+     * It does not stop the boot, and that is deliberate twice over. The failure is repairable while
+     * the run is going (edit {@code /etc/docker/daemon.json}, restart the daemon), and a bootstrap
+     * that refused to start over a host setting it can neither read nor write would be refusing the
+     * cold start it exists for. The closing report prints the same two entries as a host-side step.
+     * <p>
+     * The DAEMON is asked rather than the file, because the daemon is the thing that decides — and
+     * a daemon that has not been restarted since the file was edited is exactly the case a file
+     * read would call configured.
+     */
+    private void warnAboutInsecureRegistries(PhaseContext ctx) {
+        List<String> insecure = boot.docker.insecureRegistries();
+        List<String> missing = Stream.of(boot.config.registryVhost(), boot.config.mirrorVhost())
+                .filter(name -> !insecure.contains(name))
+                .toList();
+        if (missing.isEmpty()) {
+            ctx.log("  insecure registries: " + boot.config.registryVhost() + ", "
+                    + boot.config.mirrorVhost());
+            return;
+        }
+        ctx.warn("the docker daemon does not allow plain HTTP to " + String.join(" or ", missing)
+                + " — every push and pull through the edge will fail with \"server gave HTTP "
+                + "response to HTTPS client\". Add both names to insecure-registries in "
+                + "/etc/docker/daemon.json and restart the daemon; the closing report spells the "
+                + "line. The boot goes on: the fix is a host step and it can be made while this "
+                + "runs");
     }
 
     /**
@@ -601,16 +640,19 @@ public class SeedPhases {
                             || boot.http.get(AUTH_SEED_URL + SEED_SENTINEL_METADATA, Map.of()).ok()) {
                         ctx.skip("qits-containers-client is already served");
                     }
-                    // The platform's own store may already hold the registry port, and then the
-                    // temporary one cannot have it — the bind fails with "port is already
-                    // allocated" and the boot stops. It does not need it either: the store IS the
-                    // Maven registry the seed builds resolve against, and every one of these
-                    // libraries is published into it by every bootstrap that gets past phase 10. If
-                    // a store this far along somehow has not got one, the seed build below fails by
-                    // name rather than resolving nothing quietly.
+                    // A store that is already up makes this phase pointless: it IS the Maven
+                    // registry the seed builds resolve against, and every one of these libraries is
+                    // published into it by every bootstrap that gets past phase 10. If a store this
+                    // far along somehow has not got one, the seed build below fails by name rather
+                    // than resolving nothing quietly.
+                    //
+                    // It is also the older half of a bind conflict that is gone: while the platform
+                    // published the registry port, a temporary registry beside a running store
+                    // could not bind at all. The store publishes nothing now — the host reaches it
+                    // through the edge — so the port is free either way, and this is a skip on
+                    // merit rather than on a bind.
                     storeAlreadyServing().ifPresent(who ->
-                            ctx.skip(who + " serves port " + boot.config.registryPort()
-                                    + " — it is the registry"));
+                            ctx.skip(who + " is the registry — it serves these libraries already"));
                     boot.docker.ensureVolume("qits-maven-seed", ctx::log);
                     boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
                     String cid = create(ctx, List.of(
@@ -637,6 +679,13 @@ public class SeedPhases {
                     //                       run with --network host and resolve Maven through
                     //                       localhost:REGISTRY_PORT, and that consumer did not
                     //                       move onto the network with the CLI.
+                    //
+                    // THE PUBLISH IS THIS PHASE'S ALONE NOW. The platform's own store publishes no
+                    // host port at all since unify-ingress — it is reached at
+                    // registry.<env>.localhost through the edge — so nothing here is shadowing a
+                    // number the platform also binds. This container serves the seed builds that
+                    // run before any edge exists, and it goes away in seed-artifacts, minutes from
+                    // now; nothing has to close the port at the end of a boot.
                     //
                     // Dropping either one hangs a phase rather than failing it: without the
                     // network the probe above never answers, without the publish the first seed
@@ -725,10 +774,15 @@ public class SeedPhases {
      * every other seed image — see {@link SeedDockerfile}. What this phase starts is a service whose
      * layers came from quay.io.
      * <p>
-     * Started by hand rather than by compose, under the wire alias the compose service will claim,
-     * so the two never run side by side on the published port. Whoever already serves, serves: a
-     * deployed mirror publishes the same port from the same database and is strictly better than the
-     * seed this phase would have started.
+     * Started by hand rather than by the stack, under the wire alias the stack service will claim,
+     * so the two never run side by side under one name. Whoever already serves, serves: a deployed
+     * mirror answers at that same alias from the same database and is strictly better than the seed
+     * this phase would have started.
+     * <p>
+     * <b>The loopback publish is this phase's own and nobody else's.</b> The deployed mirror
+     * publishes no host port since unify-ingress — the host reaches it at
+     * {@code mirror.<env>.localhost} through the edge — so this one exists for the seed builds that
+     * run before any edge does, and it goes away with the container the first cutover replaces.
      */
     public Phase seedMirrorStart() {
         return new Phase("seed-mirror",
@@ -739,13 +793,18 @@ public class SeedPhases {
             Optional<String> serving = alreadyServing(mirror, prefix,
                     boot.docker.runningNames(), boot.docker.serviceNames());
             if (serving.isPresent()) {
-                ctx.log("  " + serving.get() + " already serves port " + boot.config.mirrorPort()
+                ctx.log("  " + serving.get() + " already answers as " + mirror
                         + " from the same database — no seed mirror to start");
             } else {
                 boot.docker.removeContainer(mirror, null);
                 Boot.must(boot.docker.run(Cmd.of(List.of(
                                 "docker", "run", "-d", "--name", mirror,
                                 "--network", Boot.NETWORK,
+                                // SEED-ONLY, and the platform does not take it over: the deployed
+                                // mirror publishes nothing, and the host dials
+                                // mirror.<env>.localhost through the edge. What needs a port here
+                                // is the seed image builds, which run --network host before an
+                                // edge exists.
                                 "-p", "127.0.0.1:" + boot.config.mirrorPort() + ":8080",
                                 // The seed's own credential, on the same terms as the idp's and the
                                 // bus's: this container starts before any deployer exists, so the
@@ -789,16 +848,19 @@ public class SeedPhases {
             boot.state.authSeedContainer = null;
             boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
             // Named after its wire alias, like every other seed container: this one is started by
-            // hand rather than by compose, and the name it takes has to be the same one the compose
-            // service would have claimed, or the two run side by side on the registry port.
+            // hand rather than by the stack, and the name it takes has to be the same one the stack
+            // service would have claimed, or the two run side by side under one name.
             String artifacts = PlatformModel.wireAlias("artifacts", boot.config.envName());
-            // Whoever already holds the port, holds it. A seed beside a store that is up is
-            // impossible — the bind answers "port is already allocated", exit 125, and the boot
-            // stopped exactly there on the 2026-08-08 validation rerun — and pointless: a DEPLOYED
-            // store publishes this very port over the same qits_artifacts database and answers the
-            // same API, so it is strictly better than the seed this phase would have
-            // started. This run's own seed container is asked for by name first, so a rerun still
-            // reports it as itself rather than as the deployer's.
+            // Whoever already serves, serves. A DEPLOYED store reads the same qits_artifacts
+            // database and answers the same API at the same alias, so it is strictly better than
+            // the seed this phase would have started. This run's own seed container is asked for by
+            // name first, so a rerun still reports it as itself rather than as the deployer's.
+            //
+            // It used to be a bind conflict as well — a seed beside a running store answered "port
+            // is already allocated", exit 125, and the boot stopped exactly there on the 2026-08-08
+            // validation rerun. The deployed store publishes no host port since unify-ingress, so
+            // that collision is gone and this check now buys only the duplicate it always meant to
+            // prevent.
             Optional<String> serving = alreadyServing(artifacts,
                     PlatformModel.pdNamePrefix("artifacts", boot.config.envName()),
                     boot.docker.runningNames(), boot.docker.serviceNames())
@@ -1745,8 +1807,9 @@ public class SeedPhases {
                 : boot.state.composeFile.getFileName().toString());
         values.put("PORT", String.valueOf(boot.config.port()));
         values.put("REGISTRY_PORT", String.valueOf(boot.config.registryPort()));
-        // The other two byte doors: the mirror's, for a docker daemon told to pull third-party
-        // images through the cache, and the git host's, for a person pushing from the workstation.
+        // Neither generated file publishes these two any more — the byte plane is behind the edge —
+        // but both are still filled, so a comment or a line that names one renders a number rather
+        // than a placeholder.
         values.put("MIRROR_PORT", String.valueOf(boot.config.mirrorPort()));
         values.put("GIT_HOST_PORT", String.valueOf(boot.config.gitHostPort()));
         values.put("DNS_PORT", String.valueOf(boot.config.dnsPort()));

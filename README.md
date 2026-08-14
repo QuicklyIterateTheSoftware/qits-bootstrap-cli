@@ -130,10 +130,10 @@ the same names `qits-local-up.sh` read:
 | `QITS_WRAPPER_DIR` | detected | the wrapper repository whose checkouts are the sources, and where the stack file and `.qits-bootstrap.env` land — found by walking up when unset, and cloned into `<cwd>/qits-qits` when this machine has none |
 | `QITS_SRC` | `.qits-bootstrap-src` | where those checkouts are cloned to |
 | `QITS_ORG_URL` | the GitHub org | where a repository with no local checkout is cloned from — the wrapper included, on a cold start. Read anonymously |
-| `QITS_PORT` | `8080` | the host's ONE published port, bound by qits-platform-edge. It is the door for a person's browser; the CLI dials the edge's alias instead |
-| `QITS_REGISTRY_PORT` | `8081` | qits-artifacts' host port, for the DOCKER DAEMON: seed builds run with `--network host` and resolve Maven through `localhost:<this>`, and publish steps push the platform's own images there. The HOSTED half of the two-endpoint topology. The CLI reads the registry API by alias |
-| `QITS_MIRROR_PORT` | `8082` | qits-platform-mirror's host port, and the THIRD-PARTY half: Docker Hub, quay.io, the Red Hat registry, npmjs and Maven Central, each behind a pull-through cache. Point dockerd's `registry-mirrors` at it, and note that every committed Dockerfile spells `localhost:8082/{hub,quay,redhat}/…` in its `FROM` lines — a seed build rewrites those back to the direct upstreams, because a cold start cannot pull through the mirror it is starting |
-| `QITS_GIT_HOST_PORT` | `8083` | qits-githost's host port, and what a PERSON clones and pushes through: `http://localhost:8083/git/<repo>`. The git host is a service of its own since the byte-plane split, so it needs a door of its own — it used to ride the registry's. Nothing in the CLI dials it; every phase that pushes runs inside a container on qits-net |
+| `QITS_PORT` | `8080` | **the host's ONE HTTP port**, bound by qits-platform-edge in swarm INGRESS mode, and the door of the whole platform: a person's browser, and the registry, the mirror and the git host, which are reached at `registry.<env>.localhost:<this>`, `mirror.<env>.localhost:<this>` and `githost.<env>.localhost:<this>`. Every `*.localhost` name resolves to the loopback address by itself, so there is no hosts file to edit. The CLI dials the edge's alias instead |
+| `QITS_REGISTRY_PORT` | `8081` | a SEED-ONLY port now, and the break-glass' default. The temporary Maven registry and the seed qits-artifacts container publish it on 127.0.0.1 for one consumer: the seed image builds, which run `--network host` before any edge exists. Both are gone by the first cutover, and the deployed store publishes nothing — the host reaches it at `registry.<env>.localhost:<QITS_PORT>`. The only thing that binds this on a running platform is the wrapper's `qits-registry-break-glass.sh`, while a wedged edge is repaired |
+| `QITS_MIRROR_PORT` | `8082` | the same seed-only story for qits-platform-mirror, which caches everything third-party: Docker Hub, quay.io, the Red Hat registry, npmjs and Maven Central. The seed container publishes it so the seed image builds resolve their base layers before an edge exists; the deployed mirror publishes nothing. Point dockerd's `registry-mirrors` at `mirror.<env>.localhost:<QITS_PORT>`, which is also what every committed Dockerfile spells in its `FROM` lines — a seed build rewrites those back to the direct upstreams, because a cold start cannot pull through the mirror it is starting |
+| `QITS_GIT_HOST_PORT` | `8083` | qits-githost's old host port. **Nothing publishes it any more** — neither the seed, which comes up inside the stack, nor the deployment. A person clones and pushes at `http://githost.<env>.localhost:<QITS_PORT>/git/<repo>` through the edge, where every method needs a bearer, reads included. The knob stays because this is the number to reopen by hand while an edge is being repaired. Nothing in the CLI dials it; every phase that pushes runs inside a container on qits-net |
 | `QITS_DNS_PORT` | `53` | what qits-platform-dns publishes, **on UDP and on TCP**. 53 because that is the port a registrar's delegation reaches; the service binds 8053 inside the container, since below 1024 needs privileges it should not hold. TCP is not the optional half — a truncated UDP answer carries zero records and the client's TCP retry is the only way it gets one. **Move it on a workstation that already holds 53**, which most do: measured on the WSL2 development host, systemd-resolved holds it, docker refuses the publish, and the whole stack deploy then fails — the entire seed, not just the nameserver. `5353` there. A delegation cannot follow a port, so anything but 53 is for local testing |
 | `QITS_DOMAIN` | unset | **the domain this platform serves.** Unset is a full platform with no public names: the nameserver runs with no zones and the edge stays on plain HTTP. Set, this run gives the nameserver its identity (`ns1.<domain>`, `hostmaster.<domain>`), creates the zone row, and gives the edge ports 80 and 443 with a Let's Encrypt certificate slot on a volume. The management port 9000 is NOT published: the challenge-management endpoint is unauthenticated and a swarm publish cannot be loopback-only, so it is reached on qits-net. It writes no records and touches no registrar — both need this host's public IP. Lowercase, at least two labels, no trailing dot; a bad value stops the run before anything is built. `--domain` is the same knob for one run |
 | `QITS_SKIP_BUILD` | `0` | 1 = the seed images and the daemon binary exist; skip to the stack deploy and the pushes |
@@ -206,6 +206,25 @@ and the fourth names the clone of this CLI the run was started from — the wrap
 is where the image is built from when there is a wrapper, and a checkout of this repository at or
 above the working directory (or beside it) is what answers on a cold one.
 
+**Two host settings this program warns about and cannot make.** Both come from the byte plane
+moving behind the edge, and both are standing configuration of the machine rather than of a run:
+
+    "insecure-registries": ["registry.<env>.localhost:8080", "mirror.<env>.localhost:8080"]
+    sudo ip6tables -I INPUT -i lo -p tcp --dport 8080 -j REJECT --reject-with tcp-reset
+
+The first goes in `/etc/docker/daemon.json`, and the daemon needs a restart to read it: both names
+speak plain HTTP, and docker's built-in exemption is for the loopback ADDRESSES rather than names
+that resolve to them — without the entries every push and pull fails with "server gave HTTP
+response to HTTPS client". The payload's preflight asks the DAEMON what it allows (not the file,
+which a daemon may not have re-read) and warns without stopping: the fix can be made while the run
+goes on, and the closing report prints the line again.
+
+The second is the launcher's own check, because only it is on the host. A `*.localhost` name
+resolves to `::1` first, and swarm's ingress mesh is IPv4-only: the listener ACCEPTS the v6
+connection and never serves it, so curl, docker, git, maven and npm all hang rather than fail over.
+The reset makes each one fall back at once. A host-mode publish never showed this — docker-proxy
+bound both families — so it arrives with ingress, and the rule does **not** survive a reboot.
+
 **Swarm is reported here and repaired inside.** The line above is the state this run started from;
 the payload's own preflight is what acts on it. An `inactive` daemon — one in nobody's swarm — is
 made a single-node swarm with `docker swarm init`. Every other state is somebody else's answer and
@@ -234,11 +253,16 @@ that, each measured on this host rather than assumed:
 - **`restart: unless-stopped` is `deploy.restart_policy`**, and no service asks for an
   `update_config`: swarm's default update order is stop-first, which is the only order these
   services can take — each holds a volume or a host port a second task would collide on.
-- **Every published port is `mode: host` and binds 0.0.0.0.** Neither publish mode has an ip field,
-  so the loopback binds this file used to carry cannot be expressed at all. **The platform's
-  postgres therefore publishes nothing**: its one consumer was this CLI's cold-boot DDL, which
-  dials the wire alias on 5432 like everything else. An operator with a `psql` goes in through
-  `docker exec`.
+- **Two published ports in the whole file, and they take different modes.** The edge's is
+  `mode: ingress` — the swarm holds the port, so an edge cutover is start-first and its successor
+  pulls its own image through the predecessor, which a stop-first door could not do now that every
+  pull goes through it. The nameserver's is `mode: host`, per node, because a delegation reaches
+  one machine. **The byte plane publishes nothing**: qits-artifacts, qits-platform-mirror and
+  qits-githost are reached from the host at `<app>.<env>.localhost:<QITS_PORT>` through the edge,
+  which authenticates by method — GET and HEAD anonymous on the two registry names, a bearer for
+  everything else. **The platform's postgres publishes nothing either**: its one consumer was this
+  CLI's cold-boot DDL, which dials the wire alias on 5432 like everything else. An operator with a
+  `psql` goes in through `docker exec`. No publish binds loopback — neither mode has an ip field.
 - **A rerun deploys a SUBSET by leaving services out of the file**, because `docker stack deploy`
   takes no service list. Nothing is pruned — what the file omits is the deployer's — and a seed
   service whose application the deployer has taken over is removed outright: swarm restarts a task
@@ -365,8 +389,9 @@ program whose whole job is that the platform is not up yet:
 | `GET /events` | the run as it happens: one `snapshot` on connect, then `phase`, `status`, `line`, `ev` (a platform event) and `done` as server-sent events, with a comment every 15s so nothing in the middle calls it dead |
 | `GET /state.json` | the same state in one answer, for `curl` |
 
-Knobs: `QITS_WEB_PORT` (default `8480` — 8080 is the edge, 8081 the artifacts service, 8082 the
-mirror, 8083 the git host, and 8090 is taken often enough to be a poor default), `QITS_WEB_HOST` (default `0.0.0.0` — on WSL2 the
+Knobs: `QITS_WEB_PORT` (default `8480` — 8080 is the edge and therefore the whole platform, 8081
+to 8083 belong to the seed containers and the break-glass, and 8090 is taken often enough to be a
+poor default), `QITS_WEB_HOST` (default `0.0.0.0` — on WSL2 the
 Windows-side browser cannot reliably reach a WSL-loopback bind; set `127.0.0.1` to keep the view
 off the LAN), and `QITS_WEB=0`, which turns it off entirely — no server, no port.
 
@@ -394,7 +419,7 @@ for 42. `QITS_DOMAIN` adds two more, marked below.
 | 7–14 | seed images `qits/gateway`, `qits/platform-edge`, `qits/platform-mirror`, `qits/artifacts`, `qits/githost`, `qits/oci-postgresql`, `qits/platform-dns`, `qits/events` — the eight that need nothing from a running platform |
 | 15 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC the twelve databases the seed stack needs: the deployer's own and its outbox's, qits-ci's own and its outbox's, qits-platform-idp's, qits-platform-dns', qits-events', qits-platform-mirror's, qits-githost's own and its outbox's, and qits-containers' own and its outbox's. Four are outboxes because the eventstream library keeps its own Flyway lineage and cannot share a database with its host. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |
 | 16 | have qits-platform-mirror serving, because every publish below resolves its third-party half through it — Maven Central, npmjs — and a cache that is not up is not a slow publish but a failed one. It cannot pull through itself: its own image was built minutes ago with the mirror prefixes rewritten to the direct upstreams |
-| 17 | have qits-artifacts serving the registry port, so there is somewhere to publish to |
+| 17 | have qits-artifacts serving, so there is somewhere to publish to (the seed one holds the registry port on 127.0.0.1 for the builds that run `--network host`) |
 | 18–25 | publish `qits-blobstore`, `qits-registries`, `qits-eventstream`, `qits-githost-events`, `qits-auth-core`, the two `qits-containers` libraries (`core` and `client`, the modules its consumers pin — never its service, which is a native image nobody resolves), `@qits/ui-components`, `@qits/angular`. The git host's vocabulary is here because two consumers need it out of the store long before the git host's own deployment could publish anything: the `qits/ci` image three phases below, and qits-projects, which the deploy train reaches eight phases before qits-githost |
 | 26–29 | seed images `qits/ci`, `qits/deployments`, `qits/platform-idp`, `qits/containers` — the four built out of jars the publishes above put in the store |
 | 30–34 | the five step images from qits-oci |
@@ -408,7 +433,7 @@ for 42. `QITS_DOMAIN` adds two more, marked below.
 | 42–43 | create the 40 repositories on qits-githost; pre-seed the seeded histories with `-o qits.no-ci` |
 | 44–50 | replay each publisher the platform pins by **pushing its release tag**, and wait for the run the tag starts. The release recipes select on `SCMPublishTag`, so the push is the whole trigger — nothing is announced by hand, and in particular no `SCMRelease`: that word means "a version is NEW", and saying it here woke the release train against a platform whose qits-workspaces is still fifteen phases away. Four of the seven are the Maven and npm packages the wrapper's builds install; three are docker images — `qits/workspace-base`, then `qits/workspace` and `qits/projects-daemon` + `qits/project-agent`. **The base goes first and that order is load-bearing**: both daemon builds pull it at a pinned version, and the base's own replay is what puts it in the registry. A publisher with no release tag reachable from main STOPS the boot, which is right: a pin nobody has minted has nothing to dangle. A tag the git host already has moves no ref, so it announces nothing and the phase is SKIPPED — the registry holds that version from the boot that first pushed it |
 | 51 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
-| 52–68 | one phase per deployable: push `main` quietly, push the newest release tag, and move `environment/<name>` **to that tag's commit** — the boot RESTORES, so a main that is ahead of the release deploys nothing. `--ship-mains` points the deploy ref at main's head instead, which is what the boot always did and what shipped an unreleased stack by accident on 2026-08-08. A deployable with no release tag falls back to main's head and warns. Then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-containers is immediately before qits-ci, because ci runs every pipeline step as a container it asks that service for. qits-platform-edge is second to last: it is the host port, so its cutover takes this program's own door away for a beat |
+| 52–68 | one phase per deployable: push `main` quietly, push the newest release tag, and move `environment/<name>` **to that tag's commit** — the boot RESTORES, so a main that is ahead of the release deploys nothing. `--ship-mains` points the deploy ref at main's head instead, which is what the boot always did and what shipped an unreleased stack by accident on 2026-08-08. A deployable with no release tag falls back to main's head and warns. Then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-containers is immediately before qits-ci, because ci runs every pipeline step as a container it asks that service for. qits-platform-edge is second to last: it is the host's one door, and every other service is behind it — its publish is `mode: ingress`, so the swarm holds the port and the successor pulls its own image through the predecessor rather than needing the door it is replacing |
 | 69–70 | push the seeded repositories; the closing report |
 
 Five things every deploy phase does that are easy to miss: it pushes `main` quietly
@@ -434,11 +459,12 @@ held. The deployer reads that file once, at its own boot, so a rerun that change
 nothing for a container that is already running.
 
 Phases 6 and 17 are the two that bind the registry port, and both ask first whether qits-artifacts
-is already serving it — by GET on the artifacts API's own health at the store's wire alias, which the
-temporary nginx does not answer to. On a platform whose store is deployed, the answer is yes: the
-deployed container publishes the same port from the same volume, so phase 6 skips and phase 17 waits
-for that store instead of starting a seed beside it. Binding it anyway is `port is already
-allocated`, exit 125, and a stopped boot.
+is already serving — by GET on the artifacts API's own health at the store's wire alias, which the
+temporary nginx does not answer to. On a platform whose store is deployed, the answer is yes: that
+container reads the same database and answers the same API, so phase 6 skips and phase 17 waits for
+it instead of starting a seed beside it. The port collision that used to make the check mandatory
+is gone with the store's publish — a deployed store binds nothing on the host now — so what the two
+phases prevent is a duplicate rather than a `port is already allocated`.
 
 The temporary registry of phase 6 has **two consumers and two addresses**, which is the shape every
 container the bootstrap starts for the daemon's benefit has: the CLI dials it on `qits-net` by its
@@ -489,9 +515,11 @@ seed SERVICES are named after it — a stack ignores `container_name`, and a ser
 `qits_<alias>` and under the bare alias both — which is what makes the generated stack file's own
 addresses right from the first second rather than from the first cutover.
 
-**qits-platform-edge binds the host's only published port** and hands each request to the gateway
-of the environment its Host name names. qits-gateway publishes nothing: it was on the platform
-plane only because it used to bind that port.
+**qits-platform-edge binds the host's only HTTP port** and hands each request to the gateway of the
+environment its Host name names — or, for the three byte-plane names, straight to the service the
+name belongs to, because a docker client and a git client own their own roots (`/v2`, `/git`) and
+cannot be given a path prefix. qits-gateway publishes nothing: it was on the platform plane only
+because it used to bind that port.
 
 **qits-deployments owns both halves**: the topology (environments, services, links) and the
 execution (deployment rows, the health-gated cutover, the rollback pins). It is the merge-back of

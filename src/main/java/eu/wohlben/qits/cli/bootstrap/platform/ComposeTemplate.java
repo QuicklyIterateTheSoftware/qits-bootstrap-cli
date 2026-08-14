@@ -102,11 +102,26 @@ public final class ComposeTemplate {
             # NO `name:` KEY. The stack name is the argument of `docker stack deploy`, and the loader
             # refuses the key outright — measured: "(root) Additional property name is not allowed".
             #
-            # EVERY PUBLISHED PORT BINDS 0.0.0.0, and each one says so on itself. A published port is
-            # `mode: host` here — per node, like plain docker — but neither publish mode has an ip
-            # field, so the loopback binds this file used to carry cannot be expressed at all: the
-            # short form `127.0.0.1:8081:8080` is accepted and the address is dropped with a warning.
-            # The exposure is written out where it can be reviewed rather than discovered.
+            # TWO HOST PORTS IN THE WHOLE FILE: the edge's ${PORT} and the nameserver's ${DNS_PORT}.
+            # The byte plane — qits-artifacts, qits-platform-mirror, qits-githost — publishes nothing
+            # at all. All three are reached from the host THROUGH THE EDGE, under names of their own:
+            # registry.${ENV_NAME}.localhost:${PORT}, mirror.${ENV_NAME}.localhost:${PORT} and
+            # githost.${ENV_NAME}.localhost:${PORT}. systemd-resolved answers every *.localhost name
+            # with the loopback address, so the host's docker daemon and a person's git both arrive
+            # at the edge, which is where this platform's authentication lives: GET and HEAD on the
+            # two registry names are anonymous, everything else needs a bearer.
+            #
+            # The daemon needs `insecure-registries` for the two names it dials — they are HTTP —
+            # and preflight asks the DAEMON what it allows, warning when they are missing. The way in
+            # when the edge itself is wedged is the break-glass script in the wrapper
+            # (qits-registry-break-glass.sh), which publishes the registry's port directly for as
+            # long as the repair takes. A standing publish is not that path.
+            #
+            # EVERY PUBLISHED PORT BINDS 0.0.0.0, and each one says so on itself: neither publish
+            # mode has an ip field, so the loopback binds this file used to carry cannot be
+            # expressed at all — the short form `127.0.0.1:8080:8080` is accepted and the address is
+            # dropped with a warning. The exposure is written out where it can be reviewed rather
+            # than discovered.
 
             networks:
               qits-net:
@@ -268,25 +283,28 @@ public final class ComposeTemplate {
                     condition: any
                     delay: 5s
 
-              # THE HOST'S ONE PUBLISHED PORT. Every address this bootstrap dials on 127.0.0.1:${PORT}
-              # arrives here first and is handed to the gateway of the environment the request's Host name
-              # names — which for a workstation is always the default, because localhost carries no
-              # environment label. It serves no paths of its own beyond /q, holds no state and has no client,
-              # so the seed needs no volume and no placeholder bundle.
+              # THE HOST'S ONE HTTP PORT, and now the door of the byte plane too. Every address this
+              # bootstrap dials on 127.0.0.1:${PORT} arrives here first and is handed to the gateway of the
+              # environment the request's Host name names — which for an unlabelled name is the default,
+              # because localhost carries no environment label. It serves no paths of its own beyond /q,
+              # holds no state and has no client, so the seed needs no volume and no placeholder bundle.
               #
-              # In the seed because it is the door: qits-ci and qits-deployments publish no host port, and
-              # the CLI reaches both through this process. Without it the first health poll has nothing to
-              # ask.
+              # In the seed because it is the door: qits-ci and qits-deployments publish no host port, the
+              # three byte services publish none either, and the CLI reaches all of them through this
+              # process. Without it the first health poll has nothing to ask.
               qits-platform-edge:
                 image: qits/platform-edge:latest
                 ports:
-                  # mode: host — this node's own port, exactly like a `docker run -p`. Ingress mode
-                  # would claim it across the swarm and route through the routing mesh, which is a
-                  # second hop for a door that only ever answers on this machine.
+                  # mode: ingress — the swarm holds this port, not the task, and that is what lets
+                  # the edge redeploy ITSELF. Under `mode: host` a cutover is stop-first: the old
+                  # task has to give the port up before the new one can take it, and the new one's
+                  # image is pulled THROUGH THE EDGE now — a service that has to be down to come
+                  # up. Ingress publishes start-first, so the predecessor keeps answering while its
+                  # successor pulls, starts and passes health.
                   - target: 8080
                     published: ${PORT}
                     protocol: tcp
-                    mode: host${EDGE_TLS_PORTS}
+                    mode: ingress${EDGE_TLS_PORTS}
                 environment:
                   # The whole routing surface: which environments exist, and which one an unlabelled host
                   # (localhost, an IP) resolves to. The default MUST be a member of the list — the process
@@ -299,6 +317,26 @@ public final class ComposeTemplate {
                   # to the wire aliases the rest of this file hands out.
                   QITS_EDGE_UPSTREAM_HOST_PATTERN: "{env}-qits-gateway"
                   QITS_EDGE_UPSTREAM_PORT: "8080"
+                  # THE THREE APPS THAT ARE REACHED BY NAME RATHER THAN BY PATH, and this block is
+                  # what closed three host ports. A request for registry.<env>.localhost goes to the
+                  # first pattern, mirror.<env>.localhost to the second, githost.<env>.localhost to
+                  # the third — each straight to the service, not through the gateway's route table,
+                  # because a docker client and a git client own their own root paths (/v2, /git) and
+                  # cannot be given a prefix.
+                  #
+                  # {env} is the EDGE's placeholder, read at runtime by the process this configures,
+                  # and not a token of this generator: an app of a tier resolves to that tier's
+                  # service, so one edge serves every environment on this machine. The mirror carries
+                  # no {env} because it is a platform service — one cache per machine.
+                  #
+                  # ANONYMOUS READ ON THE TWO REGISTRY NAMES, and nowhere else. A docker pull is
+                  # GET and HEAD, and every consumer of it is a machine that holds no credential
+                  # yet — the deployer's first pull of a boot, a step container's base image. Every
+                  # other method on those names, and every method on the git host, needs a bearer.
+                  QITS_EDGE_APPS_REGISTRY_HOST_PATTERN: "{env}-qits-artifacts"
+                  QITS_EDGE_APPS_MIRROR_HOST_PATTERN: "qits-platform-mirror"
+                  QITS_EDGE_APPS_GITHOST_HOST_PATTERN: "{env}-qits-githost"
+                  QITS_EDGE_AUTH_ANONYMOUS_READ_APPS: "registry,mirror"
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${EDGE_TLS}
                 networks: [qits-net]
                 deploy:
@@ -475,8 +513,12 @@ public final class ComposeTemplate {
                   # consumer: it is what lets it create the role and the database of every application
                   # that declares one. It lives in the same trust domain as the docker socket beside it.
                   QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD: "${PG_SUPERUSER_PASSWORD}"
-                  # It pulls through the HOST daemon — same reasoning as ci's registry host.
-                  QITS_ARTIFACTS_REGISTRY_HOST: localhost:${REGISTRY_PORT}
+                  # It pulls through the HOST daemon — same reasoning as ci's registry host, and the
+                  # same name: the daemon resolves registry.${ENV_NAME}.localhost to the loopback
+                  # address and the edge hands the pull to the store. A pull is GET and HEAD, which
+                  # the edge lets through anonymously, so the deployer's first pull of a cold boot
+                  # needs no credential.
+                  QITS_ARTIFACTS_REGISTRY_HOST: registry.${ENV_NAME}.localhost:${PORT}
                   # Per-application extras live in the qits-deployments-config volume
                   # (config/application.properties, written by the bootstrap), NOT here: a self-update's
                   # successor must inherit them, and env cannot nest those values.
@@ -560,25 +602,20 @@ public final class ComposeTemplate {
               # maven repository, the hosted OCI registry, the daemon binaries and the docs bundles. An
               # ENVIRONMENT service again since the byte-plane split — the pull-through caches below are
               # what made it platform-scoped, and they left.
+              #
+              # NO PUBLISHED PORT, and the host still pulls and pushes here. The door is the edge:
+              # registry.${ENV_NAME}.localhost:${PORT} is what the host's docker daemon dials, and
+              # what every QITS_ARTIFACTS_REGISTRY_HOST on this platform says. It resolves to the
+              # loopback address like every *.localhost name, arrives at the edge, and the edge hands
+              # it to this service by that name — reads anonymous, writes with a bearer. The port
+              # this block used to publish was open to anything that could reach the host.
+              #
+              # The daemon needs the name in `insecure-registries` (plain HTTP), which preflight
+              # warns about and the closing report spells. When the edge itself is wedged, the way
+              # back in is the wrapper's qits-registry-break-glass.sh, which opens a direct port for
+              # as long as the repair takes and closes it again.
               ${ENV_NAME}-qits-artifacts:
                 image: qits/artifacts:latest
-                ports:
-                  # For the HOST daemon only: ci publish steps push and the deployer pulls through the host's
-                  # docker daemon, which cannot resolve qits-net aliases. localhost:${REGISTRY_PORT} is in
-                  # docker's default insecure list, so plain HTTP needs no daemon config.
-                  #
-                  # The number did not move with the split, deliberately: every pipeline config and every
-                  # QITS_ARTIFACTS_REGISTRY_HOST on this platform says ${REGISTRY_PORT}, and what changed is
-                  # which service answers behind it. It is published for docker, not for people: the same
-                  # service is reachable through the edge at /artifacts like every other route.
-                  #
-                  # IT SAYS 0.0.0.0 NOW rather than 127.0.0.1, and no publish here can say otherwise:
-                  # neither publish mode has an ip field. The deployed successor's extras carry the
-                  # same widening and say so on themselves.
-                  - target: 8080
-                    published: ${REGISTRY_PORT}
-                    protocol: tcp
-                    mode: host
                 environment:
                   # THE WHOLE STORE, and there is nothing beside it to mount. Metadata and blob bytes are
                   # both rows in qits_artifacts, so this container is stateless: a restart loses in-flight
@@ -625,19 +662,17 @@ public final class ComposeTemplate {
               # third-party dependencies here, every image build pulls its base layers here, and a cache
               # that is not up yet is not a slow build but a failed one. It starts COLD and warms up: the
               # first of each fetch pays the upstream, and nothing has to be pre-loaded.
+              #
+              # NO PUBLISHED PORT EITHER, and the third-party door is a NAME now:
+              # mirror.${ENV_NAME}.localhost:${PORT}, through the edge. It used to be a second host
+              # port rather than a path for a reason that has not changed — this service and the
+              # store both answer the literal prefixes /artifacts/npm, /artifacts/maven and /v2, so
+              # the client's configuration is what picks between them. What picks now is the NAME:
+              # every committed Dockerfile spells mirror.<env>.localhost in its FROM lines, and
+              # dockerd's registry-mirrors names the same host. The name needs an
+              # `insecure-registries` entry of its own; the registry's is not enough.
               qits-platform-mirror:
                 image: qits/platform-mirror:latest
-                ports:
-                  # THE THIRD-PARTY DOOR, for the HOST's docker daemon — the same consumer the registry
-                  # port above exists for, and the reason this is a second PORT rather than a path: both
-                  # services answer the literal prefixes /artifacts/npm, /artifacts/maven and /v2, so the
-                  # client's configuration is what picks between them. dockerd's registry-mirrors names
-                  # this one; a pipeline's QITS_REGISTRY names the other. 0.0.0.0 for the reason the
-                  # registry's port says: a publish has no ip field in either mode.
-                  - target: 8080
-                    published: ${MIRROR_PORT}
-                    protocol: tcp
-                    mode: host
                 environment:
                   # SPELLED HERE, AND ONLY HERE, exactly as the idp's and the bus's are: the seed stack starts
                   # this container before any deployer exists, so the bootstrap created the role and the
@@ -669,21 +704,21 @@ public final class ComposeTemplate {
               # In the seed because the first push of this boot goes to it. Nothing can be built out of a
               # repository nothing hosts, and every repository this platform has is created here minutes
               # from now.
+              #
+              # NO PUBLISHED PORT, and the host-side git door stayed open: it is
+              # http://githost.${ENV_NAME}.localhost:${PORT}/git/<repo> through the edge. A person
+              # clones and pushes from the workstation, which is not on qits-net, and the url has
+              # moved twice — localhost:${REGISTRY_PORT}/artifacts/git/<repo> while the routes lived in
+              # the store, then a port of its own after the split, and now a name.
+              #
+              # EVERY METHOD NEEDS A BEARER HERE, reads included: this is not a registry and there is
+              # no anonymous half. `curl -u <client>:<secret> .../token`, then git with the header —
+              # the closing report prints the pair.
+              #
+              # This bootstrap does not use any of it: every phase that pushes runs inside a container
+              # that joined qits-net, so it dials the alias like every other member.
               ${ENV_NAME}-qits-githost:
                 image: qits/githost:latest
-                ports:
-                  # THE HOST-SIDE GIT DOOR, and the one thing the split would otherwise have closed. A
-                  # person clones and pushes from the workstation, which is not on qits-net; the clone url
-                  # used to be localhost:${REGISTRY_PORT}/artifacts/git/<repo> and rode the registry's
-                  # port. It is localhost:${GIT_HOST_PORT}/git/<repo> now.
-                  #
-                  # This bootstrap does not use it: every phase that pushes runs inside a container that
-                  # joined qits-net, so it dials the alias like every other member. 0.0.0.0 for the
-                  # reason the two ports above say: a publish has no ip field in either mode.
-                  - target: 8080
-                    published: ${GIT_HOST_PORT}
-                    protocol: tcp
-                    mode: host
                 environment:
                   # TWO STORES, TWO TRIPLES, the same shape ci's block carries and for the same reason:
                   # this service's own pack catalog and the outbox of the eventstream library are two
@@ -782,10 +817,13 @@ public final class ComposeTemplate {
                   # ${ENV_NAME}-qits-events -> the deployer's durable subscriber. qits-ci reads no such key
                   # any more, and a value nothing reads is a lie waiting to age. The deployer's HTTP intake
                   # stays as the manual door — this bootstrap's own build-event replay uses it.
-                  # Injected into publish steps as QITS_REGISTRY: dialled by the HOST daemon (see the
-                  # qits-artifacts ports note). The HOSTED registry, never the mirror: a publish step
-                  # pushes the platform's own image, and the mirror takes no writes at all.
-                  QITS_ARTIFACTS_REGISTRY_HOST: localhost:${REGISTRY_PORT}
+                  # Injected into publish steps as QITS_REGISTRY: dialled by the HOST daemon, which
+                  # resolves this name to the loopback address and reaches the store through the
+                  # edge (see the qits-artifacts block). The HOSTED registry, never the mirror: a
+                  # publish step pushes the platform's own image, and the mirror takes no writes at
+                  # all. A PUSH is not a read, so it carries a bearer — anonymous stops at GET and
+                  # HEAD.
+                  QITS_ARTIFACTS_REGISTRY_HOST: registry.${ENV_NAME}.localhost:${PORT}
                   # THE FOUR ROOTS EVERY STEP CONTAINER IS HANDED, and the byte-plane split is why they are
                   # spelled here at all. ci ships them defaulted to qits-platform-artifacts:8080, one
                   # service that answered for hosted packages and cached ones alike; there are two services
@@ -795,7 +833,8 @@ public final class ComposeTemplate {
                   #   the npmjs cache             -> qits-platform-mirror, the platform's one cache
                   #
                   # They are dialled by the STEP CONTAINER ITSELF over qits-net, so these are wire aliases
-                  # and NOT the localhost mapping above — a step container has no localhost:${REGISTRY_PORT}.
+                  # and NOT the registry name above — that one is resolved by the HOST's daemon, and a
+                  # step container's own resolver knows no *.localhost name at all.
                   QITS_ARTIFACTS_NPM_HOSTED_URL: http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/
                   QITS_ARTIFACTS_NPM_PROXY_URL: http://qits-platform-mirror:8080/artifacts/npm/npmjs/
                   QITS_ARTIFACTS_MAVEN_REGISTRY_URL: http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven
@@ -1027,13 +1066,31 @@ public final class ComposeTemplate {
             # qits-platform-artifacts, a name that resolves to nothing; the spec read is how a green build
             # becomes a deployment, so a deployer without this line deploys nothing and says only "timeout".
             qits.platform.deployments.git-host-url=http://${ENV_NAME}-qits-githost:8080
-            # THE HOST PORT IS THE EDGE'S. qits-gateway publishes nothing at all any more; publishing it from
-            # two applications is a bind conflict that only shows up on the second cutover.
+            # THE HOST PORT IS THE EDGE'S, AND IT IS THE ONLY HTTP ONE. qits-gateway publishes nothing at
+            # all, and neither do the three byte services below — they are reached through this process
+            # under names of their own. Publishing one port from two applications is a bind conflict that
+            # only shows up on the second cutover.
+            #
+            # NO MODE HERE. The publish mode is the edge's own deployment spec (publish_mode: ingress in
+            # its deployments.yml), because it is a property of the service rather than of one port: the
+            # swarm holds the port and an edge cutover is start-first, which is what lets the successor
+            # pull its own image through the predecessor.
+            #
+            # THE THREE APP NAMES, and this block is what closed three host ports. registry, mirror and
+            # githost are matched by HOST NAME rather than by path prefix, because a docker client and a
+            # git client own their own roots (/v2, /git) and cannot be given one. {env} is the edge's own
+            # placeholder, read at runtime, so one edge serves every tier on this machine; the mirror
+            # carries none because one cache serves them all. Anonymous read covers the two registry
+            # names only — a pull is GET and HEAD, and the puller holds no credential yet.
             ${EDGE_TLS_NOTE}qits.platform.deployments.extras.qits-platform-edge.publishes[0]=${PORT}:8080
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_ENVIRONMENTS=${ENV_NAME}
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_DEFAULT_ENVIRONMENT=${ENV_NAME}
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_UPSTREAM_HOST_PATTERN={env}-qits-gateway
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_UPSTREAM_PORT=8080
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_REGISTRY_HOST_PATTERN={env}-qits-artifacts
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN=qits-platform-mirror
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_AUTH_ANONYMOUS_READ_APPS=registry,mirror
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080${EDGE_TLS_ARGS}
             # THE ROUTE TABLE. Every value is a wire alias, and the image's defaults cannot carry the tier.
             qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=${ENV_NAME}-qits-artifacts
@@ -1059,11 +1116,14 @@ public final class ComposeTemplate {
             # The seed stack block spells the triple for the one reason that does not apply here: it
             # starts the container before any deployer exists.
             #
-            # THE PUBLISH SAYS 0.0.0.0 ON PURPOSE. It is dialled by the HOST's docker daemon — every ci
-            # publish step pushes to localhost:${REGISTRY_PORT} and the deployer pulls from it — so it cannot
-            # be private to the platform's network. It used to say 127.0.0.1, which a swarm service cannot
-            # express at all (there is no ip field in either publish mode), so the exposure is written out
-            # here where it can be reviewed rather than discovered.
+            # NO PUBLISH AT ALL, and the host still pushes and pulls here. This deployment used to bind
+            # ${REGISTRY_PORT} on every interface — a swarm publish has no ip field, so it could not be
+            # kept on loopback — and the door is the edge now: the host's daemon dials
+            # registry.${ENV_NAME}.localhost:${PORT}, which resolves to the loopback address, and the edge
+            # hands it to this service by name. Reads are anonymous, so a pull needs nothing; a ci publish
+            # step's push carries a bearer. The name needs an `insecure-registries` entry on the daemon,
+            # and a wedged edge is opened with the wrapper's qits-registry-break-glass.sh rather than by
+            # putting this line back.
             #
             # QITS_AUTH_MACHINE_AUDIENCE is not decoration. The image ships the bare
             # qits-platform-artifacts, and the byte-plane split made this an environment service whose
@@ -1079,33 +1139,36 @@ public final class ComposeTemplate {
             # The two GC pin sources stay: a pin source that cannot be reached makes the sweep abort
             # fail-closed rather than delete a live artifact — so every sweep stops and the cleanup banner
             # hangs on its timeout instead.
-            qits.platform.deployments.extras.qits-artifacts.publishes[0]=0.0.0.0:${REGISTRY_PORT}:8080
             qits.platform.deployments.extras.qits-artifacts.env.QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-artifacts
             qits.platform.deployments.extras.qits-artifacts.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
             qits.platform.deployments.extras.qits-artifacts.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
             qits.platform.deployments.extras.qits-artifacts.env.QITS_ARTIFACTS_GC_PINS_CD_BASE_URL=http://${ENV_NAME}-qits-deployments:8080/platform-deployments/api
             qits.platform.deployments.extras.qits-artifacts.env.QITS_ARTIFACTS_GC_PINS_CI_BASE_URL=http://${ENV_NAME}-qits-ci:8080/ci/api
             qits.platform.deployments.extras.qits-artifacts.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
-            # THE CACHE HALF. One published port and one address to say — no mount, because the cached
-            # bytes are rows in qits_platform_mirror, and no datasource, because `resources:
-            # postgresql:db` in its own deployments.yml is what gets it that store and the deployer
-            # injects the triple before the successor starts. The seed stack block spells that triple for
-            # the one reason that does not apply here: it starts this container before any deployer
-            # exists.
+            # THE CACHE HALF. One address to say and nothing else — no mount, because the cached bytes
+            # are rows in qits_platform_mirror, and no datasource, because `resources: postgresql:db` in
+            # its own deployments.yml is what gets it that store and the deployer injects the triple
+            # before the successor starts. The seed stack block spells that triple for the one reason
+            # that does not apply here: it starts this container before any deployer exists.
             #
-            # The publish is 0.0.0.0 for the reason the registry's is: dockerd's registry-mirrors names
-            # localhost:${MIRROR_PORT}, and that is the HOST's docker daemon rather than anything on this
-            # platform's network.
+            # NO PUBLISH EITHER, for the reason the registry's block gives: the HOST's docker daemon
+            # dials mirror.${ENV_NAME}.localhost:${PORT} now — dockerd's registry-mirrors and every
+            # committed FROM line name it — and the edge is what answers. It needs its own
+            # `insecure-registries` entry; the registry name's does not cover it.
             #
             # No machine auth of any kind: this service serves cached third-party bytes to anonymous
-            # clients and mints nothing, so it holds no client and validates no audience.
-            qits.platform.deployments.extras.qits-platform-mirror.publishes[0]=0.0.0.0:${MIRROR_PORT}:8080
+            # clients and mints nothing, so it holds no client and validates no audience. The edge's
+            # anonymous-read list is what keeps a pull through it credential-free.
             qits.platform.deployments.extras.qits-platform-mirror.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
-            # THE GIT HOST. The published port is the door a PERSON pushes through — the workstation is not
-            # on qits-net, and the clone url moved from localhost:${REGISTRY_PORT}/artifacts/git/<repo> to
-            # localhost:${GIT_HOST_PORT}/git/<repo> when the routes left the artifacts store. A publish
-            # missing here is that door closing at the first cutover, and 0.0.0.0 is what a swarm service
-            # can bind — the same trade the registry's port makes one block up.
+            # THE GIT HOST, and no publish here either. The door a PERSON pushes through — the
+            # workstation is not on qits-net — is http://githost.${ENV_NAME}.localhost:${PORT}/git/<repo>
+            # through the edge. The url has moved twice: it was
+            # localhost:${REGISTRY_PORT}/artifacts/git/<repo> while the routes lived in the artifacts
+            # store, then a port of this service's own after the split, and now a name.
+            #
+            # EVERY METHOD NEEDS A BEARER, reads included: this is not a registry, so the edge's
+            # anonymous-read list does not name it. A clone is a token from the idp and one git header;
+            # the closing report prints both commands.
             #
             # NO DATASOURCE ENV: both stores are declared (`resources: postgresql:db,
             # postgresql:eventstream:qits_githost_eventstream`) and injected by the deployer. NO MOUNT
@@ -1115,7 +1178,6 @@ public final class ComposeTemplate {
             # QITS_EVENTS_URL is what makes a push visible to the platform at all: SCMPublishCommit,
             # SCMPublishTag and the two deletes ride the outbox to the bus, where ci's listener queues the
             # run. The eventstream jar's baked default is the pre-rename qits-events:8080.
-            qits.platform.deployments.extras.qits-githost.publishes[0]=0.0.0.0:${GIT_HOST_PORT}:8080
             qits.platform.deployments.extras.qits-githost.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
             qits.platform.deployments.extras.qits-githost.env.QITS_PROJECTS_NAME_RESOLVER_URL=http://${ENV_NAME}-qits-projects:8080/projects/api/projects
             qits.platform.deployments.extras.qits-githost.env.QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN}
@@ -1159,7 +1221,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_URL=http://${ENV_NAME}-qits-githost:8080
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_NETWORK=qits-net
             qits.platform.deployments.extras.qits-ci.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
-            qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT}
+            qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_REGISTRY_HOST=registry.${ENV_NAME}.localhost:${PORT}
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_HOSTED_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_PROXY_URL=http://qits-platform-mirror:8080/artifacts/npm/npmjs/
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_MAVEN_REGISTRY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven
@@ -1255,7 +1317,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-deployments.env.QITS_RESOURCE_DB_PASSWORD=${PG_DEPLOYMENTS_PASSWORD}
             qits.platform.deployments.extras.qits-deployments.env.QITS_ENVIRONMENT=${ENV_NAME}
             qits.platform.deployments.extras.qits-deployments.env.QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD=${PG_SUPERUSER_PASSWORD}
-            qits.platform.deployments.extras.qits-deployments.env.QITS_ARTIFACTS_REGISTRY_HOST=localhost:${REGISTRY_PORT}
+            qits.platform.deployments.extras.qits-deployments.env.QITS_ARTIFACTS_REGISTRY_HOST=registry.${ENV_NAME}.localhost:${PORT}
             qits.platform.deployments.extras.qits-deployments.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
             qits.platform.deployments.extras.qits-deployments.env.QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-deployments
             qits.platform.deployments.extras.qits-deployments.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}

@@ -390,10 +390,19 @@ public class UnwrapPhases {
     }
 
     /**
-     * The platform's own images: qits/* and everything published to the local registry host.
+     * The platform's own images: qits/* and everything published to this platform's registry, under
+     * every name the registry has ever answered to.
+     * <p>
+     * <b>Three spellings, and a pattern is added here rather than replaced</b> — the same rule the
+     * container and network sweeps follow. A machine carries images from whichever topology it was
+     * last bootstrapped on: {@code localhost:<registry port>/…} and
+     * {@code 127.0.0.1:<registry port>/…} from the days the store published a host port, and
+     * {@code registry.<env>.localhost:<port>/…} since unify-ingress put it behind the edge. The
+     * vhost test is deliberately not tied to THIS run's environment name or port: unwrap cleans a
+     * machine, and the machine may carry tiers this run has never heard of.
      * <p>
      * The payload image this run is executing from is {@code qits-bootstrap:<content sha>} and
-     * matches neither pattern, which is why it is spelled that way rather than {@code qits/…}.
+     * matches no pattern, which is why it is spelled that way rather than {@code qits/…}.
      * Docker refuses to remove an image a running container holds, so sweeping it in would end
      * every unwrap with a failure it could do nothing about — and keeping it is what makes the
      * unwrap-then-bootstrap cycle start in seconds.
@@ -406,7 +415,8 @@ public class UnwrapPhases {
                     "docker", "images", "--format", "{{.Repository}}:{{.Tag}}"), null).captured()) {
                 String ref = line.trim();
                 if (ref.startsWith("qits/") || ref.startsWith(registryHost)
-                        || ref.startsWith("127.0.0.1:" + boot.config.registryPort() + "/")) {
+                        || ref.startsWith("127.0.0.1:" + boot.config.registryPort() + "/")
+                        || isRegistryVhostRef(ref)) {
                     refs.add(ref);
                 }
             }
@@ -417,6 +427,25 @@ public class UnwrapPhases {
             remove(ctx, refs, "rmi", "-f");
             ctx.note(done(refs.size()));
         });
+    }
+
+    /**
+     * An image this platform's registry served under its edge name:
+     * {@code registry.<env>.localhost[:<port>]/…}.
+     * <p>
+     * Any tier and any port, for the reason {@link #isPlatformName} takes any environment: what
+     * unwrap sweeps is a MACHINE, and the names on it were written by whatever bootstrapped it.
+     * Only the {@code registry.} prefix and the {@code .localhost} label are fixed, because they
+     * are what the edge routes on.
+     */
+    static boolean isRegistryVhostRef(String ref) {
+        int slash = ref.indexOf('/');
+        if (slash < 0 || !ref.startsWith("registry.")) {
+            return false;
+        }
+        String host = ref.substring(0, slash);
+        int colon = host.indexOf(':');
+        return (colon < 0 ? host : host.substring(0, colon)).endsWith(".localhost");
     }
 
     /** Names rather than ids, so the same container found by two filters is one entry. */
