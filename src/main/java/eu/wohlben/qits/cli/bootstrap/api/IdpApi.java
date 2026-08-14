@@ -52,4 +52,20 @@ public class IdpApi {
         }
         return token;
     }
+
+    /**
+     * Mints the ONE-TIME token the first account of this platform registers with.
+     * <p>
+     * Basic, with a STATIC client: a commissioned credential belongs to a context and may not make
+     * a person, so the idp refuses one here. The answer carries the plaintext token under
+     * {@code token} and carries it once — the idp keeps a fingerprint — so a token that is not read
+     * out of this response is a row nobody can use.
+     * <p>
+     * A refusal is an ANSWER here, not an exception: the caller warns and the boot goes on. Nothing
+     * else in the platform waits on a person registering.
+     */
+    public Http.Response mintRegisterToken(String clientId, String secret) {
+        return http.postJson(issuer + "/api/register-tokens", "{}",
+                Map.of("Authorization", Http.basic(clientId, secret)));
+    }
 }

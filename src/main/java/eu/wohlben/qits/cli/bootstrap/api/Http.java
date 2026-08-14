@@ -76,8 +76,6 @@ public class Http {
      * in-process: neither the header nor the body is ever printed.
      */
     public Response postForm(String url, String user, String password, Map<String, String> form) {
-        String credentials = Base64.getEncoder().encodeToString(
-                (user + ":" + password).getBytes(StandardCharsets.UTF_8));
         StringBuilder body = new StringBuilder();
         form.forEach((key, value) -> {
             if (!body.isEmpty()) {
@@ -85,9 +83,18 @@ public class Http {
             }
             body.append(encode(key)).append('=').append(encode(value));
         });
-        return send(request(url, Map.of("Authorization", "Basic " + credentials))
+        return send(request(url, Map.of("Authorization", basic(user, password)))
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString())).build());
+    }
+
+    /**
+     * The {@code Authorization} value for a Basic pair, for the calls that carry one as a header
+     * rather than as a form post's credentials — the idp's own APIs are guarded that way.
+     */
+    public static String basic(String user, String password) {
+        return "Basic " + Base64.getEncoder().encodeToString(
+                (user + ":" + password).getBytes(StandardCharsets.UTF_8));
     }
 
     private static String encode(String value) {

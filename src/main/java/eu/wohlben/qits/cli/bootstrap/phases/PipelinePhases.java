@@ -7,6 +7,7 @@ import eu.wohlben.qits.cli.bootstrap.config.DomainName;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.engine.Waiter;
+import eu.wohlben.qits.cli.bootstrap.platform.BootstrapState;
 import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
@@ -333,6 +334,97 @@ public class PipelinePhases {
                                     + PlatformModel.wireAlias("ci", env),
                             PROBE_BEARER)));
         });
+    }
+
+    // --- the first account ------------------------------------------------------------------------
+
+    /**
+     * <b>THE KEY TO THE FIRST ACCOUNT, minted once per installation.</b> A person registers at
+     * {@code /idp/register} with it, gets an admin, and the token is spent — so it is minted here,
+     * printed by the closing report and recorded beside the client secrets.
+     * <p>
+     * <b>Once, and the recorded value is what makes it once.</b> The idp mints a fresh token on
+     * every call and every one of them creates an admin, so a boot that minted on each rerun would
+     * leave a pile of live keys to this platform behind it. A rerun that finds
+     * {@code IDP_REGISTER_TOKEN} in {@code .qits-bootstrap.env} mints nothing — whether the first
+     * account exists yet or not, which is the same answer for both and needs no question asked of
+     * the idp. Deleting that line is how a lost token is replaced.
+     * <p>
+     * <b>Here because this is the first point the idp answers</b>, and a row it writes outlives
+     * every redeploy after it — the store is postgres, not the container. It is dialled with the
+     * EDGE's static client: minting is a static client's right, and the edge is the one whose whole
+     * business is user sessions.
+     * <p>
+     * <b>A refusal warns and the boot goes on.</b> Nothing this platform runs waits on a person
+     * registering, and while the sessions flip is off nothing even reads a session — so the cost of
+     * an idp that answered badly is one line in the report and a rerun, never a failed bootstrap.
+     */
+    public Phase registerToken() {
+        return new Phase("register-token", "mint the first account's register token", ctx -> {
+            if (boot.state.registerTokenRecorded) {
+                ctx.skip("an earlier run minted one — it is in " + BootstrapState.FILE_NAME);
+            }
+            String client = PlatformModel.wireAlias("edge", boot.config.envName());
+            String secret = boot.state.secrets.getOrDefault(client, "");
+            String url = boot.config.idpIssuer() + "/api/register-tokens";
+            ctx.status("POST " + url + " as " + client);
+            Http.Response response = boot.idp.mintRegisterToken(client, secret);
+            if (!response.ok()) {
+                ctx.warn("no register token: " + url + " answered " + response.describe()
+                        + ". The platform is up; nobody can register the first account until a "
+                        + "token is minted, and a rerun asks again.");
+                return;
+            }
+            String token = Json.text(Json.parse(response.body()), "token");
+            if (token.isBlank()) {
+                ctx.warn("no register token: " + url + " answered " + response.status()
+                        + " with no 'token' field. A rerun asks again.");
+                return;
+            }
+            // Recorded before it is printed: a token this run holds and never wrote down is a token
+            // lost to a closed terminal, and the next run would mint a second one.
+            BootstrapState state = new BootstrapState(
+                    boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME));
+            state.put(BootstrapState.REGISTER_TOKEN_KEY, token);
+            state.write();
+            boot.state.registerToken = token;
+            // Not logged here. The closing report prints it once, where a person is reading.
+            ctx.log("  minted and recorded in " + state.file());
+            ctx.note("minted");
+        });
+    }
+
+    /**
+     * The register token's place in the closing report, in three states.
+     * <p>
+     * <b>A value is printed on the run that minted it and on no other.</b> A credential reprinted
+     * by every boot is a credential on every screen and in every run log for the life of the
+     * platform, and after the first run there is a better answer: it is in the state file, where
+     * the pointer sends the reader. A run that minted nothing and found nothing recorded says
+     * nothing here — its phase warned, which is where that belongs.
+     */
+    static List<String> registerLines(String registerUrl, String minted, boolean recorded,
+            String stateFile) {
+        if (minted != null && !minted.isBlank()) {
+            return List.of(
+                    "register:  THE FIRST ACCOUNT is made at " + registerUrl + ", with this token:",
+                    "             " + minted,
+                    "           ONE-TIME: it makes one user, an admin, and is spent. Printed here "
+                            + "once and kept",
+                    "           in " + stateFile + ".",
+                    "           Sessions are OFF (qits.edge.sessions.enabled=false), so nothing "
+                            + "asks for a login yet;",
+                    "           the account and its passkey outlive the flip.");
+        }
+        if (recorded) {
+            return List.of(
+                    "register:  THE FIRST ACCOUNT is made at " + registerUrl + ". Its ONE-TIME "
+                            + "token was minted by an",
+                    "           earlier run and is IDP_REGISTER_TOKEN in " + stateFile + " — spent "
+                            + "once an account exists.",
+                    "           Delete that line and rerun to mint a fresh one.");
+        }
+        return List.of();
     }
 
     // --- the cold-start publishes -----------------------------------------------------------------
@@ -1401,6 +1493,9 @@ public class PipelinePhases {
                     + " -u <clientId> -p <secret>");
             report.add("           Hand it back when the workstation is done with it: DELETE "
                     + "/idp/api/clients/<clientId>.");
+            report.addAll(registerLines(boot.config.publicOrigin() + "/idp/register",
+                    boot.state.registerToken, boot.state.registerTokenRecorded,
+                    boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME).toString()));
             report.add("ipv6:      ONE STANDING HOST RULE, and without it every vhost client "
                     + "HANGS rather than fails:");
             report.add("             sudo ip6tables -I INPUT -i lo -p tcp --dport "

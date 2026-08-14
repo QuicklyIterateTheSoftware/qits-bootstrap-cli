@@ -158,6 +158,18 @@ class BootstrapPlanTest {
     }
 
     /**
+     * The register token is minted at the first point the idp answers, and on every path. The row
+     * it writes is in postgres, so it outlives the redeploys that follow — there is nothing to be
+     * gained by waiting for them, and a warm rerun deserves the same first account as a cold boot.
+     */
+    @Test
+    void theRegisterTokenIsMintedAsSoonAsTheIdpAnswers() {
+        assertThat(ids(plan(Map.of()))).containsSubsequence("seed-health", "register-token",
+                "git-repos");
+        assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1")))).contains("register-token");
+    }
+
+    /**
      * The two phases a domain adds, and where they have to sit. The certificate goes BEFORE the seed
      * stack, because the edge is started there with a keystore and a keystore whose files are missing
      * fails startup. The zone goes AFTER the health wait, because it is written over the nameserver's

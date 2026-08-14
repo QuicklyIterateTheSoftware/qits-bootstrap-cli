@@ -427,6 +427,44 @@ public interface BootstrapConfig {
     }
 
     /**
+     * <b>The address a person's browser arrives at</b>, which is the edge's and no other: the
+     * loopback name and the published port, or the domain over TLS when there is one — the name the
+     * edge's certificate is issued for.
+     * <p>
+     * Derived rather than configured, because it is decided twice already: the port is the edge's
+     * publish and the domain is the certificate's name. A third address told to a browser would be
+     * a login page nobody can reach.
+     */
+    default String publicOrigin() {
+        return DomainName.of(this).map(domain -> "https://" + domain)
+                .orElse("http://localhost:" + port());
+    }
+
+    /**
+     * <b>The WebAuthn relying party, which is a HOST and not a URL.</b> A passkey is bound to it and
+     * asserts under no other name, so it follows {@link #publicOrigin} rather than standing beside
+     * it.
+     * <p>
+     * {@code localhost} is a secure context by itself — no certificate needed — which is what lets a
+     * passkey work on this platform's plain HTTP port. The one route without a secure context is a
+     * raw IP, where the browser offers no ceremony at all and only a password logs in.
+     * <p>
+     * The binding costs nothing here: accounts are per-installation, so a platform that gains a
+     * domain registers its own from its own register token.
+     */
+    default String webauthnRpId() {
+        return DomainName.of(this).orElse("localhost");
+    }
+
+    /**
+     * The origins a ceremony is accepted from — {@link #publicOrigin} and nothing else. It is a LIST
+     * on the idp's side and one entry here, because this platform has one front door.
+     */
+    default String webauthnOrigins() {
+        return publicOrigin();
+    }
+
+    /**
      * <b>Where an image built by THIS BOOTSTRAP resolves {@code eu.wohlben.qits} from, and it is the
      * seed's loopback port on purpose.</b>
      * <p>

@@ -145,6 +145,28 @@ class SeedPhasesTest {
                 .contains("-DaltDeploymentRepository=qits::default::");
     }
 
+    /**
+     * <b>ONE VALUE, TWO SPELLINGS, and the pair is the whole credential.</b> The state file records
+     * a secret under the CLIENT ID — {@code IDP_SECRET_PROD_QITS_EDGE} — while both generated files
+     * read it under the APPLICATION, because a placeholder cannot be spelled with an environment
+     * name the template does not know yet. A pair that drifted apart is an idp holding a secret
+     * that nothing on this platform presents.
+     */
+    @Test
+    void theEdgesSecretIsRecordedByIdAndReadByApplication() {
+        Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "prod")),
+                new RunLog(temp.resolve("run.log")));
+        boot.state.secrets.put("prod-qits-edge", "s3cr3t");
+
+        Map<String, String> tokens = new SeedPhases(boot).tokens();
+
+        assertThat(tokens).containsEntry("IDP_SECRET_EDGE", "s3cr3t");
+        assertThat(tokens.get("IDP_CLIENTS")).contains("prod-qits-edge");
+        // The passkey binding travels in the same map, and with no domain it is the loopback door.
+        assertThat(tokens).containsEntry("WEBAUTHN_RP_ID", "localhost")
+                .containsEntry("WEBAUTHN_ORIGINS", "http://localhost:8080");
+    }
+
     private static final List<String> TAGS = List.of("2026.812.153438", "2026.811.090000");
 
     /**

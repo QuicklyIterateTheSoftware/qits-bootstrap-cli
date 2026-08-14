@@ -345,20 +345,39 @@ class PlatformModelTest {
         assertThat(PlatformModel.idpClients("prod")).containsExactly(
                 "prod-qits-ci", "prod-qits-artifacts", "prod-qits-workspaces",
                 "prod-qits-gateway", "prod-qits-projects", "prod-qits-deployments",
-                "prod-qits-containers");
+                "prod-qits-containers", "prod-qits-edge");
         assertThat(PlatformModel.idpAudiences("prod")).isEqualTo(
                 "prod-qits-ci,prod-qits-artifacts,prod-qits-workspaces,prod-qits-gateway,"
-                        + "prod-qits-projects,prod-qits-deployments,prod-qits-containers");
+                        + "prod-qits-projects,prod-qits-deployments,prod-qits-containers,"
+                        + "prod-qits-edge");
         // Every one of them follows the environment now: the artifacts client was the one platform
         // id in this list, and the byte-plane split made that service a tier's again.
         assertThat(PlatformModel.idpClients("preprod")).containsExactly(
                 "preprod-qits-ci", "preprod-qits-artifacts", "preprod-qits-workspaces",
                 "preprod-qits-gateway", "preprod-qits-projects", "preprod-qits-deployments",
-                "preprod-qits-containers");
+                "preprod-qits-containers", "preprod-qits-edge");
         // The two new byte services hold no client at all: the mirror has no auth surface, and the
         // git host validates a push option rather than a token.
         assertThat(PlatformModel.idpClients("prod"))
                 .doesNotContain("qits-platform-mirror", "prod-qits-githost");
+    }
+
+    /**
+     * <b>The edge's client id is the one that is not its service's alias.</b> The service answers
+     * to qits-platform-edge — one process for every environment — while the credential belongs to
+     * the session gate, which is an environment's. The edge is handed the same pair as
+     * QITS_EDGE_SESSIONS_CLIENT_ID and _SECRET, so the two sides agree with each other and with
+     * nothing else.
+     */
+    @Test
+    void theEdgesSessionClientCarriesTheEnvironmentAndNotTheServiceName() {
+        assertThat(PlatformModel.idpClients("prod")).contains("prod-qits-edge")
+                .doesNotContain("qits-platform-edge");
+        assertThat(PlatformModel.clientKey("prod-qits-edge")).isEqualTo("PROD_QITS_EDGE");
+        // Which is the key it is recorded under in .qits-bootstrap.env, and the spelling the idp's
+        // own per-client config key embeds.
+        assertThat("IDP_SECRET_" + PlatformModel.clientKey(
+                PlatformModel.wireAlias("edge", "prod"))).isEqualTo("IDP_SECRET_PROD_QITS_EDGE");
     }
 
     @Test

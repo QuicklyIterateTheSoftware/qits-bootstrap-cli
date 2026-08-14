@@ -269,6 +269,24 @@ public final class ComposeTemplate {
                   # configuration change rather than a redeploy of two services.
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_DEPLOYMENTS_SECRET: "${IDP_SECRET_DEPLOYMENTS}"
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_CONTAINERS_SECRET: "${IDP_SECRET_CONTAINERS}"
+                  # THE EDGE'S, for the user sessions, and the one id that is not its service's
+                  # alias: the credential belongs to the SESSION GATE, which is an environment's,
+                  # while qits-platform-edge is the one process that serves them all. The edge is
+                  # handed the same pair as QITS_EDGE_SESSIONS_CLIENT_ID and _SECRET below.
+                  #
+                  # INERT WHILE THE FLIP IS OFF: nothing introspects a session until
+                  # qits.edge.sessions.enabled is true. Seeded before it for the reason the pullers'
+                  # credentials were — turning user sessions on must be a configuration change, not
+                  # a redeploy of the idp and the door together.
+                  QITS_IDP_CLIENT_${ENV_KEY}_QITS_EDGE_SECRET: "${IDP_SECRET_EDGE}"
+                  # THE PASSKEY BINDING. A credential is bound to the rp id and asserts under no
+                  # other host, and the origins are what the browser's ceremony is checked against.
+                  # Both are the address a person's browser arrives at: localhost and the edge's
+                  # port, or the domain over TLS when there is one. localhost is a secure context by
+                  # itself, so a passkey works there with no certificate; a raw IP is not one, and
+                  # from it only the password fallback logs in.
+                  QITS_IDP_WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID}
+                  QITS_IDP_WEBAUTHN_ORIGINS: "${WEBAUTHN_ORIGINS}"
                   # The audiences each minting client may ask for. Restated in full, because the key replaces
                   # the shipped list rather than extending it — and an audience a client may not ask for is
                   # invalid_target, not a silent bare call. qits-ci is the one client that writes to the
@@ -391,6 +409,23 @@ public final class ComposeTemplate {
                   QITS_EDGE_APPS_REGISTRY_HOST_PATTERN: "{env}-qits-artifacts"
                   QITS_EDGE_APPS_MIRROR_HOST_PATTERN: "qits-platform-mirror"
                   QITS_EDGE_APPS_GITHOST_HOST_PATTERN: "{env}-qits-githost"
+                  # USER SESSIONS, AND THE FLIP IS OFF. With enabled=false the environment vhost is
+                  # what it always was: browser traffic passes without a credential and no
+                  # X-Qits-* header is injected. Turning it TRUE makes the edge refuse an
+                  # anonymous browser — a navigation is redirected to /idp/login, anything else is
+                  # 401 — and turn a session cookie into X-Qits-User, X-Qits-User-Id and
+                  # X-Qits-Roles. Machine credentials pass either way.
+                  #
+                  # THE ORDER IS NOT FREE: flip this one FIRST and the gateway's `local` variant
+                  # simply ignores the new headers, so browsing keeps working the moment a session
+                  # exists. Flipping the GATEWAY to the `edge` variant first would make every
+                  # request anonymous and 401 the platform.
+                  #
+                  # The pair below is the edge's own idp client, seeded three blocks up. It
+                  # introspects with Basic and asks for no token, so there is no oidc-client here.
+                  QITS_EDGE_SESSIONS_ENABLED: "false"
+                  QITS_EDGE_SESSIONS_CLIENT_ID: ${ENV_NAME}-qits-edge
+                  QITS_EDGE_SESSIONS_CLIENT_SECRET: "${IDP_SECRET_EDGE}"
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${EDGE_TLS}
                 networks:
                   # THE THREE VHOSTS ARE ALIASES OF THIS SERVICE, and the long form is here for
@@ -1234,6 +1269,14 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_REGISTRY_HOST_PATTERN={env}-qits-artifacts
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN=qits-platform-mirror
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost
+            # USER SESSIONS, PINNED OFF. false is what the deployed edge keeps until the rollout
+            # flips it: browser traffic passes uncredentialed and no X-Qits-* header is injected.
+            # The credential is written NOW so that turning sessions on is one value on this line
+            # rather than a redeploy of the door. The gateway stays on QITS_VARIANT=local, and it
+            # has to: it would 401 everything if it read the headers before the edge sent any.
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_ENABLED=false
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_CLIENT_ID=${ENV_NAME}-qits-edge
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_CLIENT_SECRET=${IDP_SECRET_EDGE}
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080${EDGE_TLS_ARGS}
             # THE ROUTE TABLE. Every value is a wire alias, and the image's defaults cannot carry the tier.
             qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=${ENV_NAME}-qits-artifacts
@@ -1529,6 +1572,11 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_SECRET=${IDP_SECRET_PROJECTS}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_DEPLOYMENTS_SECRET=${IDP_SECRET_DEPLOYMENTS}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_CONTAINERS_SECRET=${IDP_SECRET_CONTAINERS}
+            # The edge's own, for the user sessions. Its id is the session gate's rather than the
+            # service's alias — a session belongs to an environment — and the same pair is on the
+            # edge's own extras above. It gets no audience list: it introspects with Basic and asks
+            # the idp for no token.
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_EDGE_SECRET=${IDP_SECRET_EDGE}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_AUDIENCES=${IDP_AUDIENCES}
@@ -1536,6 +1584,11 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_DEPLOYMENTS_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_CONTAINERS_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_CLAIMS_PROJECT=*
+            # The passkey binding, as on the seed block: the rp id is a HOST a credential is bound
+            # to, the origins are what a ceremony is checked against, and both are the address a
+            # browser arrives at — localhost and the edge's port, or the domain over TLS.
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_WEBAUTHN_RP_ID=${WEBAUTHN_RP_ID}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_WEBAUTHN_ORIGINS=${WEBAUTHN_ORIGINS}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The nameserver's own deployment. TWO PUBLISHES, BOTH PROTOCOLS: the deployed container
             # is what answers a registrar's delegation, so a publish missing here is a domain that stops

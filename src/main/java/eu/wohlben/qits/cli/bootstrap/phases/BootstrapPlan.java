@@ -142,6 +142,10 @@ public final class BootstrapPlan {
         domain.ifPresent(name -> phases.add(seed.placeholderCertificate(name)));
         phases.add(pipeline.seedStackUp());
         phases.add(pipeline.seedHealth());
+        // The earliest point the idp answers, which is all this needs: the token is a row in
+        // postgres, so it outlives every redeploy that follows. Once per installation — a rerun
+        // that finds one recorded mints nothing.
+        phases.add(pipeline.registerToken());
         // After the nameserver has answered, because this writes to it. A zone is what makes it
         // answer for the domain at all; the records need a public address this run cannot know.
         domain.ifPresent(name -> phases.add(seed.dnsZone(name)));

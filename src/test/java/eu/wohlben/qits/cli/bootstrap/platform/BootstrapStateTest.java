@@ -118,6 +118,30 @@ class BootstrapStateTest {
         assertThat(last.value("PG_SUPERUSER_PASSWORD")).contains("eeee5555ffff6666");
     }
 
+    /**
+     * <b>The recorded register token is what makes minting a once-per-installation act.</b> Every
+     * call to the idp mints another key to an admin account, so the run that finds this key mints
+     * nothing — and it survives the client-secret write beside it, like every other key here.
+     */
+    @Test
+    void theRegisterTokenIsRememberedSoASecondIsNeverMinted() throws Exception {
+        Path file = temp.resolve(BootstrapState.FILE_NAME);
+        BootstrapState first = new BootstrapState(file);
+        first.read();
+        assertThat(first.registerToken()).isEmpty();
+        first.put(BootstrapState.REGISTER_TOKEN_KEY, "rt-0123456789");
+        first.write();
+
+        Map<String, String> secrets = new LinkedHashMap<>();
+        secrets.put("prod-qits-edge", "one");
+        new BootstrapState(file).write("digest", secrets);
+
+        BootstrapState rerun = new BootstrapState(file);
+        rerun.read();
+        assertThat(rerun.registerToken()).contains("rt-0123456789");
+        assertThat(rerun.secret("prod-qits-edge")).contains("one");
+    }
+
     @Test
     void aWrittenFileReadsBackTheSame() throws Exception {
         Path file = temp.resolve(BootstrapState.FILE_NAME);

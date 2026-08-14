@@ -133,6 +133,32 @@ class BootstrapConfigTest {
         assertThat(config.dnsUrl()).isEqualTo("http://qits-platform-dns:8080/dns");
     }
 
+    /**
+     * <b>Where a BROWSER arrives, which is the one derived address that is not a wire alias.</b> The
+     * passkey binding follows it and cannot be told anything else: a credential registered under an
+     * rp id asserts under no other host, and an origin the ceremony was not told is refused.
+     * <p>
+     * localhost is a secure context over plain HTTP, so this platform needs no certificate for
+     * passkeys to work. A raw IP is not one — the browser offers no ceremony there at all — which is
+     * why the fallback is a password and not another origin in this list.
+     */
+    @Test
+    void theBrowsersAddressIsLocalhostAndThePortUntilThereIsADomain() {
+        BootstrapConfig plain = from(Map.of("QITS_PORT", "9090"));
+
+        assertThat(plain.publicOrigin()).isEqualTo("http://localhost:9090");
+        assertThat(plain.webauthnRpId()).isEqualTo("localhost");
+        assertThat(plain.webauthnOrigins()).isEqualTo("http://localhost:9090");
+
+        // With a domain the door is TLS on the name the edge's certificate is issued for, and the
+        // rp id is that name — a HOST, never a URL.
+        BootstrapConfig hosted = from(Map.of("QITS_PORT", "9090", "QITS_DOMAIN", "qits-dev.eu"));
+
+        assertThat(hosted.publicOrigin()).isEqualTo("https://qits-dev.eu");
+        assertThat(hosted.webauthnRpId()).isEqualTo("qits-dev.eu");
+        assertThat(hosted.webauthnOrigins()).isEqualTo("https://qits-dev.eu");
+    }
+
     @Test
     void domainIsAnsweredOnTheCommandLineAndABlankOneIsNotAnAnswer() {
         BootstrapConfig base = from(Map.of("QITS_DOMAIN", "from-env.eu"));

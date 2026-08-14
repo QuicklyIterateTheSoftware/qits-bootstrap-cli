@@ -75,8 +75,26 @@ public class BootstrapState {
         return value;
     }
 
+    /**
+     * The one-time token the first account registers with.
+     * <p>
+     * <b>Its presence is what makes minting a once-per-installation act.</b> The idp mints a fresh
+     * token on every call and each one creates an admin, so a boot that minted on every rerun would
+     * leave a pile of live keys to this platform behind it. Recorded here instead: a rerun finds
+     * one and mints nothing.
+     * <p>
+     * Delete the line to mint a fresh one — which is also the repair when the token was lost before
+     * anyone used it.
+     */
+    public static final String REGISTER_TOKEN_KEY = "IDP_REGISTER_TOKEN";
+
     public Optional<String> daemonSha() {
         return Optional.ofNullable(values.get("DAEMON_SHA")).filter(s -> !s.isBlank());
+    }
+
+    /** What a previous run minted, if it minted one. */
+    public Optional<String> registerToken() {
+        return value(REGISTER_TOKEN_KEY);
     }
 
     /** What a previous run recorded for this client, if anything. */

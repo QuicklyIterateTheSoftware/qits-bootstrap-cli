@@ -559,6 +559,9 @@ public class SeedPhases {
             for (String client : PlatformModel.idpClients(boot.config.envName())) {
                 state.secret(client).ifPresent(secret -> boot.state.secrets.put(client, secret));
             }
+            // A token this file holds is a token an earlier run minted, and the mint phase mints
+            // once per installation: every call makes another key to the first admin account.
+            boot.state.registerTokenRecorded = state.registerToken().isPresent();
             if (!state.exists()) {
                 ctx.log("  no " + BootstrapState.FILE_NAME + " — this is a first boot");
                 ctx.note("first boot");
@@ -569,6 +572,8 @@ public class SeedPhases {
                     + (boot.state.daemonSha == null ? "none" : shortSha(boot.state.daemonSha)));
             ctx.log("  recorded client secrets: " + boot.state.secrets.size() + " of "
                     + PlatformModel.idpClients(boot.config.envName()).size());
+            ctx.log("  register token: " + (boot.state.registerTokenRecorded
+                    ? "minted by an earlier run" : "none yet"));
             ctx.note("kept " + boot.state.secrets.size() + " secrets");
         });
     }
@@ -1927,6 +1932,10 @@ public class SeedPhases {
             values.put("IDP_SECRET_" + PlatformModel.clientKey(app),
                     boot.state.secrets.getOrDefault(PlatformModel.wireAlias(app, env), ""));
         }
+        // THE PASSKEY BINDING, and it follows the address a browser arrives at rather than standing
+        // beside it: a credential registered under one rp id asserts under no other host.
+        values.put("WEBAUTHN_RP_ID", boot.config.webauthnRpId());
+        values.put("WEBAUTHN_ORIGINS", boot.config.webauthnOrigins());
         // What QITS_DOMAIN adds, and nothing when there is none: every one of these is empty then,
         // so both files render exactly as a platform with no public names always rendered them.
         values.putAll(DomainTokens.of(DomainName.of(boot.config)));

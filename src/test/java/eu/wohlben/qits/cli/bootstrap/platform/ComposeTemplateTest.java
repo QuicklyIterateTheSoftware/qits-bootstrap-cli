@@ -52,6 +52,10 @@ class ComposeTemplateTest {
             values.put("IDP_SECRET_" + PlatformModel.clientKey(app),
                     "secret-" + PlatformModel.wireAlias(app, ENV));
         }
+        // The passkey binding of a platform with no domain: localhost is a secure context by
+        // itself, so the ceremony works on the edge's plain HTTP port.
+        values.put("WEBAUTHN_RP_ID", "localhost");
+        values.put("WEBAUTHN_ORIGINS", "http://localhost:8080");
         // No domain: every fragment is empty, which is the ordinary platform.
         values.putAll(DomainTokens.of(Optional.empty()));
         return values;
@@ -60,6 +64,9 @@ class ComposeTemplateTest {
     /** The same values with a domain configured. */
     static Map<String, String> tokens(String domain) {
         Map<String, String> values = tokens();
+        // The binding follows the address a browser arrives at, which a domain moves to TLS.
+        values.put("WEBAUTHN_RP_ID", domain);
+        values.put("WEBAUTHN_ORIGINS", "https://" + domain);
         values.putAll(DomainTokens.of(Optional.of(domain)));
         return values;
     }
@@ -496,6 +503,69 @@ class ComposeTemplateTest {
                 + String.join(",", PlatformModel.idpClients(ENV)));
         assertThat(PlatformModel.idpClients(ENV))
                 .contains("prod-qits-deployments", "prod-qits-containers");
+    }
+
+    /**
+     * <b>THE EDGE HOLDS A CLIENT FOR THE USER SESSIONS, and the flip that uses it is OFF.</b> Both
+     * halves of the credential are written now — the idp's block and the edge's — so that turning
+     * sessions on is one value rather than a redeploy of the door and the issuer together, which is
+     * the same order the pullers' credentials landed in before their flip.
+     * <p>
+     * The id carries the environment while the service does not: it is the session gate's
+     * credential, and a session belongs to a tier.
+     */
+    @Test
+    void theEdgeIsAnIdpClientAndItsSessionFlipIsOff() {
+        String compose = ComposeTemplate.compose(tokens());
+        String edge = serviceBlock(compose, "qits-platform-edge");
+        String idp = serviceBlock(compose, "qits-platform-idp");
+
+        assertThat(idp).contains(
+                "QITS_IDP_CLIENT_PROD_QITS_EDGE_SECRET: \"secret-prod-qits-edge\"");
+        assertThat(edge).contains("QITS_EDGE_SESSIONS_ENABLED: \"false\"")
+                .contains("QITS_EDGE_SESSIONS_CLIENT_ID: prod-qits-edge")
+                .contains("QITS_EDGE_SESSIONS_CLIENT_SECRET: \"secret-prod-qits-edge\"");
+        assertThat(extras("qits-platform-idp"))
+                .contains("env.QITS_IDP_CLIENT_PROD_QITS_EDGE_SECRET=secret-prod-qits-edge");
+        assertThat(extras("qits-platform-edge"))
+                .contains("env.QITS_EDGE_SESSIONS_ENABLED=false")
+                .contains("env.QITS_EDGE_SESSIONS_CLIENT_ID=prod-qits-edge")
+                .contains("env.QITS_EDGE_SESSIONS_CLIENT_SECRET=secret-prod-qits-edge");
+        // No audience list for it: the edge introspects a session with Basic and asks the idp for
+        // no token at all, which is what parts it from the two pullers above.
+        assertThat(idp).doesNotContain("QITS_IDP_CLIENT_PROD_QITS_EDGE_AUDIENCES");
+        assertThat(extras("qits-platform-idp"))
+                .doesNotContain("QITS_IDP_CLIENT_PROD_QITS_EDGE_AUDIENCES");
+        // And the gateway is untouched by all of it: which variant it is built as is a pipeline
+        // build arg, and neither generated file sets one — the comments that NAME it are not
+        // settings, which is why this reads the keys rather than the text.
+        assertThat(compose.lines().filter(line -> !line.strip().startsWith("#")))
+                .noneMatch(line -> line.contains("QITS_VARIANT"));
+        assertThat(extrasKeys()).noneMatch(line -> line.contains("QITS_VARIANT"));
+    }
+
+    /**
+     * <b>THE PASSKEY BINDING, in both files and derived from one address.</b> A credential is bound
+     * to the rp id and asserts under no other host, so the two values follow the door a browser
+     * arrives at: localhost and the edge's port, or the domain over TLS once there is one.
+     */
+    @Test
+    void theIdpIsToldWhichHostAPasskeyIsBoundTo() {
+        String idp = serviceBlock(ComposeTemplate.compose(tokens()), "qits-platform-idp");
+
+        assertThat(idp).contains("QITS_IDP_WEBAUTHN_RP_ID: localhost")
+                .contains("QITS_IDP_WEBAUTHN_ORIGINS: \"http://localhost:8080\"");
+        assertThat(extras("qits-platform-idp"))
+                .contains("env.QITS_IDP_WEBAUTHN_RP_ID=localhost")
+                .contains("env.QITS_IDP_WEBAUTHN_ORIGINS=http://localhost:8080");
+
+        String withDomain = serviceBlock(ComposeTemplate.compose(tokens(DOMAIN)),
+                "qits-platform-idp");
+        assertThat(withDomain).contains("QITS_IDP_WEBAUTHN_RP_ID: " + DOMAIN)
+                .contains("QITS_IDP_WEBAUTHN_ORIGINS: \"https://" + DOMAIN + "\"");
+        assertThat(ComposeTemplate.extras(tokens(DOMAIN)))
+                .contains("env.QITS_IDP_WEBAUTHN_RP_ID=" + DOMAIN)
+                .contains("env.QITS_IDP_WEBAUTHN_ORIGINS=https://" + DOMAIN);
     }
 
     /**
@@ -1277,6 +1347,14 @@ class ComposeTemplateTest {
             compose = compose.replace(fragment, "");
             extras = extras.replace(fragment, "");
         }
+        // THE PASSKEY BINDING IS THE ONE THING A DOMAIN MOVES rather than adds, and it cannot be a
+        // fragment: an rp id is the HOST a credential is bound to and the origins are the door a
+        // browser arrives at, so a domain replaces both values instead of appending to a line.
+        // Put back, so that what is left to compare is everything else.
+        compose = compose.replace("https://" + DOMAIN, "http://localhost:8080")
+                .replace("RP_ID: " + DOMAIN, "RP_ID: localhost");
+        extras = extras.replace("https://" + DOMAIN, "http://localhost:8080")
+                .replace("RP_ID=" + DOMAIN, "RP_ID=localhost");
 
         assertThat(compose).isEqualTo(ComposeTemplate.compose(tokens()));
         assertThat(extras).isEqualTo(ComposeTemplate.extras(tokens()));

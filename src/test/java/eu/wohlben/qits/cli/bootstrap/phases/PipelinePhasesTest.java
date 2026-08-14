@@ -275,6 +275,46 @@ class PipelinePhasesTest {
         assertThat(plan.stale()).containsExactly("qits_prod-qits-ci");
     }
 
+    // --- the register token in the closing report --------------------------------------------------
+
+    /**
+     * The run that minted it prints it, and says the two things that make it usable: where it is
+     * spent, and that it is spent only once.
+     */
+    @Test
+    void theRunThatMintedTheTokenPrintsIt() {
+        List<String> lines = PipelinePhases.registerLines("http://localhost:8080/idp/register",
+                "rt-0123456789", false, "/home/me/code/qits-qits/.qits-bootstrap.env");
+
+        assertThat(String.join("\n", lines))
+                .contains("http://localhost:8080/idp/register")
+                .contains("rt-0123456789")
+                .contains("ONE-TIME")
+                .contains("/home/me/code/qits-qits/.qits-bootstrap.env");
+    }
+
+    /**
+     * <b>A rerun points at the file instead of reprinting the credential.</b> A token on every
+     * screen and in every run log for the life of the platform is worse than one line saying where
+     * it is — and the run that made it already printed it once.
+     */
+    @Test
+    void aRerunPointsAtTheStateFileRatherThanReprintingTheToken() {
+        List<String> lines = PipelinePhases.registerLines("http://localhost:8080/idp/register",
+                null, true, "/home/me/code/qits-qits/.qits-bootstrap.env");
+
+        assertThat(String.join("\n", lines)).contains("IDP_REGISTER_TOKEN")
+                .contains("/home/me/code/qits-qits/.qits-bootstrap.env")
+                .contains("Delete that line");
+    }
+
+    /** Nothing minted and nothing recorded: the phase warned, and the report stays quiet. */
+    @Test
+    void aBootThatMintedNothingSaysNothingHere() {
+        assertThat(PipelinePhases.registerLines("http://localhost:8080/idp/register", "", false,
+                "/tmp/.qits-bootstrap.env")).isEmpty();
+    }
+
     /** Everything deployed: there is nothing left for this phase to start. */
     @Test
     void aFullyDeployedPlatformDeploysNothing() {

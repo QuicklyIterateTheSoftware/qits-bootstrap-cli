@@ -267,6 +267,14 @@ that, each measured on this host rather than assumed:
   prints the one-liner that asks for one. **The platform's postgres publishes nothing either**: its one consumer was this
   CLI's cold-boot DDL, which dials the wire alias on 5432 like everything else. An operator with a
   `psql` goes in through `docker exec`. No publish binds loopback — neither mode has an ip field.
+- **User sessions are seeded DARK.** Both generated files carry the edge's own idp client
+  (`<env>-qits-edge`, as `QITS_EDGE_SESSIONS_CLIENT_ID` / `_SECRET`) and pin
+  `qits.edge.sessions.enabled` to **false**, so browser traffic is exactly what it always was until
+  the rollout flips that one value. The idp is told which host a passkey binds to
+  (`QITS_IDP_WEBAUTHN_RP_ID` / `_ORIGINS`: localhost and the edge's port, or the domain over TLS),
+  and the boot mints the one-time token the first account registers with. The gateway stays on
+  `QITS_VARIANT=local`, and the order is not free: a gateway reading identity headers before the
+  edge injects any would refuse every request.
 - **A rerun deploys a SUBSET by leaving services out of the file**, because `docker stack deploy`
   takes no service list. Nothing is pruned — what the file omits is the deployer's — and a seed
   service whose application the deployer has taken over is removed outright: swarm restarts a task
@@ -412,9 +420,9 @@ into a page that arrives when the run is over, so that is what to verify before 
 
 ## What it does, in order
 
-Built from configuration at startup, so the count in the header is real. A cold boot is 70 phases;
+Built from configuration at startup, so the count in the header is real. A cold boot is 71 phases;
 `QITS_SKIP_BUILD=1` drops the seed builds and puts two in their place — the skip gate and postgres —
-for 42. `QITS_DOMAIN` adds two more, marked below.
+for 43. `QITS_DOMAIN` adds two more, marked below.
 
 | | phase |
 | --- | --- |
@@ -432,13 +440,14 @@ for 42. `QITS_DOMAIN` adds two more, marked below.
 | 37–38 | generate the seed stack file; write the deployer's per-application extras onto its config volume |
 | — | **with `QITS_DOMAIN` only**: write a self-signed placeholder certificate onto the `qits-edge-letsencrypt` volume, unless one is already there. It is before the stack starts because the edge's keystore names those files and a keystore whose files are missing fails startup |
 | 39–40 | `docker stack deploy` the seed (only what the deployer does not already manage — the rest is left out of the FILE, since a stack deploy takes no service list, and any seed SERVICE of a deployer-managed application is removed); wait for the idp, the edge, the gateway, the store, the mirror, the git host, the nameserver, ci, the deployer, the bus and the container orchestrator — all on qits-net. The orchestrator is polled at its own alias like the nameserver: it has no gateway route and must not have one, because every caller is a machine and a route would put a socket-holding service behind the platform's public door |
+| 41 | mint the ONE-TIME token the first account registers with (`POST /idp/api/register-tokens`, as the edge's own static client) and record it in `.qits-bootstrap.env`. Once per installation: a rerun that finds `IDP_REGISTER_TOKEN` there mints nothing, because every call makes another key to an admin account. A refusal WARNS and the boot goes on — nothing this platform runs waits on a person registering |
 | — | **with `QITS_DOMAIN` only**: create the zone in qits-platform-dns (`POST /dns/api/zones`, 409 tolerated). No records: their values are this host's public address, which the run cannot know |
-| 41 | publish the ci-daemon binary, version-addressed by its digest |
-| 42–43 | create the 40 repositories on qits-githost; pre-seed the seeded histories with `-o qits.no-ci` |
-| 44–50 | replay each publisher the platform pins by **pushing its release tag**, and wait for the run the tag starts. The release recipes select on `SCMPublishTag`, so the push is the whole trigger — nothing is announced by hand, and in particular no `SCMRelease`: that word means "a version is NEW", and saying it here woke the release train against a platform whose qits-workspaces is still fifteen phases away. Four of the seven are the Maven and npm packages the wrapper's builds install; three are docker images — `qits/workspace-base`, then `qits/workspace` and `qits/projects-daemon` + `qits/project-agent`. **The base goes first and that order is load-bearing**: both daemon builds pull it at a pinned version, and the base's own replay is what puts it in the registry. A publisher with no release tag reachable from main STOPS the boot, which is right: a pin nobody has minted has nothing to dangle. A tag the git host already has moves no ref, so it announces nothing and the phase is SKIPPED — the registry holds that version from the boot that first pushed it |
-| 51 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
-| 52–68 | one phase per deployable: push `main` quietly, push the newest release tag, and move `environment/<name>` **to that tag's commit** — the boot RESTORES, so a main that is ahead of the release deploys nothing. `--ship-mains` points the deploy ref at main's head instead, which is what the boot always did and what shipped an unreleased stack by accident on 2026-08-08. A deployable with no release tag falls back to main's head and warns. Then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-containers is immediately before qits-ci, because ci runs every pipeline step as a container it asks that service for. qits-platform-edge is second to last: it is the host's one door, and every other service is behind it — its publish is `mode: ingress`, so the swarm holds the port and the successor pulls its own image through the predecessor rather than needing the door it is replacing |
-| 69–70 | push the seeded repositories; the closing report |
+| 42 | publish the ci-daemon binary, version-addressed by its digest |
+| 43–44 | create the 40 repositories on qits-githost; pre-seed the seeded histories with `-o qits.no-ci` |
+| 45–51 | replay each publisher the platform pins by **pushing its release tag**, and wait for the run the tag starts. The release recipes select on `SCMPublishTag`, so the push is the whole trigger — nothing is announced by hand, and in particular no `SCMRelease`: that word means "a version is NEW", and saying it here woke the release train against a platform whose qits-workspaces is still fifteen phases away. Four of the seven are the Maven and npm packages the wrapper's builds install; three are docker images — `qits/workspace-base`, then `qits/workspace` and `qits/projects-daemon` + `qits/project-agent`. **The base goes first and that order is load-bearing**: both daemon builds pull it at a pinned version, and the base's own replay is what puts it in the registry. A publisher with no release tag reachable from main STOPS the boot, which is right: a pin nobody has minted has nothing to dangle. A tag the git host already has moves no ref, so it announces nothing and the phase is SKIPPED — the registry holds that version from the boot that first pushed it |
+| 52 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
+| 53–69 | one phase per deployable: push `main` quietly, push the newest release tag, and move `environment/<name>` **to that tag's commit** — the boot RESTORES, so a main that is ahead of the release deploys nothing. `--ship-mains` points the deploy ref at main's head instead, which is what the boot always did and what shipped an unreleased stack by accident on 2026-08-08. A deployable with no release tag falls back to main's head and warns. Then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-containers is immediately before qits-ci, because ci runs every pipeline step as a container it asks that service for. qits-platform-edge is second to last: it is the host's one door, and every other service is behind it — its publish is `mode: ingress`, so the swarm holds the port and the successor pulls its own image through the predecessor rather than needing the door it is replacing |
+| 70–71 | push the seeded repositories; the closing report |
 
 Five things every deploy phase does that are easy to miss: it pushes `main` quietly
 (`-o qits.no-ci`) so a second cold native build is not queued for the same sha; it pushes the

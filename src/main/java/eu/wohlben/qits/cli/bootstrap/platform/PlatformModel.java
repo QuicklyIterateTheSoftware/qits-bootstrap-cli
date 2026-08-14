@@ -464,10 +464,21 @@ public final class PlatformModel {
      * service that was refused. Neither has a quarkus-oidc-client extension and neither asks the
      * idp for anything: the docker CLI performs the Bearer dance at the edge with these two values,
      * which is why they get a client and no {@code QUARKUS_OIDC_CLIENT_*} env.
+     * <p>
+     * <b>The edge joined on 2026-08-14, for the user sessions, and its entry is the one that is not
+     * a repository name.</b> {@code edge} here derives {@code <env>-qits-edge}, while the service
+     * itself answers to {@code qits-platform-edge} — the id is the SESSION GATE's, and a session
+     * belongs to an environment, not to the one process that serves them all. The edge is told the
+     * pair as {@code QITS_EDGE_SESSIONS_CLIENT_ID} and {@code _SECRET}, so the only agreement that
+     * has to hold is between this generator and that service.
+     * <p>
+     * It gets a secret and no audience list: it introspects a browser session with Basic, the way a
+     * static client calls the commission API, and asks the idp for no token at all. The full list
+     * is one line away if that ever changes.
      */
     public static final List<String> IDP_CLIENT_APPS =
             List.of("ci", "artifacts", "workspaces", "gateway", "projects", "deployments",
-                    "containers");
+                    "containers", "edge");
 
     /**
      * The {@code aud} values the platform's clients may ask for: every client above plus the

@@ -30,6 +30,14 @@ public class RunState {
     /** The idp's client secrets: given, kept or generated. */
     public final Map<String, String> secrets = new LinkedHashMap<>();
     /**
+     * The register token THIS run minted, and null on every other run. The closing report prints a
+     * value only when it is this one: a token is printed on the run that made it, and after that it
+     * lives in {@code .qits-bootstrap.env} where the report points.
+     */
+    public String registerToken;
+    /** An earlier run already minted one, so this run mints nothing. */
+    public boolean registerTokenRecorded;
+    /**
      * postgres' superuser password: given, kept or generated. It applies at initdb only, so the
      * recorded value is the only way into a cluster that already exists.
      */
