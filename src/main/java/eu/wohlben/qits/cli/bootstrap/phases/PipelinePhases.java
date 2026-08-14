@@ -3,7 +3,9 @@ package eu.wohlben.qits.cli.bootstrap.phases;
 import com.fasterxml.jackson.databind.JsonNode;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.Json;
+import eu.wohlben.qits.cli.bootstrap.config.Acme;
 import eu.wohlben.qits.cli.bootstrap.config.DomainName;
+import eu.wohlben.qits.cli.bootstrap.config.PublicIp;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.engine.Waiter;
@@ -425,6 +427,114 @@ public class PipelinePhases {
                     "           Delete that line and rerun to mint a fresh one.");
         }
         return List.of();
+    }
+
+    /**
+     * The domain's place in the closing report: what this run WROTE, the one step it cannot take,
+     * and which certificate the edge is serving.
+     * <p>
+     * <b>The order of the three blocks is the order a reader needs them in.</b> The records come
+     * first because they are the thing that changed — a zone that used to be empty is now the
+     * authority for every name this platform serves. The registrar comes second because it is the
+     * only step left to a person, and it is stated as a step to CHECK rather than to do: it belongs
+     * before the run, since the certificate order is answered over the delegated name. The
+     * certificate comes last because it is the outcome the first two decide.
+     * <p>
+     * <b>A failed order is a line here, not a failed boot.</b> The commonest reason is a delegation
+     * the world has not seen yet, which fixes itself in minutes to hours and which this program can
+     * neither hurry nor detect. So the phase warns and this block prints the retry with the mode and
+     * the address already filled in, exactly as the register token's lines do for its own one call.
+     */
+    static List<String> domainLines(String domain, String publicIp, Acme.Mode mode, String email,
+            String certificate) {
+        List<String> lines = new ArrayList<>();
+        lines.add("domain:    " + domain + " — the zone answers, and these A records are ROWS in it "
+                + "now:");
+        for (SeedPhases.ZoneRecord record : SeedPhases.zoneRecords(domain, publicIp)) {
+            lines.add("             " + pad(record.name()) + " A  " + record.value() + "   "
+                    + record.why());
+        }
+        lines.add("           A wildcard per DEPTH, not a record per name: the edge reads at most "
+                + "the first two");
+        lines.add("           labels of a Host header, so a new environment or a new app vhost "
+                + "needs no dns step.");
+        lines.add("           Names are stored relative to the apex — @ is the apex, and no "
+                + "wildcard matches it.");
+        lines.add("registrar: THE ONE STEP THIS RUN CANNOT TAKE, and it belongs BEFORE the run. "
+                + "Check it is in place:");
+        lines.add("             NS  " + domain + "  ->  " + DomainName.nsName(domain));
+        lines.add("             A   " + DomainName.nsName(domain) + "  ->  " + publicIp
+                + "        (the GLUE record)");
+        lines.add("           An NS record holds a hostname, so without the glue nothing can find "
+                + "the server it");
+        lines.add("           names. Both carry " + publicIp + " — the address this run was given "
+                + "and wrote above.");
+        lines.addAll(tlsLines(domain, mode, email, certificate));
+        return lines;
+    }
+
+    /** The record names, in a column, so four short names read as a table rather than as prose. */
+    private static String pad(String name) {
+        return name.length() >= 6 ? name : name + " ".repeat(6 - name.length());
+    }
+
+    /**
+     * The certificate half, in the four states a run can end in: a staging certificate, a production
+     * one, issuance switched off, and an order that did not go through.
+     */
+    private static List<String> tlsLines(String domain, Acme.Mode mode, String email,
+            String certificate) {
+        List<String> lines = new ArrayList<>();
+        if (Acme.Mode.STAGING.word().equals(certificate)) {
+            lines.add("tls:       ISSUED — the edge serves a Let's Encrypt STAGING certificate for "
+                    + domain + ".");
+            lines.add("           A browser still refuses it: staging issues from an untrusted "
+                    + "root. It proves the");
+            lines.add("           delegation, the challenge and the reload, which is what it is "
+                    + "for. When you are");
+            lines.add("           satisfied, rerun with QITS_ACME_MODE=production — one rerun, and "
+                    + "NO redeploy:");
+            lines.add("           the PEMs land on the qits-edge-letsencrypt volume under the same "
+                    + "two names and");
+            lines.add("           the TLS registry reloads them within the hour.");
+            return lines;
+        }
+        if (Acme.Mode.PRODUCTION.word().equals(certificate)) {
+            lines.add("tls:       ISSUED — the edge serves a real Let's Encrypt certificate for "
+                    + domain + ".");
+            lines.add("           https://" + domain + " is the front door and browsers accept it. "
+                    + "Renewal is the same");
+            lines.add("           command below, and needs no redeploy: the PEMs are replaced on "
+                    + "the volume and the");
+            lines.add("           TLS registry reloads them within the hour.");
+            return lines;
+        }
+        if (mode == Acme.Mode.OFF) {
+            lines.add("tls:       ISSUANCE OFF (QITS_ACME_MODE=off) — the edge holds the "
+                    + "PLACEHOLDER certificate, which");
+            lines.add("           browsers reject. Rerun with QITS_ACME_MODE=staging to have this "
+                    + "run order one, or");
+            lines.add("           do it by hand:");
+        } else {
+            lines.add("tls:       NOT ISSUED — the order did not go through, so the edge still "
+                    + "holds the PLACEHOLDER");
+            lines.add("           certificate and browsers reject it. The usual reason is the "
+                    + "delegation above: a");
+            lines.add("           zone the internet has not been pointed at yet answers nothing, "
+                    + "and the HTTP-01");
+            lines.add("           challenge is fetched over exactly that name. Port 80 has to "
+                    + "reach this host too.");
+            lines.add("           Nothing is lost — rerun the boot, or issue it by hand from a "
+                    + "container on qits-net:");
+        }
+        lines.add("             quarkus tls lets-encrypt issue-certificate"
+                + (mode == Acme.Mode.PRODUCTION ? "" : " --staging") + " \\");
+        lines.add("               --domain=" + domain + " --email=" + email + " \\");
+        lines.add("               --management-url=http://qits-platform-edge:9000");
+        lines.add("           The management port is NOT published: it is unauthenticated and a "
+                + "swarm publish cannot");
+        lines.add("           be loopback-only, so it is reachable on qits-net and nowhere else.");
+        return lines;
     }
 
     // --- the cold-start publishes -----------------------------------------------------------------
@@ -1585,40 +1695,12 @@ public class PipelinePhases {
                         + "and artifacts trust the network");
             }
             report.add("state:     seed compose + .qits-bootstrap.env in " + boot.state.wrapperDir);
-            // Only with a domain, and every line of it is a step this program cannot take itself:
-            // the ACME order is made from the host by a CLI, and the delegation and the records need
-            // this machine's public address, which a container behind a NAT cannot learn.
-            DomainName.of(boot.config).ifPresent(domain -> {
-                report.add("domain:    " + domain + " — the zone row exists and answers; it has no "
-                        + "records yet.");
-                report.add("           1. At the registrar: NS " + DomainName.nsName(domain)
-                        + " for " + domain + ", plus a GLUE A record");
-                report.add("              " + DomainName.nsName(domain)
-                        + " -> this host's public IP. An NS holds a hostname, so");
-                report.add("              without the glue nothing can find the server it names.");
-                report.add("           2. Write the records: POST " + boot.config.dnsUrl()
-                        + "/api/zones/{id}/records");
-                report.add("              (their values are that same public IP, which this run "
-                        + "cannot know).");
-                report.add("tls:       the edge holds a PLACEHOLDER certificate — browsers reject "
-                        + "it. Issue the real one");
-                report.add("           from a container on qits-net, staging while we trial it:");
-                report.add("             quarkus tls lets-encrypt issue-certificate --staging "
-                        + "--domain=" + domain + " \\");
-                report.add("               --email=<operator> "
-                        + "--management-url=http://qits-platform-edge:9000");
-                report.add("           The management port is NOT published: it is unauthenticated "
-                        + "and a publish cannot be");
-                report.add("           loopback-only under swarm, so it is reachable on qits-net "
-                        + "and nowhere else.");
-                report.add("           Renewal is renew-certificate with the same management URL. "
-                        + "The PEMs land in the");
-                report.add("           qits-edge-letsencrypt volume under the same two filenames "
-                        + "and the TLS registry");
-                report.add("           reloads within the hour, so neither is a redeploy. HTTP-01 "
-                        + "needs port 80 reachable");
-                report.add("           from the internet and the delegation above in place.");
-            });
+            // Only with a domain. The run now does everything under it that a program can do — the
+            // records are rows it wrote and the certificate is one it ordered — so these lines say
+            // what EXISTS, and the one step left is the delegation, which lives at a registrar.
+            DomainName.of(boot.config).ifPresent(domain -> report.addAll(domainLines(domain,
+                    PublicIp.of(boot.config).orElse(""), Acme.mode(boot.config),
+                    Acme.email(boot.config, domain), boot.state.certificate)));
             report.add("images:    the release replays published qits/workspace-base, qits/workspace,");
             report.add("           qits/projects-daemon and qits/project-agent at their released "
                     + "versions —");

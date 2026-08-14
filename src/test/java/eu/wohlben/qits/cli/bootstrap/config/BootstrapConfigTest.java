@@ -35,9 +35,22 @@ class BootstrapConfigTest {
         // 53, because a registrar's delegation reaches that port and no other. Both transports are
         // published from it; the service binds 8053 inside the container.
         assertThat(config.dnsPort()).isEqualTo(53);
+        // The edge's MANAGEMENT listener, published nowhere: the challenge slot and the certificate
+        // reload live on it, both unauthenticated, and this run reaches them because it is on
+        // qits-net. /q is the management root path and lets-encrypt is the extension's own segment.
+        assertThat(config.edgeLetsEncryptUrl())
+                .isEqualTo("http://qits-platform-edge:9000/q/lets-encrypt");
         // No default, and unset is a supported platform: dns serves no zones and the edge stays on
         // plain HTTP.
         assertThat(config.domain()).isEmpty();
+        // Mandatory WITH a domain and refused without one, so there is nothing to default it to.
+        assertThat(config.publicIp()).isEmpty();
+        // STAGING by default: the first order is the one most likely to meet a delegation the world
+        // has not seen yet, and production counts failed orders per domain per week.
+        assertThat(config.acmeMode()).isEqualTo("staging");
+        // No default value, because the default is DERIVED: hostmaster@<domain>, the same role the
+        // zone's SOA already names.
+        assertThat(config.acmeEmail()).isEmpty();
         assertThat(config.pushToken()).isEqualTo("local-dev");
         assertThat(config.machineAuth()).isTrue();
         assertThat(config.skipBuild()).isFalse();
@@ -63,6 +76,9 @@ class BootstrapConfigTest {
         env.put("QITS_GIT_HOST_PORT", "9093");
         env.put("QITS_DNS_PORT", "5353");
         env.put("QITS_DOMAIN", "qits-dev.eu");
+        env.put("QITS_PUBLIC_IP", "203.0.113.7");
+        env.put("QITS_ACME_MODE", "production");
+        env.put("QITS_ACME_EMAIL", "ops@qits-dev.eu");
         env.put("QITS_PUSH_TOKEN", "not-local-dev");
         env.put("QITS_SKIP_BUILD", "1");
         env.put("QITS_SHIP_MAINS", "1");
@@ -81,6 +97,9 @@ class BootstrapConfigTest {
         assertThat(config.gitHostPort()).isEqualTo(9093);
         assertThat(config.dnsPort()).isEqualTo(5353);
         assertThat(config.domain()).contains("qits-dev.eu");
+        assertThat(config.publicIp()).contains("203.0.113.7");
+        assertThat(config.acmeMode()).isEqualTo("production");
+        assertThat(config.acmeEmail()).contains("ops@qits-dev.eu");
         assertThat(config.pushToken()).isEqualTo("not-local-dev");
         // The script's knobs are 1 and 0, not true and false.
         assertThat(config.skipBuild()).isTrue();

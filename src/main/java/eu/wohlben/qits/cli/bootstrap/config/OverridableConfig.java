@@ -17,6 +17,9 @@ public class OverridableConfig implements BootstrapConfig {
     private Boolean tui;
     private String platformEnv;
     private String domain;
+    private String publicIp;
+    private String acmeMode;
+    private String acmeEmail;
 
     public OverridableConfig(BootstrapConfig base) {
         this.base = base;
@@ -52,6 +55,24 @@ public class OverridableConfig implements BootstrapConfig {
     /** {@code --domain}; blank is no answer, so {@code .env} keeps it. */
     public OverridableConfig domain(String value) {
         this.domain = value == null || value.isBlank() ? null : value.strip();
+        return this;
+    }
+
+    /** {@code --public-ip}; blank is no answer, so {@code .env} keeps it. */
+    public OverridableConfig publicIp(String value) {
+        this.publicIp = value == null || value.isBlank() ? null : value.strip();
+        return this;
+    }
+
+    /** {@code --acme-mode}; blank is no answer, so {@code .env} keeps it. */
+    public OverridableConfig acmeMode(String value) {
+        this.acmeMode = value == null || value.isBlank() ? null : value.strip();
+        return this;
+    }
+
+    /** {@code --acme-email}; blank is no answer, so {@code .env} keeps it. */
+    public OverridableConfig acmeEmail(String value) {
+        this.acmeEmail = value == null || value.isBlank() ? null : value.strip();
         return this;
     }
 
@@ -115,6 +136,21 @@ public class OverridableConfig implements BootstrapConfig {
     @Override
     public Optional<String> domain() {
         return domain != null ? Optional.of(domain) : base.domain();
+    }
+
+    @Override
+    public Optional<String> publicIp() {
+        return publicIp != null ? Optional.of(publicIp) : base.publicIp();
+    }
+
+    @Override
+    public String acmeMode() {
+        return acmeMode != null ? acmeMode : base.acmeMode();
+    }
+
+    @Override
+    public Optional<String> acmeEmail() {
+        return acmeEmail != null ? Optional.of(acmeEmail) : base.acmeEmail();
     }
 
     @Override

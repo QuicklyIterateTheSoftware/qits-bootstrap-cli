@@ -1,5 +1,6 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
+import eu.wohlben.qits.cli.bootstrap.config.Acme;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 import org.junit.jupiter.api.Test;
@@ -313,6 +314,104 @@ class PipelinePhasesTest {
     void aBootThatMintedNothingSaysNothingHere() {
         assertThat(PipelinePhases.registerLines("http://localhost:8080/idp/register", "", false,
                 "/tmp/.qits-bootstrap.env")).isEmpty();
+    }
+
+    // --- the domain in the closing report ---------------------------------------------------------
+
+    private static String domainReport(Acme.Mode mode, String certificate) {
+        return String.join("\n", PipelinePhases.domainLines("qits-dev.eu", "203.0.113.7", mode,
+                "hostmaster@qits-dev.eu", certificate));
+    }
+
+    /**
+     * <b>The records are stated as rows that EXIST</b>, because they do now — and the registrar line
+     * carries the same address they were written with, which is the value the glue record needs.
+     */
+    @Test
+    void theRecordsAreListedAndTheRegistrarLineCarriesTheAddress() {
+        String report = domainReport(Acme.Mode.STAGING, "staging");
+
+        // Every record the zone phase writes, in the report the operator reads.
+        assertThat(report).contains("@").contains("ns1").contains("*").contains("*.*");
+        assertThat(report).contains("203.0.113.7");
+        // The delegation, both halves of it, and the nameserver spelled as an fqdn there.
+        assertThat(report).contains("NS  qits-dev.eu  ->  ns1.qits-dev.eu")
+                .contains("A   ns1.qits-dev.eu  ->  203.0.113.7")
+                .contains("GLUE");
+    }
+
+    /**
+     * <b>The step that told the operator to write the records is gone, and stays gone.</b> This run
+     * writes them, so an instruction to write them by hand would be an instruction to redo work —
+     * and the "which this run cannot know" clause it carried is simply no longer true.
+     */
+    @Test
+    void theRemovedStepStaysRemoved() {
+        for (Acme.Mode mode : Acme.Mode.values()) {
+            String report = domainReport(mode, null);
+
+            assertThat(report).as("mode %s", mode)
+                    .doesNotContain("cannot know")
+                    .doesNotContain("no records")
+                    .doesNotContain("has no records yet")
+                    .doesNotContain("2. Write the records");
+        }
+    }
+
+    /**
+     * A staging certificate is a success that a browser still refuses, so the line says both — and
+     * says the flip is a rerun rather than a redeploy, because that is the thing worth knowing.
+     */
+    @Test
+    void aStagingCertificateIsStatedAsIssuedAndAsNotYetTrusted() {
+        String report = domainReport(Acme.Mode.STAGING, "staging");
+
+        assertThat(report).contains("ISSUED").contains("STAGING")
+                .contains("QITS_ACME_MODE=production").contains("NO redeploy");
+        // Nothing to retry: the order went through.
+        assertThat(report).doesNotContain("NOT ISSUED");
+    }
+
+    @Test
+    void aProductionCertificateIsStatedAsTheLiveOne() {
+        String report = domainReport(Acme.Mode.PRODUCTION, "production");
+
+        assertThat(report).contains("ISSUED").contains("https://qits-dev.eu")
+                .contains("browsers accept it");
+        assertThat(report).doesNotContain("NOT ISSUED").doesNotContain("PLACEHOLDER");
+    }
+
+    /**
+     * <b>A failed order is a report line, not a failed boot.</b> The retry is printed with the mode
+     * and the contact already filled in, so it is a command to run rather than one to compose, and
+     * the likeliest cause is named — the delegation, which nothing here can hurry.
+     */
+    @Test
+    void anOrderThatDidNotGoThroughPrintsTheRetryWithEverythingFilledIn() {
+        String report = domainReport(Acme.Mode.STAGING, null);
+
+        assertThat(report).contains("NOT ISSUED").contains("PLACEHOLDER")
+                .contains("delegation")
+                .contains("--staging")
+                .contains("--domain=qits-dev.eu")
+                .contains("--email=hostmaster@qits-dev.eu")
+                .contains("--management-url=http://qits-platform-edge:9000");
+    }
+
+    /** Issuance off is a choice, so it reads as one rather than as a failure. */
+    @Test
+    void issuanceOffSaysSoAndDoesNotReadAsAFailure() {
+        String report = domainReport(Acme.Mode.OFF, null);
+
+        assertThat(report).contains("ISSUANCE OFF").contains("QITS_ACME_MODE")
+                .contains("PLACEHOLDER");
+        assertThat(report).doesNotContain("NOT ISSUED");
+    }
+
+    /** A production order that failed offers the production retry, not a staging one. */
+    @Test
+    void theRetryCommandFollowsTheModeThatWasAskedFor() {
+        assertThat(domainReport(Acme.Mode.PRODUCTION, null)).doesNotContain("--staging");
     }
 
     /** Everything deployed: there is nothing left for this phase to start. */

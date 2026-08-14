@@ -1,5 +1,6 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
+import eu.wohlben.qits.cli.bootstrap.config.DomainName;
 import eu.wohlben.qits.cli.bootstrap.config.TestConfig;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
@@ -49,6 +50,114 @@ class SeedPhasesTest {
         Files.createDirectories(checkout.resolve(".git"));
 
         assertThat(SeedPhases.isEmptyDirectory(checkout)).isFalse();
+    }
+
+    // --- the zone's records -----------------------------------------------------------------------
+
+    /**
+     * <b>Four A records, and the shapes are the edge's rather than a list of today's names.</b> The
+     * edge reads at most the first two labels of a Host header, so one wildcard per DEPTH answers
+     * every environment and every application vhost there will ever be — adding either is then a
+     * deploy with no dns step. The apex is written out because no wildcard in this service matches
+     * it, and the nameserver because the registrar's glue names exactly that host.
+     */
+    @Test
+    void theZoneGetsAWildcardPerDepthPlusTheApexAndTheNameserver() {
+        List<SeedPhases.ZoneRecord> records =
+                SeedPhases.zoneRecords("qits-dev.eu", "203.0.113.7");
+
+        assertThat(records).extracting(SeedPhases.ZoneRecord::name)
+                .containsExactly("@", "ns1", "*", "*.*");
+        // Every name is this one host: the edge is a single front door and routes by Host behind it.
+        assertThat(records).extracting(SeedPhases.ZoneRecord::value)
+                .containsOnly("203.0.113.7");
+    }
+
+    /**
+     * Record names are stored RELATIVE to the apex — qits-platform-dns takes six shapes and an fqdn
+     * is not one of them, so a name with the domain spelled into it is a 400 rather than a record.
+     */
+    @Test
+    void noRecordNameCarriesTheDomain() {
+        assertThat(SeedPhases.zoneRecords("qits-dev.eu", "203.0.113.7"))
+                .extracting(SeedPhases.ZoneRecord::name)
+                .noneMatch(name -> name.contains("qits-dev.eu"));
+    }
+
+    /** The nameserver's record follows the derivation, so the two spellings cannot drift apart. */
+    @Test
+    void theNameserverRecordIsTheOneTheGlueRecordPointsAt() {
+        List<SeedPhases.ZoneRecord> records = SeedPhases.zoneRecords("qits.co.uk", "198.51.100.9");
+
+        assertThat(records).extracting(SeedPhases.ZoneRecord::name)
+                .contains(DomainName.nsLabel("qits.co.uk"));
+    }
+
+    // --- the ACME run -----------------------------------------------------------------------------
+
+    /**
+     * <b>The two field names the whole issuance hangs off.</b> certbot hands the hook
+     * {@code CERTBOT_TOKEN} and {@code CERTBOT_VALIDATION}; the edge's challenge slot is filled with
+     * {@code challenge-resource} and {@code challenge-content}. Getting either pair wrong fails
+     * silently — the slot is filled with nothing useful and the CA reads a 404 — so the mapping is
+     * pinned here rather than discovered on a live domain.
+     */
+    @Test
+    void theAuthHookMapsCertbotsVariablesOntoTheEdgesChallengeFields() {
+        assertThat(SeedPhases.ACME_SCRIPT)
+                .contains("challenge-resource=$CERTBOT_TOKEN")
+                .contains("challenge-content=$CERTBOT_VALIDATION");
+    }
+
+    /**
+     * The slot holds ONE challenge and answers 400 to a second, so a run killed between filling it
+     * and cleaning it up would block every run after it. The script clears it before it orders.
+     */
+    @Test
+    void theChallengeSlotIsClearedBeforeTheOrderAndByTheCleanupHook() {
+        assertThat(SeedPhases.ACME_SCRIPT).contains("-X DELETE \"$EDGE_URL/challenge\"");
+        // Before certbot is invoked, not after it.
+        assertThat(SeedPhases.ACME_SCRIPT.indexOf("-X DELETE \"$EDGE_URL/challenge\""))
+                .isLessThan(SeedPhases.ACME_SCRIPT.indexOf("certbot certonly"));
+    }
+
+    /**
+     * <b>A working public site is never taken down by a rerun that forgot the mode.</b> A production
+     * certificate on the volume ends the script whatever was asked for; a staging one only ends it
+     * when staging is what was asked for, so staging → production still issues.
+     */
+    @Test
+    void aProductionCertificateIsNeverReplacedByAStagingOne() {
+        String script = SeedPhases.ACME_SCRIPT;
+
+        // The production arm skips unconditionally; the staging arm asks what the mode is.
+        assertThat(script).contains("production)").contains("staging)")
+                .contains("if [ \"$MODE\" = staging ]");
+        assertThat(script).contains(SeedPhases.SKIPPED);
+    }
+
+    /**
+     * The edge runs as uid 1001 and reads these two files at startup and at every reload. A key it
+     * cannot read is a reload that fails and a certificate nobody ever sees.
+     */
+    @Test
+    void thePemsLandUnderTheNamesTheKeystoreExpectsAndAreReadableByTheEdge() {
+        assertThat(SeedPhases.ACME_SCRIPT)
+                .contains("/cert/lets-encrypt.crt")
+                .contains("/cert/lets-encrypt.key")
+                .contains("chown 1001:0")
+                .contains("chmod 640 /cert/lets-encrypt.key");
+    }
+
+    /**
+     * Staging and production are two certbot lineages, named per mode: a flip from one to the other
+     * is then a fresh order rather than a renewal against a different ACME server, which certbot
+     * refuses without being told twice.
+     */
+    @Test
+    void theCertbotLineageIsNamedPerMode() {
+        assertThat(SeedPhases.ACME_SCRIPT).contains("--cert-name \"qits-edge-$MODE\"")
+                .contains("/acme/live/qits-edge-$MODE/fullchain.pem");
     }
 
     /**

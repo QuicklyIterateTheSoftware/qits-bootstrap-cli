@@ -147,8 +147,15 @@ public final class BootstrapPlan {
         // that finds one recorded mints nothing.
         phases.add(pipeline.registerToken());
         // After the nameserver has answered, because this writes to it. A zone is what makes it
-        // answer for the domain at all; the records need a public address this run cannot know.
+        // answer for the domain at all, and the records — every one of them QITS_PUBLIC_IP — are
+        // what it answers WITH. Both halves are here because a delegated domain is asked of THIS
+        // server for every name under it, the apex included.
         domain.ifPresent(name -> phases.add(seed.dnsZone(name)));
+        // And then the certificate, which needs both of the phases above it. The edge has to be up
+        // and holding 80 (seed-health), because the CA fetches the HTTP-01 challenge over the public
+        // name; and the zone has to answer, because that name is what it resolves through. Ordering
+        // it earlier would be ordering it against a domain that resolves to nothing.
+        domain.ifPresent(name -> phases.add(seed.edgeCertificate(name)));
         phases.add(pipeline.daemonPublish());
         phases.add(pipeline.gitRepositories());
         phases.add(pipeline.releaseTrainPreseed());

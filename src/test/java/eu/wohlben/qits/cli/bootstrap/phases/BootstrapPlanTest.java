@@ -170,23 +170,28 @@ class BootstrapPlanTest {
     }
 
     /**
-     * The two phases a domain adds, and where they have to sit. The certificate goes BEFORE the seed
-     * stack, because the edge is started there with a keystore and a keystore whose files are missing
-     * fails startup. The zone goes AFTER the health wait, because it is written over the nameserver's
-     * own API.
+     * The three phases a domain adds, and where each of them has to sit.
+     * <p>
+     * The PLACEHOLDER certificate goes before the seed stack, because the edge is started there with
+     * a keystore and a keystore whose files are missing fails startup. The zone goes after the
+     * health wait, because it is written over the nameserver's own API. And the ACME order goes
+     * after BOTH: the CA fetches the HTTP-01 challenge over the public name, so the edge has to be
+     * holding port 80 and the zone has to be answering for that name before there is anything to
+     * order against.
      */
     @Test
-    void aDomainAddsTheCertificateBeforeTheStackAndTheZoneAfterIt() {
-        List<String> ids = ids(plan(Map.of("QITS_DOMAIN", "qits-dev.eu")));
+    void aDomainAddsThePlaceholderThenTheZoneThenTheRealCertificate() {
+        List<String> ids = ids(plan(Map.of("QITS_DOMAIN", "qits-dev.eu",
+                "QITS_PUBLIC_IP", "203.0.113.7")));
 
         assertThat(ids).containsSubsequence("pd-extras", "edge-cert", "seed-stack", "seed-health",
-                "dns-zone");
+                "dns-zone", "edge-acme");
     }
 
-    /** No domain is the default, and then neither phase exists at all — nothing to skip at runtime. */
+    /** No domain is the default, and then no phase of the three exists — nothing to skip at runtime. */
     @Test
-    void withNoDomainNeitherTheCertificateNorTheZoneIsInThePlan() {
-        assertThat(ids(plan(Map.of()))).doesNotContain("edge-cert", "dns-zone");
+    void withNoDomainNoneOfTheThreeIsInThePlan() {
+        assertThat(ids(plan(Map.of()))).doesNotContain("edge-cert", "dns-zone", "edge-acme");
         // The nameserver itself is unconditional: it is seeded, deployed and polled either way.
         assertThat(ids(plan(Map.of()))).contains("seed-image-platform-dns", "deploy-platform-dns");
     }

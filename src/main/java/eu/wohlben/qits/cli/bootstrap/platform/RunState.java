@@ -38,6 +38,15 @@ public class RunState {
     /** An earlier run already minted one, so this run mints nothing. */
     public boolean registerTokenRecorded;
     /**
+     * <b>Which certificate the edge is serving when this run ends</b>: {@code staging},
+     * {@code production}, or null for the self-signed placeholder.
+     * <p>
+     * Set by the {@code edge-acme} phase, and null is the honest answer in three different
+     * situations — issuance was off, the order failed, or there is no domain at all — which is why
+     * the closing report reads the MODE beside it rather than this word alone.
+     */
+    public String certificate;
+    /**
      * postgres' superuser password: given, kept or generated. It applies at initdb only, so the
      * recorded value is the only way into a cluster that already exists.
      */

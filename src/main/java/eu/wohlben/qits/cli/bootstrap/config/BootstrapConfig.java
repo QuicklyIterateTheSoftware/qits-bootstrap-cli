@@ -129,16 +129,70 @@ public interface BootstrapConfig {
      * edge publishes the one plain-HTTP port it always did. Everything the domain adds is absent
      * rather than broken.
      * <p>
-     * Set, four things follow in this run: the dns container is given its NS identity, the zone is
-     * created over its API, the edge gets 80, 443 and a loopback management port with a certificate
-     * slot on a volume, and the closing report prints the issuance command. What it does NOT do is
-     * write A records or touch a registrar: both need this host's public IP, which the bootstrap has
-     * no way to know.
+     * Set, the whole public-name path follows in this one run: the dns container is given its NS
+     * identity, the zone is created over its API <b>and filled with the records that make it
+     * answer</b>, the edge gets 80, 443 and a loopback management port with a certificate slot on a
+     * volume, and a real Let's Encrypt certificate is ordered for the name. The records and the
+     * order both need this host's address, which is why {@link #publicIp()} is mandatory beside
+     * this.
+     * <p>
+     * The one thing left to a person is the one thing no program here can do: the delegation at the
+     * REGISTRAR — {@code NS <domain> -> ns1.<domain>} plus the glue A record for that nameserver
+     * hostname. Set it BEFORE the run, because the certificate order is answered over the delegated
+     * name; if it has not propagated yet the issuance warns and the closing report prints the retry.
      * <p>
      * Validated by {@link DomainName}, on the host half, before the payload image is built: a typo
      * here would otherwise become a zone row and a certificate request for a name nobody owns.
      */
     Optional<String> domain();
+
+    /**
+     * <b>This host's public IPv4 address, and MANDATORY whenever {@link #domain()} is set</b> —
+     * {@code --public-ip} on the command line, {@code QITS_PUBLIC_IP} in {@code .env}.
+     * <p>
+     * It is the data of every A record this run writes into the zone, and the same address the glue
+     * record at the registrar carries. Both halves of that sentence are why it is an input: a
+     * delegation sends every name under the domain to this platform's nameserver, so the apex has to
+     * be answered from the zone rather than by the registrar, and the run cannot learn the address
+     * for itself — it is a container behind a NAT.
+     * <p>
+     * Checked by {@link PublicIp} on the host half, beside the domain and in the same manner: four
+     * dotted octets, a hostname refused rather than resolved, and set without a domain refused too.
+     */
+    Optional<String> publicIp();
+
+    /**
+     * <b>Whether this run orders a real certificate, and from which Let's Encrypt directory.</b>
+     * {@code staging} (the default), {@code production}, or {@code off}.
+     * <p>
+     * Staging by default, deliberately: the production directory rate-limits failed orders per
+     * registered domain per week, and the thing most likely to fail on a first boot is the
+     * delegation — a zone whose NS records the world has not seen yet answers nothing, and an
+     * HTTP-01 challenge is fetched over exactly that name. The staging directory has generous limits
+     * and issues from an untrusted root, so a browser still refuses the certificate; it proves the
+     * path and costs nothing when it fails.
+     * <p>
+     * Flipping to production is one rerun with this set — <b>no redeploy</b>. The PEM files land on
+     * the {@code qits-edge-letsencrypt} volume under the same two names and the edge's TLS registry
+     * reloads them within the hour, so the switch is a file change and nothing restarts.
+     * <p>
+     * {@code off} keeps the placeholder certificate and prints the manual command, which is what
+     * this program did before issuance was part of it. Read by {@link Acme}, which refuses any other
+     * word. Ignored with no domain, because there is nothing to issue for.
+     */
+    @WithDefault("staging")
+    String acmeMode();
+
+    /**
+     * <b>The ACME account's contact address</b> — where Let's Encrypt sends expiry warnings if a
+     * renewal ever stops happening.
+     * <p>
+     * Derived from the domain by default: {@code hostmaster@<domain>}, which is the same role
+     * address the zone's SOA already names as {@code hostmaster.<domain>}. One convention, spelled
+     * twice by one derivation, so a platform gains a working contact without a second knob to fill
+     * in. Set this when the mail for that domain is not read.
+     */
+    Optional<String> acmeEmail();
 
     /** 1 = the seed images and the daemon binary exist; skip to compose and the pushes. */
     @WithDefault("false")
@@ -397,6 +451,26 @@ public interface BootstrapConfig {
      */
     default String dnsUrl() {
         return "http://qits-platform-dns:8080/dns";
+    }
+
+    /**
+     * <b>qits-platform-edge's MANAGEMENT interface, and the Let's Encrypt endpoints on it</b> — the
+     * challenge slot and the certificate reload.
+     * <p>
+     * Port 9000, a second listener of the same process, and <b>published nowhere</b>: the endpoints
+     * are unauthenticated and a swarm publish cannot be bound to loopback, so the edge binds
+     * 0.0.0.0 inside its container and the address is reachable on qits-net and nowhere else. This
+     * run is on qits-net, which is the whole reason it can issue a certificate at all.
+     * <p>
+     * {@code /q} is the management root path and {@code lets-encrypt} is the extension's own
+     * segment, so the two endpoints are {@code .../challenge} and {@code .../certs}.
+     * <p>
+     * <b>The edge is not an ACME client and this address is not an ACME one.</b> The extension adds
+     * three routes and holds ONE challenge in memory; the protocol — the account, the order, the
+     * key, the certificate — is run entirely by whoever is issuing. See the {@code edge-acme} phase.
+     */
+    default String edgeLetsEncryptUrl() {
+        return "http://qits-platform-edge:9000/q/lets-encrypt";
     }
 
     /**

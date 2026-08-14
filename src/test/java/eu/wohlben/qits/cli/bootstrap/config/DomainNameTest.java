@@ -26,6 +26,18 @@ class DomainNameTest {
         assertThat(DomainName.hostmaster("qits-dev.eu")).isEqualTo("hostmaster.qits-dev.eu");
     }
 
+    /**
+     * The nameserver has two spellings of one name and they must not drift: the registrar's glue
+     * record carries the fqdn, while the zone's own A record for it is stored relative to the apex —
+     * qits-platform-dns refuses an fqdn as a record name outright.
+     */
+    @Test
+    void theNameserverIsAlsoSpelledTheWayARecordInItsOwnZoneIs() {
+        assertThat(DomainName.nsLabel("qits-dev.eu")).isEqualTo("ns1");
+        assertThat(DomainName.nsLabel("qits.co.uk") + "." + "qits.co.uk")
+                .isEqualTo(DomainName.nsName("qits.co.uk"));
+    }
+
     @Test
     void unsetAndBlankAreBothNoDomain() {
         assertThat(DomainName.of(config(null))).isEmpty();

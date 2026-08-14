@@ -1,8 +1,11 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.Json;
+import eu.wohlben.qits.cli.bootstrap.config.Acme;
 import eu.wohlben.qits.cli.bootstrap.config.DomainName;
+import eu.wohlben.qits.cli.bootstrap.config.PublicIp;
 import eu.wohlben.qits.cli.bootstrap.config.WrapperDir;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
@@ -1798,8 +1801,10 @@ public class SeedPhases {
      * files are missing fails startup — so on a cold boot the volume has to hold something before
      * compose starts the edge with that configuration. This writes it. It is a placeholder in the
      * only sense that matters: browsers reject it, and the real PEMs land in the same two filenames
-     * when {@code quarkus tls lets-encrypt issue-certificate} runs, after which the TLS registry
-     * reloads within the reload period.
+     * later in this same run — the {@code edge-acme} phase orders them once the zone answers — after
+     * which the TLS registry reloads. It is also what the edge keeps when that order does not go
+     * through, which is why the placeholder is still written on every path rather than only on the
+     * paths that end without a certificate.
      * <p>
      * <b>Skipped whenever a certificate is already there</b>, and that check is not an optimisation:
      * overwriting would replace a REAL certificate with a self-signed one, on a running public
@@ -1845,39 +1850,353 @@ public class SeedPhases {
     }
 
     /**
-     * <b>The zone row, and nothing else.</b> A zone is what makes the nameserver answer for a name at
-     * all: without one every query for the domain is REFUSED, whatever records exist.
+     * One A record of the zone: the name as the dns service stores it, and the address it answers.
      * <p>
-     * <b>No records are created, and that is not an omission.</b> An A record's value is this host's
-     * PUBLIC address, which this program has no way to learn — it runs in a container behind a NAT it
-     * cannot see past, and guessing would publish a name that resolves to a private address. So the
-     * records and the registrar's delegation are the operator's two steps, and the closing report
-     * says so.
+     * The name is RELATIVE to the apex and one of that service's six legal shapes — {@code @},
+     * {@code <label>}, {@code <label>.<label>}, {@code *}, {@code *.<label>}, {@code *.*}. An fqdn
+     * is refused with a 400, so nothing here ever spells the domain into a record name.
+     */
+    public record ZoneRecord(String name, String value, String why) {
+    }
+
+    /**
+     * <b>Every name this platform answers for, as four A records.</b> Derived from the shapes the
+     * edge routes by rather than from a list of today's environments and applications, which is what
+     * makes it a set that never needs revisiting.
      * <p>
-     * Idempotent: 201 is this call creating it, 409 is the service saying it or an overlapping zone is
-     * already there — which is a rerun, and the message names the zone it overlapped. No token: the
-     * write guard is {@code qits.dns.token}, blank on this platform, and the service is reachable only
-     * from qits-net.
+     * The edge reads at most the first two labels of a Host header: {@code <env>.<domain>} is an
+     * environment's gateway, {@code <app>.<env>.<domain>} is one of its byte-plane vhosts (registry,
+     * mirror, githost today), and everything else — the apex included — falls through to the default
+     * environment's gateway. So the durable answer is a wildcard per DEPTH, not a record per name:
+     * <ul>
+     * <li>{@code @} — the apex, and it is not decoration. A wildcard never matches the apex in this
+     *     service (the resolver's candidate list for an empty remainder is {@code @} alone), and the
+     *     apex is the address a person types, so without this record the front door has no answer.
+     * <li>{@code *} — every one-label name: {@code <env>.<domain>} for every environment there will
+     *     ever be, and anything else at that depth.
+     * <li>{@code *.*} — every two-label name: {@code <app>.<env>.<domain>} for every application the
+     *     edge gains a vhost for. Adding an environment or an app is then a deploy and no dns step,
+     *     which is the whole reason this is a wildcard.
+     * <li>{@code ns1} — the nameserver's own address, and the one explicit name. The wildcard above
+     *     would already answer it; it is written out anyway because the GLUE record at the registrar
+     *     names exactly this host, and the one name whose resolution the delegation itself depends on
+     *     should not rest on a wildcard somebody may later narrow.
+     * </ul>
+     * Every value is the same address, because every one of these names is this one host: the edge
+     * is a single front door and the routing is by Host header behind it.
+     * <p>
+     * Depth three and beyond is deliberately left to answer NXDOMAIN — the resolver stops looking
+     * there — and no shape this platform serves is that deep.
+     */
+    public static List<ZoneRecord> zoneRecords(String domain, String publicIp) {
+        return List.of(
+                new ZoneRecord("@", publicIp, "the apex — the browser door, and no wildcard covers it"),
+                new ZoneRecord(DomainName.nsLabel(domain), publicIp,
+                        "the nameserver the delegation's glue points at"),
+                new ZoneRecord("*", publicIp, "every <env>." + domain + " gateway"),
+                new ZoneRecord("*.*", publicIp, "every <app>.<env>." + domain + " vhost"));
+    }
+
+    /**
+     * <b>The zone row AND the records that make it answer.</b> A zone is what makes the nameserver
+     * answer for a name at all — without one every query for the domain is REFUSED, whatever records
+     * exist — and records are what it answers WITH.
+     * <p>
+     * <b>Why the records are written here rather than left to the operator.</b> The delegation is
+     * made once at the registrar, {@code NS <domain> -> ns1.<domain>} with a glue A record, and from
+     * the moment it takes, every name under the domain is asked of THIS nameserver. The apex
+     * included — and a registrar has no way to hold an A record on the platform's behalf. So a zone
+     * with no records is not a half-finished configuration, it is a domain that resolves to nothing;
+     * the split this used to leave the operator was wrong in practice. What the run cannot know it
+     * is TOLD: {@code QITS_PUBLIC_IP}, mandatory beside the domain and checked on the host half.
+     * <p>
+     * <b>Idempotent in both halves, and by the API's own verbs.</b> The zone is 201 on a first run
+     * and 409 on a rerun — which then reads the id back off the zone list, because a rerun still has
+     * records to write. The records go through {@code PUT .../records}, which REPLACES the value set
+     * of one {@code (name, type)} pair and answers 200 whether it changed anything or not: a record
+     * already holding the right address is left holding it, and one holding a stale address — a host
+     * that moved — is corrected without anybody deleting a row. POSTing them instead would 409 on
+     * every rerun and could never fix a wrong value.
+     * <p>
+     * No token: the write guard is {@code qits.dns.token}, blank on this platform, and the service is
+     * reachable only from qits-net.
      */
     public Phase dnsZone(String domain) {
-        return new Phase("dns-zone", "create the zone " + domain + " in qits-platform-dns", ctx -> {
-            String url = boot.config.dnsUrl() + "/api/zones";
-            ctx.status("POST " + url + " " + domain);
+        return new Phase("dns-zone",
+                "create the zone " + domain + " in qits-platform-dns and write its records", ctx -> {
+            // Checked on the host half already, and re-read rather than passed down: the phase list
+            // is built from the domain alone, and a second parameter threaded through it would be a
+            // second place for the pair to come apart.
+            String publicIp = PublicIp.of(boot.config).orElseThrow(() -> new IllegalStateException(
+                    "the dns-zone phase is in the plan with no QITS_PUBLIC_IP, which the host half "
+                            + "refuses — this is a bug in the plan, not a configuration mistake"));
+            String zones = boot.config.dnsUrl() + "/api/zones";
+            ctx.status("POST " + zones + " " + domain);
             Http.Response response =
-                    boot.http.postJson(url, Json.object("fqdn", domain), Map.of());
+                    boot.http.postJson(zones, Json.object("fqdn", domain), Map.of());
+            String zoneId;
             if (response.status() == 201) {
+                zoneId = Json.text(Json.parse(response.body()), "id");
                 ctx.log("  zone " + domain + " created");
             } else if (response.status() == 409) {
                 ctx.log("  zone " + domain + " is already there: " + response.body());
+                zoneId = existingZoneId(zones, domain);
             } else {
                 throw new IllegalStateException("creating the zone " + domain + " answered "
                         + response.describe());
             }
-            ctx.log("  no records seeded: their values are this host's PUBLIC address, which this "
-                    + "run cannot know");
-            ctx.note(domain);
+            if (zoneId.isBlank()) {
+                throw new IllegalStateException("qits-platform-dns gave no id for the zone " + domain
+                        + ", so its records cannot be written");
+            }
+            String records = zones + "/" + zoneId + "/records";
+            for (ZoneRecord record : zoneRecords(domain, publicIp)) {
+                ctx.status("PUT " + records + " " + record.name() + " A " + record.value());
+                // ttl null on purpose: the service's own qits.dns.ttl-seconds is the one authority
+                // for it, and a number repeated here would be a second one to keep in step.
+                Http.Response written = boot.http.putJson(records, Json.object(
+                        "name", record.name(),
+                        "type", "A",
+                        "values", Json.verbatim("[" + Json.quote(record.value()) + "]"),
+                        "ttl", Json.verbatim("null")), Map.of());
+                if (!written.ok()) {
+                    throw new IllegalStateException("writing the record " + record.name() + " A "
+                            + record.value() + " into " + domain + " answered "
+                            + written.describe());
+                }
+                ctx.log("  " + record.name() + " A " + record.value() + " — " + record.why());
+            }
+            ctx.note(domain + " + " + zoneRecords(domain, publicIp).size() + " records");
         });
     }
+
+    /**
+     * The id of a zone that is already there, off the zone list.
+     * <p>
+     * A rerun is the ordinary case and still has records to write, so the 409 cannot end the phase.
+     * The list is matched by fqdn rather than trusted to hold one row: the 409 is also what an
+     * OVERLAPPING zone answers — a parent or a child of this name — and that one is a real
+     * misconfiguration, so a name that is not in the list fails here rather than writing this
+     * platform's records into somebody else's zone.
+     */
+    private String existingZoneId(String zones, String domain) {
+        Http.Response listed = boot.http.get(zones, Map.of());
+        if (!listed.ok()) {
+            throw new IllegalStateException("reading the zone list to find " + domain + " answered "
+                    + listed.describe());
+        }
+        for (JsonNode zone : Json.parse(listed.body()).path("zones")) {
+            if (domain.equals(Json.text(zone, "fqdn"))) {
+                return Json.text(zone, "id");
+            }
+        }
+        throw new IllegalStateException("qits-platform-dns refused the zone " + domain
+                + " as a conflict but does not hold it, so the conflict is an OVERLAPPING zone — a "
+                + "parent or a child of this name. Its records are not this platform's to write. "
+                + "The zone list is " + zones);
+    }
+
+    /**
+     * <b>The real certificate, ordered from Let's Encrypt in this run.</b> With a domain set, this is
+     * what turns the {@code edge-cert} phase's self-signed placeholder into something a browser
+     * accepts — automatically, because a bootstrap that leaves a command for a person to paste is a
+     * bootstrap that has not finished.
+     * <p>
+     * <b>Who does what, because it is not obvious.</b> qits-platform-edge is NOT an ACME client. The
+     * Quarkus TLS extension gives it three routes and one slot: {@code /.well-known/acme-challenge/}
+     * on the main listener, which answers whatever token the slot holds for ANY Host — it wins over
+     * the proxy, which is what makes this work for a vhost as much as for the apex — and, on the
+     * unpublished management port, a way to fill that slot and a way to re-read the certificate
+     * files. The protocol itself — the account, the order, the key, the CSR, the download — belongs
+     * entirely to the issuer. So this phase IS the ACME client.
+     * <p>
+     * <b>It is a transient helper container, and that is the cheap end of a real choice.</b> The
+     * alternative was an ACME library inside this binary: a JWS signer, a nonce loop, a CSR builder
+     * and the native-image registrations they need, for something that runs once per certificate.
+     * certbot is the reference client, it takes a hook for exactly the "you serve the challenge, I
+     * run the protocol" split this edge is built around, and the container is gone the moment it
+     * exits — nothing standing is added to the platform. It is the same shape as the placeholder
+     * phase above, which already writes to this volume from a throwaway container.
+     * <p>
+     * <b>ONE name: the apex.</b> The slot holds a single challenge and refuses a second with a 400,
+     * and certbot answers every name of a multi-name order before the CA validates any of them — so
+     * a SAN certificate over {@code <env>.<domain>} and the app vhosts cannot be ordered through
+     * this endpoint at all. The apex is the name that matters: it is {@code publicOrigin}, the
+     * browser's door and the passkey's relying party. Covering the rest wants a wildcard, a wildcard
+     * wants DNS-01, and DNS-01 wants a TXT record — which qits-platform-dns has no type for yet.
+     * That is the next step, and it is a change to the nameserver rather than to this phase.
+     * <p>
+     * <b>A failure warns and the boot goes on</b>, exactly as the register token's mint does. The
+     * commonest reason is the delegation: a zone the world has not been pointed at yet answers
+     * nothing, and the HTTP-01 challenge is fetched over precisely that name. It fixes itself in
+     * minutes to hours, this program can neither hurry it nor tell it from a real misconfiguration,
+     * and nothing is lost — the edge keeps the placeholder, the report prints the retry, and a rerun
+     * asks again.
+     * <p>
+     * <b>Idempotent by reading the volume rather than by remembering.</b> The certificate that is
+     * there names its own issuer: a placeholder is self-signed under the domain, a staging one says
+     * STAGING, a real one names Let's Encrypt. A certificate that already matches what was asked for
+     * and is not near expiry is left alone, and <b>a production certificate is never replaced by a
+     * staging one</b> — a rerun that forgot to carry the mode must not take a working site down.
+     */
+    public Phase edgeCertificate(String domain) {
+        return new Phase("edge-acme", "order the Let's Encrypt certificate for " + domain, ctx -> {
+            Acme.Mode mode = Acme.mode(boot.config);
+            if (mode == Acme.Mode.OFF) {
+                ctx.skip("QITS_ACME_MODE=off — the edge keeps the placeholder certificate");
+            }
+            String email = Acme.email(boot.config, domain);
+            // certbot's own state: the ACME account key and the certificate lineage. On a volume so
+            // a rerun renews rather than registering a second account every boot, and so certbot's
+            // own "not yet due for renewal" is available as a second line of idempotency behind the
+            // one this phase makes for itself.
+            boot.docker.ensureVolume(ACME_STATE_VOLUME, ctx::log);
+            ctx.status("certbot certonly --manual, " + mode.word() + ", for " + domain);
+            ProcessResult result = boot.docker.run(Cmd.of(List.of(
+                    "docker", "run", "--rm",
+                    // The management port is on qits-net and nowhere else, and so is this container.
+                    "--network", Boot.NETWORK,
+                    "-v", "qits-edge-letsencrypt:/cert",
+                    "-v", ACME_STATE_VOLUME + ":/acme",
+                    "-e", "MODE=" + mode.word(),
+                    "-e", "DIRECTORY=" + mode.directory(),
+                    "-e", "DOMAIN=" + domain,
+                    "-e", "EMAIL=" + email,
+                    "-e", "EDGE_URL=" + boot.config.edgeLetsEncryptUrl(),
+                    "--entrypoint", "sh", "alpine/git", "-c", ACME_SCRIPT)), ctx::log);
+            if (!result.ok()) {
+                ctx.warn("no certificate for " + domain + " (exit " + result.exitCode() + "). The "
+                        + "edge keeps its PLACEHOLDER certificate and browsers reject it. The usual "
+                        + "reason is the delegation: until the registrar's NS and glue records have "
+                        + "propagated, the HTTP-01 challenge cannot be fetched over " + domain
+                        + " — and port 80 has to reach this host from the internet too. Nothing is "
+                        + "lost; a rerun asks again, and the closing report prints the command to "
+                        + "do it by hand.");
+                return;
+            }
+            // The skip is decided in the script's first lines and it exits there, so the captured
+            // head holds it whole — no need to reach into the tail for it.
+            String output = result.out();
+            if (output.contains(SKIPPED)) {
+                // Whatever is on the volume is already what was asked for, so the reload below would
+                // be a no-op on files nothing changed.
+                boot.state.certificate = output.contains("production") ? "production" : mode.word();
+                ctx.note("kept the " + boot.state.certificate + " certificate");
+                return;
+            }
+            boot.state.certificate = mode.word();
+            // The files are in place; this is what makes them LIVE now rather than within the hour.
+            // QUARKUS_TLS_RELOAD_PERIOD is 1h, so a reload that fails costs a wait and not a
+            // certificate — which is why it warns in place rather than undoing the phase.
+            String certs = boot.config.edgeLetsEncryptUrl() + "/certs";
+            ctx.status("POST " + certs);
+            Http.Response reloaded = boot.http.postJson(certs, "", Map.of());
+            if (reloaded.ok()) {
+                ctx.log("  the edge reloaded its certificate");
+            } else {
+                ctx.log("  the reload answered " + reloaded.describe() + " — the certificate is on "
+                        + "the volume and the TLS registry re-reads it within the hour anyway");
+            }
+            ctx.note(mode.word() + " certificate issued");
+        });
+    }
+
+    /** certbot's config, work and log directories, and with them the ACME account key. */
+    static final String ACME_STATE_VOLUME = "qits-edge-acme";
+
+    /** What the script prints when it decided the volume already holds the right certificate. */
+    static final String SKIPPED = "qits-acme: skipped";
+
+    /**
+     * The whole ACME run, in a throwaway container: decide whether anything is needed, write the two
+     * hooks, order the certificate, and put the PEMs where the edge's keystore names them.
+     * <p>
+     * <b>The hooks are the point of the whole design.</b> certbot runs the protocol and, for each
+     * authorization, hands the token and the key authorization to the auth hook — which does the one
+     * thing this platform needs: fills the edge's challenge slot over the management port. The
+     * cleanup hook empties it. Neither ever touches port 80: the edge is already listening there and
+     * already answers the challenge route.
+     * <p>
+     * <b>The slot is cleared before the order starts</b>, because it holds one challenge and answers
+     * 400 to a second. A run killed between filling it and cleaning it up would otherwise block
+     * every run after it, with a message about a challenge already being set that says nothing about
+     * why.
+     * <p>
+     * <b>The lineage is named per MODE</b> — the staging and the production certificates are two
+     * separate certbot lineages — so a flip from one to the other is a fresh order rather than a
+     * renewal against a different ACME server, which certbot refuses without being told twice.
+     * <p>
+     * The ownership is not decoration: the edge runs as uid 1001 and reads these two files at
+     * startup and at every reload. A key it cannot read is a reload that fails and a certificate
+     * nobody sees.
+     */
+    static final String ACME_SCRIPT = """
+            set -eu
+            apk add --no-cache openssl certbot curl >/dev/null 2>&1
+
+            # What is on the volume decides whether anything happens at all, and the certificate
+            # says for itself what it is: a placeholder is self-signed under the domain, a staging
+            # certificate names a STAGING issuer, a real one names Let's Encrypt.
+            have=none
+            if [ -f /cert/lets-encrypt.crt ]; then
+              issuer=$(openssl x509 -in /cert/lets-encrypt.crt -noout -issuer 2>/dev/null || echo "")
+              case "$issuer" in
+                *STAGING*|*Staging*|*staging*) have=staging ;;
+                *"Let's Encrypt"*|*"Lets Encrypt"*) have=production ;;
+                *) have=placeholder ;;
+              esac
+              # Thirty days, which is the window Let's Encrypt itself asks renewals to happen in.
+              if [ "$have" != placeholder ] \\
+                  && ! openssl x509 -in /cert/lets-encrypt.crt -noout -checkend 2592000 \\
+                       >/dev/null 2>&1; then
+                have="$have-expiring"
+              fi
+            fi
+            echo "on the volume now: $have"
+
+            case "$have" in
+              production)
+                # Never replaced by a staging certificate: a rerun that forgot to carry the mode
+                # must not take a working site down.
+                echo "qits-acme: skipped — a production certificate is live and not near expiry"
+                exit 0 ;;
+              staging)
+                if [ "$MODE" = staging ]; then
+                  echo "qits-acme: skipped — a staging certificate is live and not near expiry"
+                  exit 0
+                fi ;;
+            esac
+
+            cat >/tmp/qits-acme-auth <<'HOOK'
+            #!/bin/sh
+            set -eu
+            curl -fsS -G "$EDGE_URL/challenge" \\
+              --data-urlencode "challenge-resource=$CERTBOT_TOKEN" \\
+              --data-urlencode "challenge-content=$CERTBOT_VALIDATION" >/dev/null
+            HOOK
+            cat >/tmp/qits-acme-clean <<'HOOK'
+            #!/bin/sh
+            curl -fsS -X DELETE "$EDGE_URL/challenge" >/dev/null 2>&1 || true
+            HOOK
+            chmod +x /tmp/qits-acme-auth /tmp/qits-acme-clean
+
+            # One slot, and a second challenge is a 400. Clear whatever a killed run left behind.
+            curl -fsS -X DELETE "$EDGE_URL/challenge" >/dev/null 2>&1 || true
+
+            certbot certonly --manual --preferred-challenges http \\
+              --manual-auth-hook /tmp/qits-acme-auth \\
+              --manual-cleanup-hook /tmp/qits-acme-clean \\
+              --server "$DIRECTORY" --email "$EMAIL" --agree-tos --non-interactive \\
+              --config-dir /acme --work-dir /acme/work --logs-dir /acme/logs \\
+              --cert-name "qits-edge-$MODE" --keep-until-expiring -d "$DOMAIN"
+
+            cp "/acme/live/qits-edge-$MODE/fullchain.pem" /cert/lets-encrypt.crt
+            cp "/acme/live/qits-edge-$MODE/privkey.pem" /cert/lets-encrypt.key
+            chown 1001:0 /cert/lets-encrypt.crt /cert/lets-encrypt.key
+            chmod 644 /cert/lets-encrypt.crt
+            chmod 640 /cert/lets-encrypt.key
+            echo "qits-acme: issued a $MODE certificate for $DOMAIN"
+            """;
 
     /** The values both generated files are filled with. */
     Map<String, String> tokens() {

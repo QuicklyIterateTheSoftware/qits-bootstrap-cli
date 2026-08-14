@@ -1,8 +1,10 @@
 package eu.wohlben.qits.cli.bootstrap;
 
+import eu.wohlben.qits.cli.bootstrap.config.Acme;
 import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
 import eu.wohlben.qits.cli.bootstrap.config.DomainName;
 import eu.wohlben.qits.cli.bootstrap.config.OverridableConfig;
+import eu.wohlben.qits.cli.bootstrap.config.PublicIp;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseEngine;
 import eu.wohlben.qits.cli.bootstrap.engine.RunResult;
@@ -94,10 +96,37 @@ public class BootstrapCommand implements Callable<Integer> {
      * qits-platform-dns runs with no zones and the edge stays on plain HTTP.
      */
     @CommandLine.Option(names = "--domain", paramLabel = "<domain>",
-            description = "The domain to serve: the dns zone, its ns1/hostmaster identity and the "
-                    + "name the edge's certificate is issued for. Unset = no public names "
-                    + "(QITS_DOMAIN).")
+            description = "The domain to serve: the dns zone and its records, the ns1/hostmaster "
+                    + "identity and the name the edge's certificate is issued for. Unset = no "
+                    + "public names (QITS_DOMAIN).")
     String domain;
+
+    /**
+     * This host's public address, and <b>mandatory with {@link #domain}</b>: it is the data of every
+     * A record the zone is filled with, and the same address the glue record at the registrar
+     * carries. The run cannot learn it — it is a container behind a NAT — and the person who made
+     * the delegation already knows it.
+     */
+    @CommandLine.Option(names = "--public-ip", paramLabel = "<ipv4>",
+            description = "This host's public IPv4 address. Mandatory with --domain: it is what "
+                    + "every A record in the zone answers, and what the registrar's glue record "
+                    + "points at (QITS_PUBLIC_IP).")
+    String publicIp;
+
+    /**
+     * Which Let's Encrypt directory the edge's certificate is ordered from, or {@code off} to keep
+     * the placeholder. Staging by default: the first order is the one most likely to meet a
+     * delegation the world has not seen yet, and a failure there costs nothing.
+     */
+    @CommandLine.Option(names = "--acme-mode", paramLabel = "<mode>",
+            description = "staging (default), production or off. Which Let's Encrypt directory the "
+                    + "edge's certificate is ordered from (QITS_ACME_MODE).")
+    String acmeMode;
+
+    @CommandLine.Option(names = "--acme-email", paramLabel = "<address>",
+            description = "The ACME account's contact address. Default: hostmaster@<domain>, the "
+                    + "role the zone's SOA already names (QITS_ACME_EMAIL).")
+    String acmeEmail;
 
     @Override
     public Integer call() throws Exception {
@@ -107,14 +136,21 @@ public class BootstrapCommand implements Callable<Integer> {
                 .shipMains(shipMains)
                 .platformEnv(platformEnv)
                 .domain(domain)
+                .publicIp(publicIp)
+                .acmeMode(acmeMode)
+                .acmeEmail(acmeEmail)
                 .tui(noTui ? Boolean.FALSE : null);
 
-        // BEFORE either half does anything, and on the host half too: a misspelled domain becomes a
-        // zone row and a certificate request for a name nobody owns, and neither is undone by
-        // rerunning with the spelling fixed. The message is the whole output — no stack trace, since
-        // there is no bug here to report.
+        // BEFORE either half does anything, and on the host half too: every one of these values
+        // LEAVES this machine — into a zone a resolver on the internet reads back, and into a
+        // certificate request to Let's Encrypt — and none of them is undone by rerunning with the
+        // spelling fixed. The pair rule is checked in the same breath: a domain with no address is a
+        // zone that resolves to nothing, and it is far cheaper to say so here than four hours in.
+        // The message is the whole output — no stack trace, since there is no bug here to report.
         try {
             DomainName.of(effective);
+            PublicIp.of(effective);
+            Acme.mode(effective);
         } catch (IllegalArgumentException e) {
             System.err.println(e.getMessage());
             return 2;

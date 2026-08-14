@@ -47,6 +47,19 @@ public final class DomainName {
         return "ns1." + domain;
     }
 
+    /**
+     * The same nameserver, spelled the way a RECORD in its own zone is: relative to the apex.
+     * <p>
+     * qits-platform-dns stores record names relative and refuses an fqdn outright — a name of three
+     * labels is not one of the six shapes it takes — so the zone's own A record for the nameserver
+     * needs this half of {@link #nsName}. Derived by subtraction rather than written out a second
+     * time: the two spellings are of one name, and a copy is a copy that can be edited alone.
+     */
+    public static String nsLabel(String domain) {
+        String name = nsName(domain);
+        return name.substring(0, name.length() - domain.length() - 1);
+    }
+
     /** The SOA's rname, as a hostname. */
     public static String hostmaster(String domain) {
         return "hostmaster." + domain;
