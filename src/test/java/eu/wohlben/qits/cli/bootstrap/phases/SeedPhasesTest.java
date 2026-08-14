@@ -1,6 +1,7 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
 import eu.wohlben.qits.cli.bootstrap.config.TestConfig;
+import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -9,6 +10,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
@@ -191,6 +193,54 @@ class SeedPhasesTest {
         assertThat(SeedPhases.bootIdentity(true, "ci", TAGS)).isEmpty();
         assertThat(SeedPhases.bootIdentity(true, "eventstream", TAGS)).isEmpty();
         assertThat(SeedPhases.bootIdentity(true, "oci", TAGS)).isEmpty();
+    }
+
+    // --- the pullers' docker credentials -----------------------------------------------------------
+
+    /**
+     * The docker CLI's own file: four fixed keys around one base64 of {@code <id>:<secret>}, which
+     * is the same document {@code docker login} writes. The registry host is the KEY inside it —
+     * docker matches the credential by the name it is dialling — so a file keyed by anything but
+     * the vhost the deployer and the orchestrator pull from is a credential never offered.
+     */
+    @Test
+    void aPullersConfigJsonIsWhatDockerLoginWouldHaveWritten() {
+        String json = SeedPhases.dockerConfigJson(
+                "registry.prod.localhost:8080", "prod-qits-deployments", "s3cr3t");
+
+        String auth = Base64.getEncoder().encodeToString(
+                "prod-qits-deployments:s3cr3t".getBytes(StandardCharsets.UTF_8));
+        assertThat(json).isEqualTo(
+                "{\"auths\":{\"registry.prod.localhost:8080\":{\"auth\":\"" + auth + "\"}}}\n");
+        // The raw secret is not in the file: what travels is the base64, which is an encoding and
+        // not protection — and that is exactly why the write masks both.
+        assertThat(json).doesNotContain("s3cr3t");
+    }
+
+    /**
+     * <b>Both halves of the credential are masked, and the second is not covered by the first.</b>
+     * The base64 does not contain the secret as a substring, so a mask on the secret alone would
+     * leave the whole credential on the screen and in the run log in one token.
+     */
+    @Test
+    void theWriteHidesTheSecretAndTheBase64OfIt() {
+        String json = SeedPhases.dockerConfigJson(
+                "registry.prod.localhost:8080", "prod-qits-containers", "s3cr3t");
+        Cmd write = SeedPhases.dockerConfigWrite(
+                "qits-containers-config", json, "prod-qits-containers", "s3cr3t");
+
+        assertThat(write.maskText(json + " s3cr3t")).doesNotContain("s3cr3t")
+                .doesNotContain(Base64.getEncoder().encodeToString(
+                        "prod-qits-containers:s3cr3t".getBytes(StandardCharsets.UTF_8)));
+        // The file lands on the volume named, under the one name docker looks for, owned by the
+        // image's uid and readable by nobody else on that volume.
+        assertThat(write.command()).contains("qits-containers-config:/cfg");
+        assertThat(String.join(" ", write.command()))
+                .contains("cat > /cfg/config.json")
+                .contains("chown 1001:0 /cfg/config.json")
+                .contains("chmod 600 /cfg/config.json");
+        // The document travels on stdin: a credential on a command line is a credential in ps.
+        assertThat(write.stdinText()).isEqualTo(json);
     }
 
     @Test

@@ -1379,6 +1379,28 @@ public class PipelinePhases {
             report.add("           A *.localhost name resolves to the loopback address by itself "
                     + "(systemd-resolved");
             report.add("           synthesises it) — no hosts-file entry to make.");
+            report.add("login:     pulls are anonymous; a PUSH needs a credential, and a person's "
+                    + "is COMMISSIONED —");
+            report.add("           the idp issues one per context, so no static pair is handed "
+                    + "out. Ask for yours");
+            report.add("           from a container, because the idp answers on qits-net and has "
+                    + "no gateway route:");
+            report.add("             docker run --rm --network qits-net curlimages/curl -s "
+                    + "-u <client>:<secret> \\");
+            report.add("               -H 'Content-Type: application/json' \\");
+            report.add("               -d '{\"contextKind\":\"workstation\",\"contextId\":\""
+                    + "<hostname>\"}' \\");
+            report.add("               " + boot.config.idpIssuer() + "/api/clients");
+            report.add("           <client>:<secret> is a service client out of "
+                    + ".qits-bootstrap.env, and a commissioned");
+            report.add("           credential inherits ITS access — so name "
+                    + PlatformModel.wireAlias("artifacts", env)
+                    + ", the one that may write.");
+            report.add("           The answer's clientId and secret are the credential:");
+            report.add("             docker login " + boot.config.registryVhost()
+                    + " -u <clientId> -p <secret>");
+            report.add("           Hand it back when the workstation is done with it: DELETE "
+                    + "/idp/api/clients/<clientId>.");
             report.add("ipv6:      ONE STANDING HOST RULE, and without it every vhost client "
                     + "HANGS rather than fails:");
             report.add("             sudo ip6tables -I INPUT -i lo -p tcp --dport "

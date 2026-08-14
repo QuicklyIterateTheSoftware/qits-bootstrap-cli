@@ -440,38 +440,120 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>WHAT A PUBLISH STEP PUSHES WITH, in both files.</b> The registry is behind the edge, which
-     * answers a WRITE with a 401 Bearer challenge, so a step container without a credential fails
-     * the first publish of a boot on a push that used to need nothing. ci writes a DOCKER_CONFIG
-     * only when it holds BOTH halves, which is why the pair is asserted together.
-     * <p>
-     * The secret is the ARTIFACTS client's own, and it is the same value the idp block is handed
-     * for that client — one generated secret, read twice. A second one would be a client that
-     * authenticates against half of its own configuration.
+     * <b>ci HOLDS NO STATIC REGISTRY CREDENTIAL, in either file.</b> The pair this generator
+     * carried for half a day lent the store's own client to every publish step, so one leaked step
+     * secret was the identity that may write to every registry on the platform. ci commissions a
+     * credential from the idp for the run instead, with its own client id and secret, and nothing
+     * takes the pair's place here.
      */
     @Test
-    void ciPushesToTheRegistryAsTheStoresOwnClient() {
+    void noStaticRegistryCredentialReachesCi() {
         String compose = ComposeTemplate.compose(tokens());
-        String ci = serviceBlock(compose, ENV + "-qits-ci");
-        String idp = serviceBlock(compose, "qits-platform-idp");
-        String secret = "secret-prod-qits-artifacts";
 
-        assertThat(ci).contains("QITS_CI_REGISTRY_AUTH_CLIENT_ID: prod-qits-artifacts")
-                .contains("QITS_CI_REGISTRY_AUTH_CLIENT_SECRET: \"" + secret + "\"");
-        assertThat(extras("qits-ci"))
-                .contains("env.QITS_CI_REGISTRY_AUTH_CLIENT_ID=prod-qits-artifacts")
-                .contains("env.QITS_CI_REGISTRY_AUTH_CLIENT_SECRET=" + secret);
-        // The same secret the idp is told to expect, in both files: one value, never minted twice.
-        assertThat(idp).contains(
-                "QITS_IDP_CLIENT_PROD_QITS_ARTIFACTS_SECRET: \"" + secret + "\"");
-        assertThat(extras("qits-platform-idp")).contains(
-                "env.QITS_IDP_CLIENT_PROD_QITS_ARTIFACTS_SECRET=" + secret);
-        // The client id is a wire alias, so it moves with the environment name.
-        Map<String, String> other = tokens();
-        other.put("ENV_NAME", "preprod");
-        other.put("ENV_KEY", "PREPROD");
-        assertThat(ComposeTemplate.extras(other))
-                .contains("env.QITS_CI_REGISTRY_AUTH_CLIENT_ID=preprod-qits-artifacts");
+        assertThat(compose).doesNotContain("QITS_CI_REGISTRY_AUTH_CLIENT_ID")
+                .doesNotContain("QITS_CI_REGISTRY_AUTH_CLIENT_SECRET");
+        assertThat(ComposeTemplate.extras(tokens()).lines()
+                .filter(line -> line.startsWith(EXTRAS))
+                .filter(line -> line.contains("QITS_CI_REGISTRY_AUTH"))
+                .toList()).isEmpty();
+        // The artifacts secret is still in both files — the idp is told what it is — and it is
+        // ci's block that must not carry it.
+        assertThat(serviceBlock(compose, ENV + "-qits-ci"))
+                .doesNotContain("secret-prod-qits-artifacts");
+        assertThat(extras("qits-ci")).doesNotContain("secret-prod-qits-artifacts");
+    }
+
+    /**
+     * <b>THE TWO PULLERS HOLD A CLIENT NOW, and each holds its OWN.</b> The deployer and the
+     * orchestrator both shell {@code docker pull}, and after the flip a pull is authenticated with
+     * a client id and a secret out of a config.json. A borrowed identity would make a refused pull
+     * unattributable, so each gets a credential of its own — and the same full audience list every
+     * other client gets, because a list is restated in full or it is not there.
+     */
+    @Test
+    void thePullersAreIdpClientsWithTheirOwnSecrets() {
+        String compose = ComposeTemplate.compose(tokens());
+        String idp = serviceBlock(compose, "qits-platform-idp");
+        String idpExtras = extras("qits-platform-idp");
+        String audiences = PlatformModel.idpAudiences(ENV);
+
+        assertThat(idp).contains("QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_SECRET: "
+                        + "\"secret-prod-qits-deployments\"")
+                .contains("QITS_IDP_CLIENT_PROD_QITS_CONTAINERS_SECRET: "
+                        + "\"secret-prod-qits-containers\"")
+                .contains("QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_AUDIENCES: \"" + audiences + "\"")
+                .contains("QITS_IDP_CLIENT_PROD_QITS_CONTAINERS_AUDIENCES: \"" + audiences + "\"");
+        assertThat(idpExtras)
+                .contains("env.QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_SECRET="
+                        + "secret-prod-qits-deployments")
+                .contains("env.QITS_IDP_CLIENT_PROD_QITS_CONTAINERS_SECRET="
+                        + "secret-prod-qits-containers")
+                .contains("env.QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_AUDIENCES=" + audiences)
+                .contains("env.QITS_IDP_CLIENT_PROD_QITS_CONTAINERS_AUDIENCES=" + audiences);
+        // And both are on the list that says which clients exist: an id not on it is
+        // invalid_client, with nothing to say it was a typo.
+        assertThat(idp).contains("QITS_IDP_CLIENTS: \"" + String.join(",",
+                PlatformModel.idpClients(ENV)) + "\"");
+        assertThat(idpExtras).contains("env.QITS_IDP_CLIENTS="
+                + String.join(",", PlatformModel.idpClients(ENV)));
+        assertThat(PlatformModel.idpClients(ENV))
+                .contains("prod-qits-deployments", "prod-qits-containers");
+    }
+
+    /**
+     * <b>WHERE EACH PULLER'S DOCKER CREDENTIAL IS, in both files.</b> Neither container has a home,
+     * so the docker CLI reads no {@code ~/.docker/config.json} and every pull is anonymous unless
+     * {@code DOCKER_CONFIG} names a mounted path. The deployer's file goes beside its extras on the
+     * volume it already has; the orchestrator gets a volume that holds nothing else.
+     * <p>
+     * All of it is INERT while registry reads are anonymous, and it is written before the flip for
+     * that exact reason: gaining a credential must not be a redeploy of the two services that pull
+     * everything this platform runs.
+     */
+    @Test
+    void bothPullersAreGivenADockerConfigHome() {
+        String compose = ComposeTemplate.compose(tokens());
+        String deployer = serviceBlock(compose, ENV + "-qits-deployments");
+        String containers = serviceBlock(compose, ENV + "-qits-containers");
+
+        assertThat(deployer).contains("DOCKER_CONFIG: /work/config")
+                .contains("- qits-deployments-config:/work/config");
+        assertThat(containers).contains("DOCKER_CONFIG: /work/config")
+                .contains("- qits-containers-config:/work/config")
+                // The socket stays: it is the whole component.
+                .contains("- /var/run/docker.sock:/var/run/docker.sock");
+        // A mount needs a declaration, and the orchestrator's volume is new.
+        assertThat(compose).contains("  qits-containers-config:\n    name: qits-containers-config");
+
+        assertThat(extras("qits-deployments"))
+                .contains(".mounts[0]=volume:qits-deployments-config:/work/config")
+                .contains("env.DOCKER_CONFIG=/work/config");
+        assertThat(extras("qits-containers"))
+                .contains(".mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock")
+                .contains(".mounts[1]=volume:qits-containers-config:/work/config")
+                .contains("env.DOCKER_CONFIG=/work/config");
+    }
+
+    /**
+     * <b>THE FLIP IS OFF, in both files.</b> Everything the campaign wires ships inert: reads stay
+     * anonymous on the two registry names, and the deployer's {@code registry-auth} is left at its
+     * shipped false. Turning either on here would refuse every pull the other half cannot
+     * authenticate.
+     */
+    @Test
+    void theFlipStaysOff() {
+        String compose = ComposeTemplate.compose(tokens());
+        String edge = serviceBlock(compose, "qits-platform-edge");
+
+        assertThat(edge).contains("QITS_EDGE_AUTH_ANONYMOUS_READ_APPS: \"registry,mirror\"");
+        assertThat(ComposeTemplate.extras(tokens())).contains(
+                "qits.platform.deployments.extras.qits-platform-edge.env."
+                        + "QITS_EDGE_AUTH_ANONYMOUS_READ_APPS=registry,mirror");
+        // The deployer's key is its own default and this generator does not set it. A line here
+        // would be the flip, made by a file nobody reads before a boot.
+        assertThat(ComposeTemplate.extras(tokens()).lines()
+                .filter(line -> line.startsWith("qits.platform.deployments.registry-auth"))
+                .toList()).isEmpty();
     }
 
     /**

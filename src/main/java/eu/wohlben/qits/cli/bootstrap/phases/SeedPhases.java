@@ -26,6 +26,7 @@ import java.security.SecureRandom;
 import java.sql.Connection;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -1608,10 +1609,19 @@ public class SeedPhases {
      * The deployer's per-application extras, as a config file on a named volume: quarkus reads
      * config/application.properties next to the binary, and a self-update's successor mounts the
      * same volume — which is the whole reason this is a file and not compose env.
+     * <p>
+     * <b>It writes the two PULLERS' docker credentials too</b>, and they are here rather than in a
+     * phase of their own because they are the same act: a file on a config volume that a container
+     * reads at a mount path. The deployer's config.json goes beside its extras on the volume it
+     * already has; qits-containers gets a volume that holds nothing else. Both are INERT while
+     * registry reads are anonymous — a pull succeeds whether or not a credential was offered — and
+     * both are written before the flip so that gaining one is a configuration change rather than a
+     * redeploy of the deployer and the orchestrator.
      */
     public Phase pdExtras() {
         return new Phase("pd-extras", "write the deployer's extras config volume", ctx -> {
             boot.docker.ensureVolume("qits-deployments-config", ctx::log);
+            boot.docker.ensureVolume("qits-containers-config", ctx::log);
             String properties = ComposeTemplate.extras(tokens());
             // What the volume held BEFORE this write, as a DIGEST rather than as text: the file
             // carries the push token and every client secret, and reading it back would put both
@@ -1658,10 +1668,72 @@ public class SeedPhases {
                     .map(l -> l.substring("qits.platform.deployments.extras.".length()).split("\\.")[0])
                     .distinct().count()
                     + " applications configured on the qits-deployments-config volume");
+            dockerConfig(ctx, "qits-deployments-config", "deployments");
+            dockerConfig(ctx, "qits-containers-config", "containers");
             if (!sha256(properties).equals(before)) {
                 restartSeedDeployer(ctx);
             }
         });
+    }
+
+    /**
+     * One puller's docker credential, as {@code config.json} on its config volume. The docker CLI
+     * these two shell out to reads a FILE named by {@code DOCKER_CONFIG}, which is what both
+     * generated files set on them — the containers run as uid 1001 with no home, so there is no
+     * other place the CLI would look.
+     * <p>
+     * <b>The identity is the puller's own idp client</b>, never a borrowed one: a pull the registry
+     * refuses has to name the service that was refused. The secret is the same generated value the
+     * idp's own block is handed for that client — one value, recorded once in
+     * {@code .qits-bootstrap.env}, read by both sides of one credential.
+     * <p>
+     * Rerun-safe by being a whole-file write, and not digested like the extras beside it: nothing
+     * restarts on a change, because the CLI opens this file per invocation rather than at boot.
+     */
+    private void dockerConfig(PhaseContext ctx, String volume, String app) {
+        String client = PlatformModel.wireAlias(app, boot.config.envName());
+        String secret = boot.state.secrets.getOrDefault(client, "");
+        Cmd write = dockerConfigWrite(volume,
+                dockerConfigJson(boot.config.registryVhost(), client, secret), client, secret);
+        Boot.must(boot.docker.run(write, ctx::log), "writing " + client + "'s config.json failed");
+        ctx.log("  " + client + " docker credential on the " + volume + " volume, for "
+                + boot.config.registryVhost() + " (inert while registry reads are anonymous)");
+    }
+
+    /**
+     * The write itself, and the two values it must never print. The secret is one; the BASE64 is
+     * the other and is not covered by the first — the raw secret is not a substring of it, so a
+     * mask on the secret alone would leave the whole credential on the screen in one token.
+     */
+    static Cmd dockerConfigWrite(String volume, String json, String clientId, String secret) {
+        return Cmd.of(List.of(
+                        "docker", "run", "--rm", "-i",
+                        "-v", volume + ":/cfg",
+                        "--entrypoint", "sh", "alpine/git",
+                        // 0600 and the image's own uid: a credential file is readable by the one
+                        // container that presents it and by nobody sharing the volume later.
+                        "-c", "cat > /cfg/config.json && chown 1001:0 /cfg/config.json "
+                                + "&& chmod 600 /cfg/config.json"))
+                .stdin(json)
+                .mask(secret)
+                .mask(dockerAuth(clientId, secret));
+    }
+
+    /**
+     * The docker CLI's own {@code config.json}: four fixed keys around one base64 of
+     * {@code <id>:<secret>}, the same bytes {@code docker login} would store. Hand-written, because
+     * base64 has no character JSON escapes and the only value that could need quoting is the
+     * registry host — a deployment fact, escaped here anyway.
+     */
+    static String dockerConfigJson(String registryHost, String clientId, String secret) {
+        String host = registryHost.replace("\\", "\\\\").replace("\"", "\\\"");
+        return "{\"auths\":{\"" + host + "\":{\"auth\":\"" + dockerAuth(clientId, secret)
+                + "\"}}}\n";
+    }
+
+    private static String dockerAuth(String clientId, String secret) {
+        return Base64.getEncoder()
+                .encodeToString((clientId + ":" + secret).getBytes(StandardCharsets.UTF_8));
     }
 
     /**

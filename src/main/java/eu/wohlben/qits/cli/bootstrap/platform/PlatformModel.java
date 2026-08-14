@@ -432,11 +432,8 @@ public final class PlatformModel {
      * ({@code qits.idp.client.<id>.secret}), so a client the deployment spells differently from
      * the token request is {@code invalid_client} with nothing in any log to say why.
      * <p>
-     * qits-deployments and qits-containers are deliberately NOT here — see
-     * {@link #RECEIVE_ONLY_APPS}. Neither mints anything, so neither needs a client or a secret,
-     * only the audience its callers may ask for. qits-cd is gone for the opposite reason to the
-     * one that kept it: the client ids all moved on 2026-08-08, so no id in this list is one a
-     * pre-rename platform would recognise anyway.
+     * qits-cd is gone for the opposite reason to the one that kept it: the client ids all moved on
+     * 2026-08-08, so no id in this list is one a pre-rename platform would recognise anyway.
      */
     public static List<String> idpClients(String envName) {
         return IDP_CLIENT_APPS.stream().map(app -> wireAlias(app, envName)).toList();
@@ -458,13 +455,23 @@ public final class PlatformModel {
      * qits-githost validates a push option rather than a token, and publishes on the bus, which
      * enforces no gate. A client neither of them would ever present is a secret to rotate for
      * nothing.
+     * <p>
+     * <b>qits-deployments and qits-containers joined on 2026-08-14, and they are the PULLERS.</b>
+     * Both were validate-only for as long as a registry read was anonymous; the flip makes a pull
+     * an authenticated request, and the thing that authenticates it is a docker {@code config.json}
+     * holding a client id and a secret. So each one needs a credential of its own — the identity in
+     * the file is the puller's, never a borrowed one, because a refused pull has to name the
+     * service that was refused. Neither has a quarkus-oidc-client extension and neither asks the
+     * idp for anything: the docker CLI performs the Bearer dance at the edge with these two values,
+     * which is why they get a client and no {@code QUARKUS_OIDC_CLIENT_*} env.
      */
     public static final List<String> IDP_CLIENT_APPS =
-            List.of("ci", "artifacts", "workspaces", "gateway", "projects");
+            List.of("ci", "artifacts", "workspaces", "gateway", "projects", "deployments",
+                    "containers");
 
     /**
      * The {@code aud} values the platform's clients may ask for: every client above plus the
-     * RECEIVE-ONLY applications below, which hold no client because they only validate. An audience
+     * RECEIVE-ONLY applications below, which are an audience without being a client. An audience
      * a client may not ask for is {@code invalid_target}, not a silent bare call — and the key
      * REPLACES the shipped list rather than extending it, so it is restated in full.
      */
@@ -475,18 +482,19 @@ public final class PlatformModel {
     }
 
     /**
-     * The applications that VALIDATE a bearer and mint none. They are an audience and not a client:
-     * a client is what a service needs to ask for a token, and neither of these ever asks.
+     * The applications that VALIDATE a bearer and hold no client of their own. They are an audience
+     * and nothing else, which is what this list adds to {@link #idpAudiences}: a caller refused
+     * {@code invalid_target} never reaches the service's own gate at all.
      * <p>
-     * qits-deployments has been one since the merge-back removed the oidc-client its ancestor
-     * needed. <b>qits-containers joined on 2026-08-11</b>, and it is the stricter case of the pair:
-     * every route of it is guarded, reads included, because a row says which containers another
-     * module has running. Both halves of that gate are this one line — the service validates tokens
-     * addressed to {@code <env>-qits-containers}, and its callers may ask the idp for exactly that
-     * audience. Without it the caller is refused {@code invalid_target} and the service's own gate
-     * never sees a token at all.
+     * <b>It is empty since 2026-08-14, and the seam stays.</b> qits-deployments and qits-containers
+     * were its two members, and both are clients now — not because either mints a token, but
+     * because each pulls images and a docker {@code config.json} is a client id and a secret. They
+     * still validate exactly as they did; an audience is now something they get for being clients.
+     * The list is kept because "validates and holds no credential" is a real shape for the next
+     * service that has it, and because an audience that is not derived from a client has nowhere
+     * else to be named.
      */
-    public static final List<String> RECEIVE_ONLY_APPS = List.of("deployments", "containers");
+    public static final List<String> RECEIVE_ONLY_APPS = List.of();
 
     /** The env-var spelling of a client id: uppercase, dashes as underscores. */
     public static String clientKey(String clientId) {

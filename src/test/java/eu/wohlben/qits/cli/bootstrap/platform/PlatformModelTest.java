@@ -318,19 +318,23 @@ class PlatformModelTest {
         assertThat(PlatformModel.DEPLOYABLES).containsSubsequence("containers", "ci");
     }
 
+    /**
+     * The deployer and the orchestrator are AUDIENCES and CLIENTS both, since 2026-08-14. They
+     * validate exactly as they always did — every route of the orchestrator is behind the machine
+     * gate, reads included — and each holds a credential now because each pulls images, and a
+     * docker config.json is a client id and a secret. Neither asks the idp for a token.
+     */
     @Test
-    void theReceiveOnlyServicesNeedNoIdpClientAndTheAudienceListGrantsThem() {
-        // Neither mints anything, so neither holds a client — only the audience its callers may ask
-        // for. An audience a caller may not ask for is invalid_target, and the service's own gate
-        // then never sees a token at all.
-        assertThat(PlatformModel.idpClients("prod")).doesNotContain("prod-qits-deployments");
-        assertThat(PlatformModel.idpAudiences("prod")).contains("prod-qits-deployments");
-        // The orchestrator, since 2026-08-11. It is the stricter case: EVERY route of it is behind
-        // the machine gate, reads included, so a caller with no grantable audience can do nothing
-        // at all.
-        assertThat(PlatformModel.idpClients("prod")).doesNotContain("prod-qits-containers");
-        assertThat(PlatformModel.idpAudiences("prod")).contains("prod-qits-containers");
-        assertThat(PlatformModel.RECEIVE_ONLY_APPS).containsExactly("deployments", "containers");
+    void thePullersValidateAndHoldACredentialOfTheirOwn() {
+        assertThat(PlatformModel.idpClients("prod"))
+                .contains("prod-qits-deployments", "prod-qits-containers");
+        assertThat(PlatformModel.idpAudiences("prod"))
+                .contains("prod-qits-deployments", "prod-qits-containers");
+        // Each name once. The audience list is derived from the clients now, and a duplicate would
+        // be a key that says the same thing twice to a service that replaces the shipped list.
+        assertThat(PlatformModel.idpAudiences("prod").split(",")).doesNotHaveDuplicates();
+        // Empty, and the seam is kept for the next service that validates without a credential.
+        assertThat(PlatformModel.RECEIVE_ONLY_APPS).isEmpty();
     }
 
     @Test
@@ -340,7 +344,8 @@ class PlatformModelTest {
         // joined for orchestration round 2: its agent containers start through qits-containers.
         assertThat(PlatformModel.idpClients("prod")).containsExactly(
                 "prod-qits-ci", "prod-qits-artifacts", "prod-qits-workspaces",
-                "prod-qits-gateway", "prod-qits-projects");
+                "prod-qits-gateway", "prod-qits-projects", "prod-qits-deployments",
+                "prod-qits-containers");
         assertThat(PlatformModel.idpAudiences("prod")).isEqualTo(
                 "prod-qits-ci,prod-qits-artifacts,prod-qits-workspaces,prod-qits-gateway,"
                         + "prod-qits-projects,prod-qits-deployments,prod-qits-containers");
@@ -348,7 +353,8 @@ class PlatformModelTest {
         // id in this list, and the byte-plane split made that service a tier's again.
         assertThat(PlatformModel.idpClients("preprod")).containsExactly(
                 "preprod-qits-ci", "preprod-qits-artifacts", "preprod-qits-workspaces",
-                "preprod-qits-gateway", "preprod-qits-projects");
+                "preprod-qits-gateway", "preprod-qits-projects", "preprod-qits-deployments",
+                "preprod-qits-containers");
         // The two new byte services hold no client at all: the mirror has no auth surface, and the
         // git host validates a push option rather than a token.
         assertThat(PlatformModel.idpClients("prod"))

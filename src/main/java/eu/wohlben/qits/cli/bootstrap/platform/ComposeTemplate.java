@@ -24,7 +24,7 @@ public final class ComposeTemplate {
     }
 
     public static String compose(Map<String, String> values) {
-        return Tokens.apply(COMPOSE, values);
+        return Tokens.apply(COMPOSE.concat(COMPOSE_REST), values);
     }
 
     /** The deployer's per-application extras — {@code qits.platform.deployments.extras.<app>.*}. */
@@ -181,9 +181,20 @@ public final class ComposeTemplate {
                 name: qits-workspaces-data
               qits-stt-data:
                 name: qits-stt-data
-              # The deployer's own config (config/application.properties, written by the bootstrap). A
-              # volume rather than env so a self-update's successor inherits it — env cannot nest these
-              # values.
+              # THE ORCHESTRATOR'S DOCKER CONFIG, and the whole volume is one file: the config.json
+              # its `docker pull` authenticates with, written by the bootstrap with this service's
+              # own idp client. A volume rather than env because the docker CLI reads a FILE under
+              # DOCKER_CONFIG, and a mount is what a cutover carries across.
+              #
+              # Inert while registry reads are anonymous. The flip makes it load-bearing, which is
+              # why it exists before the flip: a puller that has to be redeployed to gain a
+              # credential is a puller that is down for the length of the change.
+              qits-containers-config:
+                name: qits-containers-config
+              # The deployer's own config: config/application.properties AND the config.json its own
+              # pulls authenticate with, both written by the bootstrap. A volume rather than env so a
+              # self-update's successor inherits them — env cannot nest the extras, and the docker
+              # CLI reads a file.
               qits-deployments-config:
                 name: qits-deployments-config${LETSENCRYPT_VOLUME}
 
@@ -245,6 +256,17 @@ public final class ComposeTemplate {
                   # qits-projects mints since it starts its agent containers through
                   # qits-containers (orchestration round 2).
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_SECRET: "${IDP_SECRET_PROJECTS}"
+                  # THE TWO PULLERS, and neither of them mints a token. The deployer and the
+                  # orchestrator both shell `docker pull`, and the docker CLI authenticates with a
+                  # client id and a secret out of a config.json — so what they need from the idp is
+                  # a credential, not an oidc-client. Each holds its OWN: a refused pull has to name
+                  # the service that was refused, which a borrowed identity cannot do.
+                  #
+                  # INERT UNTIL THE FLIP. Registry reads are anonymous today, so nothing presents
+                  # either of these; the config.json files are written and mounted anyway, so the
+                  # flip is a configuration change rather than a redeploy of two services.
+                  QITS_IDP_CLIENT_${ENV_KEY}_QITS_DEPLOYMENTS_SECRET: "${IDP_SECRET_DEPLOYMENTS}"
+                  QITS_IDP_CLIENT_${ENV_KEY}_QITS_CONTAINERS_SECRET: "${IDP_SECRET_CONTAINERS}"
                   # The audiences each minting client may ask for. Restated in full, because the key replaces
                   # the shipped list rather than extending it — and an audience a client may not ask for is
                   # invalid_target, not a silent bare call. qits-ci is the one client that writes to the
@@ -258,6 +280,12 @@ public final class ComposeTemplate {
                   # shipped list rather than extending it.
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_AUDIENCES: "${IDP_AUDIENCES}"
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_AUDIENCES: "${IDP_AUDIENCES}"
+                  # The two pullers get the SAME full list, although a registry login asks for no
+                  # audience at all: the list a client may ask for costs nothing unused, and a
+                  # credential that is later used for anything else would otherwise be
+                  # invalid_target with nothing in any log to say which value was missing.
+                  QITS_IDP_CLIENT_${ENV_KEY}_QITS_DEPLOYMENTS_AUDIENCES: "${IDP_AUDIENCES}"
+                  QITS_IDP_CLIENT_${ENV_KEY}_QITS_CONTAINERS_AUDIENCES: "${IDP_AUDIENCES}"
                   # The one wildcard grant, and it is kept for a PERSON. qits-ci's manual trigger names
                   # no repository, so it demands them all — a token granted project=*. This bootstrap
                   # used to present one, for the release replays; they push the release tag now and
@@ -333,6 +361,21 @@ public final class ComposeTemplate {
                   # GET and HEAD, and every consumer of it is a machine that holds no credential
                   # yet — the deployer's first pull of a boot, a step container's base image. Every
                   # other method on those names, and every method on the git host, needs a bearer.
+                  #
+                  # THE FLIP, and this line is one of the three values it changes. Every puller on
+                  # this platform now holds a credential — the deployer and the orchestrator from
+                  # the config.json files this bootstrap writes, a ci step from the credential ci
+                  # commissions for its run — so the day reads stop being anonymous is a
+                  # configuration change and not a release:
+                  #
+                  #   QITS_EDGE_AUTH_ANONYMOUS_READ_APPS      registry,mirror  ->  empty
+                  #   qits.platform.deployments.registry-auth false            ->  true
+                  #   qits-ci                                 nothing changes — it commissions a
+                  #                                           credential per run either way.
+                  #
+                  # Both stay at the left-hand value here. Flipping one without the other is a
+                  # platform whose deployer cannot pull, or agents authenticating against a door
+                  # that never asks.
                   QITS_EDGE_APPS_REGISTRY_HOST_PATTERN: "{env}-qits-artifacts"
                   QITS_EDGE_APPS_MIRROR_HOST_PATTERN: "qits-platform-mirror"
                   QITS_EDGE_APPS_GITHOST_HOST_PATTERN: "{env}-qits-githost"
@@ -519,6 +562,19 @@ public final class ComposeTemplate {
                   # the edge lets through anonymously, so the deployer's first pull of a cold boot
                   # needs no credential.
                   QITS_ARTIFACTS_REGISTRY_HOST: registry.${ENV_NAME}.localhost:${PORT}
+                  # WHERE THE DOCKER CLI LOOKS FOR A CREDENTIAL. This container runs as uid 1001
+                  # with no home, so docker finds no ~/.docker/config.json and pulls anonymously —
+                  # which is right today and refused after the flip. The bootstrap writes
+                  # config.json onto the config volume below beside the extras, and this variable is
+                  # what makes the CLI read it. The identity in it is this service's own idp client,
+                  # ${ENV_NAME}-qits-deployments.
+                  #
+                  # INERT UNTIL THE FLIP: an anonymous read succeeds whether or not a credential was
+                  # offered. What the flip then needs is qits.platform.deployments.registry-auth
+                  # true — a key in the extras file, so one restart rather than a redeploy — which
+                  # also serialises this credential into each service spec so the swarm agent's own
+                  # pull carries it.
+                  DOCKER_CONFIG: /work/config
                   # Per-application extras live in the qits-deployments-config volume
                   # (config/application.properties, written by the bootstrap), NOT here: a self-update's
                   # successor must inherit them, and env cannot nest those values.
@@ -546,6 +602,18 @@ public final class ComposeTemplate {
                   restart_policy:
                     condition: any
                     delay: 5s
+            """;
+
+    /**
+     * The same file, continued. <b>The split is the class-file limit and nothing else</b>: a string
+     * constant cannot exceed 65535 UTF-8 bytes, and this template passed it on 2026-08-14 —
+     * "constant string too long", at the declaration rather than at the line that grew. The two
+     * halves are joined with {@code concat} rather than {@code +} because the compiler folds a
+     * concatenation of two constants back into one constant and refuses it again. Split at a
+     * service boundary so no block is cut in half; the head ends with the deployer, this begins
+     * with the blank line above the gateway's comment.
+     */
+    private static final String COMPOSE_REST = """
 
               # No ports. The gateway is behind the edge now, and an environment service of ${ENV_NAME}
               # rather than a platform one: it was only ever on the platform plane because it bound the
@@ -824,20 +892,13 @@ public final class ComposeTemplate {
                   # all. A PUSH is not a read, so it carries a bearer — anonymous stops at GET and
                   # HEAD.
                   QITS_ARTIFACTS_REGISTRY_HOST: registry.${ENV_NAME}.localhost:${PORT}
-                  # WHAT A PUBLISH STEP PUSHES WITH, and without it the first pipeline of a cold boot
-                  # fails: the edge answers a registry WRITE with a 401 Bearer challenge, docker
-                  # exchanges a client id and secret at the edge's /token, and a step container with no
-                  # credential has nothing to exchange. Set as a PAIR — ci writes a DOCKER_CONFIG for
-                  # its docker-enabled steps only when it holds both — and the credential is the
-                  # STORE'S OWN client, ${ENV_NAME}-qits-artifacts: the identity that may write to the
-                  # registry is the registry's, and ci borrows it the way this bootstrap borrows
-                  # identities for the calls it makes by hand.
-                  #
-                  # THE SAME SECRET THE IDP BLOCK ABOVE IS HANDED, never a second one. Both lines read
-                  # one generated value, recorded once in .qits-bootstrap.env; a credential minted
-                  # twice is a client that authenticates against one half of its own configuration.
-                  QITS_CI_REGISTRY_AUTH_CLIENT_ID: ${ENV_NAME}-qits-artifacts
-                  QITS_CI_REGISTRY_AUTH_CLIENT_SECRET: "${IDP_SECRET_ARTIFACTS}"
+                  # NO QITS_CI_REGISTRY_AUTH_*, and its retirement is the commission API's dividend.
+                  # A publish step still needs a credential — the edge answers a registry WRITE with
+                  # a 401 Bearer challenge — but ci no longer holds a static one to lend out: it
+                  # commissions a credential from qits-platform-idp for the RUN, with its own client
+                  # id and secret, and decommissions it when the run ends. It borrowed the store's
+                  # own client for half a day, which made one leaked step secret the identity that
+                  # may write to every registry on the platform. Nothing goes here in its place.
                   # THE FOUR ROOTS EVERY STEP CONTAINER IS HANDED, and the byte-plane split is why they are
                   # spelled here at all. ci ships them defaulted to qits-platform-artifacts:8080, one
                   # service that answered for hosted packages and cached ones alike; there are two services
@@ -970,14 +1031,28 @@ public final class ComposeTemplate {
                   QITS_AUTH_MACHINE_AUDIENCE: ${ENV_NAME}-qits-containers
                   QITS_AUTH_MACHINE_REQUIRED: "${MACHINE_REQUIRED}"
                   QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP}
+                  # WHERE THE DOCKER CLI LOOKS FOR A CREDENTIAL, exactly as the deployer's block
+                  # says: this container runs as uid 1001 with no home, so without this variable
+                  # docker reads no config.json and every `docker pull` of a workload image is
+                  # anonymous. The file on the volume below carries this service's own idp client,
+                  # ${ENV_NAME}-qits-containers — the puller's identity, so a refusal names the
+                  # service that was refused.
+                  #
+                  # INERT UNTIL THE FLIP, and mounted before it for the same reason the deployer's
+                  # is: gaining a credential must not be a redeploy of the one service that starts
+                  # every workload on this host.
+                  DOCKER_CONFIG: /work/config
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
                 volumes:
-                  # THE SOCKET, AND NOTHING ELSE. Starting containers is what this service is, so the
-                  # mount is not a deployment's convenience but the whole component — and it is the
-                  # one this platform means to concentrate: every module that holds it today asks
-                  # this service instead, one at a time. The store is the postgres above, so nothing
-                  # it writes outlives the container.
+                  # THE SOCKET. Starting containers is what this service is, so the mount is not a
+                  # deployment's convenience but the whole component — and it is the one this
+                  # platform means to concentrate: every module that holds it today asks this
+                  # service instead, one at a time. The store is the postgres above, so nothing it
+                  # writes outlives the container.
                   - /var/run/docker.sock:/var/run/docker.sock
+                  # And the one file the docker CLI authenticates a pull with, which is why this
+                  # volume holds no state of the service's own.
+                  - qits-containers-config:/work/config
                 networks: [qits-net]
                 deploy:
                   replicas: 1
@@ -1207,12 +1282,12 @@ public final class ComposeTemplate {
             # 2026-08-10 and the key it read is gone with it: a green build is announced on the bus,
             # ci -> outbox -> ${ENV_NAME}-qits-events -> the deployer's durable subscriber, which is what
             # QITS_EVENTS_URL below configures. A line naming a key nothing reads outlives the reader.
-            # QITS_CI_REGISTRY_AUTH_* IS WHAT A PUBLISH STEP PUSHES WITH, and it is a PAIR: ci writes a
-            # DOCKER_CONFIG for its docker-enabled steps only when it holds both halves. The registry is
-            # behind the edge now, and the edge answers a WRITE with a 401 Bearer challenge — so a step
-            # without this credential fails the first publish of a boot, on a push that used to need
-            # nothing. The identity is the STORE'S OWN client, and the secret is the very one the idp
-            # block below is handed for it: one generated value, recorded once, never minted twice.
+            # NO QITS_CI_REGISTRY_AUTH_* EITHER. A publish step still pushes against a 401 Bearer
+            # challenge, and what it pushes with is now commissioned per RUN: ci asks
+            # qits-platform-idp for a credential with its own client id and secret, hands it to the
+            # step, and gives it back when the run ends. The static pair this file carried for half a
+            # day lent the store's own client to every step, which made one leaked step secret the
+            # identity that may write to every registry on the platform.
             # QITS_AUTH_MACHINE_AUDIENCE and QUARKUS_OIDC_CLIENT_CLIENT_ID are both this tier's alias: ci
             # ships the unqualified qits-ci for each, and the idp knows neither name. THE CLIENT ID IS
             # ALSO CI'S OWNER STRING at the orchestrator — qits.ci.containers.owner defaults to
@@ -1242,8 +1317,6 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_NETWORK=qits-net
             qits.platform.deployments.extras.qits-ci.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_REGISTRY_HOST=registry.${ENV_NAME}.localhost:${PORT}
-            qits.platform.deployments.extras.qits-ci.env.QITS_CI_REGISTRY_AUTH_CLIENT_ID=${ENV_NAME}-qits-artifacts
-            qits.platform.deployments.extras.qits-ci.env.QITS_CI_REGISTRY_AUTH_CLIENT_SECRET=${IDP_SECRET_ARTIFACTS}
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_HOSTED_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_PROXY_URL=http://qits-platform-mirror:8080/artifacts/npm/npmjs/
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_MAVEN_REGISTRY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven
@@ -1285,8 +1358,17 @@ public final class ComposeTemplate {
             # the image cannot ship: the default is the bare name, so a token minted for
             # ${ENV_NAME}-qits-containers would be refused on every guarded route — which is all of
             # them.
+            #
+            # THE SECOND MOUNT IS ONE FILE: the config.json this service's `docker pull` reads,
+            # written by the bootstrap with this service's own idp client. The container runs with no
+            # home, so DOCKER_CONFIG is what makes the CLI look at it at all. Both are INERT while
+            # registry reads are anonymous — a pull succeeds whether or not a credential was offered
+            # — and both are here BEFORE the flip so gaining a credential is not a redeploy of the
+            # one service that starts every workload on this host.
             qits.platform.deployments.extras.qits-containers.mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock
+            qits.platform.deployments.extras.qits-containers.mounts[1]=volume:qits-containers-config:/work/config
             qits.platform.deployments.extras.qits-containers.groups[0]=${DOCKER_GID}
+            qits.platform.deployments.extras.qits-containers.env.DOCKER_CONFIG=/work/config
             qits.platform.deployments.extras.qits-containers.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
             qits.platform.deployments.extras.qits-containers.env.QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-containers
             qits.platform.deployments.extras.qits-containers.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
@@ -1331,6 +1413,13 @@ public final class ComposeTemplate {
             # QITS_EVENTS_URL is the wire-name override and belongs here, not in the resources: the
             # eventstream jar's baked default is the pre-rename `qits-events:8080`, and this deployer
             # SUBSCRIBES — a BuildSuccessful it never receives is a deployment that never happens.
+            #
+            # DOCKER_CONFIG NAMES THE MOUNT IT ALREADY HAS: the bootstrap writes config.json onto the
+            # config volume beside this very file, and the docker CLI reads a credential out of it
+            # under this variable — the container has no home, so there is no other place it would
+            # look. INERT while registry reads are anonymous. The flip is then
+            # qits.platform.deployments.registry-auth=true, a key in THIS file, which also serialises
+            # the credential into each service spec so the swarm agent's own pull carries it.
             qits.platform.deployments.extras.qits-deployments.mounts[0]=volume:qits-deployments-config:/work/config
             qits.platform.deployments.extras.qits-deployments.mounts[1]=bind:/var/run/docker.sock:/var/run/docker.sock
             qits.platform.deployments.extras.qits-deployments.groups[0]=${DOCKER_GID}
@@ -1340,6 +1429,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-deployments.env.QITS_ENVIRONMENT=${ENV_NAME}
             qits.platform.deployments.extras.qits-deployments.env.QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD=${PG_SUPERUSER_PASSWORD}
             qits.platform.deployments.extras.qits-deployments.env.QITS_ARTIFACTS_REGISTRY_HOST=registry.${ENV_NAME}.localhost:${PORT}
+            qits.platform.deployments.extras.qits-deployments.env.DOCKER_CONFIG=/work/config
             qits.platform.deployments.extras.qits-deployments.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
             qits.platform.deployments.extras.qits-deployments.env.QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-deployments
             qits.platform.deployments.extras.qits-deployments.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
@@ -1366,10 +1456,14 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_SECRET=${IDP_SECRET_WORKSPACES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_GATEWAY_SECRET=${IDP_SECRET_GATEWAY}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_SECRET=${IDP_SECRET_PROJECTS}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_DEPLOYMENTS_SECRET=${IDP_SECRET_DEPLOYMENTS}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_CONTAINERS_SECRET=${IDP_SECRET_CONTAINERS}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_AUDIENCES=${IDP_AUDIENCES}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_DEPLOYMENTS_AUDIENCES=${IDP_AUDIENCES}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_CONTAINERS_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_CLAIMS_PROJECT=*
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The nameserver's own deployment. TWO PUBLISHES, BOTH PROTOCOLS: the deployed container
