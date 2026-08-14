@@ -701,6 +701,11 @@ public final class ComposeTemplate {
                   # service's own segment — its view and its health — and nothing else claims it. A
                   # PLATFORM service, so the alias carries no tier: one cache serves every environment.
                   QITS_GATEWAY_PROXY_HOSTS_MIRROR: qits-platform-mirror
+                  # THE IDENTITY PROVIDER — a PLATFORM service like the mirror, so no tier on the
+                  # alias. This is what puts /idp/login and /idp/register in front of a browser;
+                  # machine callers keep dialling qits-platform-idp on qits-net and never pass
+                  # here. The key needs the gateway's IDP enum entry (same rule as DOCS below).
+                  QITS_GATEWAY_PROXY_HOSTS_IDP: qits-platform-idp
                   QITS_GATEWAY_PROXY_HOSTS_CI: ${ENV_NAME}-qits-ci
                   QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS: ${ENV_NAME}-qits-deployments
                   QITS_GATEWAY_PROXY_HOSTS_OBSERVABILITY: ${ENV_NAME}-qits-observability
@@ -1281,6 +1286,7 @@ public final class ComposeTemplate {
             # THE ROUTE TABLE. Every value is a wire alias, and the image's defaults cannot carry the tier.
             qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=${ENV_NAME}-qits-artifacts
             qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_MIRROR=qits-platform-mirror
+            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_IDP=qits-platform-idp
             qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_CI=${ENV_NAME}-qits-ci
             qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS=${ENV_NAME}-qits-deployments
             qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_OBSERVABILITY=${ENV_NAME}-qits-observability

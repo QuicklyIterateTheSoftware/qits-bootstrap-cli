@@ -736,6 +736,9 @@ class ComposeTemplateTest {
         // the alias. Its share of the store's prefixes is still unrouted: two services cannot share
         // one prefix behind one entry.
         assertThat(compose).contains("QITS_GATEWAY_PROXY_HOSTS_MIRROR: qits-platform-mirror");
+        // The idp joins it: same platform-service rule, and the key that puts /idp/login in front
+        // of a browser. Machine callers keep dialling qits-platform-idp on qits-net.
+        assertThat(compose).contains("QITS_GATEWAY_PROXY_HOSTS_IDP: qits-platform-idp");
         assertThat(compose).doesNotContain("QITS_GATEWAY_PROXY_HOSTS_CD:")
                 .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_GIT:");
         assertThat(extras("qits-gateway"))
@@ -744,6 +747,7 @@ class ComposeTemplateTest {
                 .contains("QITS_GATEWAY_PROXY_HOSTS_DOCS=prod-qits-docs")
                 .contains("QITS_GATEWAY_PROXY_HOSTS_GITHOST=prod-qits-githost")
                 .contains("QITS_GATEWAY_PROXY_HOSTS_MIRROR=qits-platform-mirror")
+                .contains("QITS_GATEWAY_PROXY_HOSTS_IDP=qits-platform-idp")
                 .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_CD=")
                 .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_GIT=");
     }
