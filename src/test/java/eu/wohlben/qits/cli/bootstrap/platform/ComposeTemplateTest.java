@@ -220,8 +220,8 @@ class ComposeTemplateTest {
     /**
      * <b>The three names that closed three host ports.</b> registry, mirror and githost are matched
      * by HOST NAME rather than by path prefix — a docker client and a git client own their own
-     * roots — and the anonymous-read list covers the two registry names only, because a pull is GET
-     * and HEAD and the puller holds no credential yet.
+     * roots. What each name is answered by is here; what a caller must present to be answered at
+     * all is {@link #theFlipIsOn()}.
      */
     @Test
     void theEdgeRoutesTheByteplaneByNameInBothFiles() {
@@ -230,13 +230,11 @@ class ComposeTemplateTest {
 
         assertThat(edge).contains("QITS_EDGE_APPS_REGISTRY_HOST_PATTERN: \"{env}-qits-artifacts\"")
                 .contains("QITS_EDGE_APPS_MIRROR_HOST_PATTERN: \"qits-platform-mirror\"")
-                .contains("QITS_EDGE_APPS_GITHOST_HOST_PATTERN: \"{env}-qits-githost\"")
-                .contains("QITS_EDGE_AUTH_ANONYMOUS_READ_APPS: \"registry,mirror\"");
+                .contains("QITS_EDGE_APPS_GITHOST_HOST_PATTERN: \"{env}-qits-githost\"");
         assertThat(edgeExtras)
                 .contains("env.QITS_EDGE_APPS_REGISTRY_HOST_PATTERN={env}-qits-artifacts")
                 .contains("env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN=qits-platform-mirror")
-                .contains("env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost")
-                .contains("env.QITS_EDGE_AUTH_ANONYMOUS_READ_APPS=registry,mirror");
+                .contains("env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost");
     }
 
     /**
@@ -465,7 +463,7 @@ class ComposeTemplateTest {
 
     /**
      * <b>THE TWO PULLERS HOLD A CLIENT NOW, and each holds its OWN.</b> The deployer and the
-     * orchestrator both shell {@code docker pull}, and after the flip a pull is authenticated with
+     * orchestrator both shell {@code docker pull}, and since the flip a pull is authenticated with
      * a client id and a secret out of a config.json. A borrowed identity would make a refused pull
      * unattributable, so each gets a credential of its own — and the same full audience list every
      * other client gets, because a list is restated in full or it is not there.
@@ -502,13 +500,13 @@ class ComposeTemplateTest {
 
     /**
      * <b>WHERE EACH PULLER'S DOCKER CREDENTIAL IS, in both files.</b> Neither container has a home,
-     * so the docker CLI reads no {@code ~/.docker/config.json} and every pull is anonymous unless
-     * {@code DOCKER_CONFIG} names a mounted path. The deployer's file goes beside its extras on the
-     * volume it already has; the orchestrator gets a volume that holds nothing else.
+     * so the docker CLI reads no {@code ~/.docker/config.json} and every pull would be anonymous —
+     * which the edge refuses — unless {@code DOCKER_CONFIG} names a mounted path. The deployer's
+     * file goes beside its extras on the volume it already has; the orchestrator gets a volume that
+     * holds nothing else.
      * <p>
-     * All of it is INERT while registry reads are anonymous, and it is written before the flip for
-     * that exact reason: gaining a credential must not be a redeploy of the two services that pull
-     * everything this platform runs.
+     * All of it was written and mounted BEFORE the flip for one reason: gaining a credential must
+     * not be a redeploy of the two services that pull everything this platform runs.
      */
     @Test
     void bothPullersAreGivenADockerConfigHome() {
@@ -535,25 +533,81 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>THE FLIP IS OFF, in both files.</b> Everything the campaign wires ships inert: reads stay
-     * anonymous on the two registry names, and the deployer's {@code registry-auth} is left at its
-     * shipped false. Turning either on here would refuse every pull the other half cannot
-     * authenticate.
+     * <b>THE FLIP IS ON, in both files, and it landed on 2026-08-14.</b> Its three values are one
+     * absence and two presences: no anonymous-read list anywhere, so every method on all three
+     * vhosts needs a bearer; the deployer told to authenticate its pulls; and ci told which
+     * registries a step must log in to. Half of it is a platform whose deployer cannot pull, or
+     * step containers authenticating against a door that never asks — so all three are asserted
+     * together. The rollback is re-adding the anonymous-read env to the two files.
      */
     @Test
-    void theFlipStaysOff() {
+    void theFlipIsOn() {
         String compose = ComposeTemplate.compose(tokens());
-        String edge = serviceBlock(compose, "qits-platform-edge");
+        String extras = ComposeTemplate.extras(tokens());
+        String vhosts = "registry.prod.localhost:8080,mirror.prod.localhost:8080";
 
-        assertThat(edge).contains("QITS_EDGE_AUTH_ANONYMOUS_READ_APPS: \"registry,mirror\"");
-        assertThat(ComposeTemplate.extras(tokens())).contains(
-                "qits.platform.deployments.extras.qits-platform-edge.env."
-                        + "QITS_EDGE_AUTH_ANONYMOUS_READ_APPS=registry,mirror");
-        // The deployer's key is its own default and this generator does not set it. A line here
-        // would be the flip, made by a file nobody reads before a boot.
-        assertThat(ComposeTemplate.extras(tokens()).lines()
+        // The absence, and it is the whole of the edge's half: the key is a LIST, and a list
+        // nobody sets is the empty one. Asked of both files whole, because a stray copy anywhere
+        // reopens the door.
+        assertThat(compose.lines().filter(line -> line.strip().startsWith("QITS_")).toList())
+                .allSatisfy(line -> assertThat(line)
+                        .doesNotContain("QITS_EDGE_AUTH_ANONYMOUS_READ_APPS"));
+        assertThat(extrasKeys()).allSatisfy(line -> assertThat(line)
+                .doesNotContain("QITS_EDGE_AUTH_ANONYMOUS_READ_APPS"));
+
+        // The deployer authenticates its own pull AND serialises the credential into every service
+        // spec it creates. Spelled in the seed too: that deployer pulls before it reads any extras.
+        assertThat(serviceBlock(compose, ENV + "-qits-deployments"))
+                .contains("QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH: \"true\"");
+        assertThat(extras("qits-deployments"))
+                .contains("env.QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH=true");
+
+        // ci's half names BOTH stores: a step pushes to the hosted registry and pulls its base
+        // images from the mirror, and neither answers a read anonymously any more. The port is
+        // part of each entry — a docker credential is keyed by host:port.
+        assertThat(serviceBlock(compose, ENV + "-qits-ci"))
+                .contains("QITS_CI_DOCKER_AUTH_HOSTS: \"" + vhosts + "\"");
+        assertThat(extras("qits-ci")).contains("env.QITS_CI_DOCKER_AUTH_HOSTS=" + vhosts);
+
+        // The deployer's plain property is NOT how this is said: what starts a successor is the
+        // application's extras, so the switch is an env key like every other value there.
+        assertThat(extras.lines()
                 .filter(line -> line.startsWith("qits.platform.deployments.registry-auth"))
                 .toList()).isEmpty();
+    }
+
+    /**
+     * <b>THE THREE VHOSTS ARE ALIASES OF THE EDGE ON qits-net, in both files.</b> Docker's embedded
+     * DNS holds no wildcard, so nothing ON the network resolves a {@code *.localhost} name unless a
+     * container claims it — and BuildKit inside a ci step fetches its registry token client-side,
+     * which is a lookup made on this network. curl is a misleading probe: it resolves
+     * {@code *.localhost} to loopback itself and asks no resolver at all.
+     */
+    @Test
+    void theEdgeAnswersTheThreeVhostsOnTheNetworkToo() {
+        String edge = serviceBlock(ComposeTemplate.compose(tokens()), "qits-platform-edge");
+
+        // The long form, whole: the short `networks: [qits-net]` carries no aliases at all.
+        assertThat(edge).contains("""
+                    networks:
+                """.stripTrailing());
+        assertThat(edge).contains("""
+                      qits-net:
+                        aliases:
+                          - registry.prod.localhost
+                          - mirror.prod.localhost
+                          - githost.prod.localhost
+                """.stripTrailing());
+        assertThat(edge).doesNotContain("networks: [qits-net]");
+        // And the deployer's words for the same thing, applied when it creates the container.
+        assertThat(extras("qits-platform-edge"))
+                .contains(".aliases[0]=registry.prod.localhost")
+                .contains(".aliases[1]=mirror.prod.localhost")
+                .contains(".aliases[2]=githost.prod.localhost");
+        // Nobody else claims a vhost: two containers holding one name is a lookup that answers
+        // whichever of them the DNS server picked.
+        assertThat(extrasKeys()).filteredOn(line -> line.contains(".aliases["))
+                .allSatisfy(line -> assertThat(line).startsWith(EXTRAS + "qits-platform-edge."));
     }
 
     /**
@@ -837,8 +891,8 @@ class ComposeTemplateTest {
         for (String line : extrasKeys(tokens(DOMAIN))) {
             String element = line.substring(EXTRAS.length(), line.indexOf('='));
             String value = line.substring(line.indexOf('=') + 1);
-            assertThat(element).as("key %s", line).containsPattern(
-                    "^[a-z0-9-]+\\.(env\\.[A-Za-z_][A-Za-z0-9_]*|(mounts|publishes|groups)\\[\\d+])$");
+            assertThat(element).as("key %s", line).containsPattern("^[a-z0-9-]+\\.(env\\."
+                    + "[A-Za-z_][A-Za-z0-9_]*|(mounts|publishes|groups|aliases)\\[\\d+])$");
             if (element.contains(".mounts[")) {
                 // The kind is stated rather than guessed from a leading slash.
                 assertThat(value).as("mount %s", line)
@@ -847,6 +901,13 @@ class ComposeTemplateTest {
             if (element.contains(".publishes[")) {
                 assertThat(value).as("publish %s", line)
                         .containsPattern("^(\\d+\\.\\d+\\.\\d+\\.\\d+:)?\\d+:\\d+(/(tcp|udp))?$");
+            }
+            if (element.contains(".aliases[")) {
+                // A network alias is a HOSTNAME and nothing else: no port, no scheme, no path.
+                // The vhosts carry the edge's port everywhere else, and one copied in here would
+                // be a name the embedded DNS never answers.
+                assertThat(value).as("alias %s", line)
+                        .containsPattern("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9-]+)*$");
             }
         }
     }
@@ -876,8 +937,8 @@ class ComposeTemplateTest {
     /**
      * <b>The one address the HOST's docker daemon dials, in all four places that spell it.</b> Both
      * the seed and the deployment of ci and of the deployer carry it, and it is a NAME behind the
-     * edge rather than a loopback port: {@code *.localhost} resolves to the loopback address, the
-     * edge routes on the name, and a pull is anonymous while a push carries a bearer.
+     * edge rather than a loopback port: the HOST's resolver answers {@code *.localhost} with the
+     * loopback address, the edge routes on the name, and every method carries a bearer.
      */
     @Test
     void everyRegistryHostIsTheEdgesRegistryName() {

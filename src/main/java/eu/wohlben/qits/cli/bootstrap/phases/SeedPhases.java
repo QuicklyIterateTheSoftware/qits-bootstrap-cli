@@ -1613,9 +1613,9 @@ public class SeedPhases {
      * <b>It writes the two PULLERS' docker credentials too</b>, and they are here rather than in a
      * phase of their own because they are the same act: a file on a config volume that a container
      * reads at a mount path. The deployer's config.json goes beside its extras on the volume it
-     * already has; qits-containers gets a volume that holds nothing else. Both are INERT while
-     * registry reads are anonymous — a pull succeeds whether or not a credential was offered — and
-     * both are written before the flip so that gaining one is a configuration change rather than a
+     * already has; qits-containers gets a volume that holds nothing else. Both are LOAD-BEARING
+     * since the flip landed on 2026-08-14 — the edge refuses a read with no credential — and both
+     * were written before it so that closing the door was a configuration change rather than a
      * redeploy of the deployer and the orchestrator.
      */
     public Phase pdExtras() {
@@ -1697,7 +1697,7 @@ public class SeedPhases {
                 dockerConfigJson(boot.config.registryVhost(), client, secret), client, secret);
         Boot.must(boot.docker.run(write, ctx::log), "writing " + client + "'s config.json failed");
         ctx.log("  " + client + " docker credential on the " + volume + " volume, for "
-                + boot.config.registryVhost() + " (inert while registry reads are anonymous)");
+                + boot.config.registryVhost() + " (every read there needs it)");
     }
 
     /**

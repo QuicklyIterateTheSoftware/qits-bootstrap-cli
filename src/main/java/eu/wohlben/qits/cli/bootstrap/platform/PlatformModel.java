@@ -457,7 +457,7 @@ public final class PlatformModel {
      * nothing.
      * <p>
      * <b>qits-deployments and qits-containers joined on 2026-08-14, and they are the PULLERS.</b>
-     * Both were validate-only for as long as a registry read was anonymous; the flip makes a pull
+     * Both were validate-only for as long as a registry read was anonymous; the flip made a pull
      * an authenticated request, and the thing that authenticates it is a docker {@code config.json}
      * holding a client id and a secret. So each one needs a credential of its own — the identity in
      * the file is the puller's, never a borrowed one, because a refused pull has to name the

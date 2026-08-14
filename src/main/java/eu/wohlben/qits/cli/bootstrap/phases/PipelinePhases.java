@@ -1360,9 +1360,9 @@ public class PipelinePhases {
             report.add("           It is the door of the byte plane too: the registry, the mirror "
                     + "and the git host");
             report.add("           publish no port of their own and are reached by NAME through "
-                    + "this one. GET and");
-            report.add("           HEAD are anonymous on the two registry names; every other "
-                    + "method needs a bearer.");
+                    + "this one. EVERY");
+            report.add("           method on all three names needs a bearer, reads included, "
+                    + "since 2026-08-14.");
             report.add("gateway:   " + env + "-qits-gateway on qits-net "
                     + "(variant: local, UNAUTHENTICATED) — no host port of its own");
             report.add("registry:  " + boot.config.registryVhost()
@@ -1379,7 +1379,7 @@ public class PipelinePhases {
             report.add("           A *.localhost name resolves to the loopback address by itself "
                     + "(systemd-resolved");
             report.add("           synthesises it) — no hosts-file entry to make.");
-            report.add("login:     pulls are anonymous; a PUSH needs a credential, and a person's "
+            report.add("login:     a PULL needs a credential now as much as a PUSH, and a person's "
                     + "is COMMISSIONED —");
             report.add("           the idp issues one per context, so no static pair is handed "
                     + "out. Ask for yours");
@@ -1428,10 +1428,9 @@ public class PipelinePhases {
                     + "gate.");
             report.add("git host:  http://" + boot.config.gitHostVhost()
                     + "/git/<repoId> — qits-githost, through the edge.");
-            report.add("           EVERY method needs a bearer here, reads included: it is not a "
-                    + "registry, so the");
-            report.add("           anonymous-read list does not name it. Mint one and clone with "
-                    + "it:");
+            report.add("           EVERY method needs a bearer here, reads included — as on the "
+                    + "two registry names");
+            report.add("           since the flip. Mint one and clone with it:");
             report.add("             curl -u <client>:<secret> http://"
                     + boot.config.gitHostVhost() + "/token        (the access_token is in the "
                     + "answer)");
