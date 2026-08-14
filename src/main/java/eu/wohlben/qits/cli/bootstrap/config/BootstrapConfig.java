@@ -425,4 +425,27 @@ public interface BootstrapConfig {
     default String gitHostVhost() {
         return "githost." + envName() + ".localhost:" + port();
     }
+
+    /**
+     * <b>Where an image built by THIS BOOTSTRAP resolves {@code eu.wohlben.qits} from, and it is the
+     * seed's loopback port on purpose.</b>
+     * <p>
+     * Every seed build runs {@code --network host} against the HOST's daemon, minutes before any
+     * edge exists — the whole point of the seed is that the platform is not up yet — so the only
+     * server that can answer is the one this run publishes on 127.0.0.1: the temporary Maven
+     * registry of {@code maven-seed}, then the seed qits-artifacts that replaces it on the same
+     * port.
+     * <p>
+     * <b>A seed build must never ride a committed Dockerfile's default</b>, which is what made this
+     * a knob at all. The repositories declare
+     * {@code ARG QITS_MAVEN_REPOSITORY_URL} and their {@code .qits-maven-settings.xml} reads it, and
+     * that default now names the edge vhost — the address of a platform that is RUNNING. It happened
+     * to be this same loopback url until the unify-ingress sweep, so the bootstrap passed nothing and
+     * nobody noticed the free ride; the first boot after the sweep died at the qits-platform-mirror
+     * seed build with connection refused on the vhost. The build-arg is the lever, so this run
+     * always pulls it.
+     */
+    default String seedMavenRepositoryUrl() {
+        return "http://localhost:" + registryPort() + "/artifacts/maven/maven";
+    }
 }

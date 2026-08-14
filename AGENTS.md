@@ -114,6 +114,15 @@ forced. Add to that list rather than deviating quietly.
   `*.localhost` name resolves to `::1` first and the ingress mesh is IPv4-only — the listener
   accepts and never answers, so clients hang instead of failing over. The launcher probes
   `[::1]:<edge port>` and warns; the closing report prints both steps.
+- **A seed build resolves the platform's own jars from the SEED registry, and is TOLD so.** Every
+  image this run builds — the seed images, the step images, the ci-daemon's musl builder — carries
+  `--build-arg QITS_MAVEN_REPOSITORY_URL=http://localhost:<registry port>/artifacts/maven/maven`,
+  set once on the `Docker` facade (`Boot.imageBuildArgs`) rather than at each call site. The
+  repositories' own `ARG` default names the edge vhost, which is the address of a platform that is
+  already up; a seed build runs before any edge exists. The default WAS this same loopback url
+  until the vhost sweep, so the bootstrap passed nothing for months and then died at the
+  qits-platform-mirror seed build with a connection refused. A build argument an image has no
+  `ARG` for is a warning, which is why every build gets it rather than a chosen list.
 - **The seed is a docker STACK, and four compose words do not survive the move.** The generated
   file carries no root `name:` and no `group_add:` — either one makes `docker stack deploy` refuse
   it outright, measured — no `container_name:` (ignored; a task's container is

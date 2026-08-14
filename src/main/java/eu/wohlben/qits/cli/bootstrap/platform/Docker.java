@@ -40,8 +40,32 @@ public class Docker {
 
     private final ProcessRunner runner;
 
+    /**
+     * <b>What every image build this program runs carries, whatever the image is.</b> A build
+     * argument an image has no {@code ARG} for is a warning and nothing else, so the honest place
+     * for one that MOST builds need is all of them — see {@link #withBuildArgs}.
+     */
+    private List<String> buildArgs = List.of();
+
     public Docker(ProcessRunner runner) {
         this.runner = runner;
+    }
+
+    /**
+     * <b>The arguments both build methods below carry, set once by the run that owns this facade.</b>
+     * <p>
+     * It is at this seam rather than at each call site because the requirement is per-DAEMON and not
+     * per-image: a build this bootstrap runs resolves the platform's own maven artifacts from the
+     * seed registry on the host's loopback, and there is no second answer any build of this run could
+     * want. Spelled per call site, a build added later inherits nothing and fails minutes in with a
+     * connection refused.
+     * <p>
+     * The HOST HALF's own Docker is a second instance and deliberately gets none: the payload image
+     * is this CLI and resolves nothing of the platform.
+     */
+    public Docker withBuildArgs(List<String> args) {
+        this.buildArgs = List.copyOf(args);
+        return this;
     }
 
     public ProcessResult run(Cmd cmd, Consumer<String> out) {
@@ -374,6 +398,7 @@ public class Docker {
                                         List<String> extraArgs, Consumer<String> out) {
         List<String> command = new ArrayList<>(List.of(
                 "docker", "build", "--network", "host", "-t", tag, "-f", "-"));
+        command.addAll(buildArgs);
         command.addAll(extraArgs);
         command.add(context.toString());
         return runner.run(Cmd.of(command)
@@ -386,6 +411,7 @@ public class Docker {
 
     public ProcessResult build(List<String> args, Consumer<String> out) {
         List<String> command = new ArrayList<>(List.of("docker", "build"));
+        command.addAll(buildArgs);
         command.addAll(args);
         return runner.run(Cmd.of(command).timeout(BUILD_TIMEOUT)
                 .env("BUILDKIT_PROGRESS", "plain"), out);

@@ -471,6 +471,16 @@ container the bootstrap starts for the daemon's benefit has: the CLI dials it on
 container name, and the seed image builds resolve Maven through `localhost:<registry port>` on the
 host, because a build runs with `--network host` against the host's daemon.
 
+**Every image this run builds is told that address, and none of them may infer it.** The
+repositories declare `ARG QITS_MAVEN_REPOSITORY_URL` and their maven settings read it, and the
+committed default names the edge vhost — a platform that is RUNNING, which during a seed build it is
+not. So `--build-arg QITS_MAVEN_REPOSITORY_URL=http://localhost:<registry port>/artifacts/maven/maven`
+rides every build this program starts: the seed images, the step images and the ci-daemon's musl
+builder. It sits on the Docker facade rather than at each call site, because the answer is the same
+for every image and a build added later would inherit nothing. The default happened to be this same
+url until the vhost sweep, which is how a boot rode it for months and then died at
+qits-platform-mirror with a connection refused.
+
 ## Two planes, one branch
 
 `main` is the integration trunk of every repository and deploys nothing. What deploys is

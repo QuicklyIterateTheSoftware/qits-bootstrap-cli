@@ -57,13 +57,30 @@ public class Boot {
         this.config = config;
         this.log = log;
         this.runner = runner;
-        this.docker = new Docker(runner);
+        this.docker = new Docker(runner).withBuildArgs(imageBuildArgs(config));
         this.git = new Git(runner);
         this.artifacts = new ArtifactsApi(http, config.artifactsUrl());
         this.githost = new GitHostApi(http, config.gitHostUrl(), config.gitHostHealthUrl());
         this.ci = new CiApi(http, config.ciUrl());
         this.pd = new PdApi(http, config.platformDeploymentsUrl());
         this.idp = new IdpApi(http, config.idpIssuer());
+    }
+
+    /**
+     * <b>What every image this run builds is built with</b> — the seed images, the step images and
+     * the ci-daemon's musl builder alike, because they are all built by the HOST's daemon while the
+     * platform is still being made.
+     * <p>
+     * One argument today: where a build resolves the platform's own maven artifacts. It is passed
+     * to every build rather than to the ones known to read it, because an image with no matching
+     * {@code ARG} answers a build argument with a warning, and the alternative is a per-image list
+     * that a new image is added without.
+     * <p>
+     * See {@link BootstrapConfig#seedMavenRepositoryUrl()} for why the value cannot be left to the
+     * Dockerfile's own default any more.
+     */
+    public static List<String> imageBuildArgs(BootstrapConfig config) {
+        return List.of("--build-arg", "QITS_MAVEN_REPOSITORY_URL=" + config.seedMavenRepositoryUrl());
     }
 
     /** Fails the phase, with the command's own last words attached. */
