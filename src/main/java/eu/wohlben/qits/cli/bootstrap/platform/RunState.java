@@ -91,6 +91,8 @@ public class RunState {
      */
     public String pgContainersPassword;
     public String pgContainersEventstreamPassword;
+    public String pgPlatformEdgePassword;
+    public String pgPlatformEdgeEventstreamPassword;
     /** The environment row the deployer reconciled. */
     public String environmentId;
     /** The temporary maven-over-HTTP container that breaks the first-boot dependency cycle. */

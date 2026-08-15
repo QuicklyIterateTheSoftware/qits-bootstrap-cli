@@ -414,6 +414,13 @@ public final class ComposeTemplate {
                   QITS_EDGE_SESSIONS_ENABLED: "true"
                   QITS_EDGE_SESSIONS_CLIENT_ID: ${ENV_NAME}-qits-edge
                   QITS_EDGE_SESSIONS_CLIENT_SECRET: "${IDP_SECRET_EDGE}"
+                  QITS_RESOURCE_EDGE_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_platform_edge
+                  QITS_RESOURCE_EDGE_USERNAME: qits_platform_edge
+                  QITS_RESOURCE_EDGE_PASSWORD: "${PG_PLATFORM_EDGE_PASSWORD}"
+                  QITS_RESOURCE_EVENTSTREAM_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_platform_edge_eventstream
+                  QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_platform_edge_eventstream
+                  QITS_RESOURCE_EVENTSTREAM_PASSWORD: "${PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD}"
+                  QITS_EVENTS_URL: http://${ENV_NAME}-qits-events:8080
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${EDGE_TLS}
                 networks:
                   # THE THREE VHOSTS ARE ALIASES OF THIS SERVICE, and the long form is here for

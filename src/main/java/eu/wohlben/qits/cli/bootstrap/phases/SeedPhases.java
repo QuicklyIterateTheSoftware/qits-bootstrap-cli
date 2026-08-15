@@ -1224,7 +1224,8 @@ public class SeedPhases {
             "qits_platform_idp", "qits_events",
             "qits_artifacts", "qits_platform_mirror",
             "qits_githost", "qits_githost_eventstream",
-            "qits_containers", "qits_containers_eventstream");
+            "qits_containers", "qits_containers_eventstream",
+            "qits_platform_edge", "qits_platform_edge_eventstream");
 
     /**
      * The platform's postgres, running with a password of this bootstrap's choosing from its very
@@ -1289,6 +1290,11 @@ public class SeedPhases {
             String containersEventstream = pgPassword(ctx, state,
                     "PG_CONTAINERS_EVENTSTREAM_PASSWORD",
                     "qits.pg.containers-eventstream-password");
+            String platformEdge = pgPassword(ctx, state, "PG_PLATFORM_EDGE_PASSWORD",
+                    "qits.pg.platform-edge-password");
+            String platformEdgeEventstream = pgPassword(ctx, state,
+                    "PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD",
+                    "qits.pg.platform-edge-eventstream-password");
             boot.state.pgSuperuserPassword = superuser;
             boot.state.pgDeploymentsPassword = deployments;
             boot.state.pgDeploymentsEventstreamPassword = deploymentsEventstream;
@@ -1302,6 +1308,8 @@ public class SeedPhases {
             boot.state.pgGithostEventstreamPassword = githostEventstream;
             boot.state.pgContainersPassword = containers;
             boot.state.pgContainersEventstreamPassword = containersEventstream;
+            boot.state.pgPlatformEdgePassword = platformEdge;
+            boot.state.pgPlatformEdgeEventstreamPassword = platformEdgeEventstream;
 
             // RECORDED BEFORE THE SERVER IS STARTED, and the order is the whole point.
             // POSTGRES_PASSWORD applies at initdb only: once the data volume holds a cluster, the
@@ -1325,6 +1333,8 @@ public class SeedPhases {
             state.put("PG_GITHOST_EVENTSTREAM_PASSWORD", githostEventstream);
             state.put("PG_CONTAINERS_PASSWORD", containers);
             state.put("PG_CONTAINERS_EVENTSTREAM_PASSWORD", containersEventstream);
+            state.put("PG_PLATFORM_EDGE_PASSWORD", platformEdge);
+            state.put("PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD", platformEdgeEventstream);
             state.write();
             ctx.log("  recorded in " + state.file() + " before the server starts");
 
@@ -1394,6 +1404,9 @@ public class SeedPhases {
             containers = registry.getOrDefault("qits_containers", containers);
             containersEventstream =
                     registry.getOrDefault("qits_containers_eventstream", containersEventstream);
+            platformEdge = registry.getOrDefault("qits_platform_edge", platformEdge);
+            platformEdgeEventstream =
+                    registry.getOrDefault("qits_platform_edge_eventstream", platformEdgeEventstream);
             if (!registry.isEmpty()) {
                 boot.state.pgCiPassword = ci;
                 boot.state.pgCiEventstreamPassword = ciEventstream;
@@ -1405,6 +1418,8 @@ public class SeedPhases {
                 boot.state.pgGithostEventstreamPassword = githostEventstream;
                 boot.state.pgContainersPassword = containers;
                 boot.state.pgContainersEventstreamPassword = containersEventstream;
+                boot.state.pgPlatformEdgePassword = platformEdge;
+                boot.state.pgPlatformEdgeEventstreamPassword = platformEdgeEventstream;
                 state.put("PG_CI_PASSWORD", ci);
                 state.put("PG_CI_EVENTSTREAM_PASSWORD", ciEventstream);
                 state.put("PG_PLATFORM_IDP_PASSWORD", platformIdp);
@@ -1415,6 +1430,8 @@ public class SeedPhases {
                 state.put("PG_GITHOST_EVENTSTREAM_PASSWORD", githostEventstream);
                 state.put("PG_CONTAINERS_PASSWORD", containers);
                 state.put("PG_CONTAINERS_EVENTSTREAM_PASSWORD", containersEventstream);
+                state.put("PG_PLATFORM_EDGE_PASSWORD", platformEdge);
+                state.put("PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD", platformEdgeEventstream);
                 state.write();
                 ctx.log("  " + registry.size() + " credentials read back from the deployer's "
                         + "registry — the seed uses what the rows say");
@@ -1486,6 +1503,9 @@ public class SeedPhases {
                 // the first pipeline deployment are the rows this creates.
                 provision(ctx, admin, "qits_containers", containers, false);
                 provision(ctx, admin, "qits_containers_eventstream", containersEventstream, false);
+                provision(ctx, admin, "qits_platform_edge", platformEdge, false);
+                provision(ctx, admin, "qits_platform_edge_eventstream", platformEdgeEventstream,
+                        false);
             }
             ctx.note(SEED_DATABASES.size() + " databases ready on " + pg);
         });
@@ -2123,6 +2143,9 @@ public class SeedPhases {
         values.put("PG_CONTAINERS_PASSWORD", orEmpty(boot.state.pgContainersPassword));
         values.put("PG_CONTAINERS_EVENTSTREAM_PASSWORD",
                 orEmpty(boot.state.pgContainersEventstreamPassword));
+        values.put("PG_PLATFORM_EDGE_PASSWORD", orEmpty(boot.state.pgPlatformEdgePassword));
+        values.put("PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD",
+                orEmpty(boot.state.pgPlatformEdgeEventstreamPassword));
         values.put("IDP", boot.config.idpIssuer());
         values.put("PUSH_TOKEN", boot.config.pushToken());
         values.put("BOOTSTRAP_INGRESS_GIT_ENABLED", String.valueOf(boot.config.bootstrapIngress()));
