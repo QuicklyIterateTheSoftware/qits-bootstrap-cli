@@ -836,12 +836,13 @@ public class SeedPhases {
     public Phase seedArtifactsStart() {
         return new Phase("seed-artifacts",
                 "have qits-artifacts serving for the Maven bootstrap", ctx -> {
-            // By name and unconditionally: a crashed earlier run leaves the registry running, and
-            // this run then skips the seed phase without ever learning the container's name.
-            ctx.log("  removing the temporary maven registry, freeing port "
-                    + boot.config.registryPort());
-            boot.docker.removeContainer(AUTH_SEED_HTTP, ctx::log);
-            boot.state.authSeedContainer = null;
+            // Keep the temporary file registry until the bootstrap process exits. Seed images
+            // built after this phase still resolve their qits dependencies through the host-side
+            // localhost port; qits-artifacts intentionally publishes no host port. Removing nginx
+            // here therefore made every uncached later image fail with connection refused. The
+            // shutdown hook installed by mavenSeed removes it after the final build.
+            ctx.log("  keeping the temporary maven registry on host port "
+                    + boot.config.registryPort() + " for the remaining seed image builds");
             boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
             // Named after its wire alias, like every other seed container: this one is started by
             // hand rather than by the stack, and the name it takes has to be the same one the stack
