@@ -25,7 +25,7 @@ import java.util.function.Consumer;
  * services that need it.
  */
 public class Docker {
-    static final String BUILDER = "qits-bootstrap-builder-v2";
+    static final String BUILDER = "qits-bootstrap-builder-v3";
 
     /** Long enough for a cold GraalVM native build, which is what most of these are. */
     public static final Duration BUILD_TIMEOUT = Duration.ofHours(4);
@@ -443,7 +443,7 @@ public class Docker {
         ProcessResult ready = existing.ok() ? existing : runner.run(Cmd.of(
                 "docker", "buildx", "create", "--name", BUILDER,
                 "--driver", "docker-container", "--driver-opt",
-                "network=host,memory=4g,cpu-quota=200000"), out);
+                "network=host,memory=4g,cpu-quota=200000,cpuset-cpus=0-1"), out);
         if (ready.ok()) {
             ready = runner.run(Cmd.of(
                     "docker", "buildx", "inspect", "--bootstrap", BUILDER), out);

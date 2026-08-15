@@ -67,7 +67,7 @@ public final class SeedDockerfile {
                 // The builder's 4 GB cgroup also holds Maven, BuildKit and native-image itself.
                 // Giving the Java heap the entire cgroup ends in exit 137 before compilation ends.
                 .replace("-Dquarkus.native.native-image-xmx=4g",
-                        "-Dquarkus.native.native-image-xmx=3g");
+                        "-Dquarkus.native.native-image-xmx=2g");
     }
 
     public static String read(Path dockerfile, String mirrorHost) throws IOException {
