@@ -16,10 +16,9 @@ import java.util.stream.Stream;
  * The image the phases run in, addressed BY ITS CONTENT.
  * <p>
  * The tag is a digest of everything {@code docker/Dockerfile.bootstrap} reads, so the same
- * checkout always names the same image and a rerun finds it already built. That is not a nicety:
- * the build is a cold GraalVM native image, and rebuilding it on every bootstrap would put many
- * minutes in front of a loop people run to save minutes. Change a source file and the tag changes
- * with it, so a stale image cannot be run by mistake either.
+ * checkout always names the same image and a rerun finds it already built. The recovery payload is
+ * a JVM image so it can build within a constrained host's two-CPU, 2 GB budget. Change a source
+ * file and the tag changes with it, so a stale image cannot be run by mistake either.
  * <p>
  * <b>The repository is {@code qits-bootstrap}, deliberately not {@code qits/bootstrap}.</b>
  * {@code unwrap}'s image sweep removes everything under {@code qits/}, and this is the image the
@@ -42,13 +41,13 @@ public final class PayloadImage {
      * but not hashed is a change that does not rebuild, and a path hashed but not copied is a
      * rebuild that changes nothing.
      * <p>
-     * {@code mvnw} is here because the image's builder stage is a GraalVM with no maven on it, so
-     * the wrapper is what runs the build.
+     * The builder is a pinned Maven/Temurin image, so neither the host Maven installation nor a
+     * wrapper distribution cache is part of this recovery path.
      * <p>
      * {@code src/test} is in neither. The tests are the {@code ./mvnw clean verify} gate on the
      * host; the image build skips them, so a test-only edit is not a new image.
      */
-    static final List<String> CONTENT = List.of(DOCKERFILE, "pom.xml", "mvnw", ".mvn", "src/main");
+    static final List<String> CONTENT = List.of(DOCKERFILE, "pom.xml", "src/main");
 
     private PayloadImage() {
     }

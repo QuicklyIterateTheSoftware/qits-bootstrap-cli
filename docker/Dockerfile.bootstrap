@@ -1,144 +1,28 @@
-# The bootstrap, as an image, so the cold boot can run on the platform's docker network
-# instead of on the host. Build it from the repository root:
+# The one-shot bootstrap payload is deliberately a JVM image.  Native builds need more than 2 GB
+# on the smallest recovery hosts, while the orchestration tool runs only for the duration of a
+# bootstrap and has no latency-sensitive request path.  Keeping this build within the platform's
+# two-CPU, 2 GB recovery limit matters more than saving its startup milliseconds.
 #
-#     docker build -f docker/Dockerfile.bootstrap -t qits-bootstrap:<tag> .
-#
-# The CLI builds and runs this itself when it is started outside a container, and tags it by the
-# content of what the build reads, so a rerun with unchanged sources rebuilds nothing.
-#
-# It ships the NATIVE BINARY, because that is the only form of this CLI there is. The build makes
-# no jar, here or on a workstation.
-#
-# THE BINARY IS BUILT HERE, in the first stage, and that is what makes this image cold-start
-# capable. Copying one out of target/ would mean the image could only be built on a machine that
-# had just run a native build — which is the machine the bootstrap is NOT for — and it would be
-# the wrong binary anyway: see below. Building it in the image also removes the "did you run mvn
-# first" question entirely, so the only input is the checkout.
-#
-# --- WHY THE BINARY IS FULLY STATIC AGAINST musl -----------------------------------------------
-# Two independent reasons, and either one alone decides it.
-#
-#  1. THE HOST'S BINARY DOES NOT RUN HERE. This host is glibc 2.42. A binary linked against it
-#     will not start on Debian stable (2.36), on Ubuntu 24.04 (2.39), or on any alpine image at
-#     all — qits-ci-daemon's own musl builder records the exact failure, "exec /qits-ci-daemon: no
-#     such file or directory", which is what a missing dynamic loader looks like. The runtime
-#     stage below IS alpine, so this is not hypothetical.
-#  2. STATIC glibc CANNOT RESOLVE NAMES. Every address this CLI dials is a wire alias on qits-net
-#     — qits-platform-artifacts, prod-qits-ci, the postgres alias — so DNS is not an extra, it is
-#     the whole conversation. glibc's resolver reaches the name services through dlopen, which a
-#     static binary has no loader for, and every lookup fails. musl compiles its resolver in, so a
-#     static musl binary resolves normally. That is why --libc=musl rather than a static glibc
-#     build, which would link and then fail on its first phase.
-#
-# --- WHY THE BUILDER STAGE LOOKS LIKE THIS ------------------------------------------------------
-# The toolchain half is copied from daemons/qits-ci-daemon/docker/Dockerfile.musl-builder, which
-# holds the long form of the reasoning. Copied and not shared: this image has to build from a git
-# URL on a machine that has never seen the platform, so it can depend on no file outside this
-# repository and on no locally-built image. The short form:
-#
-#   * GraalVM CE and not Mandrel. Mandrel ships static JDK libraries for glibc only, and a
-#     --libc=musl build dies in seconds with "Missing libraries: java, nio, net". Those archives
-#     are part of the JDK distribution and cannot be installed after the fact. GraalVM CE ships
-#     both flavours.
-#   * Neither image carries a musl TOOLCHAIN, and quay publishes no musl-flavoured builder tag, so
-#     the toolchain is added here from GraalVM's own documented static-image recipe.
-#   * The static musl binary costs about 5% in size over a glibc-dynamic one. That is the trade.
-#
-# The base is pulled from quay.io directly, NOT through the platform's mirror the way the
-# ci-daemon's builder does. Every platform image is built BY this bootstrap, so a cold boot has no
-# mirror to pull through yet.
-FROM quay.io/quarkus/ubi10-quarkus-graalvmce-builder-image:jdk-25 AS build
-
-# The base runs its build as uid 1001. Installing a toolchain needs root, and the whole stage is
-# thrown away, so it simply stays root.
-USER root
-
-# more.musl.cc is a small community host. If build reproducibility ever matters more than build
-# simplicity, mirror this tarball rather than fetching it per image build. zlib comes from the
-# GitHub release and not zlib.net, which 404s old versions as soon as a new one lands.
-ARG MUSL_URL=https://more.musl.cc/11.2.1/x86_64-linux-musl/x86_64-linux-musl-native.tgz
-ARG ZLIB_URL=https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz
-
-RUN mkdir -p /opt/musl \
- && curl -fsSL "$MUSL_URL" | tar -xz -C /opt/musl --strip-components=1 \
- && /opt/musl/bin/x86_64-linux-musl-gcc --version
-
-# native-image with --libc=musl invokes `x86_64-linux-musl-gcc`, so that name must be on PATH — but
-# ONLY that name. Putting /opt/musl/bin itself on PATH also shadows the system `gcc`, and then
-# native-image's C query step dies in a wall of "'LC_ADDRESS' undeclared". A shim directory holding
-# just the target-prefixed symlinks keeps the system gcc the default.
-RUN mkdir -p /opt/musl-shim \
- && for f in /opt/musl/bin/x86_64-linux-musl-*; do ln -s "$f" "/opt/musl-shim/$(basename "$f")"; done
-ENV PATH=/opt/musl-shim:$PATH
-
-# native-image links `-lz`, so zlib has to exist for the musl target too — compiled against the
-# toolchain above and installed into the same prefix.
-RUN mkdir -p /tmp/zlib \
- && curl -fsSL "$ZLIB_URL" | tar -xz -C /tmp/zlib --strip-components=1 \
- && cd /tmp/zlib \
- && CC=/opt/musl/bin/x86_64-linux-musl-gcc ./configure --static --prefix=/opt/musl \
- && make -j"$(nproc)" && make install \
- && rm -rf /tmp/zlib
+# A native image can still be produced explicitly from this checkout for installations that need
+# one; it is not the cold-recovery payload's dependency.
+FROM maven:3.9-eclipse-temurin-25 AS build
 
 WORKDIR /src
 
-# Only what the build reads, and the CLI hashes the same paths to tag the image. Copying the whole
-# context instead would make every log file and every editor scratch file a rebuild.
-#
-# `mvnw` is one of them: this base is a JDK and a native-image, with no maven on it, so the wrapper
-# is how the build gets one. (The ci-daemon's builder is handed a whole checkout at run time and
-# uses the same wrapper.)
-COPY .mvn/ .mvn/
-COPY mvnw ./
+# Keep this list in lockstep with PayloadImage.CONTENT.  Tests are deliberately absent: the image
+# is a recovery vehicle and the source test suite is run before it is promoted.
 COPY pom.xml ./
 COPY src/main/ src/main/
 
-# -Dnative.extra-build-args is the pom's seam: the native profile appends it to the flag it already
-# carries, so the musl flags apply HERE and the binary people build on the host stays dynamic
-# glibc. Naming quarkus.native.additional-build-args whole instead would drop the jline flag,
-# because Quarkus reads that setting from one config source and the command line is a higher one.
-#
-# The leading comma is the separator, not a typo.
-#
-# The maven repository is a BuildKit cache mount, not a layer: it survives between builds on this
-# daemon, so a source change re-resolves nothing and re-downloads no maven. Without it every
-# rebuild is a cold download of the whole Quarkus platform, which is minutes, on a loop people run
-# often. /root/.m2 whole rather than its repository/ alone, because the wrapper caches its maven
-# distribution beside it.
-#
-# -DskipTests because the tests are the `./mvnw clean verify` gate on the host, not a step of the
-# image build; src/test is not even copied above.
+# Use the Maven binary baked into the builder rather than mvnw.  A recovery host may have a broken
+# wrapper distribution cache, whereas this tagged builder is the independently validated path.
 RUN --mount=type=cache,target=/root/.m2 \
-    ./mvnw -B -ntp package -Dnative -DskipTests \
-        -Dnative.extra-build-args=,--static,--libc=musl
+    mvn -B -ntp package -DskipTests
 
-# The base is upstream on purpose. This image has to build on a machine that has never seen
-# the platform, and every platform image — ci-base included — is built BY this bootstrap.
-# Basing it on one of those makes the cold boot need the thing it exists to create.
-#
-# Plain alpine, with no JDK and no JRE on it: the binary above carries its own runtime and its own
-# libc. What is left in the image is the docker CLI trio, git and busybox.
-FROM alpine:3.23
+FROM eclipse-temurin:25-jre-alpine
 
-# What the CLI shells, and nothing else:
-#
-#   docker-cli            eleven of its commands are `docker ...`
-#   docker-cli-buildx     the BUILDER IS CHOSEN BY THE CLIENT. A client without buildx does not
-#                         fail — it quietly falls back to the legacy builder, which reads flags
-#                         differently. qits-deployments already carries a scar from that:
-#                         `--network qits-net` on a build only worked because an old client fell
-#                         back to it. Shipping buildx is what keeps this image honest.
-#   docker-cli-compose    SeedPhases refuses to boot without it ("docker compose plugin missing"),
-#                         and the seed plane is brought up by `docker compose -p qits`
-#   git                   clones and pushes are shelled, not a Java git library
-#   ca-certificates       the platform's HTTP is called over TLS
-#
-# The versions are left to the branch: alpine drops old package versions from its index, so a
-# pinned version is a cold build that fails on the day it is aged out.
-#
-# Not listed because busybox already has them: sh, stty and tty, which JLine's exec provider
-# shells for every terminal (it is pinned to exec because the jni and ffm providers cannot be
-# native-imaged), and stat, which reads the docker socket's group.
+# The JVM is the only addition compared with the former static payload.  Everything the CLI shells
+# remains available in the runtime image, so its capability and mount model stay unchanged.
 RUN apk add --no-cache \
         ca-certificates \
         docker-cli \
@@ -146,11 +30,8 @@ RUN apk add --no-cache \
         docker-cli-compose \
         git
 
-# A fallback only. The launcher sets the working directory to the one it was started in, which is
-# also a mount, so the run's log and clones land on the host where the next run can find them.
 WORKDIR /work
 
-# Copied by glob so the CalVer version in the name is not repeated here, where it would go stale.
-COPY --from=build /src/target/qits-cli-bootstrap-*-runner /opt/qits/bootstrap
+COPY --from=build /src/target/quarkus-app/ /opt/qits/
 
-ENTRYPOINT ["/opt/qits/bootstrap"]
+ENTRYPOINT ["java", "-jar", "/opt/qits/quarkus-run.jar"]
