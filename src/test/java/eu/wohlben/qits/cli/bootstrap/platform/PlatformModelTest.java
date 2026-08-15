@@ -212,11 +212,13 @@ class PlatformModelTest {
                 .isEqualTo("service/src/main/webui/dist/qits-spa-githost/browser");
         assertThat(PlatformModel.seedUiPath("platform-mirror"))
                 .isEqualTo("src/main/webui/dist/qits-platform-spa-mirror/browser");
+        // The idp's login/register client landed on 2026-08-14, prebuilt-dist shape like the rest.
+        assertThat(PlatformModel.seedUiPath("platform-idp"))
+                .isEqualTo("service/src/main/webui/dist/qits-platform-spa-idp/browser");
         // No client at all, and empty is the answer that says so: a seed build must not be made to
         // require a bundle that does not exist. The orchestrator serves machines and has no SPA at
         // all, so it is in this half and not the one above.
         assertThat(PlatformModel.seedUiPath("containers")).isEmpty();
-        assertThat(PlatformModel.seedUiPath("platform-idp")).isEmpty();
         assertThat(PlatformModel.seedUiPath("platform-edge")).isEmpty();
         assertThat(PlatformModel.seedUiPath("oci-postgresql")).isEmpty();
     }

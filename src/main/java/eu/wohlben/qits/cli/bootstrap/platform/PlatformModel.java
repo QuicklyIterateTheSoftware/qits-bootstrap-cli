@@ -388,9 +388,9 @@ public final class PlatformModel {
      * repository name. The path is the one the service's Dockerfile checks with {@code test -f}, so
      * a stale spelling fails the seed build minutes in rather than at the edit.
      * <p>
-     * Empty is a real answer, not a gap: qits-platform-idp ships no client and qits-platform-edge
-     * serves no paths of its own at all. {@code SeedPhases.seedImage} writes no placeholder for
-     * them. A seed service added without a line here also gets none — and the Dockerfile's own
+     * Empty is a real answer, not a gap: qits-platform-edge serves no paths of its own at all.
+     * {@code SeedPhases.seedImage} writes no placeholder for it. A seed service added without a
+     * line here also gets none — and the Dockerfile's own
      * {@code test -f} names the exact path it wanted, which is the clearest failure available.
      */
     public static String seedUiPath(String name) {
@@ -414,6 +414,10 @@ public final class PlatformModel {
             // one module and its webui sits at the root.
             case "githost" -> "service/src/main/webui/dist/qits-spa-githost/browser";
             case "platform-mirror" -> "src/main/webui/dist/qits-platform-spa-mirror/browser";
+            // The idp grew its login/register client on 2026-08-14, in the prebuilt-dist shape
+            // like the rest — found by the first bare-server boot, whose seed build stopped at
+            // the Dockerfile's `test -f` on this path.
+            case "platform-idp" -> "service/src/main/webui/dist/qits-platform-spa-idp/browser";
             default -> "";
         };
     }
