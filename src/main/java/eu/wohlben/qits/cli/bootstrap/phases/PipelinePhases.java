@@ -531,6 +531,12 @@ public class PipelinePhases {
      */
     public Phase gitRepositories() {
         return new Phase("git-repos", "create the platform's repositories on the git host", ctx -> {
+            // The seed stack can replace a same-tag githost task after seed-health observed the
+            // previous task. Close that rollout race at the point that needs the service: every
+            // PUT below is idempotent, but the first one must not be sacrificed to a brief socket
+            // gap between Swarm tasks.
+            boot.awaitHealth(ctx, boot.config.envName() + "-qits-githost before repository PUTs",
+                    boot.githost::health);
             int created = 0;
             for (String name : PlatformModel.platformRepos()) {
                 String repo = PlatformModel.repo(name);
