@@ -60,6 +60,7 @@ public final class BootState {
     private Integer exitCode;
     private String logPath = "";
     private String externalSnapshot;
+    private long externalSnapshotAt;
 
     public BootState(int tailLines) {
         this.tail = new TailBuffer(Math.max(50, tailLines));
@@ -174,7 +175,15 @@ public final class BootState {
     /** The whole state, which is what a new connection and {@code /state.json} both want. */
     public synchronized String snapshotJson() {
         if (externalSnapshot != null) {
-            return externalSnapshot;
+            long since = System.currentTimeMillis() - externalSnapshotAt;
+            String current = replaceNumber(externalSnapshot, "now", System.currentTimeMillis());
+            if (externalSnapshot.contains("\"exitCode\":null")) {
+                current = addToNumber(current, "runElapsedMs", since);
+                if (!externalSnapshot.contains("\"currentIndex\":-1")) {
+                    current = addToNumber(current, "currentElapsedMs", since);
+                }
+            }
+            return current;
         }
         StringBuilder json = new StringBuilder("{");
         json.append("\"seq\":").append(seq);
@@ -212,7 +221,42 @@ public final class BootState {
             return;
         }
         externalSnapshot = ProgressRedaction.redact(json);
+        externalSnapshotAt = System.currentTimeMillis();
         emit("snapshot", externalSnapshot);
+    }
+
+    private static String addToNumber(String json, String field, long amount) {
+        String marker = "\"" + field + "\":";
+        int start = json.indexOf(marker);
+        if (start < 0) {
+            return json;
+        }
+        start += marker.length();
+        int end = start;
+        while (end < json.length() && Character.isDigit(json.charAt(end))) {
+            end++;
+        }
+        try {
+            return json.substring(0, start)
+                    + (Long.parseLong(json.substring(start, end)) + amount)
+                    + json.substring(end);
+        } catch (NumberFormatException ignored) {
+            return json;
+        }
+    }
+
+    private static String replaceNumber(String json, String field, long value) {
+        String marker = "\"" + field + "\":";
+        int start = json.indexOf(marker);
+        if (start < 0) {
+            return json;
+        }
+        start += marker.length();
+        int end = start;
+        while (end < json.length() && Character.isDigit(json.charAt(end))) {
+            end++;
+        }
+        return json.substring(0, start) + value + json.substring(end);
     }
 
     private static void quoted(StringBuilder json, List<String> lines) {

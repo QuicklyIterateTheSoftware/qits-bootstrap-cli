@@ -43,4 +43,17 @@ class DurableProgressTest {
                 .contains("replacement worker is building")
                 .doesNotContain("builder exited");
     }
+
+    @Test
+    void elapsedTimeKeepsAdvancingWhileAWorkerIsQuiet() throws Exception {
+        BootState supervisor = new BootState(200);
+        supervisor.replaceSnapshot("{\"now\":1000,\"currentIndex\":0,\"runElapsedMs\":100,"+
+                "\"currentElapsedMs\":50,\"exitCode\":null}");
+
+        Thread.sleep(25);
+        String refreshed = supervisor.snapshotJson();
+
+        assertThat(refreshed).doesNotContain("\"runElapsedMs\":100")
+                .doesNotContain("\"currentElapsedMs\":50");
+    }
 }

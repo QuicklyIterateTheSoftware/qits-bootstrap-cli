@@ -49,7 +49,7 @@ class SeedDockerfileTest {
         String dockerfile = "RUN ./mvnw package -Dquarkus.native.native-image-xmx=4g\n";
 
         assertThat(SeedDockerfile.rewrite(dockerfile))
-                .contains("-Dquarkus.native.native-image-xmx=2g")
+                .contains("-Dquarkus.native.native-image-xmx=2560m")
                 .doesNotContain("native-image-xmx=4g");
     }
 
