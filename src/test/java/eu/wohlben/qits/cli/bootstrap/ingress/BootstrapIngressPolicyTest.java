@@ -37,6 +37,20 @@ class BootstrapIngressPolicyTest {
         assertThat(policy.authorize("GET", "localhost", "/", basic(PASSWORD)).status()).isEqualTo(401);
     }
 
+    @Test
+    void publicProgressNeedsNoCredentialButHasExactlyThreeGetDoors() {
+        assertThat(policy.authorizeProgress("GET", "/").target())
+                .isEqualTo(BootstrapIngressPolicy.Target.UI);
+        assertThat(policy.authorizeProgress("GET", "/state.json").target())
+                .isEqualTo(BootstrapIngressPolicy.Target.UI);
+        assertThat(policy.authorizeProgress("GET", "/events").target())
+                .isEqualTo(BootstrapIngressPolicy.Target.UI);
+        assertThat(policy.authorizeProgress("HEAD", "/").status()).isEqualTo(403);
+        assertThat(policy.authorizeProgress("GET", "/idp/token").status()).isEqualTo(403);
+        assertThat(policy.authorizeProgress("GET", "/git/qits-bootstrap/info/refs").status())
+                .isEqualTo(403);
+    }
+
     private BootstrapIngressPolicy.Decision decide(String method, String path) {
         return policy.authorize(method, "localhost:8481", path, basic(PASSWORD));
     }

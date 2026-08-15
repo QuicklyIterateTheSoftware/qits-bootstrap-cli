@@ -14,6 +14,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -38,6 +39,10 @@ public final class BootstrapIngressLifecycle {
         if (!config.web()) {
             throw new IllegalStateException("QITS_BOOTSTRAP_INGRESS requires QITS_WEB=1: its fixed UI "
                     + "upstream is qits-bootstrap-cli:" + config.webPort());
+        }
+        if (config.bootstrapIngressPublic() && config.domain().isEmpty()) {
+            throw new IllegalStateException("QITS_BOOTSTRAP_INGRESS_PUBLIC requires QITS_DOMAIN: "
+                    + "the public ingress accepts exactly that Host header");
         }
         String password = random();
         String capability = random();
@@ -68,18 +73,31 @@ public final class BootstrapIngressLifecycle {
             throw new IllegalStateException("cannot identify this bootstrap payload image for bootstrap ingress");
         }
         writeEnvironment();
-        Cmd command = Cmd.of(List.of("docker", "run", "-d", "--rm", "--name", CONTAINER,
-                        "--label", LABEL + "=true", "--label",
-                        LABEL + ".expires-at=" + boot.state.bootstrapIngressExpiresAt,
-                        "--network", Boot.NETWORK, "--cap-drop", "ALL", "--security-opt",
-                        "no-new-privileges", "-p", boot.config.bootstrapIngressBind() + ":"
-                                + boot.config.bootstrapIngressPort() + ":8080", "--env-file",
-                        boot.state.bootstrapIngressEnvFile.toString(), image, "bootstrap-edge"))
+        List<String> argv = new ArrayList<>(List.of("docker", "run", "-d", "--rm", "--name", CONTAINER,
+                "--label", LABEL + "=true", "--label", LABEL + ".expires-at="
+                        + boot.state.bootstrapIngressExpiresAt, "--network", Boot.NETWORK,
+                "--cap-drop", "ALL", "--security-opt", "no-new-privileges"));
+        if (boot.config.bootstrapIngressPublic()) {
+            // The only ingress mount is the retained certificate pair, read-only. This container
+            // receives neither the Docker socket nor any platform/configuration volume.
+            argv.addAll(List.of("-p", "80:8080", "-p", "443:8443", "-v",
+                    "qits-edge-letsencrypt:/cert:ro"));
+        } else {
+            argv.addAll(List.of("-p", boot.config.bootstrapIngressBind() + ":"
+                    + boot.config.bootstrapIngressPort() + ":8080"));
+        }
+        argv.addAll(List.of("--env-file", boot.state.bootstrapIngressEnvFile.toString(), image,
+                "bootstrap-edge"));
+        Cmd command = Cmd.of(argv)
                 .mask(boot.state.bootstrapIngressPassword)
                 .mask(boot.state.bootstrapIngressGitCapability);
         Boot.must(boot.docker.run(command, out), "starting the bootstrap ingress failed");
-        out.accept("  bootstrap ingress: http://" + boot.config.bootstrapIngressHost() + ":"
-                + boot.config.bootstrapIngressPort() + " (loopback-published, expires "
+        String address = boot.config.bootstrapIngressPublic()
+                ? "https://" + ingressHost() : "http://" + boot.config.bootstrapIngressHost() + ":"
+                        + boot.config.bootstrapIngressPort();
+        out.accept("  bootstrap ingress: " + address + " ("
+                + (boot.config.bootstrapIngressPublic() ? "TLS domain handoff" : "loopback-published")
+                + ", expires "
                 + Instant.ofEpochSecond(boot.state.bootstrapIngressExpiresAt) + ")");
     }
 
@@ -124,14 +142,25 @@ public final class BootstrapIngressLifecycle {
         String text = String.join("\n",
                 "QITS_WEB_BIND=false",
                 "QITS_BOOTSTRAP_INGRESS_INTERNAL_PORT=8080",
-                "QITS_BOOTSTRAP_INGRESS_HOST=" + boot.config.bootstrapIngressHost(),
+                "QITS_BOOTSTRAP_INGRESS_HOST=" + ingressHost(),
                 "QITS_BOOTSTRAP_INGRESS_PASSWORD=" + boot.state.bootstrapIngressPassword,
                 "QITS_BOOTSTRAP_INGRESS_GITHOST_CAPABILITY=" + boot.state.bootstrapIngressGitCapability,
                 "QITS_BOOTSTRAP_INGRESS_UI_UPSTREAM=http://qits-bootstrap-cli:" + boot.config.webPort(),
                 "QITS_BOOTSTRAP_INGRESS_GIT_UPSTREAM=http://"
-                        + PlatformModel.wireAlias("githost", env) + ":8080", "");
+                        + PlatformModel.wireAlias("githost", env) + ":8080");
+        if (boot.config.bootstrapIngressPublic()) {
+            text += "\nQITS_BOOTSTRAP_INGRESS_TLS_PORT=8443"
+                    + "\nQITS_BOOTSTRAP_INGRESS_TLS_CERTIFICATE=/cert/lets-encrypt.crt"
+                    + "\nQITS_BOOTSTRAP_INGRESS_TLS_KEY=/cert/lets-encrypt.key";
+        }
+        text += "\n";
         Files.writeString(boot.state.bootstrapIngressEnvFile, text, StandardCharsets.UTF_8);
         secure(boot.state.bootstrapIngressEnvFile);
+    }
+
+    private String ingressHost() {
+        return boot.config.bootstrapIngressPublic()
+                ? boot.config.domain().orElseThrow() : boot.config.bootstrapIngressHost();
     }
 
     private static boolean expired(String value, long now) {

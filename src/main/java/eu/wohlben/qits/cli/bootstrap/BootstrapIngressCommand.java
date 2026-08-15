@@ -20,7 +20,7 @@ public class BootstrapIngressCommand implements Callable<Integer> {
                 required("QITS_BOOTSTRAP_INGRESS_PASSWORD"),
                 required("QITS_BOOTSTRAP_INGRESS_GITHOST_CAPABILITY"),
                 URI.create(required("QITS_BOOTSTRAP_INGRESS_UI_UPSTREAM")),
-                URI.create(required("QITS_BOOTSTRAP_INGRESS_GIT_UPSTREAM")));
+                URI.create(required("QITS_BOOTSTRAP_INGRESS_GIT_UPSTREAM")), tls());
         Vertx vertx = Vertx.vertx();
         BootstrapIngressServer server = new BootstrapIngressServer(vertx, settings);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -47,5 +47,16 @@ public class BootstrapIngressCommand implements Callable<Integer> {
         } catch (NumberFormatException badPort) {
             throw new IllegalArgumentException(name + " must be an integer", badPort);
         }
+    }
+
+    private static BootstrapIngressServer.Tls tls() {
+        String certificate = System.getenv("QITS_BOOTSTRAP_INGRESS_TLS_CERTIFICATE");
+        String key = System.getenv("QITS_BOOTSTRAP_INGRESS_TLS_KEY");
+        if ((certificate == null || certificate.isBlank()) && (key == null || key.isBlank())) {
+            return null;
+        }
+        return new BootstrapIngressServer.Tls(requiredInt("QITS_BOOTSTRAP_INGRESS_TLS_PORT"),
+                required("QITS_BOOTSTRAP_INGRESS_TLS_CERTIFICATE"),
+                required("QITS_BOOTSTRAP_INGRESS_TLS_KEY"));
     }
 }

@@ -125,8 +125,9 @@ public final class BootState {
     }
 
     public synchronized void output(String line) {
-        tail.add(line);
-        emit("line", Json.object("text", line));
+        String safe = ProgressRedaction.redact(line);
+        tail.add(safe);
+        emit("line", Json.object("text", safe));
     }
 
     /**
@@ -135,16 +136,17 @@ public final class BootState {
      * is "event" reads as a mistake.
      */
     public synchronized void event(String line) {
-        eventTail.add(line);
-        emit("ev", Json.object("text", line));
+        String safe = ProgressRedaction.redact(line);
+        eventTail.add(safe);
+        emit("ev", Json.object("text", safe));
     }
 
     public synchronized void status(String status) {
         if (status == null) {
             return;
         }
-        this.status = status;
-        emit("status", Json.object("text", status));
+        this.status = ProgressRedaction.redact(status);
+        emit("status", Json.object("text", this.status));
     }
 
     public synchronized void phaseFinished(PhaseOutcome outcome) {

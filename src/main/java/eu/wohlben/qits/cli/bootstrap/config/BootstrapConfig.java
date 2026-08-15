@@ -306,6 +306,14 @@ public interface BootstrapConfig {
     @WithDefault("true")
     boolean bootstrapIngress();
 
+    /**
+     * Publish the disposable ingress on the platform domain while a recovery bootstrap runs.
+     * The ordinary local default remains loopback-only; this mode is for a remote operator who
+     * needs the live progress page at the same URL the normal edge will take over afterwards.
+     */
+    @WithDefault("false")
+    boolean bootstrapIngressPublic();
+
     /** The loopback host port of the short-lived bootstrap ingress, kept away from the edge. */
     @WithDefault("8481")
     int bootstrapIngressPort();

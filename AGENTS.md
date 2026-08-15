@@ -45,6 +45,11 @@ forced. Add to that list rather than deviating quietly.
 
 ## Conventions
 
+- **Bootstrap progress is a public, narrow status surface.** The payload publishes `0.0.0.0:8480`
+  by default and only `GET /`, `GET /state.json`, and `GET /events` may answer without credentials.
+  Keep its state/event text redacted. Do not turn it into a loopback-only default or a general
+  proxy. Git remains the separate Basic/capability-gated bootstrap ingress.
+
 - **Plain Language everywhere** — code comments, commit messages, documentation, and every string
   the display prints. Say only what the reader needs, in as few words as possible.
 - **A comment says why, not what.** The ported ones say why an order is what it is; keep that.

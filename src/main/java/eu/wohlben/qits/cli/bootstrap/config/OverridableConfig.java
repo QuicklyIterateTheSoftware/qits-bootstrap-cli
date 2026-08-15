@@ -224,6 +224,11 @@ public class OverridableConfig implements BootstrapConfig {
     }
 
     @Override
+    public boolean bootstrapIngressPublic() {
+        return base.bootstrapIngressPublic();
+    }
+
+    @Override
     public int bootstrapIngressPort() {
         return base.bootstrapIngressPort();
     }

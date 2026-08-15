@@ -17,7 +17,7 @@ import java.util.stream.Stream;
  * <p>
  * The tag is a digest of everything {@code docker/Dockerfile.bootstrap} reads, so the same
  * checkout always names the same image and a rerun finds it already built. The recovery payload is
- * a JVM image so it can build within a constrained host's two-CPU, 2 GB budget. Change a source
+ * a JVM image so it leaves the host budget to the seed images it orchestrates. Change a source
  * file and the tag changes with it, so a stale image cannot be run by mistake either.
  * <p>
  * <b>The repository is {@code qits-bootstrap}, deliberately not {@code qits/bootstrap}.</b>

@@ -1,7 +1,5 @@
-# The one-shot bootstrap payload is deliberately a JVM image.  Native builds need more than 2 GB
-# on the smallest recovery hosts, while the orchestration tool runs only for the duration of a
-# bootstrap and has no latency-sensitive request path.  Keeping this build within the platform's
-# two-CPU, 2 GB recovery limit matters more than saving its startup milliseconds.
+# The one-shot bootstrap payload is deliberately a JVM image.  It has no latency-sensitive request
+# path and keeps recovery headroom for the capped native seed image builds it orchestrates.
 #
 # A native image can still be produced explicitly from this checkout for installations that need
 # one; it is not the cold-recovery payload's dependency.

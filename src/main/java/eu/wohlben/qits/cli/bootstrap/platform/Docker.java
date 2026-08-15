@@ -29,6 +29,9 @@ public class Docker {
     /** Long enough for a cold GraalVM native build, which is what most of these are. */
     public static final Duration BUILD_TIMEOUT = Duration.ofHours(4);
 
+    /** One host budget for every seed, step and payload build the bootstrap starts. */
+    private static final List<String> BUILD_LIMITS = List.of("--memory", "4g", "--cpu-quota", "200000");
+
     /** The only driver a network of this platform has: see {@link #ensureNetwork}. */
     public static final String OVERLAY = "overlay";
 
@@ -409,6 +412,7 @@ public class Docker {
                                         List<String> extraArgs, Consumer<String> out) {
         List<String> command = new ArrayList<>(List.of(
                 "docker", "build", "--network", "host", "-t", tag, "-f", "-"));
+        command.addAll(BUILD_LIMITS);
         command.addAll(buildArgs);
         command.addAll(extraArgs);
         command.add(context.toString());
@@ -422,6 +426,7 @@ public class Docker {
 
     public ProcessResult build(List<String> args, Consumer<String> out) {
         List<String> command = new ArrayList<>(List.of("docker", "build"));
+        command.addAll(BUILD_LIMITS);
         command.addAll(buildArgs);
         command.addAll(args);
         return runner.run(Cmd.of(command).timeout(BUILD_TIMEOUT)

@@ -20,8 +20,12 @@ four-hour cold start is no longer four hours of silence.
     │  … the running step's own output, live                                     │
     └────────────────────────────────────────────────────────────────────────────┘
 
-The same run is also served to a browser at `http://localhost:8480` while it runs — see
+The same run is also served to a browser at `http://<host>:8480` while it runs — see
 [The browser view](#the-browser-view).
+
+The progress endpoint is deliberately public: only `GET /`, `GET /state.json`, and `GET /events`
+(SSE) exist, and progress text is redacted before it is published. There is no catch-all proxy.
+Git stays separate and requires the run-scoped Basic capability.
 
 ## Two modes
 
@@ -111,7 +115,7 @@ repository from the org anyway, so initialising them would clone the platform tw
 that IS there is skipped, never refreshed: the sha it stands on is the operator's decision.
 
 What it needs to run: a reachable docker daemon, roughly 4 GB of RAM free per native build it
-starts, and reach to quay.io, registry.access.redhat.com, docker.io and npm — a cold start cannot
+starts (each bootstrap build is capped to 2 CPUs and 4 GB; at most two may run), and reach to quay.io, registry.access.redhat.com, docker.io and npm — a cold start cannot
 pull through the mirror it is starting. **Nothing else**: git, the compose plugin (unwrap still
 takes a pre-swarm platform down with it), `stty` and the CLI's own binary are in the payload image,
 which the run builds for itself. What it needs to build:
@@ -419,7 +423,7 @@ was. Exit codes: `0` all good, `1` something warned (a deployment that never lan
 
 The same run, in a browser, from phase 1:
 
-    http://localhost:8480
+    http://<server-ip-or-name>:8480
 
 It is printed on the first line of every run. The page is the terminal display in HTML — the phase
 list with the finished ones dimmed, the running one with its elapsed time counting, the wait line,

@@ -61,6 +61,9 @@ public final class BootstrapIngressPolicy {
         if ("CONNECT".equals(verb)) {
             return new Decision(405, null, null);
         }
+        if (!allowedRoute(method, path)) {
+            return new Decision(403, null, null);
+        }
         if (UI_PATHS.contains(path) && ("GET".equals(verb) || "HEAD".equals(verb))) {
             return new Decision(0, Target.UI, path);
         }
@@ -68,6 +71,27 @@ public final class BootstrapIngressPolicy {
             return new Decision(0, Target.GIT, path);
         }
         return new Decision(403, null, null);
+    }
+
+    /** The public progress surface has no credential and does not use Host as a route selector. */
+    public Decision authorizeProgress(String method, String path) {
+        if (method == null || path == null || unsafePath(path)) {
+            return new Decision(403, null, null);
+        }
+        if (UI_PATHS.contains(path) && "GET".equals(method.toUpperCase(Locale.ROOT))) {
+            return new Decision(0, Target.UI, path);
+        }
+        return new Decision(403, null, null);
+    }
+
+    /** Route-only check for the clear-text listener: redirect only known bootstrap surfaces. */
+    public boolean allowedRoute(String method, String path) {
+        if (method == null || path == null || unsafePath(path)) {
+            return false;
+        }
+        String verb = method.toUpperCase(Locale.ROOT);
+        return (UI_PATHS.contains(path) && "GET".equals(verb))
+                || (gitPath(path) && gitMethod(verb, path));
     }
 
     private boolean hostMatches(String requestHost) {

@@ -60,6 +60,9 @@ class BootstrapIngressServerTest {
         assertThat(sse.headers().firstValue("Content-Type")).contains("text/event-stream");
         assertThat(sse.body()).contains("event: live");
 
+        HttpResponse<String> publicState = send(edgePort, "GET", "/state.json", "", null);
+        assertThat(publicState.statusCode()).isEqualTo(200);
+
         HttpResponse<String> clone = send(edgePort, "GET", "/git/qits-bootstrap/info/refs?service=git-upload-pack", "");
         assertThat(clone.statusCode()).isEqualTo(200);
         assertThat(clone.body()).isEqualTo("GET:");
@@ -76,8 +79,9 @@ class BootstrapIngressServerTest {
                 "127.0.0.1", password(), "internal-capability", URI.create("http://127.0.0.1:9"),
                 URI.create("http://127.0.0.1:9")));
         ingress.start().toCompletionStage().toCompletableFuture().join();
-        assertThat(send(edgePort, "GET", "/", "", "Basic bad").statusCode()).isEqualTo(401);
-        assertThat(send(edgePort, "GET", "/", "", basic()).statusCode()).isEqualTo(503); // allowed, bad fixed upstream
+        assertThat(send(edgePort, "GET", "/git/qits-bootstrap/info/refs", "", "Basic bad").statusCode())
+                .isEqualTo(401);
+        assertThat(send(edgePort, "GET", "/", "", null).statusCode()).isEqualTo(503); // public, bad fixed upstream
         assertThat(send(edgePort, "GET", "/idp/token", "", basic()).statusCode()).isEqualTo(403);
     }
 
@@ -87,10 +91,11 @@ class BootstrapIngressServerTest {
 
     private HttpResponse<String> send(int port, String method, String path, String body, String authorization)
             throws Exception {
-        HttpRequest request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
-                .timeout(Duration.ofSeconds(5)).header("Authorization", authorization)
-                .method(method, HttpRequest.BodyPublishers.ofString(body)).build();
-        return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
+                .timeout(Duration.ofSeconds(5));
+        if (authorization != null) request.header("Authorization", authorization);
+        HttpRequest built = request.method(method, HttpRequest.BodyPublishers.ofString(body)).build();
+        return HttpClient.newHttpClient().send(built, HttpResponse.BodyHandlers.ofString());
     }
 
     private void listen(HttpServer server, int port) {

@@ -903,7 +903,7 @@ public final class ComposeTemplate {
                   # on it.
                   QITS_CI_NETWORK: qits-net
                   QITS_CI_CONCURRENT_BUILDS: "2"
-                  QITS_CI_MEMORY_LIMIT: 2g
+                  QITS_CI_MEMORY_LIMIT: 4g
                   # WHERE STEP CONTAINERS COME FROM NOW. ci starts nothing itself: it asks this tier's
                   # orchestrator, which is the only service on the host holding a docker socket. The
                   # image ships the unqualified qits-containers:8080, which resolves to nothing here —
@@ -1392,7 +1392,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_AUDIENCE=${ENV_NAME}-qits-githost
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_NETWORK=qits-net
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONCURRENT_BUILDS=2
-            qits.platform.deployments.extras.qits-ci.env.QITS_CI_MEMORY_LIMIT=2g
+            qits.platform.deployments.extras.qits-ci.env.QITS_CI_MEMORY_LIMIT=4g
             qits.platform.deployments.extras.qits-ci.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_REGISTRY_HOST=registry.${ENV_NAME}.localhost:${PORT}
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_DOCKER_AUTH_HOSTS=registry.${ENV_NAME}.localhost:${PORT},mirror.${ENV_NAME}.localhost:${PORT}
