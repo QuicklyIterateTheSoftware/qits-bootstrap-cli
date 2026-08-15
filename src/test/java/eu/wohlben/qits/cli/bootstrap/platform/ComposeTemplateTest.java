@@ -500,29 +500,26 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>THE EDGE HOLDS A CLIENT FOR THE USER SESSIONS, and the flip that uses it is OFF.</b> Both
-     * halves of the credential are written now — the idp's block and the edge's — so that turning
-     * sessions on is one value rather than a redeploy of the door and the issuer together, which is
-     * the same order the pullers' credentials landed in before their flip.
+     * <b>THE EDGE HOLDS A CLIENT FOR USER SESSIONS, and sessions are enforced by default.</b>
      * <p>
      * The id carries the environment while the service does not: it is the session gate's
      * credential, and a session belongs to a tier.
      */
     @Test
-    void theEdgeIsAnIdpClientAndItsSessionFlipIsOff() {
+    void theEdgeIsAnIdpClientAndSessionsAreEnabled() {
         String compose = ComposeTemplate.compose(tokens());
         String edge = serviceBlock(compose, "qits-platform-edge");
         String idp = serviceBlock(compose, "qits-platform-idp");
 
         assertThat(idp).contains(
                 "QITS_IDP_CLIENT_PROD_QITS_EDGE_SECRET: \"secret-prod-qits-edge\"");
-        assertThat(edge).contains("QITS_EDGE_SESSIONS_ENABLED: \"false\"")
+        assertThat(edge).contains("QITS_EDGE_SESSIONS_ENABLED: \"true\"")
                 .contains("QITS_EDGE_SESSIONS_CLIENT_ID: prod-qits-edge")
                 .contains("QITS_EDGE_SESSIONS_CLIENT_SECRET: \"secret-prod-qits-edge\"");
         assertThat(extras("qits-platform-idp"))
                 .contains("env.QITS_IDP_CLIENT_PROD_QITS_EDGE_SECRET=secret-prod-qits-edge");
         assertThat(extras("qits-platform-edge"))
-                .contains("env.QITS_EDGE_SESSIONS_ENABLED=false")
+                .contains("env.QITS_EDGE_SESSIONS_ENABLED=true")
                 .contains("env.QITS_EDGE_SESSIONS_CLIENT_ID=prod-qits-edge")
                 .contains("env.QITS_EDGE_SESSIONS_CLIENT_SECRET=secret-prod-qits-edge");
         // No audience list for it: the edge introspects a session with Basic and asks the idp for
@@ -1122,8 +1119,7 @@ class ComposeTemplateTest {
         }
         // Each of these keys REPLACES the shipped list rather than extending it, and every id in
         // them carries the environment name, which no shipped default can follow.
-        assertThat(idp).contains("QITS_IDP_CLIENTS=prod-qits-ci,prod-qits-artifacts,"
-                + "prod-qits-workspaces,prod-qits-gateway");
+        assertThat(idp).contains("QITS_IDP_CLIENTS=" + String.join(",", PlatformModel.idpClients(ENV)));
         assertThat(idp).contains("QITS_IDP_CLIENT_PROD_QITS_CI_AUDIENCES=")
                 .contains("QITS_IDP_CLIENT_PROD_QITS_ARTIFACTS_AUDIENCES=")
                 .contains("prod-qits-deployments");

@@ -417,21 +417,14 @@ public final class ComposeTemplate {
                   QITS_EDGE_APPS_REGISTRY_HOST_PATTERN: "{env}-qits-artifacts"
                   QITS_EDGE_APPS_MIRROR_HOST_PATTERN: "qits-platform-mirror"
                   QITS_EDGE_APPS_GITHOST_HOST_PATTERN: "{env}-qits-githost"
-                  # USER SESSIONS, AND THE FLIP IS OFF. With enabled=false the environment vhost is
-                  # what it always was: browser traffic passes without a credential and no
-                  # X-Qits-* header is injected. Turning it TRUE makes the edge refuse an
-                  # anonymous browser — a navigation is redirected to /idp/login, anything else is
-                  # 401 — and turn a session cookie into X-Qits-User, X-Qits-User-Id and
-                  # X-Qits-Roles. Machine credentials pass either way.
-                  #
-                  # THE ORDER IS NOT FREE: flip this one FIRST and the gateway's `local` variant
-                  # simply ignores the new headers, so browsing keeps working the moment a session
-                  # exists. Flipping the GATEWAY to the `edge` variant first would make every
-                  # request anonymous and 401 the platform.
+                  # USER SESSIONS ARE THE DEFAULT. The environment vhost refuses an anonymous
+                  # browser — a navigation is redirected to /idp/login, anything else is 401 — and
+                  # turns a session cookie into X-Qits-User, X-Qits-User-Id and X-Qits-Roles.
+                  # Machine credentials pass through their own validation path.
                   #
                   # The pair below is the edge's own idp client, seeded three blocks up. It
                   # introspects with Basic and asks for no token, so there is no oidc-client here.
-                  QITS_EDGE_SESSIONS_ENABLED: "false"
+                  QITS_EDGE_SESSIONS_ENABLED: "true"
                   QITS_EDGE_SESSIONS_CLIENT_ID: ${ENV_NAME}-qits-edge
                   QITS_EDGE_SESSIONS_CLIENT_SECRET: "${IDP_SECRET_EDGE}"
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${EDGE_TLS}
@@ -1236,12 +1229,9 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_REGISTRY_HOST_PATTERN={env}-qits-artifacts
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN=qits-platform-mirror
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost
-            # USER SESSIONS, PINNED OFF. false is what the deployed edge keeps until the rollout
-            # flips it: browser traffic passes uncredentialed and no X-Qits-* header is injected.
-            # The credential is written NOW so that turning sessions on is one value on this line
-            # rather than a redeploy of the door. The gateway stays on QITS_VARIANT=local, and it
-            # has to: it would 401 everything if it read the headers before the edge sent any.
-            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_ENABLED=false
+            # USER SESSIONS ARE ENFORCED at the public environment vhost; IdP routes remain the
+            # protocol-required anonymous carve-out.
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_ENABLED=true
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_CLIENT_ID=${ENV_NAME}-qits-edge
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_CLIENT_SECRET=${IDP_SECRET_EDGE}
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080${EDGE_TLS_ARGS}
