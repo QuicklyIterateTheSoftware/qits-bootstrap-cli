@@ -154,7 +154,7 @@ public class SeedPhases {
                 throw new IllegalStateException("docker compose plugin missing");
             }
             ctx.log("  docker compose: present");
-            ctx.log("  docker build: enforced 4g memory and 2 cpu limits");
+            ctx.log("  bootstrap builders: enforced 6g memory and 4 cpu limits");
             boot.state.swarm = ensureSwarm(boot.docker, ctx::log);
             ctx.log("  swarm: " + boot.state.swarm);
             warnAboutInsecureRegistries(ctx);
@@ -1180,6 +1180,7 @@ public class SeedPhases {
             boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
             String cid = create(ctx, List.of(
                     "docker", "create", "--user", "root", "--entrypoint", "bash",
+                    "--memory", "6g", "--cpu-quota", "400000", "--cpuset-cpus", "0-3",
                     "-v", MAVEN_CACHE_MOUNT, "qits/graalvmce-musl-builder:jdk-25",
                     "-c", MAVEN_PURGE_QITS
                             + "cd /qits-build && ./mvnw -B -ntp -pl ci-daemon -am package -Dnative "
