@@ -90,11 +90,8 @@ forced. Add to that list rather than deviating quietly.
   network alias, the temporary Maven registry and the two seed byte services are exactly that case,
   and all of them are gone by the first cutover. No deployed service of the byte plane publishes
   anything.
-  **Two services are dialled at their own alias rather than through the edge**, and neither is an
-  inconsistency to tidy away — both are deliberately off the gateway's route table.
-  `qits-platform-dns:8080/dns` is the record API's only address: the gateway proxies HTTP and there
-  is no route to it. Its other door is not HTTP at all — UDP and TCP on 8053, published on
-  `QITS_DNS_PORT` — and nothing here speaks it.
+  **One service is dialled at its own alias rather than through the edge**, and it is not an
+  inconsistency to tidy away — it is deliberately off the gateway's route table.
   `<env>-qits-containers:8080/containers` is the container orchestrator's, and it must stay unrouted:
   every caller is a machine on qits-net, every route of the service is behind the machine gate, and a
   gateway entry would put a socket-holding service behind the platform's public door. This CLI only

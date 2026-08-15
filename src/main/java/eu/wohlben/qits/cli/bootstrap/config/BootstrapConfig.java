@@ -101,48 +101,24 @@ public interface BootstrapConfig {
     int gitHostPort();
 
     /**
-     * Host port qits-platform-dns publishes — <b>on UDP and on TCP</b>.
+     * <b>The domain this platform serves</b>, and the name the edge's Let's Encrypt certificate is
+     * issued for.
      * <p>
-     * 53, because this is the port a registrar's delegation ultimately reaches and a nameserver on
-     * any other one is a nameserver nobody can find. The service binds 8053 inside the container
-     * (below 1024 needs privileges it should not hold), so the publish is what makes it 53.
+     * <b>Unset is the default and a supported state</b>, not a half-configured one: the edge
+     * publishes the one plain-HTTP port it always did. Everything the domain adds is absent rather
+     * than broken.
      * <p>
-     * <b>Both protocols, and TCP is not the optional half.</b> dnsjava drops a whole RRset that will
-     * not fit a UDP answer, so a name with several records answers TC=1 and <i>zero</i> records and
-     * the client's TCP retry is the only way it ever gets an answer. Resolvers also probe TCP
-     * outright.
+     * Set, the edge gets 80, 443 and a loopback management port with a certificate slot on a volume,
+     * and a real Let's Encrypt certificate is ordered for the name. The closing report prints the
+     * records the domain needs, which is why {@link #publicIp()} is mandatory beside this.
      * <p>
-     * Move it when something on the host already holds 53 — systemd-resolved is the usual one. A
-     * delegation cannot name a port, so any other value is a local-testing answer rather than a
-     * public one.
-     */
-    @WithDefault("53")
-    int dnsPort();
-
-    /**
-     * <b>The domain this platform serves</b>, and the one knob the whole public-name path hangs off:
-     * the dns service's zone row and its SOA/NS identity ({@code ns1.<domain>},
-     * {@code hostmaster.<domain>}), and the name the edge's Let's Encrypt certificate is issued for.
-     * <p>
-     * <b>Unset is the default and a supported state</b>, not a half-configured one: qits-platform-dns
-     * runs with no zones and no SOA synthesis — which its own README documents as legal — and the
-     * edge publishes the one plain-HTTP port it always did. Everything the domain adds is absent
-     * rather than broken.
-     * <p>
-     * Set, the whole public-name path follows in this one run: the dns container is given its NS
-     * identity, the zone is created over its API <b>and filled with the records that make it
-     * answer</b>, the edge gets 80, 443 and a loopback management port with a certificate slot on a
-     * volume, and a real Let's Encrypt certificate is ordered for the name. The records and the
-     * order both need this host's address, which is why {@link #publicIp()} is mandatory beside
-     * this.
-     * <p>
-     * The one thing left to a person is the one thing no program here can do: the delegation at the
-     * REGISTRAR — {@code NS <domain> -> ns1.<domain>} plus the glue A record for that nameserver
-     * hostname. Set it BEFORE the run, because the certificate order is answered over the delegated
-     * name; if it has not propagated yet the issuance warns and the closing report prints the retry.
+     * <b>DNS IS EXTERNAL.</b> The records live at whatever provider holds the domain, and this run
+     * writes none of them. Put them in place BEFORE the run, because the certificate order is
+     * answered over the public name; if they have not propagated yet the issuance warns and the
+     * closing report prints the retry.
      * <p>
      * Validated by {@link DomainName}, on the host half, before the payload image is built: a typo
-     * here would otherwise become a zone row and a certificate request for a name nobody owns.
+     * here would otherwise become a certificate request for a name nobody owns.
      */
     Optional<String> domain();
 
@@ -150,11 +126,9 @@ public interface BootstrapConfig {
      * <b>This host's public IPv4 address, and MANDATORY whenever {@link #domain()} is set</b> —
      * {@code --public-ip} on the command line, {@code QITS_PUBLIC_IP} in {@code .env}.
      * <p>
-     * It is the data of every A record this run writes into the zone, and the same address the glue
-     * record at the registrar carries. Both halves of that sentence are why it is an input: a
-     * delegation sends every name under the domain to this platform's nameserver, so the apex has to
-     * be answered from the zone rather than by the registrar, and the run cannot learn the address
-     * for itself — it is a container behind a NAT.
+     * It is the data of every A record the domain needs at its dns provider, and the run cannot
+     * learn the address for itself — it is a container behind a NAT. So it is told, and the closing
+     * report prints the records with it filled in.
      * <p>
      * Checked by {@link PublicIp} on the host half, beside the domain and in the same manner: four
      * dotted octets, a hostname refused rather than resolved, and set without a domain refused too.
@@ -167,7 +141,7 @@ public interface BootstrapConfig {
      * <p>
      * Staging by default, deliberately: the production directory rate-limits failed orders per
      * registered domain per week, and the thing most likely to fail on a first boot is the
-     * delegation — a zone whose NS records the world has not seen yet answers nothing, and an
+     * dns — a name whose records the world has not seen yet answers nothing, and an
      * HTTP-01 challenge is fetched over exactly that name. The staging directory has generous limits
      * and issues from an untrusted root, so a browser still refuses the certificate; it proves the
      * path and costs nothing when it fails.
@@ -188,7 +162,7 @@ public interface BootstrapConfig {
      * renewal ever stops happening.
      * <p>
      * Derived from the domain by default: {@code hostmaster@<domain>}, which is the same role
-     * address the zone's SOA already names as {@code hostmaster.<domain>}. One convention, spelled
+     * name the {@code hostmaster.<domain>} convention already carries. One convention, spelled
      * twice by one derivation, so a platform gains a working contact without a second knob to fill
      * in. Set this when the mail for that domain is not read.
      */
@@ -436,21 +410,6 @@ public interface BootstrapConfig {
      */
     default String eventsUrl() {
         return "http://qits-platform-edge:8080/events";
-    }
-
-    /**
-     * qits-platform-dns' HTTP surface — its health and the zone API — <b>at its own alias, not
-     * through the edge</b>, which is the one exception to the rule the two addresses above follow.
-     * There is no gateway route to this service and there must not be one: the gateway proxies HTTP
-     * and the record API is a service-to-service door, so every caller addresses it directly.
-     * <p>
-     * The path is {@code /dns} because that is the service's own
-     * {@code quarkus.http.non-application-root-path} — health is {@code /dns/q/health/ready} and the
-     * zones are {@code /dns/api/zones}. The wire protocol is a different door entirely: UDP and TCP
-     * on 8053, published by {@link #dnsPort()}, and nothing here speaks it.
-     */
-    default String dnsUrl() {
-        return "http://qits-platform-dns:8080/dns";
     }
 
     /**

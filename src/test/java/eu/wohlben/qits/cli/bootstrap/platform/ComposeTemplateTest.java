@@ -25,14 +25,12 @@ class ComposeTemplateTest {
         values.put("MIRROR_PORT", "8082");
         values.put("GIT_HOST_PORT", "8083");
         values.put("PG_PORT", "5433");
-        values.put("DNS_PORT", "53");
         values.put("PG_SUPERUSER_PASSWORD", "0123456789abcdef");
         values.put("PG_DEPLOYMENTS_PASSWORD", "fedcba9876543210");
         values.put("PG_DEPLOYMENTS_EVENTSTREAM_PASSWORD", "1111222233334444");
         values.put("PG_CI_PASSWORD", "aaaabbbbccccdddd");
         values.put("PG_CI_EVENTSTREAM_PASSWORD", "eeeeffff00001111");
         values.put("PG_PLATFORM_IDP_PASSWORD", "2222333344445555");
-        values.put("PG_PLATFORM_DNS_PASSWORD", "66667777888899aa");
         values.put("PG_EVENTS_PASSWORD", "bbbbccccddddeeee");
         values.put("PG_ARTIFACTS_PASSWORD", "cafecafecafecafe");
         values.put("PG_PLATFORM_MIRROR_PASSWORD", "1234123412341234");
@@ -138,14 +136,12 @@ class ComposeTemplateTest {
         assertThat(compose).contains("user: \"1001:988\"");
         assertThat(compose).contains("QITS_CI_DAEMON_VERSION: \"abc123\"");
         assertThat(compose).doesNotContain("${PORT}");
-        assertThat(compose).doesNotContain("${DNS_PORT}");
         assertThat(compose).doesNotContain("${PG_SUPERUSER_PASSWORD}")
                 .doesNotContain("${PG_DEPLOYMENTS_PASSWORD}")
                 .doesNotContain("${PG_DEPLOYMENTS_EVENTSTREAM_PASSWORD}")
                 .doesNotContain("${PG_CI_PASSWORD}")
                 .doesNotContain("${PG_CI_EVENTSTREAM_PASSWORD}")
                 .doesNotContain("${PG_PLATFORM_IDP_PASSWORD}")
-                .doesNotContain("${PG_PLATFORM_DNS_PASSWORD}")
                 .doesNotContain("${PG_EVENTS_PASSWORD}")
                 .doesNotContain("${PG_ARTIFACTS_PASSWORD}")
                 .doesNotContain("${PG_PLATFORM_MIRROR_PASSWORD}")
@@ -156,8 +152,7 @@ class ComposeTemplateTest {
         assertThat(compose).doesNotContain("${MIRROR_PORT}").doesNotContain("${GIT_HOST_PORT}");
         // The domain fragments are filled even when they are empty: a leftover placeholder would
         // reach the file as literal text and compose would refuse it.
-        assertThat(compose).doesNotContain("${DNS_IDENTITY}")
-                .doesNotContain("${LETSENCRYPT_VOLUME}")
+        assertThat(compose).doesNotContain("${LETSENCRYPT_VOLUME}")
                 .doesNotContain("${EDGE_TLS_PORTS}")
                 .doesNotContain("${EDGE_TLS}");
         assertThat(compose).doesNotContain("${ENV_NAME}");
@@ -926,7 +921,7 @@ class ComposeTemplateTest {
         for (String application : new String[]{"qits-platform-edge", "qits-gateway",
                 "qits-artifacts", "qits-platform-mirror", "qits-githost", "qits-containers",
                 "qits-ci", "qits-deployments", "qits-platform-idp",
-                "qits-platform-dns", "qits-stt", "qits-projects", "qits-workspaces", "qits-events",
+                "qits-stt", "qits-projects", "qits-workspaces", "qits-events",
                 "qits-docs", "qits-observability", "qits-oci-postgresql"}) {
             assertThat(properties).contains(EXTRAS + application + ".");
         }
@@ -987,21 +982,19 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>WHAT IS PUBLISHED, AND IT IS TWO THINGS.</b> The edge's HTTP port and the nameserver's DNS
-     * one — everything else on this platform is reached through the first or dialled at a wire
-     * alias. A service publish has no ip field in either mode, so a port that must not reach the
-     * network cannot be published at all.
+     * <b>WHAT IS PUBLISHED, AND IT IS ONE THING:</b> the edge's HTTP port. Everything else on this
+     * platform is reached through it or dialled at a wire alias. A service publish has no ip field
+     * in either mode, so a port that must not reach the network cannot be published at all.
      */
     @Test
-    void onlyTheEdgeAndTheNameserverPublishAHostPort() {
+    void onlyTheEdgePublishesAHostPort() {
         List<String> publishing = extrasKeys().stream()
                 .filter(line -> line.contains(".publishes["))
                 .map(line -> line.substring(EXTRAS.length(), line.indexOf('.', EXTRAS.length())))
                 .distinct()
                 .toList();
 
-        assertThat(publishing)
-                .containsExactlyInAnyOrder("qits-platform-edge", "qits-platform-dns");
+        assertThat(publishing).containsExactly("qits-platform-edge");
         // The database whose only consumer was this CLI's cold-boot DDL, which dials the wire
         // alias. Neither file publishes it, in the seed or in the deployment.
         assertThat(ComposeTemplate.extras(tokens())).doesNotContain(":5433:5432");
@@ -1309,31 +1302,17 @@ class ComposeTemplateTest {
     }
 
     /**
-     * The nameserver, in both files: two publishes because both transports are mandatory, and the
-     * database triple because compose starts it before any deployer exists to inject one.
+     * <b>THE NAMESERVER IS GONE, from both files and from the seed's databases.</b> This platform
+     * serves no dns: a domain's records live at whatever provider holds it.
      */
     @Test
-    void theNameserverPublishesBothTransportsAndIsHandedItsDatabase() {
-        String compose = ComposeTemplate.compose(tokens());
-        String block = serviceBlock(compose, "qits-platform-dns");
-        String dns = extras("qits-platform-dns");
-
-        assertThat(compose).contains("image: qits/platform-dns:latest");
-        // TCP is not the optional half: a truncated UDP answer carries ZERO records, so the client's
-        // TCP retry is the only way it ever gets one.
-        assertThat(block).contains("protocol: udp").contains("protocol: tcp")
-                .contains("published: 53").contains("mode: host");
-        assertThat(block).contains("QITS_RESOURCE_DB_URL: "
-                        + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_platform_dns")
-                .contains("QITS_RESOURCE_DB_USERNAME: qits_platform_dns")
-                .contains("QITS_RESOURCE_DB_PASSWORD: \"66667777888899aa\"");
-        // No volume: the store is postgres and this service writes nothing that outlives it.
-        assertThat(block).doesNotContain("volumes:");
-
-        assertThat(dns).contains(".publishes[0]=53:8053/udp").contains(".publishes[1]=53:8053/tcp");
-        // The deployer injects the triple from `resources: postgresql:db`; a pin here would outlive
-        // a rotation and break the deployment it looks like it is configuring.
-        assertThat(dns).doesNotContain("QITS_RESOURCE_");
+    void neitherFileCarriesTheRetiredNameserver() {
+        assertThat(ComposeTemplate.compose(tokens())).doesNotContain("qits-platform-dns")
+                .doesNotContain("qits/platform-dns")
+                .doesNotContain("qits_platform_dns")
+                .doesNotContain("8053");
+        assertThat(ComposeTemplate.extras(tokens())).doesNotContain("qits-platform-dns");
+        assertThat(ComposeTemplate.extras(tokens(DOMAIN))).doesNotContain("qits-platform-dns");
     }
 
     /**
@@ -1364,40 +1343,21 @@ class ComposeTemplateTest {
         assertThat(extras).isEqualTo(ComposeTemplate.extras(tokens()));
     }
 
-    /** With no domain, not one trace of the zone, the TLS ports or the certificate volume. */
+    /** With no domain, not one trace of the TLS ports or the certificate volume. */
     @Test
-    void withNoDomainThereIsNoTlsAndNoNameserverIdentity() {
+    void withNoDomainThereIsNoTls() {
         String compose = ComposeTemplate.compose(tokens());
         String extras = ComposeTemplate.extras(tokens());
 
         assertThat(compose).doesNotContain("letsencrypt")
-                .doesNotContain("QITS_DNS_NS_NAMES")
-                .doesNotContain("QITS_DNS_HOSTMASTER")
                 .doesNotContain("QUARKUS_TLS_")
                 .doesNotContain("443:8443")
                 .doesNotContain("127.0.0.1:9000");
         assertThat(extras).doesNotContain("letsencrypt")
-                .doesNotContain("QITS_DNS_NS_NAMES")
                 .doesNotContain("QUARKUS_TLS_");
         // The edge keeps the one port it always published, and nothing asks for an ip.
         assertThat(extras("qits-platform-edge")).contains(".publishes[0]=8080:8080")
                 .doesNotContain(".publishes[1]");
-    }
-
-    /**
-     * A configured domain, in both files, on both services. <b>Both dns variables or neither</b>: the
-     * service turns SOA and NS synthesis off unless it holds the pair, and a half-configured zone
-     * answers records while resolvers cannot negative-cache — load and latency, never an alarm.
-     */
-    @Test
-    void aDomainGivesTheNameserverItsIdentityInBothFiles() {
-        String block = serviceBlock(ComposeTemplate.compose(tokens(DOMAIN)), "qits-platform-dns");
-        String dns = extras("qits-platform-dns", tokens(DOMAIN));
-
-        assertThat(block).contains("QITS_DNS_NS_NAMES: ns1.qits-dev.eu")
-                .contains("QITS_DNS_HOSTMASTER: hostmaster.qits-dev.eu");
-        assertThat(dns).contains("env.QITS_DNS_NS_NAMES=ns1.qits-dev.eu")
-                .contains("env.QITS_DNS_HOSTMASTER=hostmaster.qits-dev.eu");
     }
 
     /**
@@ -1432,17 +1392,19 @@ class ComposeTemplateTest {
         // insecure-requests stays at its default: every health poll in the boot speaks plain HTTP.
         assertThat(compose).doesNotContain("INSECURE_REQUESTS");
 
+        // 9000 is not published in the extras either: the swarm driver refuses a loopback
+        // publish, and every caller dials qits-platform-edge:9000 on qits-net. The first
+        // bare-server domain boot found the stale loopback line here refusing the edge cutover.
         assertThat(edgeExtras).contains(".publishes[0]=8080:8080")
                 .contains(".publishes[1]=80:8080")
                 .contains(".publishes[2]=443:8443")
-                .contains(".publishes[3]=127.0.0.1:9000:9000")
+                .doesNotContain("9000")
                 .contains(".mounts[0]=volume:qits-edge-letsencrypt:/work/.letsencrypt")
                 .contains("env.QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT=/work/.letsencrypt/lets-encrypt.crt")
                 .contains("env.QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY=/work/.letsencrypt/lets-encrypt.key")
                 .contains("env.QUARKUS_TLS_RELOAD_PERIOD=1h");
-        // The refusal the loopback publish buys, said where the operator reads it.
         assertThat(ComposeTemplate.extras(tokens(DOMAIN)))
-                .contains("9000 STAYS ON LOOPBACK, and under swarm that REFUSES the deployment");
+                .contains("9000 IS NOT PUBLISHED");
     }
 
     @Test

@@ -11,7 +11,7 @@ import java.util.stream.Collectors;
  * The whole reason there is a mode at all is that the two directories fail differently. Production
  * counts failed orders per registered domain per week and locks the domain out when the count is
  * reached; staging counts almost nothing. The order most likely to fail on a first boot is the
- * first one — the delegation at the registrar has to have propagated before an HTTP-01 challenge
+ * first one — the domain's records have to have propagated before an HTTP-01 challenge
  * can be fetched over the delegated name — so the default is the directory a failure is free in.
  * <p>
  * <b>Both values are checked on the host half, beside the domain and the address</b>, and for the
@@ -25,7 +25,7 @@ public final class Acme {
 
         /**
          * The testing directory: generous limits, and an untrusted root, so a browser still refuses
-         * what it issues. It proves the delegation, the challenge and the reload for free.
+         * what it issues. It proves the records, the challenge and the reload for free.
          */
         STAGING("https://acme-staging-v02.api.letsencrypt.org/directory"),
 
@@ -75,7 +75,7 @@ public final class Acme {
                         + Arrays.stream(Mode.values()).map(Mode::word)
                                 .collect(Collectors.joining(", "))
                         + ". staging is the default and issues from an untrusted root — it proves "
-                        + "the delegation and the challenge without spending production's weekly "
+                        + "the records and the challenge without spending production's weekly "
                         + "failure limit. production issues the certificate a browser accepts. off "
                         + "keeps the self-signed placeholder and prints the manual command."));
     }
@@ -83,8 +83,8 @@ public final class Acme {
     /**
      * The account's contact address: what was configured, or {@code hostmaster@<domain>}.
      * <p>
-     * The derivation is not a guess — it is the same role address the zone's SOA already names as
-     * {@code hostmaster.<domain>}, so a platform that has a domain has a contact by construction and
+     * The derivation is not a guess — {@code hostmaster} is the convention for the role that
+     * answers for a domain, so a platform that has a domain has a contact by construction and
      * nobody has to fill a second knob in to get a certificate.
      */
     public static String email(BootstrapConfig config, String domain) {

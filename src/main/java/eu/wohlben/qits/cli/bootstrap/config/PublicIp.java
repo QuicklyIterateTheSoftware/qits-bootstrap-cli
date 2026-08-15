@@ -6,24 +6,22 @@ import java.util.regex.Pattern;
 /**
  * {@code QITS_PUBLIC_IP}, read and checked, and <b>mandatory whenever {@link DomainName} answers</b>.
  * <p>
- * <b>Why the bootstrap needs an address at all.</b> A delegation is made at the registrar, where the
- * operator writes {@code NS <domain> -> ns1.<domain>} and a glue A record for that nameserver
- * hostname. From the moment it takes, this platform's own nameserver is asked for <i>every</i> name
- * in the zone — the apex included — and a registrar has no way to answer for one: an apex A record
- * is not something the delegation can carry. So the records have to exist in the zone this run
- * creates, and every one of them is an A record pointing at this host. The value cannot be derived:
- * a container behind a NAT sees a private address, and asking a third party what it thinks this
- * host's address is would make the whole public-name path depend on a service nobody here owns. It
- * is an input, and the person who set up the delegation already knows it.
+ * <b>Why the bootstrap needs an address at all.</b> Every name this platform serves resolves to
+ * this one host, and the A records that say so live at the domain's own dns provider — this platform
+ * serves no dns. The run still needs the address: the closing report prints the records with it
+ * filled in, and the certificate order is answered over a name that carries it. The value cannot be
+ * derived — a container behind a NAT sees a private address, and asking a third party what it thinks
+ * this host's address is would make the whole public-name path depend on a service nobody here owns.
+ * It is an input, and the person who holds the domain already knows it.
  * <p>
  * <b>Checked here, beside the domain, for the same reason the domain is.</b> Both values leave this
- * machine — into zone rows a resolver on the internet reads, and into the guidance a registrar entry
- * is typed from — so the shape is settled on the host half, before the payload image is built,
- * where a wrong value costs one line rather than a four-hour boot.
+ * machine — into the records a person types at a dns provider, and into a certificate request — so
+ * the shape is settled on the host half, before the payload image is built, where a wrong value
+ * costs one line rather than a four-hour boot.
  * <p>
  * <b>An IPv4 literal, and a name is refused rather than resolved.</b> The value becomes the data of
  * an A record, which holds four octets and nothing else, and a program that resolved a name here
- * would put whatever some other resolver believed today into a zone that then answers for it.
+ * would put whatever some other resolver believed today into a record that then answers for it.
  */
 public final class PublicIp {
 
@@ -63,22 +61,21 @@ public final class PublicIp {
      */
     private static void refuseWithoutDomain(String value) {
         throw new IllegalArgumentException("QITS_PUBLIC_IP (--public-ip) is '" + value + "', but "
-                + "QITS_DOMAIN (--domain) is unset, so this run has no zone to write it into and no "
+                + "QITS_DOMAIN (--domain) is unset, so this run has no public name to serve and no "
                 + "certificate to issue. The address is only ever the data of this platform's own A "
                 + "records. Set the domain as well, or drop the address: a platform with no domain "
-                + "is a supported platform — dns serves no zones and the edge stays on plain HTTP.");
+                + "is a supported platform — the edge stays on plain HTTP.");
     }
 
     private static IllegalArgumentException missing(String domain) {
         return new IllegalArgumentException("QITS_DOMAIN (--domain) is '" + domain + "' but "
-                + "QITS_PUBLIC_IP (--public-ip) is unset, and a domain without an address is a zone "
-                + "nobody can reach. Once " + domain + " is delegated to " + DomainName.nsName(domain)
-                + ", THIS platform answers every name under it — the apex included — and a registrar "
-                + "cannot hold an A record for you. So this run writes the zone's records itself, "
-                + "and each one is this host's public IPv4 address: the same address the glue record "
-                + "for " + DomainName.nsName(domain) + " carries. Set QITS_PUBLIC_IP to it, as four "
-                + "dotted octets — 203.0.113.7. It cannot be derived: this run is a container behind "
-                + "a NAT.");
+                + "QITS_PUBLIC_IP (--public-ip) is unset, and a domain without an address is a name "
+                + "nobody can reach. Every name under " + domain + " — the apex included — has to "
+                + "resolve to THIS host, and the A records that say so live at your dns provider: "
+                + "this platform serves no dns. The run needs the address anyway, to print those "
+                + "records and to order the certificate. Set QITS_PUBLIC_IP to it, as four dotted "
+                + "octets — 203.0.113.7. It cannot be derived: this run is a container behind a "
+                + "NAT.");
     }
 
     static String checked(String value) {
@@ -88,7 +85,7 @@ public final class PublicIp {
                     + "no leading zeros — 203.0.113.7. A HOSTNAME is refused rather than resolved: "
                     + "this value becomes the data of A records that a resolver on the internet then "
                     + "reads back, and a name looked up here would freeze whatever some other "
-                    + "resolver happened to answer today into the zone that is supposed to be the "
+                    + "resolver happened to answer today into the record that is supposed to be the "
                     + "authority for it. It is also the address the glue record at your registrar "
                     + "carries, so the two are one value on purpose.");
         }

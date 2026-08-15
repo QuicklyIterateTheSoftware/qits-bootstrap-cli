@@ -129,11 +129,6 @@ public class OverridableConfig implements BootstrapConfig {
     }
 
     @Override
-    public int dnsPort() {
-        return base.dnsPort();
-    }
-
-    @Override
     public Optional<String> domain() {
         return domain != null ? Optional.of(domain) : base.domain();
     }

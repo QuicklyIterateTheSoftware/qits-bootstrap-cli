@@ -19,23 +19,8 @@ class DomainNameTest {
     }
 
     @Test
-    void aDomainIsReadAndTheTwoNamesAreDerivedFromIt() {
+    void aDomainIsReadAsGiven() {
         assertThat(DomainName.of(config("qits-dev.eu"))).contains("qits-dev.eu");
-        // Both are conventions of this bootstrap: the dns service only knows what it is told.
-        assertThat(DomainName.nsName("qits-dev.eu")).isEqualTo("ns1.qits-dev.eu");
-        assertThat(DomainName.hostmaster("qits-dev.eu")).isEqualTo("hostmaster.qits-dev.eu");
-    }
-
-    /**
-     * The nameserver has two spellings of one name and they must not drift: the registrar's glue
-     * record carries the fqdn, while the zone's own A record for it is stored relative to the apex —
-     * qits-platform-dns refuses an fqdn as a record name outright.
-     */
-    @Test
-    void theNameserverIsAlsoSpelledTheWayARecordInItsOwnZoneIs() {
-        assertThat(DomainName.nsLabel("qits-dev.eu")).isEqualTo("ns1");
-        assertThat(DomainName.nsLabel("qits.co.uk") + "." + "qits.co.uk")
-                .isEqualTo(DomainName.nsName("qits.co.uk"));
     }
 
     @Test
@@ -53,7 +38,7 @@ class DomainNameTest {
                 "qits.eu.",         // a trailing dot is a third spelling of one name
                 "localhost",        // one label cannot be delegated
                 "https://qits.eu",  // a URL, not a name
-                "qits.eu/dns",      // a path
+                "qits.eu/path",     // a path
                 "-qits.eu",         // a label may not start with a dash
                 "qits..eu",         // an empty label
                 "qits eu"}) {       // a space

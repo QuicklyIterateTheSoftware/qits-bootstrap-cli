@@ -324,37 +324,33 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>The records are stated as rows that EXIST</b>, because they do now — and the registrar line
-     * carries the same address they were written with, which is the value the glue record needs.
+     * <b>The records are stated as a step to CHECK, because this platform serves no dns.</b> They
+     * are held at whatever provider holds the domain, and every one of them carries the address
+     * this run was given.
      */
     @Test
-    void theRecordsAreListedAndTheRegistrarLineCarriesTheAddress() {
+    void theRecordsAreListedWithTheAddressTheyAllCarry() {
         String report = domainReport(Acme.Mode.STAGING, "staging");
 
-        // Every record the zone phase writes, in the report the operator reads.
-        assertThat(report).contains("@").contains("ns1").contains("*").contains("*.*");
+        assertThat(report).contains("@").contains("*").contains("*.*");
         assertThat(report).contains("203.0.113.7");
-        // The delegation, both halves of it, and the nameserver spelled as an fqdn there.
-        assertThat(report).contains("NS  qits-dev.eu  ->  ns1.qits-dev.eu")
-                .contains("A   ns1.qits-dev.eu  ->  203.0.113.7")
-                .contains("GLUE");
     }
 
     /**
-     * <b>The step that told the operator to write the records is gone, and stays gone.</b> This run
-     * writes them, so an instruction to write them by hand would be an instruction to redo work —
-     * and the "which this run cannot know" clause it carried is simply no longer true.
+     * <b>Nothing here claims this run wrote a record, or that a delegation is wanted.</b> There is
+     * no nameserver to delegate to any more, and an instruction to point one at this host would send
+     * the reader to set up something that does not exist.
      */
     @Test
-    void theRemovedStepStaysRemoved() {
+    void theRetiredNameserverIsNotMentioned() {
         for (Acme.Mode mode : Acme.Mode.values()) {
             String report = domainReport(mode, null);
 
             assertThat(report).as("mode %s", mode)
-                    .doesNotContain("cannot know")
-                    .doesNotContain("no records")
-                    .doesNotContain("has no records yet")
-                    .doesNotContain("2. Write the records");
+                    .doesNotContain("ns1")
+                    .doesNotContain("GLUE")
+                    .doesNotContain("registrar")
+                    .doesNotContain("cannot know");
         }
     }
 
@@ -384,14 +380,14 @@ class PipelinePhasesTest {
     /**
      * <b>A failed order is a report line, not a failed boot.</b> The retry is printed with the mode
      * and the contact already filled in, so it is a command to run rather than one to compose, and
-     * the likeliest cause is named — the delegation, which nothing here can hurry.
+     * the likeliest cause is named — the records, which nothing here can hurry.
      */
     @Test
     void anOrderThatDidNotGoThroughPrintsTheRetryWithEverythingFilledIn() {
         String report = domainReport(Acme.Mode.STAGING, null);
 
         assertThat(report).contains("NOT ISSUED").contains("PLACEHOLDER")
-                .contains("delegation")
+                .contains("records above")
                 .contains("--staging")
                 .contains("--domain=qits-dev.eu")
                 .contains("--email=hostmaster@qits-dev.eu")

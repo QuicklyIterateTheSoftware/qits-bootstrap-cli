@@ -102,7 +102,7 @@ public final class ComposeTemplate {
             # NO `name:` KEY. The stack name is the argument of `docker stack deploy`, and the loader
             # refuses the key outright — measured: "(root) Additional property name is not allowed".
             #
-            # TWO HOST PORTS IN THE WHOLE FILE: the edge's ${PORT} and the nameserver's ${DNS_PORT}.
+            # ONE HOST PORT IN THE WHOLE FILE: the edge's ${PORT}.
             # The byte plane — qits-artifacts, qits-platform-mirror, qits-githost — publishes nothing
             # at all. All three are reached from the host THROUGH THE EDGE, under names of their own:
             # registry.${ENV_NAME}.localhost:${PORT}, mirror.${ENV_NAME}.localhost:${PORT} and
@@ -449,61 +449,6 @@ public final class ComposeTemplate {
                       - registry.${ENV_NAME}.localhost
                       - mirror.${ENV_NAME}.localhost
                       - githost.${ENV_NAME}.localhost
-                deploy:
-                  replicas: 1
-                  restart_policy:
-                    condition: any
-                    delay: 5s
-
-              # THE HOST'S SECOND DOOR, and the only one that is not HTTP: the authoritative
-              # nameserver for the platform's own names. A registrar delegates a domain to it and the
-              # internet reaches it on 53; the record API on 8080 is service-to-service and has no
-              # gateway route, deliberately — the gateway proxies HTTP and DNS is not HTTP, so this
-              # is a SIBLING of the edge behind the same public IP rather than something behind it.
-              #
-              # A PLATFORM SERVICE: one delegated nameserver answers for every environment, because a
-              # zone is a row. Two of them would be two servers claiming one IP's port 53 and
-              # disagreeing about what exists.
-              #
-              # In the seed because this bootstrap writes to it: with QITS_DOMAIN set the zone row is
-              # created over the API in this same run, hours before the pipeline could deploy it.
-              # With no domain it runs with no zones at all, which its own README calls a legal state
-              # — a server answering REFUSED for everything is what a platform with no public names
-              # should have.
-              qits-platform-dns:
-                image: qits/platform-dns:latest
-                ports:
-                  # BOTH PROTOCOLS. dnsjava drops a whole RRset that will not fit a UDP answer, so a
-                  # name with several records answers TC=1 and ZERO records and the client's TCP
-                  # retry is the only way it ever gets one. Resolvers also probe TCP outright. The
-                  # listener binds 8053 because below 1024 needs privileges this process should not
-                  # hold, so the publish is what makes it 53.
-                  - target: 8053
-                    published: ${DNS_PORT}
-                    protocol: udp
-                    mode: host
-                  - target: 8053
-                    published: ${DNS_PORT}
-                    protocol: tcp
-                    mode: host
-                environment:
-                  # SPELLED HERE, AND ONLY HERE, exactly as the idp's and ci's are: the seed stack starts
-                  # this container before any deployer exists, so the bootstrap created the role and
-                  # the database over JDBC and hands the credential over itself. Every deployment
-                  # after this one is handed the same three by qits-platform-deployments, from
-                  # `resources: postgresql:db` in this repository's deployments.yml — which is why
-                  # the extras beside this file carry no datasource env either.
-                  #
-                  # It REFUSES TO BOOT without them, and for this service that is the failure worth
-                  # having: a nameserver that came up on an empty store would answer NXDOMAIN for
-                  # every deployed hostname, with nothing anywhere reporting an outage.
-                  QITS_RESOURCE_DB_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_platform_dns
-                  QITS_RESOURCE_DB_USERNAME: qits_platform_dns
-                  QITS_RESOURCE_DB_PASSWORD: "${PG_PLATFORM_DNS_PASSWORD}"
-                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${DNS_IDENTITY}
-                # No volume: the store is the postgres below and this service writes nothing that
-                # outlives the container.
-                networks: [qits-net]
                 deploy:
                   replicas: 1
                   restart_policy:
@@ -1155,7 +1100,7 @@ public final class ComposeTemplate {
               ${ENV_NAME}-qits-events:
                 image: qits/events:latest
                 environment:
-                  # SPELLED HERE, AND ONLY HERE, exactly as ci's, the idp's and the nameserver's are:
+                  # SPELLED HERE, AND ONLY HERE, exactly as ci's and the idp's are:
                   # the seed stack starts this container before any deployer exists, so the bootstrap created
                   # the role and the database over JDBC and hands the credential over itself. Every
                   # deployment after this one is handed the same three by qits-platform-deployments, from
@@ -1221,7 +1166,7 @@ public final class ComposeTemplate {
             # variables are injected BEFORE the ones here, and the last assignment of a key wins — so a
             # datasource line here is an operator PIN that outlives a password rotation and breaks the
             # deployment it looks like it is configuring. The seed stack file spells the triples for
-            # qits-ci, qits-platform-idp, qits-platform-dns, qits-events, qits-containers, qits-artifacts,
+            # qits-ci, qits-platform-idp, qits-events, qits-containers, qits-artifacts,
             # qits-platform-mirror, qits-githost and the deployer's OWN OUTBOX for the one reason that
             # does not apply here: it starts them before any deployer exists.
             #
@@ -1596,24 +1541,6 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_WEBAUTHN_RP_ID=${WEBAUTHN_RP_ID}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_WEBAUTHN_ORIGINS=${WEBAUTHN_ORIGINS}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
-            # The nameserver's own deployment. TWO PUBLISHES, BOTH PROTOCOLS: the deployed container
-            # is what answers a registrar's delegation, so a publish missing here is a domain that stops
-            # resolving at the first cutover, and a missing /tcp loses every answer too big for a UDP
-            # packet. The port is the same knob the seed publishes (QITS_DNS_PORT), because a
-            # delegation cannot follow a port that moved. Neither publish names an ip: this one is
-            # meant to be reachable from the internet.
-            #
-            # NO DATASOURCE ENV AND NO VOLUME: `resources: postgresql:db` in its deployments.yml is
-            # what gets it a store, and the deployer injects the triple from its registry row before
-            # the successor starts — pinning it here would outlive a rotation and break the
-            # deployment it looks like it is configuring. The seed stack block spells the same three
-            # variables because it starts this container before any deployer exists.
-            #
-            # No machine auth: the record API's write guard is qits.dns.token, which this platform
-            # leaves blank, and there is no gateway route to reach it from outside qits-net.
-            qits.platform.deployments.extras.qits-platform-dns.publishes[0]=${DNS_PORT}:8053/udp
-            qits.platform.deployments.extras.qits-platform-dns.publishes[1]=${DNS_PORT}:8053/tcp
-            qits.platform.deployments.extras.qits-platform-dns.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080${DNS_IDENTITY_ARGS}
             qits.platform.deployments.extras.qits-stt.mounts[0]=volume:qits-stt-data:/data
             qits.platform.deployments.extras.qits-stt.env.QITS_SPEECH_HOME=/data/speech
             qits.platform.deployments.extras.qits-stt.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080

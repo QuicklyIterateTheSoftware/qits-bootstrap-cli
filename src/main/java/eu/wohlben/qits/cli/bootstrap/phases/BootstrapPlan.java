@@ -59,11 +59,7 @@ public final class BootstrapPlan {
             // Beside artifacts because it needs nothing either: the image is upstream postgres,
             // built from one FROM line, so it costs seconds rather than a native build.
             phases.add(seed.seedImage("oci-postgresql"));
-            // The nameserver is in the first half for the same reason as the edge: a clone of that
-            // repository builds green on its own — no qits Maven dependency, no client bundle — so
-            // its image needs nothing this run has not got yet.
-            phases.add(seed.seedImage("platform-dns"));
-            // The bus, in the first half for the same reason as the edge and the nameserver: a
+            // The bus, in the first half for the same reason as the edge: a
             // clone of qits-events resolves against Maven Central alone. It declares no qits Maven
             // dependency and no <repositories>, and the @qits npm package its client needs is
             // stood in for by the placeholder bundle — so nothing here waits on the publishes
@@ -146,15 +142,13 @@ public final class BootstrapPlan {
         // postgres, so it outlives every redeploy that follows. Once per installation — a rerun
         // that finds one recorded mints nothing.
         phases.add(pipeline.registerToken());
-        // After the nameserver has answered, because this writes to it. A zone is what makes it
-        // answer for the domain at all, and the records — every one of them QITS_PUBLIC_IP — are
-        // what it answers WITH. Both halves are here because a delegated domain is asked of THIS
-        // server for every name under it, the apex included.
-        domain.ifPresent(name -> phases.add(seed.dnsZone(name)));
-        // And then the certificate, which needs both of the phases above it. The edge has to be up
-        // and holding 80 (seed-health), because the CA fetches the HTTP-01 challenge over the public
-        // name; and the zone has to answer, because that name is what it resolves through. Ordering
-        // it earlier would be ordering it against a domain that resolves to nothing.
+        // NOTE: this could be a hook to register the domain's dns records (apex and wildcard at
+        // QITS_PUBLIC_IP) with an external dns provider. qits-platform-dns used to be seeded here.
+        // The records are a person's job now, and the closing report prints the set.
+        //
+        // Then the certificate. The edge has to be up and holding 80 (seed-health), because the CA
+        // fetches the HTTP-01 challenge over the public name — and that name has to resolve to this
+        // host already, which is what the records above are for.
         domain.ifPresent(name -> phases.add(seed.edgeCertificate(name)));
         phases.add(pipeline.daemonPublish());
         phases.add(pipeline.gitRepositories());

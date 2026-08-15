@@ -142,7 +142,7 @@ class StackFileTest {
      * the edge by name.
      */
     @Test
-    void theEdgePublishesThroughIngressAndTheNameserverThroughTheHost() {
+    void onlyTheEdgePublishesAndItGoesThroughIngress() {
         String stack = stack();
 
         assertThat(block(stack, alias("platform-edge"))).contains("""
@@ -155,9 +155,6 @@ class StackFileTest {
             assertThat(block(stack, alias(app))).as("the ports of %s", app)
                     .doesNotContain("ports:");
         }
-        // Both transports, and a nameserver needs both: a truncated UDP answer carries no records.
-        assertThat(block(stack, alias("platform-dns"))).contains("protocol: udp")
-                .contains("protocol: tcp").contains("mode: host");
     }
 
     /** No publish can say 127.0.0.1 any more: neither publish mode has an ip field. */

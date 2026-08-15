@@ -65,13 +65,11 @@ class AcmeTest {
 
     /**
      * The contact is derived from the domain, so a platform that has a domain has a working contact
-     * without a second knob filled in — and it is the same role the zone's SOA already names.
+     * without a second knob filled in.
      */
     @Test
     void theContactDefaultsToTheHostmasterOfTheDomain() {
         assertThat(Acme.email(config(Map.of()), "qits-dev.eu")).isEqualTo("hostmaster@qits-dev.eu");
-        // One derivation, two spellings of the one role: the SOA's rname is the same name with a dot.
-        assertThat(DomainName.hostmaster("qits-dev.eu")).isEqualTo("hostmaster.qits-dev.eu");
     }
 
     @Test

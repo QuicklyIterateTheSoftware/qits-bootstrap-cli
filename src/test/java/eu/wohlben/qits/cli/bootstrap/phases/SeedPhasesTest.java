@@ -1,6 +1,5 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
-import eu.wohlben.qits.cli.bootstrap.config.DomainName;
 import eu.wohlben.qits.cli.bootstrap.config.TestConfig;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
@@ -52,45 +51,38 @@ class SeedPhasesTest {
         assertThat(SeedPhases.isEmptyDirectory(checkout)).isFalse();
     }
 
-    // --- the zone's records -----------------------------------------------------------------------
+    // --- the records the domain needs -------------------------------------------------------------
 
     /**
-     * <b>Four A records, and the shapes are the edge's rather than a list of today's names.</b> The
+     * <b>Three A records, and the shapes are the edge's rather than a list of today's names.</b> The
      * edge reads at most the first two labels of a Host header, so one wildcard per DEPTH answers
      * every environment and every application vhost there will ever be — adding either is then a
-     * deploy with no dns step. The apex is written out because no wildcard in this service matches
-     * it, and the nameserver because the registrar's glue names exactly that host.
+     * deploy with no dns step. The apex is written out because no wildcard matches it.
+     * <p>
+     * The nameserver's own record went with qits-platform-dns: this platform serves no dns, so there
+     * is nothing to delegate to and no glue record to answer for.
      */
     @Test
-    void theZoneGetsAWildcardPerDepthPlusTheApexAndTheNameserver() {
+    void theDomainNeedsAWildcardPerDepthPlusTheApex() {
         List<SeedPhases.ZoneRecord> records =
                 SeedPhases.zoneRecords("qits-dev.eu", "203.0.113.7");
 
         assertThat(records).extracting(SeedPhases.ZoneRecord::name)
-                .containsExactly("@", "ns1", "*", "*.*");
+                .containsExactly("@", "*", "*.*");
         // Every name is this one host: the edge is a single front door and routes by Host behind it.
         assertThat(records).extracting(SeedPhases.ZoneRecord::value)
                 .containsOnly("203.0.113.7");
     }
 
     /**
-     * Record names are stored RELATIVE to the apex — qits-platform-dns takes six shapes and an fqdn
-     * is not one of them, so a name with the domain spelled into it is a 400 rather than a record.
+     * Record names are RELATIVE to the apex, which is how a provider's own record editor asks for
+     * them — a name with the domain spelled into it lands as {@code <domain>.<domain>}.
      */
     @Test
     void noRecordNameCarriesTheDomain() {
         assertThat(SeedPhases.zoneRecords("qits-dev.eu", "203.0.113.7"))
                 .extracting(SeedPhases.ZoneRecord::name)
                 .noneMatch(name -> name.contains("qits-dev.eu"));
-    }
-
-    /** The nameserver's record follows the derivation, so the two spellings cannot drift apart. */
-    @Test
-    void theNameserverRecordIsTheOneTheGlueRecordPointsAt() {
-        List<SeedPhases.ZoneRecord> records = SeedPhases.zoneRecords("qits.co.uk", "198.51.100.9");
-
-        assertThat(records).extracting(SeedPhases.ZoneRecord::name)
-                .contains(DomainName.nsLabel("qits.co.uk"));
     }
 
     // --- the ACME run -----------------------------------------------------------------------------

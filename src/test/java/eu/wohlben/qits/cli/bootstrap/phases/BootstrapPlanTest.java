@@ -85,11 +85,9 @@ class BootstrapPlanTest {
         assertThat(ids).containsSubsequence("seed-image-platform-mirror", "seed-postgres",
                 "seed-mirror", "seed-artifacts", "publish-qits-blobstore");
         // The edge needs nothing from the platform — no client bundle, no qits dependency — so its
-        // image is built in the first half, beside the gateway it fronts. The nameserver is there
-        // for the same reason: a clone of that repository builds green on its own.
+        // image is built in the first half, beside the gateway it fronts.
         assertThat(ids).containsSubsequence("seed-image-gateway", "seed-image-platform-edge",
                 "seed-image-artifacts");
-        assertThat(ids).containsSubsequence("seed-image-platform-dns", "seed-artifacts");
         // The bus is in the first half too: qits-events declares no qits Maven dependency, so it
         // waits on none of the publishes below it.
         assertThat(ids).containsSubsequence("seed-image-events", "seed-artifacts");
@@ -117,7 +115,7 @@ class BootstrapPlanTest {
         assertThat(ids).containsSubsequence("environment", "deploy-observability",
                 "deploy-oci-postgresql",
                 "deploy-platform-idp", "deploy-stt", "deploy-projects", "deploy-workspaces",
-                "deploy-events", "deploy-docs", "deploy-platform-dns", "deploy-gateway",
+                "deploy-events", "deploy-docs", "deploy-gateway",
                 "deploy-platform-mirror", "deploy-artifacts", "deploy-githost",
                 // The orchestrator immediately before ci: ci runs every step as a container it asks
                 // that service for, so a ci cutover inside the orchestrator's window is a pipeline
@@ -170,30 +168,33 @@ class BootstrapPlanTest {
     }
 
     /**
-     * The three phases a domain adds, and where each of them has to sit.
+     * The two phases a domain adds, and where each of them has to sit.
      * <p>
      * The PLACEHOLDER certificate goes before the seed stack, because the edge is started there with
-     * a keystore and a keystore whose files are missing fails startup. The zone goes after the
-     * health wait, because it is written over the nameserver's own API. And the ACME order goes
-     * after BOTH: the CA fetches the HTTP-01 challenge over the public name, so the edge has to be
-     * holding port 80 and the zone has to be answering for that name before there is anything to
-     * order against.
+     * a keystore and a keystore whose files are missing fails startup. The ACME order goes after the
+     * health wait: the CA fetches the HTTP-01 challenge over the public name, so the edge has to be
+     * holding port 80 before there is anything to order against.
+     * <p>
+     * There is no zone phase between them any more. This platform serves no dns — the records are
+     * held at the domain's own provider, before the run.
      */
     @Test
-    void aDomainAddsThePlaceholderThenTheZoneThenTheRealCertificate() {
+    void aDomainAddsThePlaceholderThenTheRealCertificate() {
         List<String> ids = ids(plan(Map.of("QITS_DOMAIN", "qits-dev.eu",
                 "QITS_PUBLIC_IP", "203.0.113.7")));
 
         assertThat(ids).containsSubsequence("pd-extras", "edge-cert", "seed-stack", "seed-health",
-                "dns-zone", "edge-acme");
+                "edge-acme");
+        assertThat(ids).doesNotContain("dns-zone");
     }
 
-    /** No domain is the default, and then no phase of the three exists — nothing to skip at runtime. */
+    /** No domain is the default, and then neither phase exists — nothing to skip at runtime. */
     @Test
-    void withNoDomainNoneOfTheThreeIsInThePlan() {
+    void withNoDomainNeitherIsInThePlan() {
         assertThat(ids(plan(Map.of()))).doesNotContain("edge-cert", "dns-zone", "edge-acme");
-        // The nameserver itself is unconditional: it is seeded, deployed and polled either way.
-        assertThat(ids(plan(Map.of()))).contains("seed-image-platform-dns", "deploy-platform-dns");
+        // The nameserver is retired outright: no seed image and no deployment, domain or not.
+        assertThat(ids(plan(Map.of())))
+                .doesNotContain("seed-image-platform-dns", "deploy-platform-dns");
     }
 
     @Test

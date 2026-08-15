@@ -93,30 +93,27 @@ public class BootstrapCommand implements Callable<Integer> {
 
     /**
      * The domain this platform serves. Unset — the default — is a platform with no public names:
-     * qits-platform-dns runs with no zones and the edge stays on plain HTTP.
+     * the edge stays on plain HTTP. Its dns records are held outside this platform.
      */
     @CommandLine.Option(names = "--domain", paramLabel = "<domain>",
-            description = "The domain to serve: the dns zone and its records, the ns1/hostmaster "
-                    + "identity and the name the edge's certificate is issued for. Unset = no "
-                    + "public names (QITS_DOMAIN).")
+            description = "The domain to serve: the name the edge's certificate is issued for. Its "
+                    + "dns records are yours to hold. Unset = no public names (QITS_DOMAIN).")
     String domain;
 
     /**
      * This host's public address, and <b>mandatory with {@link #domain}</b>: it is the data of every
-     * A record the zone is filled with, and the same address the glue record at the registrar
-     * carries. The run cannot learn it — it is a container behind a NAT — and the person who made
-     * the delegation already knows it.
+     * A record the domain needs at its dns provider. The run cannot learn it — it is a container
+     * behind a NAT — and the person who set the records up already knows it.
      */
     @CommandLine.Option(names = "--public-ip", paramLabel = "<ipv4>",
             description = "This host's public IPv4 address. Mandatory with --domain: it is what "
-                    + "every A record in the zone answers, and what the registrar's glue record "
-                    + "points at (QITS_PUBLIC_IP).")
+                    + "every A record of the domain answers (QITS_PUBLIC_IP).")
     String publicIp;
 
     /**
      * Which Let's Encrypt directory the edge's certificate is ordered from, or {@code off} to keep
      * the placeholder. Staging by default: the first order is the one most likely to meet a
-     * delegation the world has not seen yet, and a failure there costs nothing.
+     * record the world has not seen yet, and a failure there costs nothing.
      */
     @CommandLine.Option(names = "--acme-mode", paramLabel = "<mode>",
             description = "staging (default), production or off. Which Let's Encrypt directory the "
@@ -125,7 +122,7 @@ public class BootstrapCommand implements Callable<Integer> {
 
     @CommandLine.Option(names = "--acme-email", paramLabel = "<address>",
             description = "The ACME account's contact address. Default: hostmaster@<domain>, the "
-                    + "role the zone's SOA already names (QITS_ACME_EMAIL).")
+                    + "convention for the role that answers for a domain (QITS_ACME_EMAIL).")
     String acmeEmail;
 
     @Override
@@ -142,10 +139,10 @@ public class BootstrapCommand implements Callable<Integer> {
                 .tui(noTui ? Boolean.FALSE : null);
 
         // BEFORE either half does anything, and on the host half too: every one of these values
-        // LEAVES this machine — into a zone a resolver on the internet reads back, and into a
+        // LEAVES this machine — into the records a person types at a dns provider, and into a
         // certificate request to Let's Encrypt — and none of them is undone by rerunning with the
         // spelling fixed. The pair rule is checked in the same breath: a domain with no address is a
-        // zone that resolves to nothing, and it is far cheaper to say so here than four hours in.
+        // name that resolves to nothing, and it is far cheaper to say so here than four hours in.
         // The message is the whole output — no stack trace, since there is no bug here to report.
         try {
             DomainName.of(effective);

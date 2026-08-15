@@ -122,23 +122,14 @@ class PlatformModelTest {
 
     @Test
     void thePlatformPlaneIsWhatCannotBePerTier() {
-        // Five since 2026-08-09: the nameserver is of exactly this kind, because a zone is a row and
-        // one delegation answers for every environment. Two of them would be two servers claiming
-        // one public IP's port 53 and disagreeing about what exists.
+        // Three: the nameserver left with qits-platform-dns, and this platform serves no dns.
         assertThat(PlatformModel.PLATFORM_SERVICES).containsExactlyInAnyOrder(
-                "platform-edge", "platform-idp", "platform-mirror", "platform-dns");
+                "platform-edge", "platform-idp", "platform-mirror");
         // The byte-plane split settled the pair that used to be here: the caches were the only
         // reason either could not be per-tier, and they are qits-platform-mirror now.
         assertThat(PlatformModel.isPlatformService("artifacts")).isFalse();
         assertThat(PlatformModel.isPlatformService("docs")).isFalse();
         assertThat(PlatformModel.isPlatformService("githost")).isFalse();
-        assertThat(PlatformModel.wireAlias("platform-dns", "prod")).isEqualTo("qits-platform-dns");
-        assertThat(PlatformModel.pdNamePrefix("platform-dns", "prod"))
-                .isEqualTo("qits-pd-qits-platform-dns-");
-        assertThat(PlatformModel.repoPath("platform-dns")).isEqualTo("services/qits-platform-dns");
-        // A service, so its Dockerfile is in docker/ and it has no client bundle to place.
-        assertThat(PlatformModel.dockerfilePath("platform-dns")).isEqualTo("docker/Dockerfile");
-        assertThat(PlatformModel.seedUiPath("platform-dns")).isEmpty();
         // Everything else is a service of the one environment — the gateway included, since
         // qits-platform-edge took the host port that was its only reason to be up here.
         assertThat(PlatformModel.DEPLOYABLES)
@@ -165,7 +156,7 @@ class PlatformModelTest {
         // there in time.
         assertThat(PlatformModel.CORE).containsExactlyInAnyOrder(
                 "gateway", "platform-edge", "platform-mirror", "artifacts", "githost", "ci",
-                "containers", "deployments", "platform-idp", "platform-dns", "events",
+                "containers", "deployments", "platform-idp", "events",
                 "oci-postgresql");
         // Every seed service is also deployed through the pipeline afterwards; nothing stays
         // hand-built.
@@ -307,10 +298,6 @@ class PlatformModelTest {
         // goes as late as it can — after the gateway it forwards to, before the self-update.
         assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
                 "gateway", "platform-edge", "deployments");
-        // The nameserver goes with the other platform service nothing in this train dials, and its
-        // window must not fall inside the edge's.
-        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
-                "docs", "platform-dns", "platform-edge");
         // The mirror before everything whose build resolves through it, and the git host between
         // the store and ci — ci reads pipeline config out of the git host and clones from it.
         assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(

@@ -62,9 +62,9 @@ public class RunState {
     public String pgDeploymentsEventstreamPassword;
     /**
      * The passwords of the CORE SEED SERVICES' databases: qits-ci's own store, its outbox, the
-     * idp's, the nameserver's, and the bus's.
+     * idp's, and the bus's.
      * <p>
-     * These five exist because their containers boot from the seed compose file, before any
+     * These four exist because their containers boot from the seed compose file, before any
      * deployer exists to provision anything — so the CLI creates the roles and the seed carries
      * the credentials. From the first pipeline deployment onwards the deployer's registry owns
      * them, which is why the CLI creates those roles and never alters them again.
@@ -72,10 +72,9 @@ public class RunState {
     public String pgCiPassword;
     public String pgCiEventstreamPassword;
     public String pgPlatformIdpPassword;
-    public String pgPlatformDnsPassword;
     public String pgEventsPassword;
     /**
-     * The byte plane's three stores, on the same terms as the five above. Every one of them keeps a
+     * The byte plane's three stores, on the same terms as the four above. Every one of them keeps a
      * whole store — catalog rows and blob bytes both — in one database; qits-githost takes a second
      * for the eventstream outbox, because two Flyway lineages cannot share one, which is the same
      * pair qits-ci and the deployer carry.

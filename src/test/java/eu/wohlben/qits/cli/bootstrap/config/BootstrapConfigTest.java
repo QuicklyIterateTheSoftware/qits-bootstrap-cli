@@ -32,16 +32,12 @@ class BootstrapConfigTest {
         assertThat(config.gitHostPort()).isEqualTo(8083);
         // NO POSTGRES PORT KNOB. The platform's postgres publishes nothing: every consumer dials
         // the wire alias on 5432, this CLI included.
-        // 53, because a registrar's delegation reaches that port and no other. Both transports are
-        // published from it; the service binds 8053 inside the container.
-        assertThat(config.dnsPort()).isEqualTo(53);
         // The edge's MANAGEMENT listener, published nowhere: the challenge slot and the certificate
         // reload live on it, both unauthenticated, and this run reaches them because it is on
         // qits-net. /q is the management root path and lets-encrypt is the extension's own segment.
         assertThat(config.edgeLetsEncryptUrl())
                 .isEqualTo("http://qits-platform-edge:9000/q/lets-encrypt");
-        // No default, and unset is a supported platform: dns serves no zones and the edge stays on
-        // plain HTTP.
+        // No default, and unset is a supported platform: the edge stays on plain HTTP.
         assertThat(config.domain()).isEmpty();
         // Mandatory WITH a domain and refused without one, so there is nothing to default it to.
         assertThat(config.publicIp()).isEmpty();
@@ -74,7 +70,6 @@ class BootstrapConfigTest {
         env.put("QITS_REGISTRY_PORT", "9091");
         env.put("QITS_MIRROR_PORT", "9092");
         env.put("QITS_GIT_HOST_PORT", "9093");
-        env.put("QITS_DNS_PORT", "5353");
         env.put("QITS_DOMAIN", "qits-dev.eu");
         env.put("QITS_PUBLIC_IP", "203.0.113.7");
         env.put("QITS_ACME_MODE", "production");
@@ -95,7 +90,6 @@ class BootstrapConfigTest {
         assertThat(config.registryPort()).isEqualTo(9091);
         assertThat(config.mirrorPort()).isEqualTo(9092);
         assertThat(config.gitHostPort()).isEqualTo(9093);
-        assertThat(config.dnsPort()).isEqualTo(5353);
         assertThat(config.domain()).contains("qits-dev.eu");
         assertThat(config.publicIp()).contains("203.0.113.7");
         assertThat(config.acmeMode()).isEqualTo("production");
@@ -146,10 +140,6 @@ class BootstrapConfigTest {
         assertThat(config.envBranch()).isEqualTo("environment/preprod");
         // The issuer is a value consumers validate as well as an address this program dials.
         assertThat(config.idpIssuer()).isEqualTo("http://qits-platform-idp:8080/idp");
-        // The one address NOT behind the edge: there is no gateway route to the nameserver's API and
-        // there must not be one, so it is dialled at its own alias. /dns is the service's own
-        // non-application root path, which is where health and the zones both hang.
-        assertThat(config.dnsUrl()).isEqualTo("http://qits-platform-dns:8080/dns");
     }
 
     /**

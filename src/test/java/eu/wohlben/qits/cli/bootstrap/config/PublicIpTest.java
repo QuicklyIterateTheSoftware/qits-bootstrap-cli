@@ -42,10 +42,9 @@ class PublicIpTest {
     }
 
     /**
-     * <b>The rule the whole change hangs off.</b> Once the domain is delegated, this platform's
-     * nameserver is asked for every name under it — the apex included — and a registrar cannot hold
-     * an A record on its behalf. A zone with no address is a domain that resolves to nothing, so the
-     * run is refused before anything is built rather than four hours in.
+     * <b>The rule the whole change hangs off.</b> Every name under the domain has to resolve to this
+     * host, and a domain with no address is a domain that resolves to nothing — so the run is
+     * refused before anything is built rather than four hours in.
      */
     @Test
     void aDomainWithNoAddressIsRefusedAndTheMessageNamesBoth() {
@@ -53,9 +52,7 @@ class PublicIpTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("QITS_PUBLIC_IP")
                 .hasMessageContaining("QITS_DOMAIN")
-                .hasMessageContaining("qits-dev.eu")
-                // The nameserver the glue record names, so the reader knows which address is wanted.
-                .hasMessageContaining("ns1.qits-dev.eu");
+                .hasMessageContaining("qits-dev.eu");
         // A blank value is not an answer either — a .env line left with nothing after the '='.
         assertThatThrownBy(() -> PublicIp.of(config("qits-dev.eu", "   ")))
                 .isInstanceOf(IllegalArgumentException.class)

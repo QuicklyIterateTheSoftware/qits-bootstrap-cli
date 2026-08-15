@@ -201,15 +201,14 @@ public class SeedPhases {
                 ctx.log("  cold start: the wrapper phase clones it from " + boot.config.orgUrl());
             }
             ctx.log("  sources: " + boot.state.srcDir);
-            // Printed rather than assumed: everything the domain switches on — the dns zone, the
-            // nameserver's SOA identity, the edge's TLS ports and its certificate — is invisible in
-            // a log that never says which of the two runs this is. The value was checked before the
-            // payload image was built, so this line cannot be the first place a typo shows.
+            // Printed rather than assumed: everything the domain switches on — the edge's TLS ports
+            // and its certificate — is invisible in a log that never says which of the two runs this
+            // is. The value was checked before the payload image was built, so this line cannot be
+            // the first place a typo shows.
             DomainName.of(boot.config).ifPresentOrElse(
-                    domain -> ctx.log("  domain: " + domain + "  (ns " + DomainName.nsName(domain)
-                            + ", hostmaster " + DomainName.hostmaster(domain) + ")"),
-                    () -> ctx.log("  domain: none — dns serves no zones and the edge stays on "
-                            + "plain HTTP"));
+                    domain -> ctx.log("  domain: " + domain + "  (its dns records are held "
+                            + "outside this platform)"),
+                    () -> ctx.log("  domain: none — the edge stays on plain HTTP"));
 
             long local = PlatformModel.platformRepos().stream()
                     .filter(name -> boot.git.isCheckout(boot.state.wrapperCheckout(name)))
@@ -1234,7 +1233,7 @@ public class SeedPhases {
     public static final List<String> SEED_DATABASES = List.of(
             "qits_deployments", "qits_deployments_eventstream",
             "qits_ci", "qits_ci_eventstream",
-            "qits_platform_idp", "qits_platform_dns", "qits_events",
+            "qits_platform_idp", "qits_events",
             "qits_artifacts", "qits_platform_mirror",
             "qits_githost", "qits_githost_eventstream",
             "qits_containers", "qits_containers_eventstream");
@@ -1257,16 +1256,15 @@ public class SeedPhases {
      * <b>Which databases are here, and which are deliberately not.</b> This phase provisions what
      * the SEED STACK needs: the deployer's own store AND ITS OUTBOX, and the stores of the core
      * services that come up beside it — qits-ci (its database and its outbox), qits-platform-idp,
-     * qits-platform-dns, qits-events, qits-artifacts, qits-platform-mirror, qits-githost (its
-     * database and its outbox) and qits-containers (the same pair). Four of the thirteen are
+     * qits-events, qits-artifacts, qits-platform-mirror, qits-githost (its
+     * database and its outbox) and qits-containers (the same pair). Four of the twelve are
      * outboxes because the
      * eventstream library keeps its own Flyway lineage and cannot share a database with its host; ci
      * carried one from the start, the deployer joined the bus on 2026-08-10, and the git host and
      * the orchestrator are the newest publishers on it.
      * Every one of them runs Flyway at boot against a database that has to exist
-     * already, and at that point in a cold boot no deployer exists to make one. The nameserver is
-     * the loudest about it on purpose: it refuses to start rather than answer NXDOMAIN for every
-     * hostname the platform hands out. Everything else — projects, workspaces, observability — is
+     * already, and at that point in a cold boot no deployer exists to make one.
+     * Everything else — projects, workspaces, observability — is
      * pipeline-deployed only, so the deployer creates their roles and databases during their own
      * deployments from the {@code resources:} line in each repository's deployments.yml. Adding
      * them here would put a second authority on a credential that has exactly one.
@@ -1289,8 +1287,6 @@ public class SeedPhases {
                     "qits.pg.ci-eventstream-password");
             String platformIdp = pgPassword(ctx, state, "PG_PLATFORM_IDP_PASSWORD",
                     "qits.pg.platform-idp-password");
-            String platformDns = pgPassword(ctx, state, "PG_PLATFORM_DNS_PASSWORD",
-                    "qits.pg.platform-dns-password");
             String events = pgPassword(ctx, state, "PG_EVENTS_PASSWORD", "qits.pg.events-password");
             String artifacts = pgPassword(ctx, state, "PG_ARTIFACTS_PASSWORD",
                     "qits.pg.artifacts-password");
@@ -1311,7 +1307,6 @@ public class SeedPhases {
             boot.state.pgCiPassword = ci;
             boot.state.pgCiEventstreamPassword = ciEventstream;
             boot.state.pgPlatformIdpPassword = platformIdp;
-            boot.state.pgPlatformDnsPassword = platformDns;
             boot.state.pgEventsPassword = events;
             boot.state.pgArtifactsPassword = artifacts;
             boot.state.pgPlatformMirrorPassword = platformMirror;
@@ -1335,7 +1330,6 @@ public class SeedPhases {
             state.put("PG_CI_PASSWORD", ci);
             state.put("PG_CI_EVENTSTREAM_PASSWORD", ciEventstream);
             state.put("PG_PLATFORM_IDP_PASSWORD", platformIdp);
-            state.put("PG_PLATFORM_DNS_PASSWORD", platformDns);
             state.put("PG_EVENTS_PASSWORD", events);
             state.put("PG_ARTIFACTS_PASSWORD", artifacts);
             state.put("PG_PLATFORM_MIRROR_PASSWORD", platformMirror);
@@ -1403,7 +1397,6 @@ public class SeedPhases {
             ci = registry.getOrDefault("qits_ci", ci);
             ciEventstream = registry.getOrDefault("qits_ci_eventstream", ciEventstream);
             platformIdp = registry.getOrDefault("qits_platform_idp", platformIdp);
-            platformDns = registry.getOrDefault("qits_platform_dns", platformDns);
             events = registry.getOrDefault("qits_events", events);
             artifacts = registry.getOrDefault("qits_artifacts", artifacts);
             platformMirror = registry.getOrDefault("qits_platform_mirror", platformMirror);
@@ -1417,7 +1410,6 @@ public class SeedPhases {
                 boot.state.pgCiPassword = ci;
                 boot.state.pgCiEventstreamPassword = ciEventstream;
                 boot.state.pgPlatformIdpPassword = platformIdp;
-                boot.state.pgPlatformDnsPassword = platformDns;
                 boot.state.pgEventsPassword = events;
                 boot.state.pgArtifactsPassword = artifacts;
                 boot.state.pgPlatformMirrorPassword = platformMirror;
@@ -1428,7 +1420,6 @@ public class SeedPhases {
                 state.put("PG_CI_PASSWORD", ci);
                 state.put("PG_CI_EVENTSTREAM_PASSWORD", ciEventstream);
                 state.put("PG_PLATFORM_IDP_PASSWORD", platformIdp);
-                state.put("PG_PLATFORM_DNS_PASSWORD", platformDns);
                 state.put("PG_EVENTS_PASSWORD", events);
                 state.put("PG_ARTIFACTS_PASSWORD", artifacts);
                 state.put("PG_PLATFORM_MIRROR_PASSWORD", platformMirror);
@@ -1463,12 +1454,6 @@ public class SeedPhases {
                 provision(ctx, admin, "qits_ci", ci, false);
                 provision(ctx, admin, "qits_ci_eventstream", ciEventstream, false);
                 provision(ctx, admin, "qits_platform_idp", platformIdp, false);
-                // The nameserver, on the same terms: it is in the seed, so it boots from the compose
-                // file before any deployer could have created it a database, and it refuses to boot
-                // without one. The name is the deployer's own default for this application —
-                // qits-platform-dns with the prefix dropped and dashes underscored — so the row the
-                // deployer registers later is the row this creates.
-                provision(ctx, admin, "qits_platform_dns", platformDns, false);
                 // The BUS, on the same terms and for the same reason: it joined the seed on
                 // 2026-08-10, so it boots from the compose file before any deployer could have
                 // created it a database, and its datasource is an expression over the triple with
@@ -1481,7 +1466,7 @@ public class SeedPhases {
                 // password, records it, and starts the successor with what it recorded. The seed
                 // container is stopped by the same cutover, so nothing is left holding the old
                 // value. Every redeploy after that finds a row and touches nothing. This is
-                // exactly what ci, the idp and the nameserver already go through; the CLI only
+                // exactly what ci and the idp already go through; the CLI only
                 // opens the door and never alters the role again.
                 provision(ctx, admin, "qits_events", events, false);
                 // THE BYTE PLANE'S THREE SERVICES, FOUR DATABASES, on the same terms as everything
@@ -1654,7 +1639,6 @@ public class SeedPhases {
                     .mask(orEmpty(boot.state.pgCiPassword))
                     .mask(orEmpty(boot.state.pgCiEventstreamPassword))
                     .mask(orEmpty(boot.state.pgPlatformIdpPassword))
-                    .mask(orEmpty(boot.state.pgPlatformDnsPassword))
                     .mask(orEmpty(boot.state.pgEventsPassword))
                     .mask(orEmpty(boot.state.pgArtifactsPassword))
                     .mask(orEmpty(boot.state.pgPlatformMirrorPassword))
@@ -1801,7 +1785,7 @@ public class SeedPhases {
      * files are missing fails startup — so on a cold boot the volume has to hold something before
      * compose starts the edge with that configuration. This writes it. It is a placeholder in the
      * only sense that matters: browsers reject it, and the real PEMs land in the same two filenames
-     * later in this same run — the {@code edge-acme} phase orders them once the zone answers — after
+     * later in this same run — the {@code edge-acme} phase orders them once the name resolves — after
      * which the TLS registry reloads. It is also what the edge keeps when that order does not go
      * through, which is why the placeholder is still written on every path rather than only on the
      * paths that end without a certificate.
@@ -1850,150 +1834,47 @@ public class SeedPhases {
     }
 
     /**
-     * One A record of the zone: the name as the dns service stores it, and the address it answers.
+     * One A record the domain needs: the name relative to the apex, and the address it answers.
      * <p>
-     * The name is RELATIVE to the apex and one of that service's six legal shapes — {@code @},
-     * {@code <label>}, {@code <label>.<label>}, {@code *}, {@code *.<label>}, {@code *.*}. An fqdn
-     * is refused with a 400, so nothing here ever spells the domain into a record name.
+     * Written relative because that is how a dns provider's own record editor asks for it, and
+     * because a name with the domain spelled into it is the commonest way to end up with
+     * {@code <domain>.<domain>}.
      */
     public record ZoneRecord(String name, String value, String why) {
     }
 
     /**
-     * <b>Every name this platform answers for, as four A records.</b> Derived from the shapes the
+     * <b>Every name this platform answers for, as three A records.</b> Derived from the shapes the
      * edge routes by rather than from a list of today's environments and applications, which is what
      * makes it a set that never needs revisiting.
+     * <p>
+     * <b>This platform serves no dns.</b> The set is what the domain's own provider has to hold, and
+     * the closing report prints it — nothing here writes a record.
      * <p>
      * The edge reads at most the first two labels of a Host header: {@code <env>.<domain>} is an
      * environment's gateway, {@code <app>.<env>.<domain>} is one of its byte-plane vhosts (registry,
      * mirror, githost today), and everything else — the apex included — falls through to the default
      * environment's gateway. So the durable answer is a wildcard per DEPTH, not a record per name:
      * <ul>
-     * <li>{@code @} — the apex, and it is not decoration. A wildcard never matches the apex in this
-     *     service (the resolver's candidate list for an empty remainder is {@code @} alone), and the
+     * <li>{@code @} — the apex, and it is not decoration. A wildcard never matches the apex, and the
      *     apex is the address a person types, so without this record the front door has no answer.
      * <li>{@code *} — every one-label name: {@code <env>.<domain>} for every environment there will
      *     ever be, and anything else at that depth.
      * <li>{@code *.*} — every two-label name: {@code <app>.<env>.<domain>} for every application the
      *     edge gains a vhost for. Adding an environment or an app is then a deploy and no dns step,
      *     which is the whole reason this is a wildcard.
-     * <li>{@code ns1} — the nameserver's own address, and the one explicit name. The wildcard above
-     *     would already answer it; it is written out anyway because the GLUE record at the registrar
-     *     names exactly this host, and the one name whose resolution the delegation itself depends on
-     *     should not rest on a wildcard somebody may later narrow.
      * </ul>
      * Every value is the same address, because every one of these names is this one host: the edge
      * is a single front door and the routing is by Host header behind it.
      * <p>
-     * Depth three and beyond is deliberately left to answer NXDOMAIN — the resolver stops looking
-     * there — and no shape this platform serves is that deep.
+     * Depth three and beyond is deliberately left to answer NXDOMAIN, and no shape this platform
+     * serves is that deep.
      */
     public static List<ZoneRecord> zoneRecords(String domain, String publicIp) {
         return List.of(
                 new ZoneRecord("@", publicIp, "the apex — the browser door, and no wildcard covers it"),
-                new ZoneRecord(DomainName.nsLabel(domain), publicIp,
-                        "the nameserver the delegation's glue points at"),
                 new ZoneRecord("*", publicIp, "every <env>." + domain + " gateway"),
                 new ZoneRecord("*.*", publicIp, "every <app>.<env>." + domain + " vhost"));
-    }
-
-    /**
-     * <b>The zone row AND the records that make it answer.</b> A zone is what makes the nameserver
-     * answer for a name at all — without one every query for the domain is REFUSED, whatever records
-     * exist — and records are what it answers WITH.
-     * <p>
-     * <b>Why the records are written here rather than left to the operator.</b> The delegation is
-     * made once at the registrar, {@code NS <domain> -> ns1.<domain>} with a glue A record, and from
-     * the moment it takes, every name under the domain is asked of THIS nameserver. The apex
-     * included — and a registrar has no way to hold an A record on the platform's behalf. So a zone
-     * with no records is not a half-finished configuration, it is a domain that resolves to nothing;
-     * the split this used to leave the operator was wrong in practice. What the run cannot know it
-     * is TOLD: {@code QITS_PUBLIC_IP}, mandatory beside the domain and checked on the host half.
-     * <p>
-     * <b>Idempotent in both halves, and by the API's own verbs.</b> The zone is 201 on a first run
-     * and 409 on a rerun — which then reads the id back off the zone list, because a rerun still has
-     * records to write. The records go through {@code PUT .../records}, which REPLACES the value set
-     * of one {@code (name, type)} pair and answers 200 whether it changed anything or not: a record
-     * already holding the right address is left holding it, and one holding a stale address — a host
-     * that moved — is corrected without anybody deleting a row. POSTing them instead would 409 on
-     * every rerun and could never fix a wrong value.
-     * <p>
-     * No token: the write guard is {@code qits.dns.token}, blank on this platform, and the service is
-     * reachable only from qits-net.
-     */
-    public Phase dnsZone(String domain) {
-        return new Phase("dns-zone",
-                "create the zone " + domain + " in qits-platform-dns and write its records", ctx -> {
-            // Checked on the host half already, and re-read rather than passed down: the phase list
-            // is built from the domain alone, and a second parameter threaded through it would be a
-            // second place for the pair to come apart.
-            String publicIp = PublicIp.of(boot.config).orElseThrow(() -> new IllegalStateException(
-                    "the dns-zone phase is in the plan with no QITS_PUBLIC_IP, which the host half "
-                            + "refuses — this is a bug in the plan, not a configuration mistake"));
-            String zones = boot.config.dnsUrl() + "/api/zones";
-            ctx.status("POST " + zones + " " + domain);
-            Http.Response response =
-                    boot.http.postJson(zones, Json.object("fqdn", domain), Map.of());
-            String zoneId;
-            if (response.status() == 201) {
-                zoneId = Json.text(Json.parse(response.body()), "id");
-                ctx.log("  zone " + domain + " created");
-            } else if (response.status() == 409) {
-                ctx.log("  zone " + domain + " is already there: " + response.body());
-                zoneId = existingZoneId(zones, domain);
-            } else {
-                throw new IllegalStateException("creating the zone " + domain + " answered "
-                        + response.describe());
-            }
-            if (zoneId.isBlank()) {
-                throw new IllegalStateException("qits-platform-dns gave no id for the zone " + domain
-                        + ", so its records cannot be written");
-            }
-            String records = zones + "/" + zoneId + "/records";
-            for (ZoneRecord record : zoneRecords(domain, publicIp)) {
-                ctx.status("PUT " + records + " " + record.name() + " A " + record.value());
-                // ttl null on purpose: the service's own qits.dns.ttl-seconds is the one authority
-                // for it, and a number repeated here would be a second one to keep in step.
-                Http.Response written = boot.http.putJson(records, Json.object(
-                        "name", record.name(),
-                        "type", "A",
-                        "values", Json.verbatim("[" + Json.quote(record.value()) + "]"),
-                        "ttl", Json.verbatim("null")), Map.of());
-                if (!written.ok()) {
-                    throw new IllegalStateException("writing the record " + record.name() + " A "
-                            + record.value() + " into " + domain + " answered "
-                            + written.describe());
-                }
-                ctx.log("  " + record.name() + " A " + record.value() + " — " + record.why());
-            }
-            ctx.note(domain + " + " + zoneRecords(domain, publicIp).size() + " records");
-        });
-    }
-
-    /**
-     * The id of a zone that is already there, off the zone list.
-     * <p>
-     * A rerun is the ordinary case and still has records to write, so the 409 cannot end the phase.
-     * The list is matched by fqdn rather than trusted to hold one row: the 409 is also what an
-     * OVERLAPPING zone answers — a parent or a child of this name — and that one is a real
-     * misconfiguration, so a name that is not in the list fails here rather than writing this
-     * platform's records into somebody else's zone.
-     */
-    private String existingZoneId(String zones, String domain) {
-        Http.Response listed = boot.http.get(zones, Map.of());
-        if (!listed.ok()) {
-            throw new IllegalStateException("reading the zone list to find " + domain + " answered "
-                    + listed.describe());
-        }
-        for (JsonNode zone : Json.parse(listed.body()).path("zones")) {
-            if (domain.equals(Json.text(zone, "fqdn"))) {
-                return Json.text(zone, "id");
-            }
-        }
-        throw new IllegalStateException("qits-platform-dns refused the zone " + domain
-                + " as a conflict but does not hold it, so the conflict is an OVERLAPPING zone — a "
-                + "parent or a child of this name. Its records are not this platform's to write. "
-                + "The zone list is " + zones);
     }
 
     /**
@@ -2023,12 +1904,12 @@ public class SeedPhases {
      * a SAN certificate over {@code <env>.<domain>} and the app vhosts cannot be ordered through
      * this endpoint at all. The apex is the name that matters: it is {@code publicOrigin}, the
      * browser's door and the passkey's relying party. Covering the rest wants a wildcard, a wildcard
-     * wants DNS-01, and DNS-01 wants a TXT record — which qits-platform-dns has no type for yet.
-     * That is the next step, and it is a change to the nameserver rather than to this phase.
+     * wants DNS-01, and DNS-01 wants a TXT record written at the domain's dns provider mid-order —
+     * so it needs a provider API this program has no hook for yet.
      * <p>
      * <b>A failure warns and the boot goes on</b>, exactly as the register token's mint does. The
-     * commonest reason is the delegation: a zone the world has not been pointed at yet answers
-     * nothing, and the HTTP-01 challenge is fetched over precisely that name. It fixes itself in
+     * commonest reason is dns: a name the world cannot resolve yet answers nothing, and the
+     * HTTP-01 challenge is fetched over precisely that name. It fixes itself in
      * minutes to hours, this program can neither hurry it nor tell it from a real misconfiguration,
      * and nothing is lost — the edge keeps the placeholder, the report prints the retry, and a rerun
      * asks again.
@@ -2067,8 +1948,8 @@ public class SeedPhases {
             if (!result.ok()) {
                 ctx.warn("no certificate for " + domain + " (exit " + result.exitCode() + "). The "
                         + "edge keeps its PLACEHOLDER certificate and browsers reject it. The usual "
-                        + "reason is the delegation: until the registrar's NS and glue records have "
-                        + "propagated, the HTTP-01 challenge cannot be fetched over " + domain
+                        + "reason is dns: until the domain's A records have propagated, the "
+                        + "HTTP-01 challenge cannot be fetched over " + domain
                         + " — and port 80 has to reach this host from the internet too. Nothing is "
                         + "lost; a rerun asks again, and the closing report prints the command to "
                         + "do it by hand.");
@@ -2216,7 +2097,6 @@ public class SeedPhases {
         // than a placeholder.
         values.put("MIRROR_PORT", String.valueOf(boot.config.mirrorPort()));
         values.put("GIT_HOST_PORT", String.valueOf(boot.config.gitHostPort()));
-        values.put("DNS_PORT", String.valueOf(boot.config.dnsPort()));
         // Resolved by seed-postgres, which runs before both generated files are written.
         values.put("PG_SUPERUSER_PASSWORD", orEmpty(boot.state.pgSuperuserPassword));
         values.put("PG_DEPLOYMENTS_PASSWORD", orEmpty(boot.state.pgDeploymentsPassword));
@@ -2225,7 +2105,6 @@ public class SeedPhases {
         values.put("PG_CI_PASSWORD", orEmpty(boot.state.pgCiPassword));
         values.put("PG_CI_EVENTSTREAM_PASSWORD", orEmpty(boot.state.pgCiEventstreamPassword));
         values.put("PG_PLATFORM_IDP_PASSWORD", orEmpty(boot.state.pgPlatformIdpPassword));
-        values.put("PG_PLATFORM_DNS_PASSWORD", orEmpty(boot.state.pgPlatformDnsPassword));
         values.put("PG_EVENTS_PASSWORD", orEmpty(boot.state.pgEventsPassword));
         values.put("PG_ARTIFACTS_PASSWORD", orEmpty(boot.state.pgArtifactsPassword));
         values.put("PG_PLATFORM_MIRROR_PASSWORD", orEmpty(boot.state.pgPlatformMirrorPassword));

@@ -1,7 +1,5 @@
 package eu.wohlben.qits.cli.bootstrap.platform;
 
-import eu.wohlben.qits.cli.bootstrap.config.DomainName;
-
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -21,10 +19,9 @@ import java.util.Optional;
  * so a fragment has to carry the OUTPUT's indentation: six spaces for a compose environment key, four
  * for a service field, two for a volume name.
  * <p>
- * The one rule the fragments encode is <b>both or neither</b>. The dns service turns SOA and NS
- * synthesis off unless it holds a nameserver name AND a hostmaster address, and the edge refuses to
- * start when a keystore names files that are not there — so the pair of dns variables, and the edge's
- * ports, env and volume, are written together or not at all.
+ * The one rule the fragments encode is <b>all or none</b>. The edge refuses to start when a keystore
+ * names files that are not there, so its ports, its env and its volume are written together or not
+ * at all.
  */
 public final class DomainTokens {
 
@@ -34,8 +31,11 @@ public final class DomainTokens {
     /** The token values for this domain, or the empty answers when there is none. */
     public static Map<String, String> of(Optional<String> domain) {
         Map<String, String> values = new LinkedHashMap<>();
-        values.put("DNS_IDENTITY", domain.map(DomainTokens::dnsIdentity).orElse(""));
-        values.put("DNS_IDENTITY_ARGS", domain.map(DomainTokens::dnsIdentityArgs).orElse(""));
+        // NOTE: this could be a hook to register the domain's dns records with an external dns
+        // provider. Domain mode assumes dns is configured OUTSIDE this platform now: the names it
+        // serves have to resolve to QITS_PUBLIC_IP before the certificate order can be answered,
+        // and nothing here writes them. qits-platform-dns used to be given its own SOA and NS
+        // identity here.
         values.put("LETSENCRYPT_VOLUME", domain.isPresent() ? LETSENCRYPT_VOLUME : "");
         values.put("EDGE_TLS_PORTS", domain.isPresent() ? EDGE_TLS_PORTS : "");
         values.put("EDGE_TLS", domain.isPresent() ? EDGE_TLS : "");
@@ -44,34 +44,13 @@ public final class DomainTokens {
         return values;
     }
 
-    /** The dns container's own identity: the two variables SOA and NS synthesis needs. */
-    private static String dnsIdentity(String domain) {
-        return "\n"
-                + "      # ITS PUBLIC IDENTITY, AND BOTH OR NEITHER. Blank either one and this\n"
-                + "      # service answers A and CNAME records perfectly while serving no SOA at\n"
-                + "      # all, so resolvers cannot negative-cache and come back for every\n"
-                + "      # nonexistent name forever. It degrades as load and latency rather than as\n"
-                + "      # an outage, and one boot log line is the whole warning. Both names are\n"
-                + "      # conventions of the bootstrap; the service only knows what it is told.\n"
-                + "      QITS_DNS_NS_NAMES: " + DomainName.nsName(domain) + "\n"
-                + "      QITS_DNS_HOSTMASTER: " + DomainName.hostmaster(domain);
-    }
-
-    /** The nameserver's two variables, as extras keys appended after its last one. */
-    private static String dnsIdentityArgs(String domain) {
-        return "\n" + DNS + "env.QITS_DNS_NS_NAMES=" + DomainName.nsName(domain)
-                + "\n" + DNS + "env.QITS_DNS_HOSTMASTER=" + DomainName.hostmaster(domain);
-    }
-
     private static final String EDGE = "qits.platform.deployments.extras.qits-platform-edge.";
-
-    private static final String DNS = "qits.platform.deployments.extras.qits-platform-dns.";
 
     private static final String LETSENCRYPT_VOLUME = "\n"
             + "  # THE EDGE'S TLS MATERIAL, and it is declared only because a domain is configured.\n"
             + "  # It holds the placeholder certificate this bootstrap writes before the edge first\n"
             + "  # starts with a keystore, and then the real PEMs the bootstrap's own edge-acme phase\n"
-            + "  # writes over them under the same two filenames once the zone answers. A keystore\n"
+            + "  # writes over them under the same two filenames once the name resolves. A keystore\n"
             + "  # naming files that are not there refuses to start, so the\n"
             + "  # volume, the placeholder and the env on the edge are one decision.\n"
             + "  qits-edge-letsencrypt:\n"
@@ -124,16 +103,15 @@ public final class DomainTokens {
             + "# while health goes on passing on 8080. The volume is what carries the PEMs across the\n"
             + "# cutover.\n"
             + "#\n"
-            + "# 9000 STAYS ON LOOPBACK, and under swarm that REFUSES the deployment rather than\n"
-            + "# widening it: a service publish has no ip field, so the only thing an orchestrator\n"
-            + "# could do with this line is put an unauthenticated ACME challenge-management endpoint\n"
-            + "# on every interface of the host. A domain on a swarm platform needs this port fronted\n"
-            + "# some other way; a refused deployment is how that decision gets made deliberately.\n";
+            + "# 9000 IS NOT PUBLISHED, here exactly as in the seed: the challenge-management\n"
+            + "# endpoint is unauthenticated, and a swarm publish has no ip field to keep a port on\n"
+            + "# loopback — a publish line here would put that endpoint on every interface of the\n"
+            + "# host, and the swarm driver REFUSES a loopback publish for that reason. Every\n"
+            + "# caller — the edge-acme phase, a renew — dials qits-platform-edge:9000 on qits-net.\n";
 
     private static final String EDGE_TLS_ARGS =
             "\n" + EDGE + "publishes[1]=80:8080"
                     + "\n" + EDGE + "publishes[2]=443:8443"
-                    + "\n" + EDGE + "publishes[3]=127.0.0.1:9000:9000"
                     + "\n" + EDGE + "mounts[0]=volume:qits-edge-letsencrypt:/work/.letsencrypt"
                     + "\n" + EDGE
                     + "env.QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT=/work/.letsencrypt/lets-encrypt.crt"

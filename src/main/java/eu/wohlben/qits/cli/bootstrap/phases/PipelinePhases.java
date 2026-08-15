@@ -235,13 +235,6 @@ public class PipelinePhases {
             // without, which is exactly what those calls need.
             boot.awaitHealth(ctx, env + "-qits-githost (the git host, on qits-net)",
                     boot.githost::health);
-            // At its OWN alias, which is the one exception to "everything through the edge": there
-            // is no gateway route to this service and there must not be one, so its record API is
-            // addressed directly. Health lives under /dns/q because that is the service's own
-            // non-application root path, and readiness includes the database it refuses to boot
-            // without — which is exactly what the zone write two phases from now needs.
-            boot.awaitHealth(ctx, "qits-platform-dns (on qits-net, no gateway route)",
-                    () -> boot.http.get(boot.config.dnsUrl() + "/q/health/ready", Map.of()));
             // Through the edge and the gateway's route table, and at the service's own alias if
             // that route is not up yet. Either answer means the service is ready; the first also
             // proves the whole path the rest of this run calls ci and the deployer through, which
@@ -277,9 +270,8 @@ public class PipelinePhases {
             // boot rather than trusted to arrive: qits-ci runs every step as a container it asks
             // this service for, so a pipeline that starts first has nowhere to run a step.
             //
-            // At its OWN alias, the second exception to "everything through the edge" and for the
-            // same reason as the nameserver: there is no gateway route to this service and there
-            // must not be one. Every caller is a machine on qits-net, and a route would put a
+            // At its OWN alias, the one exception to "everything through the edge", and for one
+            // reason: there is no gateway route to this service and there must not be one. Every caller is a machine on qits-net, and a route would put a
             // socket-holding orchestrator behind the platform's public door. Health lives under
             // /containers/q because that is the service's own non-application root path, and
             // readiness includes the two databases it refuses to boot without.
@@ -430,26 +422,23 @@ public class PipelinePhases {
     }
 
     /**
-     * The domain's place in the closing report: what this run WROTE, the one step it cannot take,
-     * and which certificate the edge is serving.
+     * The domain's place in the closing report: the records it needs, and which certificate the edge
+     * is serving.
      * <p>
-     * <b>The order of the three blocks is the order a reader needs them in.</b> The records come
-     * first because they are the thing that changed — a zone that used to be empty is now the
-     * authority for every name this platform serves. The registrar comes second because it is the
-     * only step left to a person, and it is stated as a step to CHECK rather than to do: it belongs
-     * before the run, since the certificate order is answered over the delegated name. The
-     * certificate comes last because it is the outcome the first two decide.
+     * <b>THIS PLATFORM SERVES NO DNS.</b> The records are held wherever the domain is, and this run
+     * writes none of them — so they are printed as a step to CHECK, and they belong BEFORE the run:
+     * the certificate order is answered over the public name.
      * <p>
-     * <b>A failed order is a line here, not a failed boot.</b> The commonest reason is a delegation
-     * the world has not seen yet, which fixes itself in minutes to hours and which this program can
+     * <b>A failed order is a line here, not a failed boot.</b> The commonest reason is a record the
+     * world has not seen yet, which fixes itself in minutes to hours and which this program can
      * neither hurry nor detect. So the phase warns and this block prints the retry with the mode and
      * the address already filled in, exactly as the register token's lines do for its own one call.
      */
     static List<String> domainLines(String domain, String publicIp, Acme.Mode mode, String email,
             String certificate) {
         List<String> lines = new ArrayList<>();
-        lines.add("domain:    " + domain + " — the zone answers, and these A records are ROWS in it "
-                + "now:");
+        lines.add("domain:    " + domain + " — DNS IS NOT THIS PLATFORM'S. Check your provider "
+                + "holds these A records:");
         for (SeedPhases.ZoneRecord record : SeedPhases.zoneRecords(domain, publicIp)) {
             lines.add("             " + pad(record.name()) + " A  " + record.value() + "   "
                     + record.why());
@@ -458,22 +447,14 @@ public class PipelinePhases {
                 + "the first two");
         lines.add("           labels of a Host header, so a new environment or a new app vhost "
                 + "needs no dns step.");
-        lines.add("           Names are stored relative to the apex — @ is the apex, and no "
-                + "wildcard matches it.");
-        lines.add("registrar: THE ONE STEP THIS RUN CANNOT TAKE, and it belongs BEFORE the run. "
-                + "Check it is in place:");
-        lines.add("             NS  " + domain + "  ->  " + DomainName.nsName(domain));
-        lines.add("             A   " + DomainName.nsName(domain) + "  ->  " + publicIp
-                + "        (the GLUE record)");
-        lines.add("           An NS record holds a hostname, so without the glue nothing can find "
-                + "the server it");
-        lines.add("           names. Both carry " + publicIp + " — the address this run was given "
-                + "and wrote above.");
+        lines.add("           Names are relative to the apex — @ is the apex, and no wildcard "
+                + "matches it.");
+        lines.add("           Every one carries " + publicIp + ", the address this run was given.");
         lines.addAll(tlsLines(domain, mode, email, certificate));
         return lines;
     }
 
-    /** The record names, in a column, so four short names read as a table rather than as prose. */
+    /** The record names, in a column, so short names read as a table rather than as prose. */
     private static String pad(String name) {
         return name.length() >= 6 ? name : name + " ".repeat(6 - name.length());
     }
@@ -490,7 +471,7 @@ public class PipelinePhases {
                     + domain + ".");
             lines.add("           A browser still refuses it: staging issues from an untrusted "
                     + "root. It proves the");
-            lines.add("           delegation, the challenge and the reload, which is what it is "
+            lines.add("           records, the challenge and the reload, which is what it is "
                     + "for. When you are");
             lines.add("           satisfied, rerun with QITS_ACME_MODE=production — one rerun, and "
                     + "NO redeploy:");
@@ -519,9 +500,9 @@ public class PipelinePhases {
             lines.add("tls:       NOT ISSUED — the order did not go through, so the edge still "
                     + "holds the PLACEHOLDER");
             lines.add("           certificate and browsers reject it. The usual reason is the "
-                    + "delegation above: a");
-            lines.add("           zone the internet has not been pointed at yet answers nothing, "
-                    + "and the HTTP-01");
+                    + "records above: a");
+            lines.add("           name the internet cannot resolve yet answers nothing, and the "
+                    + "HTTP-01");
             lines.add("           challenge is fetched over exactly that name. Port 80 has to "
                     + "reach this host too.");
             lines.add("           Nothing is lost — rerun the boot, or issue it by hand from a "
@@ -749,7 +730,7 @@ public class PipelinePhases {
      * <p>
      * The flag is not decoration. The deployer ships a platform service only from the branch the
      * platform environment listens to, so an environment created without it leaves
-     * qits-platform-idp, qits-platform-mirror, qits-platform-dns and the edge registering
+     * qits-platform-idp, qits-platform-mirror and the edge registering
      * nothing and deploying nowhere — silently, because "no tier is the platform one" and "this
      * branch is not the platform tier's" are one answer.
      * <p>
@@ -1192,7 +1173,7 @@ public class PipelinePhases {
         // containers <service>.<slot>.<taskid> — no qits-pd- prefix anywhere. Matching only the
         // docker driver's names left this wait blind while the deployer's log said "Deployed …
         // into the platform": measured on the third flip boot, 44 minutes staring at a healthy
-        // dns task.
+        // healthy task.
         String alias = PlatformModel.wireAlias(name, boot.config.envName());
         String[] notServing = null;
         // A pipe separator, deliberately: the process pipeline strips control characters — tabs
@@ -1621,10 +1602,6 @@ public class PipelinePhases {
                     + "docker-proxy bound both");
             report.add("           families — so it arrives with ingress. The rule does NOT "
                     + "survive a reboot.");
-            report.add("dns:       qits-platform-dns, published on " + boot.config.dnsPort()
-                    + " udp AND tcp — a sibling of the edge, never a route behind it.");
-            report.add("           Zones and records are ROWS: " + boot.config.dnsUrl()
-                    + "/api/zones");
             report.add("workloads: " + PlatformModel.wireAlias("containers", env)
                     + " on qits-net — the orchestrator that holds the");
             report.add("           docker socket. No host port and no gateway route: every caller "
@@ -1695,9 +1672,11 @@ public class PipelinePhases {
                         + "and artifacts trust the network");
             }
             report.add("state:     seed compose + .qits-bootstrap.env in " + boot.state.wrapperDir);
-            // Only with a domain. The run now does everything under it that a program can do — the
-            // records are rows it wrote and the certificate is one it ordered — so these lines say
-            // what EXISTS, and the one step left is the delegation, which lives at a registrar.
+            // Only with a domain. This platform serves no dns, so the records are printed as a
+            // step to CHECK at whatever provider holds the domain; the certificate is the one thing
+            // under it the run does itself.
+            // NOTE: this could be a hook to read those records back from an external dns provider,
+            // and say which of them are actually in place.
             DomainName.of(boot.config).ifPresent(domain -> report.addAll(domainLines(domain,
                     PublicIp.of(boot.config).orElse(""), Acme.mode(boot.config),
                     Acme.email(boot.config, domain), boot.state.certificate)));

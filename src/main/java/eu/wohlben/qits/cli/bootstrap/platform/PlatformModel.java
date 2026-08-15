@@ -42,12 +42,6 @@ public final class PlatformModel {
      * image adds nothing to upstream postgres — and it is still hand-built and hand-started for
      * the same reason as the rest: nothing can deploy it until the deployer answers.
      * <p>
-     * qits-platform-dns joined on 2026-08-09, and it is in the seed because THIS PROGRAM writes to
-     * it: with {@code QITS_DOMAIN} set, the zone row is created over its API in the same run, hours
-     * before the pipeline could have deployed it. It is also the platform's only public nameserver,
-     * so once a registrar delegates a domain here every minute with no server answering is an
-     * outage rather than a slow start.
-     * <p>
      * <b>qits-events joined on 2026-08-10, because it is the BUS and the bus is now the only road a
      * green build takes.</b> The direct ci -&gt; deployer announcement is retired; what is left is
      * ci -&gt; outbox -&gt; qits-events -&gt; the deployer's durable subscriber. Every hop of that
@@ -72,7 +66,7 @@ public final class PlatformModel {
      */
     public static final List<String> CORE = List.of(
             "gateway", "platform-edge", "platform-mirror", "artifacts", "githost", "ci",
-            "containers", "deployments", "platform-idp", "platform-dns", "events",
+            "containers", "deployments", "platform-idp", "events",
             "oci-postgresql");
 
     /**
@@ -109,12 +103,6 @@ public final class PlatformModel {
      * Plan is plain values and no deployment reads the database inside the docker window. The same
      * self-referential class as the registry pulling its own successor before stopping itself.
      * <p>
-     * <b>qits-platform-dns sits beside qits-docs</b>, before the gateway and well before
-     * the edge. Nothing in this train dials it: a DNS query arrives from the internet rather than
-     * from qits-net, so its cutover can interrupt queries and nothing else. What it must not do is
-     * fall inside the edge's window, which is the one deployment that takes this program's own door
-     * away for a beat.
-     * <p>
      * <b>The byte plane's three sit together, and their order inside it is forced.</b>
      * qits-platform-mirror is first of the three: every image build and every dependency
      * resolution after it goes through the mirror, so its cutover belongs before the services whose
@@ -131,7 +119,7 @@ public final class PlatformModel {
      */
     public static final List<String> DEPLOYABLES = List.of(
             "observability", "oci-postgresql", "platform-idp", "stt", "projects", "workspaces",
-            "events", "docs", "platform-dns", "gateway", "platform-mirror", "artifacts", "githost",
+            "events", "docs", "gateway", "platform-mirror", "artifacts", "githost",
             "containers", "ci", "platform-edge", "deployments");
 
     /**
@@ -160,20 +148,16 @@ public final class PlatformModel {
      * reads (qits-docs). The git host left with them, as qits-githost, and it is an environment
      * service too: every one of its consumers already was one.
      * <p>
-     * <b>It grew to five on 2026-08-09</b>, and qits-platform-dns is of exactly that kind: one
-     * delegated nameserver answers for every environment's hostnames, because a zone is a row and
-     * {@code <epic>.qits-dev.eu} and its neighbours are rows in one database behind one delegation.
-     * A copy per tier would be several servers claiming one public IP's port 53 and disagreeing
-     * about what exists. Its own {@code deployments.yml} says {@code deployment_target: platform},
-     * which is the authority; this list is what tells the bootstrap the container name to expect and
-     * the wire alias to dial.
+     * <b>It grew to five with a nameserver on 2026-08-09 and is back to three</b>: qits-platform-dns
+     * is gone, and the platform serves no dns of its own. A domain's records are held by an external
+     * provider now.
      * <p>
      * There is no platform deploy ref any more. Both planes answer the same question of a green
      * build — does an environment listen to this ref — so {@code environment/<name>} is the whole
      * set and {@code platform/main} is retired.
      */
     public static final List<String> PLATFORM_SERVICES = List.of(
-            "platform-edge", "platform-idp", "platform-mirror", "platform-dns");
+            "platform-edge", "platform-idp", "platform-mirror");
 
     /**
      * Repositories that need a repository on the platform git host and a main push, but are not

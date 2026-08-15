@@ -5,29 +5,23 @@ import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
- * {@code QITS_DOMAIN}, read and checked, plus the two names derived from it.
+ * {@code QITS_DOMAIN}, read and checked.
  * <p>
  * <b>The check is here rather than in a phase because the value leaves this machine.</b> A typo
- * becomes a zone row in the dns service and a certificate request to Let's Encrypt for a name
- * nobody owns, and neither is undone by rerunning the boot with the spelling fixed. So the shape is
- * settled once, before the payload image is built, and the message names the knob.
- * <p>
- * <b>Both derived names are conventions of this bootstrap and not of the dns service</b>, which
- * knows only what it is told: {@code ns1.<domain>} is the nameserver hostname a registrar's NS
- * record points at, and {@code hostmaster.<domain>} is the SOA's rname. They travel together —
- * the dns service turns SOA/NS synthesis OFF unless it has both — which is why one method here
- * answers for the pair.
+ * becomes a certificate request to Let's Encrypt for a name nobody owns, which rerunning the boot
+ * with the spelling fixed does not undo. So the shape is settled once, before the payload image is
+ * built, and the message names the knob.
  */
 public final class DomainName {
 
     /**
      * Lowercase labels of letters, digits and inner dashes, at least two of them, no trailing dot.
      * <p>
-     * Lowercase only, although DNS is case-insensitive on the wire: the zone fqdn is stored and
-     * compared as text by the dns service, and {@code QITS.EU} and {@code qits.eu} would be two
-     * zones that answer for one name. A trailing dot is rejected for the same reason rather than
-     * stripped — the value is also spelled into a certificate request and a registrar's NS record,
-     * and a program that quietly rewrote it would leave three places disagreeing about which of
+     * Lowercase only, although DNS is case-insensitive on the wire: the value is compared as text
+     * everywhere it is used, so {@code QITS.EU} and {@code qits.eu} would be two spellings of one
+     * name. A trailing dot is rejected for the same reason rather than stripped — the value is also
+     * spelled into a certificate request and into the records a person creates at the dns provider,
+     * and a program that quietly rewrote it would leave those places disagreeing about which of
      * them is right.
      */
     private static final Pattern SHAPE = Pattern.compile(
@@ -42,40 +36,16 @@ public final class DomainName {
                 .map(DomainName::checked);
     }
 
-    /** The nameserver hostname a registrar delegates to, and the SOA's mname. */
-    public static String nsName(String domain) {
-        return "ns1." + domain;
-    }
-
-    /**
-     * The same nameserver, spelled the way a RECORD in its own zone is: relative to the apex.
-     * <p>
-     * qits-platform-dns stores record names relative and refuses an fqdn outright — a name of three
-     * labels is not one of the six shapes it takes — so the zone's own A record for the nameserver
-     * needs this half of {@link #nsName}. Derived by subtraction rather than written out a second
-     * time: the two spellings are of one name, and a copy is a copy that can be edited alone.
-     */
-    public static String nsLabel(String domain) {
-        String name = nsName(domain);
-        return name.substring(0, name.length() - domain.length() - 1);
-    }
-
-    /** The SOA's rname, as a hostname. */
-    public static String hostmaster(String domain) {
-        return "hostmaster." + domain;
-    }
-
     static String checked(String value) {
         if (!SHAPE.matcher(value).matches() || value.length() > 253
                 || Arrays.stream(value.split("\\.")).anyMatch(label -> label.length() > 63)) {
             throw new IllegalArgumentException("QITS_DOMAIN (--domain) is '" + value + "', which is "
                     + "not a domain this platform can serve. It must be a LOWERCASE DNS name of at "
                     + "least two labels, with no trailing dot and no scheme or path — qits.eu, "
-                    + "qits-dev.eu. It becomes the zone row in qits-platform-dns, the nameserver "
-                    + "name a registrar delegates to (ns1." + value + "), the SOA's hostmaster "
-                    + "address and the name the edge's certificate is issued for, so it is checked "
-                    + "here rather than in four places later. Leave it unset to run without a "
-                    + "domain: dns then serves no zones and the edge stays on plain HTTP.");
+                    + "qits-dev.eu. It becomes the name the edge's certificate is issued for and "
+                    + "the name every record at your dns provider hangs under, so it is checked "
+                    + "here rather than later. Leave it unset to run without a domain: the edge "
+                    + "then stays on plain HTTP.");
         }
         return value;
     }
