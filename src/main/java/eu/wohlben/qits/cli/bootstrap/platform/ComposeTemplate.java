@@ -1224,6 +1224,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-edge.aliases[2]=githost.${ENV_NAME}.localhost
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_ENVIRONMENTS=${ENV_NAME}
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_DEFAULT_ENVIRONMENT=${ENV_NAME}
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_UPSTREAM_HOST_PATTERN={env}-qits-gateway
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_UPSTREAM_PORT=8080
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_REGISTRY_HOST_PATTERN={env}-qits-artifacts
