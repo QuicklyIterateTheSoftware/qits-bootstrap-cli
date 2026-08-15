@@ -417,6 +417,7 @@ public final class ComposeTemplate {
                   QITS_EDGE_APPS_REGISTRY_HOST_PATTERN: "{env}-qits-artifacts"
                   QITS_EDGE_APPS_MIRROR_HOST_PATTERN: "qits-platform-mirror"
                   QITS_EDGE_APPS_GITHOST_HOST_PATTERN: "{env}-qits-githost"
+                  QITS_EDGE_APPS_GITHOST_AUDIENCE_PATTERN: "{env}-qits-githost"
                   # USER SESSIONS ARE THE DEFAULT. The environment vhost refuses an anonymous
                   # browser — a navigation is redirected to /idp/login, anything else is 401 — and
                   # turns a session cookie into X-Qits-User, X-Qits-User-Id and X-Qits-Roles.
@@ -1230,6 +1231,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_REGISTRY_HOST_PATTERN={env}-qits-artifacts
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN=qits-platform-mirror
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_AUDIENCE_PATTERN={env}-qits-githost
             # USER SESSIONS ARE ENFORCED at the public environment vhost; IdP routes remain the
             # protocol-required anonymous carve-out.
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_ENABLED=true
