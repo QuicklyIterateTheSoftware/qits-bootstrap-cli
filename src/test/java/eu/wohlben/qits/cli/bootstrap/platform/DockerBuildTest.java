@@ -44,8 +44,8 @@ class DockerBuildTest {
         docker(runner, config(Map.of())).buildFromStdin("qits/platform-mirror:latest",
                 "FROM quay.io/x\n", Path.of("/src/qits-platform-mirror"), List.of(), null);
 
-        assertThat(runner.argv.getLast()).containsExactly("docker", "build", "--network", "host",
-                "-t", "qits/platform-mirror:latest", "-f", "-", "--memory", "4g", "--cpu-quota", "200000",
+        assertThat(runner.argv.getLast()).containsExactly("docker", "buildx", "build", "--load", "--network", "host",
+                "-t", "qits/platform-mirror:latest", "-f", "-", "--resource", "memory=4g", "--resource", "cpu-quota=200000",
                 "--build-arg", ARG, "/src/qits-platform-mirror");
     }
 
@@ -69,7 +69,7 @@ class DockerBuildTest {
         docker(runner, config(Map.of())).build(List.of("-t", "qits/build-images/ci-base:latest",
                 "-f", "/src/qits-oci/ci-base/Dockerfile", "/src/qits-oci"), null);
 
-        assertThat(runner.argv.getLast()).containsExactly("docker", "build", "--memory", "4g", "--cpu-quota", "200000", "--build-arg", ARG,
+        assertThat(runner.argv.getLast()).containsExactly("docker", "buildx", "build", "--load", "--resource", "memory=4g", "--resource", "cpu-quota=200000", "--build-arg", ARG,
                 "-t", "qits/build-images/ci-base:latest",
                 "-f", "/src/qits-oci/ci-base/Dockerfile", "/src/qits-oci");
     }
@@ -107,7 +107,7 @@ class DockerBuildTest {
         new Docker(runner).build(List.of("-t", "qits-bootstrap:abc", "/src/cli"), null);
 
         assertThat(runner.argv.getLast())
-                .containsExactly("docker", "build", "--memory", "4g", "--cpu-quota", "200000",
+                .containsExactly("docker", "buildx", "build", "--load", "--resource", "memory=4g", "--resource", "cpu-quota=200000",
                         "-t", "qits-bootstrap:abc", "/src/cli");
     }
 }

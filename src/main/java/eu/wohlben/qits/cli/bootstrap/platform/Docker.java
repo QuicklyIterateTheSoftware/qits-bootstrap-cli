@@ -30,7 +30,8 @@ public class Docker {
     public static final Duration BUILD_TIMEOUT = Duration.ofHours(4);
 
     /** One host budget for every seed, step and payload build the bootstrap starts. */
-    private static final List<String> BUILD_LIMITS = List.of("--memory", "4g", "--cpu-quota", "200000");
+    private static final List<String> BUILD_LIMITS = List.of("--resource", "memory=4g",
+            "--resource", "cpu-quota=200000");
 
     /** The only driver a network of this platform has: see {@link #ensureNetwork}. */
     public static final String OVERLAY = "overlay";
@@ -411,7 +412,7 @@ public class Docker {
     public ProcessResult buildFromStdin(String tag, String dockerfile, Path context,
                                         List<String> extraArgs, Consumer<String> out) {
         List<String> command = new ArrayList<>(List.of(
-                "docker", "build", "--network", "host", "-t", tag, "-f", "-"));
+                "docker", "buildx", "build", "--load", "--network", "host", "-t", tag, "-f", "-"));
         command.addAll(BUILD_LIMITS);
         command.addAll(buildArgs);
         command.addAll(extraArgs);
@@ -425,7 +426,7 @@ public class Docker {
     }
 
     public ProcessResult build(List<String> args, Consumer<String> out) {
-        List<String> command = new ArrayList<>(List.of("docker", "build"));
+        List<String> command = new ArrayList<>(List.of("docker", "buildx", "build", "--load"));
         command.addAll(BUILD_LIMITS);
         command.addAll(buildArgs);
         command.addAll(args);
