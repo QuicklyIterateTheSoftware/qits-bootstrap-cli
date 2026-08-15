@@ -16,6 +16,11 @@ import java.util.Optional;
  */
 public class PdApi {
 
+    /** Identity asserted on the private qits-net hop to the deployer's authorized read API. */
+    private static final Map<String, String> ADMIN_HEADERS = Map.of(
+            "X-Qits-User", "qits-bootstrap",
+            "X-Qits-Roles", "qits-platform:admin");
+
     private final Http http;
     private final String base;
 
@@ -25,7 +30,7 @@ public class PdApi {
     }
 
     public Http.Response health() {
-        return http.get(base + "/q/health/ready", Map.of());
+        return http.get(base + "/q/health/ready", ADMIN_HEADERS);
     }
 
     public boolean ready() {
@@ -56,7 +61,7 @@ public class PdApi {
     }
 
     private java.util.List<JsonNode> environments() {
-        Http.Response response = http.get(base + "/api/environments", Map.of());
+        Http.Response response = http.get(base + "/api/environments", ADMIN_HEADERS);
         if (!response.ok()) {
             return java.util.List.of();
         }
@@ -94,7 +99,8 @@ public class PdApi {
 
     /** The newest deployment row of an application in an environment. */
     public Optional<JsonNode> newestDeployment(String environmentId, String applicationName) {
-        Http.Response response = http.get(base + "/api/deployments?environmentId=" + environmentId, Map.of());
+        Http.Response response = http.get(base + "/api/deployments?environmentId=" + environmentId,
+                ADMIN_HEADERS);
         if (!response.ok()) {
             return Optional.empty();
         }
