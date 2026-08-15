@@ -14,6 +14,11 @@ public class CiApi {
     /** The one file whose run IS a repository's release — the identity no other run fact gives. */
     public static final String RELEASE_CONFIG = ".config/qits/ci-event-release.yml";
 
+    /** Identity asserted on the private qits-net hop to CI's now-authorized read API. */
+    private static final Map<String, String> SYSTEM_HEADERS = Map.of(
+            "X-Qits-User", "qits-bootstrap",
+            "X-Qits-Roles", "qits:admin");
+
     private final Http http;
     private final String base;
 
@@ -23,7 +28,7 @@ public class CiApi {
     }
 
     public Http.Response health() {
-        return http.get(base + "/q/health/ready", Map.of());
+        return http.get(base + "/q/health/ready", SYSTEM_HEADERS);
     }
 
     public boolean ready() {
@@ -74,7 +79,7 @@ public class CiApi {
      * that ran is what the run IS.
      */
     public List<String[]> finishedEventRuns(String repoId) {
-        Http.Response response = http.get(base + "/api/runs/finished?limit=20", Map.of());
+        Http.Response response = http.get(base + "/api/runs/finished?limit=20", SYSTEM_HEADERS);
         if (!response.ok()) {
             return List.of();
         }
@@ -98,7 +103,7 @@ public class CiApi {
      */
     public boolean greenReleaseRunAt(String repoId, String commitSha) {
         Http.Response response = http.get(base + "/api/runs?repositoryId=" + repoId + "&limit=20",
-                Map.of());
+                SYSTEM_HEADERS);
         if (!response.ok()) {
             return false;
         }
@@ -119,7 +124,8 @@ public class CiApi {
      * the newest one is this phase's or an earlier one's.
      */
     public Optional<JsonNode> newestRun(String repoId) {
-        Http.Response response = http.get(base + "/api/runs?repositoryId=" + repoId + "&limit=1", Map.of());
+        Http.Response response = http.get(base + "/api/runs?repositoryId=" + repoId + "&limit=1",
+                SYSTEM_HEADERS);
         if (!response.ok()) {
             return Optional.empty();
         }
@@ -135,7 +141,7 @@ public class CiApi {
      * output, so following a build along is polling here, which is what its own client does.
      */
     public Optional<JsonNode> run(String runId) {
-        Http.Response response = http.get(base + "/api/runs/" + runId, Map.of());
+        Http.Response response = http.get(base + "/api/runs/" + runId, SYSTEM_HEADERS);
         return response.ok() ? Optional.of(Json.parse(response.body())) : Optional.empty();
     }
 

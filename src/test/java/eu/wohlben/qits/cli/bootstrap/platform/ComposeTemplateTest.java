@@ -682,10 +682,10 @@ class ComposeTemplateTest {
         // ci itself uses the direct bearer route; its untrusted step containers use the edge.
         assertThat(serviceBlock(compose, ENV + "-qits-ci"))
                 .contains("QITS_CI_GIT_HOST_URL: " + host)
-                .contains("QITS_CI_CONTAINER_GIT_URL: http://qits-platform-edge:8080")
+                .contains("QITS_CI_CONTAINER_GIT_URL: http://githost.prod.internal:8080")
                 .contains("QITS_CI_CONTAINER_GIT_AUDIENCE: prod-qits-githost");
         assertThat(extras("qits-ci")).contains("env.QITS_CI_GIT_HOST_URL=" + host)
-                .contains("env.QITS_CI_CONTAINER_GIT_URL=http://qits-platform-edge:8080")
+                .contains("env.QITS_CI_CONTAINER_GIT_URL=http://githost.prod.internal:8080")
                 .contains("env.QITS_CI_CONTAINER_GIT_AUDIENCE=prod-qits-githost");
         // The two services that push. Their key was renamed with the split — a deployment still
         // passing qits.artifacts.url configures nothing and silently takes the default.

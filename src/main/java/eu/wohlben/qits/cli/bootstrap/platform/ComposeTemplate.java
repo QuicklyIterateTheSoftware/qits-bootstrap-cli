@@ -444,6 +444,7 @@ public final class ComposeTemplate {
                       - registry.${ENV_NAME}.localhost
                       - mirror.${ENV_NAME}.localhost
                       - githost.${ENV_NAME}.localhost
+                      - githost.${ENV_NAME}.internal
                 deploy:
                   replicas: 1
                   restart_policy:
@@ -831,7 +832,7 @@ public final class ComposeTemplate {
                   # /artifacts, because the routes lived inside the artifacts store; qits-githost serves
                   # /git at its own root and there is nothing in front of it.
                   QITS_CI_GIT_HOST_URL: http://${ENV_NAME}-qits-githost:8080
-                  QITS_CI_CONTAINER_GIT_URL: http://qits-platform-edge:8080
+                  QITS_CI_CONTAINER_GIT_URL: http://githost.${ENV_NAME}.internal:8080
                   QITS_CI_CONTAINER_GIT_AUDIENCE: ${ENV_NAME}-qits-githost
                   # The network step containers join. Still qits-net: it is the deployer's legacy network,
                   # the one every container on this host is on whatever plane it belongs to. It is
@@ -1167,6 +1168,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-edge.aliases[0]=registry.${ENV_NAME}.localhost
             qits.platform.deployments.extras.qits-platform-edge.aliases[1]=mirror.${ENV_NAME}.localhost
             qits.platform.deployments.extras.qits-platform-edge.aliases[2]=githost.${ENV_NAME}.localhost
+            qits.platform.deployments.extras.qits-platform-edge.aliases[3]=githost.${ENV_NAME}.internal
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_ENVIRONMENTS=${ENV_NAME}
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_DEFAULT_ENVIRONMENT=${ENV_NAME}
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
@@ -1308,7 +1310,7 @@ public final class ComposeTemplate {
             # block spells the same variables because at that moment no deployer exists to inject
             # anything. The /data volume went with the H2: the image has no mount point for it any more.
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_GIT_HOST_URL=http://${ENV_NAME}-qits-githost:8080
-            qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_URL=http://qits-platform-edge:8080
+            qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_URL=http://githost.${ENV_NAME}.internal:8080
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_AUDIENCE=${ENV_NAME}-qits-githost
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_NETWORK=qits-net
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONCURRENT_BUILDS=2
@@ -1592,7 +1594,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-workspaces.env.QITS_PROJECTS_URL=http://${ENV_NAME}-qits-projects:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_GITHOST_AUDIENCE=${ENV_NAME}-qits-githost
-            qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_CONTAINER_GIT_URL=http://qits-platform-edge:8080
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_CONTAINER_GIT_URL=http://githost.${ENV_NAME}.internal:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_GIT_HOST=${ENV_NAME}-qits-githost
             qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/${ENV_NAME}
