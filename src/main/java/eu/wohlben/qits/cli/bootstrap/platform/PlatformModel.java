@@ -184,7 +184,7 @@ public final class PlatformModel {
             "userflows", "spa-docs", "spa-deployments",
             "integrations-angular", "integrations-quarkus", "spa-home", "spa-projects",
             "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events",
-            "spa-ci", "spa-githost", "platform-spa-mirror",
+            "spa-ci", "spa-githost", "platform-spa-idp", "platform-spa-mirror",
             "oci-workspace", "workspace-daemon", "projects-daemon");
 
     /**
