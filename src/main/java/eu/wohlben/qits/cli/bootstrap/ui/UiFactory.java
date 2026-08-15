@@ -5,6 +5,7 @@ import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 
 import java.io.PrintStream;
+import java.nio.file.Path;
 
 /**
  * Picks the display. A real terminal gets the live one; a pipe, a dumb TERM or
@@ -24,12 +25,17 @@ public final class UiFactory {
     }
 
     public static Ui create(BootstrapConfig config, PrintStream out) {
+        Ui terminal = terminal(config, out);
+        String progressFile = System.getenv("QITS_PROGRESS_FILE");
+        if (progressFile != null && !progressFile.isBlank()) {
+            return new CompositeUi(terminal, new JournalUi(config, Path.of(progressFile)));
+        }
         if (!config.web()) {
-            return terminal(config, out);
+            return terminal;
         }
         // Said before the live display takes the screen, so it stays in the scrollback above it.
         out.println("browser view: http://" + url(config.webHost()) + ":" + config.webPort());
-        return new CompositeUi(terminal(config, out), new WebUi(config));
+        return new CompositeUi(terminal, new WebUi(config));
     }
 
     /** 0.0.0.0 is what the server binds, not an address to type into a browser. */

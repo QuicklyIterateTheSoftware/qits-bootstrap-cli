@@ -76,7 +76,8 @@ public final class ContainerRun {
      * @param args          this program's own arguments, relayed verbatim
      */
     public record Plan(String image, Path wrapper, boolean wrapperOnHost, List<Path> gitDirs,
-                       Path workDir, Path sources, Path logFile, String user, String dockerGid,
+                       Path workDir, Path sources, Path logFile, Path progressFile, String user,
+                       String dockerGid,
                        boolean tty, BootstrapConfig config, Map<String, String> environment,
                        List<String> args) {
     }
@@ -226,16 +227,12 @@ public final class ContainerRun {
         // host; this is that answer, told rather than re-derived. On a cold start it is where the
         // wrapper WILL be — the run clones it there, and both halves have to mean the same path.
         explicit.put("QITS_WRAPPER_DIR", plan.wrapper().toString());
-        // Only the payload binds the browser view. The launcher is the same binary and would
-        // otherwise hold the port the publish below needs, so the server defaults to not binding
-        // and this is QITS_WEB's answer, told to the half that may act on it.
-        explicit.put("QITS_WEB_BIND", String.valueOf(plan.config().web()));
+        // The durable supervisor owns the browser port. This worker only publishes its real state
+        // through the shared file, so its failure cannot take the public view down with it.
+        explicit.put("QITS_WEB_BIND", "false");
+        explicit.put("QITS_WEB_HOST", "0.0.0.0");
         if (plan.config().web()) {
-            // QITS_WEB_HOST answers "who can reach the browser view", and inside a container that
-            // boundary is the PUBLISH, not the bind — a view bound to the container's loopback is
-            // reachable by nobody at all. So the knob's answer moves to the -p below and the server
-            // binds every interface of a container that has one address.
-            explicit.put("QITS_WEB_HOST", "0.0.0.0");
+            explicit.put("QITS_PROGRESS_FILE", plan.progressFile().toString());
         }
         return explicit;
     }
@@ -255,18 +252,9 @@ public final class ContainerRun {
     }
 
     /**
-     * The browser view's port, published so it stays reachable from the machine the person is on.
-     * {@code QITS_WEB=0} means "do not bind", and then there is nothing to publish either.
+     * The worker publishes no port. The independently restarted supervisor owns it.
      */
     static Optional<String> publish(Plan plan) {
-        BootstrapConfig config = plan.config();
-        if (!config.web()) {
-            return Optional.empty();
-        }
-        String host = config.webHost();
-        // The host-side bind is where "keep it off the LAN" now applies. 0.0.0.0 is not an address
-        // to bind the publish to, it is the absence of one.
-        String bind = host == null || host.isBlank() || "0.0.0.0".equals(host) ? "" : host + ":";
-        return Optional.of(bind + config.webPort() + ":" + config.webPort());
+        return Optional.empty();
     }
 }

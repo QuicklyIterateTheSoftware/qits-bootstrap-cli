@@ -2,6 +2,7 @@ package eu.wohlben.qits.cli.bootstrap.phases;
 
 import eu.wohlben.qits.cli.bootstrap.config.WrapperDir;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
+import eu.wohlben.qits.cli.bootstrap.host.HostLauncher;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
@@ -213,6 +214,10 @@ public class UnwrapPhases {
             String self = boot.docker.selfContainerName();
             if (self != null && ids.remove(self)) {
                 ctx.log("  keeping " + self + ", which is this run");
+            }
+            if (ids.remove(HostLauncher.SUPERVISOR)) {
+                ctx.log("  keeping " + HostLauncher.SUPERVISOR
+                        + ", which serves this run's progress");
             }
             if (ids.isEmpty()) {
                 ctx.skip("no qits containers");

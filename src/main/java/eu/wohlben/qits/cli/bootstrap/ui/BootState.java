@@ -59,6 +59,7 @@ public final class BootState {
     private String summary = "";
     private Integer exitCode;
     private String logPath = "";
+    private String externalSnapshot;
 
     public BootState(int tailLines) {
         this.tail = new TailBuffer(Math.max(50, tailLines));
@@ -94,6 +95,7 @@ public final class BootState {
     }
 
     public synchronized void started(List<Phase> plan) {
+        externalSnapshot = null;
         phases.clear();
         states.clear();
         tookMillis.clear();
@@ -171,6 +173,9 @@ public final class BootState {
 
     /** The whole state, which is what a new connection and {@code /state.json} both want. */
     public synchronized String snapshotJson() {
+        if (externalSnapshot != null) {
+            return externalSnapshot;
+        }
         StringBuilder json = new StringBuilder("{");
         json.append("\"seq\":").append(seq);
         json.append(",\"now\":").append(System.currentTimeMillis());
@@ -199,6 +204,15 @@ public final class BootState {
         json.append("],\"events\":[");
         quoted(json, eventTail.all());
         return json.append("]}").toString();
+    }
+
+    /** Replace this process' empty state with the worker's redacted durable snapshot. */
+    public synchronized void replaceSnapshot(String json) {
+        if (json == null || json.isBlank() || json.equals(externalSnapshot)) {
+            return;
+        }
+        externalSnapshot = ProgressRedaction.redact(json);
+        emit("snapshot", externalSnapshot);
     }
 
     private static void quoted(StringBuilder json, List<String> lines) {

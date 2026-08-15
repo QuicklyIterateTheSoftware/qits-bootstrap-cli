@@ -32,7 +32,8 @@ class ContainerRunTest {
                                           Path wrapper, boolean wrapperOnHost, Path workDir,
                                           Path sources, boolean tty, List<String> args) {
         return new ContainerRun.Plan(IMAGE, wrapper, wrapperOnHost, List.of(), workDir, sources,
-                workDir.resolve("qits-bootstrap-cli.log"), "1000:1000", "988", tty,
+                workDir.resolve("qits-bootstrap-cli.log"),
+                workDir.resolve(".qits-bootstrap-progress.json"), "1000:1000", "988", tty,
                 config, environment, args);
     }
 
@@ -56,9 +57,9 @@ class ContainerRunTest {
                 "-e", "TZ=" + ZoneId.systemDefault().getId(),
                 "-e", "QITS_IN_CONTAINER=1",
                 "-e", "QITS_WRAPPER_DIR=/home/dev/qits-qits",
-                "-e", "QITS_WEB_BIND=true",
+                "-e", "QITS_WEB_BIND=false",
                 "-e", "QITS_WEB_HOST=0.0.0.0",
-                "-p", "8480:8480",
+                "-e", "QITS_PROGRESS_FILE=/home/dev/qits-qits/.qits-bootstrap-progress.json",
                 IMAGE, "bootstrap");
     }
 
@@ -120,8 +121,8 @@ class ContainerRunTest {
         List<String> argv = ContainerRun.command(plan(config, Map.of(), WRAPPER,
                 WRAPPER.resolve(".qits-bootstrap-src"), true, List.of("bootstrap")));
 
-        assertThat(argv).containsSequence("-p", "127.0.0.1:8480:8480");
-        assertThat(argv).containsSequence("-e", "QITS_WEB_HOST=0.0.0.0");
+        assertThat(argv).doesNotContain("-p");
+        assertThat(argv).contains("QITS_WEB_HOST=0.0.0.0");
     }
 
     @Test
@@ -131,18 +132,20 @@ class ContainerRunTest {
                 WRAPPER.resolve(".qits-bootstrap-src"), true, List.of("bootstrap")));
 
         assertThat(argv).doesNotContain("-p");
-        assertThat(argv).doesNotContain("QITS_WEB_HOST=0.0.0.0");
+        assertThat(argv).contains("QITS_WEB_HOST=0.0.0.0");
         // The payload is told not to bind either: only the launcher knows which half may.
         assertThat(argv).contains("QITS_WEB_BIND=false");
+        assertThat(argv).doesNotContain("QITS_PROGRESS_FILE=/home/dev/qits-qits/"
+                + ".qits-bootstrap-progress.json");
     }
 
     @Test
-    void aMovedPortIsThePortPublished() {
+    void aMovedPortIsPublishedByTheSupervisorNotTheWorker() {
         BootstrapConfig config = TestConfig.from(Map.of("QITS_WEB_PORT", "8481"));
         List<String> argv = ContainerRun.command(plan(config, Map.of(), WRAPPER,
                 WRAPPER.resolve(".qits-bootstrap-src"), true, List.of("bootstrap")));
 
-        assertThat(argv).containsSequence("-p", "8481:8481");
+        assertThat(argv).doesNotContain("-p", "8481:8481");
     }
 
     @Test
@@ -163,7 +166,8 @@ class ContainerRunTest {
         ContainerRun.Plan plan = new ContainerRun.Plan(IMAGE, WRAPPER, true,
                 List.of(common, common, embedded), WRAPPER,
                 WRAPPER.resolve(".qits-bootstrap-src"), WRAPPER.resolve("qits-bootstrap-cli.log"),
-                "1000:1000", "988", true, TestConfig.from(Map.of()), Map.of(),
+                WRAPPER.resolve(".qits-bootstrap-progress.json"), "1000:1000", "988", true,
+                TestConfig.from(Map.of()), Map.of(),
                 List.of("bootstrap"));
         assertThat(ContainerRun.mounts(plan)).containsExactly(common, embedded, WRAPPER);
     }

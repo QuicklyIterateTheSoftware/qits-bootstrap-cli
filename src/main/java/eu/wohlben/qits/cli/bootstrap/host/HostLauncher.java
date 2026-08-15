@@ -8,6 +8,7 @@ import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessRunner;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
 import eu.wohlben.qits.cli.bootstrap.ui.UiFactory;
+import eu.wohlben.qits.cli.bootstrap.ui.BootState;
 
 import java.io.IOException;
 import java.io.PrintStream;
@@ -37,6 +38,7 @@ import java.util.Optional;
  * clean. {@code docker run} propagates it, so all this half does is not swallow it.
  */
 public final class HostLauncher {
+    public static final String SUPERVISOR = "qits-bootstrap-progress";
 
     /** Where this CLI sits inside the wrapper, and therefore where the image is built from. */
     static final String CLI_PATH = "cli/qits-cli-bootstrap";
@@ -122,10 +124,17 @@ public final class HostLauncher {
             Path sources = workDir.resolve(config.src()).normalize();
             Files.createDirectories(sources);
             Path logFile = workDir.resolve(config.logFile()).normalize();
+            Path progressFile = workDir.resolve(".qits-bootstrap-progress.json").normalize();
+            Files.writeString(progressFile, new BootState(config.tailLines()).snapshotJson());
+
+            if (config.web() && !startSupervisor(docker, image, workDir, progressFile,
+                    user(runner), config, out)) {
+                return 2;
+            }
 
             argv = ContainerRun.command(new ContainerRun.Plan(
                     image, wrapper.path(), wrapperOnHost, gitDirs, workDir, sources, logFile,
-                    user(runner), docker.socketGroupId(),
+                    progressFile, user(runner), docker.socketGroupId(),
                     // The same test UiFactory uses to pick a display, asked on this side: the two
                     // must not disagree about whether there is a terminal.
                     UiFactory.isTerminal(),
@@ -138,6 +147,29 @@ public final class HostLauncher {
         // JLine has a real tty to repaint, and so the exit code arrives unaltered.
         Process payload = new ProcessBuilder(argv).inheritIO().start();
         return payload.waitFor();
+    }
+
+    private static boolean startSupervisor(Docker docker, String image, Path workDir,
+                                           Path state, String user, BootstrapConfig config,
+                                           PrintStream out) {
+        if (docker.allNames().contains(SUPERVISOR)) {
+            docker.removeContainer(SUPERVISOR, out::println);
+        }
+        String host = config.webHost();
+        String bind = host == null || host.isBlank() || "0.0.0.0".equals(host) ? "" : host + ":";
+        ProcessResult result = docker.exec(out::println, "run", "-d", "--name", SUPERVISOR,
+                "--restart", "unless-stopped", "--user", user, "-v", workDir + ":" + workDir,
+                "-w", workDir.toString(), "-e", "QITS_WEB_BIND=true", "-e",
+                "QITS_WEB_HOST=0.0.0.0", "-p", bind + config.webPort() + ":" + config.webPort(),
+                image, "progress-supervisor", "--state", state.toString());
+        if (!result.ok()) {
+            out.println("the bootstrap progress supervisor did not start (exit "
+                    + result.exitCode() + ")");
+            return false;
+        }
+        out.println("browser view: http://" + (bind.isEmpty() ? "0.0.0.0" : host)
+                + ":" + config.webPort() + " (durable supervisor)");
+        return true;
     }
 
     /**

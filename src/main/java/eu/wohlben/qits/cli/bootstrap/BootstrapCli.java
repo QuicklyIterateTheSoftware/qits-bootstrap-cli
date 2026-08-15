@@ -17,7 +17,8 @@ import java.util.concurrent.Callable;
         name = "qits",
         mixinStandardHelpOptions = true,
         subcommands = {BootstrapCommand.class, UnwrapCommand.class, LoginCommand.class,
-                GitCredentialCommand.class, BootstrapIngressCommand.class},
+                GitCredentialCommand.class, BootstrapIngressCommand.class,
+                ProgressSupervisorCommand.class},
         description = "Bring the qits platform up on this workstation, and take it down again.")
 public class BootstrapCli implements Callable<Integer> {
 
