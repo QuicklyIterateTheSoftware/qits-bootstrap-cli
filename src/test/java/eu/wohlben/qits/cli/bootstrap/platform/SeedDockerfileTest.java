@@ -45,6 +45,15 @@ class SeedDockerfileTest {
     }
 
     @Test
+    void leavesHeadroomInsideTheFourGigabyteBuilder() {
+        String dockerfile = "RUN ./mvnw package -Dquarkus.native.native-image-xmx=4g\n";
+
+        assertThat(SeedDockerfile.rewrite(dockerfile))
+                .contains("-Dquarkus.native.native-image-xmx=3g")
+                .doesNotContain("native-image-xmx=4g");
+    }
+
+    @Test
     void doesNotRewriteAnUnrelatedMirrorRef() {
         // Only the three upstream namespaces are the mirror's; any other path under the same host
         // is left alone.
