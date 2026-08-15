@@ -95,6 +95,14 @@ public class RunState {
     public String environmentId;
     /** The temporary maven-over-HTTP container that breaks the first-boot dependency cycle. */
     public String authSeedContainer;
+    /** Ephemeral paths and capabilities for the bootstrap-only ingress; never persisted in state. */
+    public Path bootstrapIngressEnvFile;
+    public String bootstrapIngressPassword;
+    public String bootstrapIngressGitCapability;
+    public String bootstrapIngressGitCapabilityHash;
+    public String bootstrapIngressRepository;
+    public String bootstrapIngressRefPattern;
+    public long bootstrapIngressExpiresAt;
     /** The closing report, printed after the display is handed back. */
     public final List<String> summary = new ArrayList<>();
 

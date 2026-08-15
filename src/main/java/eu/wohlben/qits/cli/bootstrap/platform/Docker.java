@@ -229,6 +229,17 @@ public class Docker {
         return text.startsWith("/") ? text.substring(1) : text.isEmpty() ? null : text;
     }
 
+    /** The exact payload image this bootstrap is running from, for a sibling with identical code. */
+    public String selfImage() {
+        String self = selfName();
+        if (self == null) {
+            return null;
+        }
+        ProcessResult image = runner.run(Cmd.of("docker", "inspect", "--type", "container", "-f",
+                "{{.Config.Image}}", self), null);
+        return image.ok() && !image.trimmed().isBlank() ? image.trimmed() : null;
+    }
+
     public boolean containerExists(String nameOrId) {
         return runner.run(Cmd.of("docker", "inspect", "--type", "container", "-f", "{{.Id}}",
                 nameOrId), null).ok();

@@ -176,6 +176,9 @@ public class BootstrapCommand implements Callable<Integer> {
                 result = new PhaseEngine(ui).run(phases);
             } finally {
                 feed.close();
+                // The ingress owns a run-scoped credential and must not survive a failed phase or
+                // Ctrl-C. Its own TTL reconciliation is only the safety net for a killed daemon.
+                boot.ingress.stop(log::line);
                 try {
                     Runtime.getRuntime().removeShutdownHook(restore);
                 } catch (IllegalStateException alreadyShuttingDown) {

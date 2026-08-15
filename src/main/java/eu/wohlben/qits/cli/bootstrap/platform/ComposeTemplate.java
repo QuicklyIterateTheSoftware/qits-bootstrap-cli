@@ -837,6 +837,14 @@ public final class ComposeTemplate {
                   # name-addressed scheme 404s and every project agent starts with an empty /workspace.
                   QITS_PROJECTS_NAME_RESOLVER_URL: http://${ENV_NAME}-qits-projects:8080/projects/api/projects
                   QITS_AUTH_MACHINE_AUDIENCE: ${ENV_NAME}-qits-githost
+                  # The bootstrap ingress owns the plaintext capability. The seed githost sees
+                  # only a fingerprint, one repository/ref namespace and an expiry; deployed
+                  # githost receives none of these values through deployment extras.
+                  QITS_BOOTSTRAP_INGRESS_GIT_ENABLED: "${BOOTSTRAP_INGRESS_GIT_ENABLED}"
+                  QITS_BOOTSTRAP_INGRESS_GIT_SECRET_HASH: "${BOOTSTRAP_INGRESS_GIT_CAPABILITY_HASH}"
+                  QITS_BOOTSTRAP_INGRESS_GIT_REPOSITORY: "${BOOTSTRAP_INGRESS_GIT_REPOSITORY}"
+                  QITS_BOOTSTRAP_INGRESS_GIT_REF_PATTERN: "${BOOTSTRAP_INGRESS_GIT_REF_PATTERN}"
+                  QITS_BOOTSTRAP_INGRESS_GIT_EXPIRES_AT: "${BOOTSTRAP_INGRESS_GIT_EXPIRES_AT}"
                   # The default branch's escape hatch: a push carrying -o qits.token=<this> is let through
                   # even when protection is on. Unset would mean no value matches and nothing overrides —
                   # which is the shipped default, and which this bootstrap cannot live with (it pushes

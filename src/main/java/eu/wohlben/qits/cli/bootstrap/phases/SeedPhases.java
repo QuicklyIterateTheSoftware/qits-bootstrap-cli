@@ -1582,6 +1582,27 @@ public class SeedPhases {
                 });
     }
 
+    /** Generate one run's two ingress capabilities before compose needs githost's fingerprint. */
+    public Phase bootstrapIngressPrepare() {
+        return new Phase("bootstrap-ingress-prepare", "prepare the bootstrap-only ingress capability",
+                ctx -> {
+                    boot.ingress.prepare(ctx::log);
+                    if (!boot.config.bootstrapIngress()) {
+                        ctx.skip("QITS_BOOTSTRAP_INGRESS=0");
+                    }
+                });
+    }
+
+    /** Starts before the seed stack and never waits for or routes through the normal edge. */
+    public Phase bootstrapIngressStart() {
+        return new Phase("bootstrap-ingress", "start the temporary bootstrap ingress", ctx -> {
+            boot.ingress.start(ctx::log);
+            if (!boot.config.bootstrapIngress()) {
+                ctx.skip("QITS_BOOTSTRAP_INGRESS=0");
+            }
+        });
+    }
+
     public Phase composeFile() {
         return new Phase("compose-file", "generate the seed compose file", ctx -> {
             try {
@@ -2116,6 +2137,14 @@ public class SeedPhases {
                 orEmpty(boot.state.pgContainersEventstreamPassword));
         values.put("IDP", boot.config.idpIssuer());
         values.put("PUSH_TOKEN", boot.config.pushToken());
+        values.put("BOOTSTRAP_INGRESS_GIT_ENABLED", String.valueOf(boot.config.bootstrapIngress()));
+        values.put("BOOTSTRAP_INGRESS_GIT_CAPABILITY_HASH",
+                orEmpty(boot.state.bootstrapIngressGitCapabilityHash));
+        values.put("BOOTSTRAP_INGRESS_GIT_REPOSITORY", orEmpty(boot.state.bootstrapIngressRepository));
+        values.put("BOOTSTRAP_INGRESS_GIT_REF_PATTERN", orEmpty(boot.state.bootstrapIngressRefPattern));
+        values.put("BOOTSTRAP_INGRESS_GIT_EXPIRES_AT",
+                boot.state.bootstrapIngressExpiresAt == 0 ? "1970-01-01T00:00:00Z"
+                        : java.time.Instant.ofEpochSecond(boot.state.bootstrapIngressExpiresAt).toString());
         values.put("MACHINE_REQUIRED", String.valueOf(boot.config.machineAuth()));
         // The OUTBOUND half, and a separate switch from the gate: quarkus-oidc-client ships
         // DISABLED, so a service given an issuer and a secret still posts BARE until this is set.

@@ -300,6 +300,29 @@ public interface BootstrapConfig {
     String webHost();
 
     /**
+     * A separate, short-lived bootstrap ingress.  It is deliberately not a deployment extra and
+     * never joins the standing platform's routing table: it exists only while this command runs.
+     */
+    @WithDefault("true")
+    boolean bootstrapIngress();
+
+    /** The loopback host port of the short-lived bootstrap ingress, kept away from the edge. */
+    @WithDefault("8481")
+    int bootstrapIngressPort();
+
+    /** The host-side bind for that ingress.  Loopback is the safe default for a bootstrap UI. */
+    @WithDefault("127.0.0.1")
+    String bootstrapIngressBind();
+
+    /** The only Host header the ingress accepts, apart from its optional port. */
+    @WithDefault("localhost")
+    String bootstrapIngressHost();
+
+    /** A stale ingress cannot remain a useful capability after this run has gone away. */
+    @WithDefault("8h")
+    Duration bootstrapIngressTtl();
+
+    /**
      * The branch that deploys, and the ONLY one. main stays the integration trunk on every
      * repository and whichever plane it is on: a platform service is deployed by a green build of
      * this same ref, because both planes ask one question of a build — does an environment listen

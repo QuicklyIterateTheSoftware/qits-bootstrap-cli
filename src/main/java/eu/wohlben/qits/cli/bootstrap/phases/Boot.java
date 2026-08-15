@@ -7,6 +7,7 @@ import eu.wohlben.qits.cli.bootstrap.api.GitHostApi;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.IdpApi;
 import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
+import eu.wohlben.qits.cli.bootstrap.ingress.BootstrapIngressLifecycle;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.engine.Waiter;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
@@ -35,6 +36,8 @@ public class Boot {
     public final ProcessRunner runner;
     public final Docker docker;
     public final Git git;
+    /** The bootstrap-only sidecar; it never enters platform deployment extras. */
+    public final BootstrapIngressLifecycle ingress;
     public final RunState state = new RunState();
 
     public final Http http = new Http();
@@ -60,6 +63,7 @@ public class Boot {
         this.runner = runner;
         this.docker = new Docker(runner).withBuildArgs(imageBuildArgs(config));
         this.git = new Git(runner);
+        this.ingress = new BootstrapIngressLifecycle(this);
         this.artifacts = new ArtifactsApi(http, config.artifactsUrl());
         this.githost = new GitHostApi(http, config.gitHostUrl(), config.gitHostHealthUrl());
         this.ci = new CiApi(http, config.ciUrl());

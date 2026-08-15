@@ -217,4 +217,29 @@ public class OverridableConfig implements BootstrapConfig {
     public String webHost() {
         return base.webHost();
     }
+
+    @Override
+    public boolean bootstrapIngress() {
+        return base.bootstrapIngress();
+    }
+
+    @Override
+    public int bootstrapIngressPort() {
+        return base.bootstrapIngressPort();
+    }
+
+    @Override
+    public String bootstrapIngressBind() {
+        return base.bootstrapIngressBind();
+    }
+
+    @Override
+    public String bootstrapIngressHost() {
+        return base.bootstrapIngressHost();
+    }
+
+    @Override
+    public Duration bootstrapIngressTtl() {
+        return base.bootstrapIngressTtl();
+    }
 }

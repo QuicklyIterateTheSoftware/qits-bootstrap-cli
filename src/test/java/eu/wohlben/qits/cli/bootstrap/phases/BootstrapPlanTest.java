@@ -93,8 +93,9 @@ class BootstrapPlanTest {
         assertThat(ids).containsSubsequence("seed-image-events", "seed-artifacts");
         // The daemon digest is written into the compose file and the deployer's extras, so it is
         // measured before either is generated.
-        assertThat(ids).containsSubsequence("ci-daemon", "idp-secrets", "compose-file",
-                "pd-extras", "seed-stack", "seed-health");
+        assertThat(ids).containsSubsequence("ci-daemon", "idp-secrets", "bootstrap-ingress-prepare",
+                "compose-file", "bootstrap-ingress", "pd-extras", "seed-stack", "seed-health",
+                "register-token");
         // postgres before every file that addresses it: the deployer refuses to boot without the
         // database, and seed-stack is what starts the deployer.
         assertThat(ids).containsSubsequence("seed-image-oci-postgresql", "seed-postgres",
