@@ -440,9 +440,9 @@ public final class PlatformModel {
      * <p>
      * <b>The two new byte services hold no client at all.</b> qits-platform-mirror has no auth
      * surface — it serves cached third-party bytes to anonymous clients and mints nothing — and
-     * qits-githost validates a push option rather than a token, and publishes on the bus, which
-     * enforces no gate. A client neither of them would ever present is a secret to rotate for
-     * nothing.
+     * qits-githost validates but does not mint, so it remains receive-only. {@code bootstrap} is
+     * the exception that proves the distinction: it is not a deployable application, but it does
+     * make the first protected lifecycle calls and pushes before any service can do so.
      * <p>
      * <b>qits-deployments and qits-containers joined on 2026-08-14, and they are the PULLERS.</b>
      * Both were validate-only for as long as a registry read was anonymous; the flip made a pull
@@ -465,7 +465,7 @@ public final class PlatformModel {
      * is one line away if that ever changes.
      */
     public static final List<String> IDP_CLIENT_APPS =
-            List.of("ci", "artifacts", "workspaces", "gateway", "projects", "deployments",
+            List.of("bootstrap", "ci", "artifacts", "workspaces", "gateway", "projects", "deployments",
                     "containers", "edge");
 
     /**
@@ -493,7 +493,7 @@ public final class PlatformModel {
      * service that has it, and because an audience that is not derived from a client has nowhere
      * else to be named.
      */
-    public static final List<String> RECEIVE_ONLY_APPS = List.of();
+    public static final List<String> RECEIVE_ONLY_APPS = List.of("githost");
 
     /** The env-var spelling of a client id: uppercase, dashes as underscores. */
     public static String clientKey(String clientId) {

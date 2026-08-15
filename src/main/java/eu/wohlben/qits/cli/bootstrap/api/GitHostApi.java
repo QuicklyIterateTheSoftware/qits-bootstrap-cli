@@ -13,9 +13,8 @@ import java.util.Map;
  * created the repository and 200 when one was already there. Only the host and the prefix moved —
  * {@code <env>-qits-githost:8080/git} where it was {@code qits-platform-artifacts:8080/artifacts/git}.
  * <p>
- * There is no authentication here and none to add: this service has no JAX-RS surface, no machine
- * gate and no token to mint. What guards the default branch is a push option, checked inside the
- * receive-pack — see {@code qits.repositories.git.push-token}.
+ * The lifecycle endpoints are machine-only. Callers supply a short-lived bearer addressed to this
+ * git host; this small HTTP facade deliberately does not mint or cache it.
  */
 public class GitHostApi {
 
@@ -46,12 +45,19 @@ public class GitHostApi {
      * Creates a repository. Idempotent by design: 201 when this call created it, 200 when one was
      * already there — which is what makes the phase rerun-safe.
      */
-    public Http.Response createRepository(String repoId) {
-        return http.putJson(base + "/" + repoId, Json.object("defaultBranch", "main"), Map.of());
+    public Http.Response createRepository(String repoId, String bearer) {
+        return http.putJson(base + "/" + repoId, Json.object("defaultBranch", "main"), authorization(bearer));
     }
 
     /** The clone and push URL of a repository, as reached from qits-net. */
     public String gitUrl(String repoId) {
         return base + "/" + repoId;
+    }
+
+    private static Map<String, String> authorization(String bearer) {
+        if (bearer == null || bearer.isBlank() || bearer.indexOf('\r') >= 0 || bearer.indexOf('\n') >= 0) {
+            throw new IllegalArgumentException("A qits-githost bearer is required");
+        }
+        return Map.of("Authorization", "Bearer " + bearer);
     }
 }

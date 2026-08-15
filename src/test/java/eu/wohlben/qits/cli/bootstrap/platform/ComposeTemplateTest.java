@@ -333,11 +333,10 @@ class ComposeTemplateTest {
         assertThat(extras("qits-artifacts"))
                 .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-artifacts")
                 .doesNotContain("QUARKUS_OIDC_CLIENT_");
-        // Neither new byte service holds an identity: the mirror has no auth surface at all, and
-        // the git host validates a push option rather than a token.
+        // The mirror remains anonymous; githost validates machine bearers and user-forwarded roles.
         assertThat(extras("qits-platform-mirror")).doesNotContain("QITS_AUTH_MACHINE_")
                 .doesNotContain("QUARKUS_OIDC_");
-        assertThat(extras("qits-githost")).doesNotContain("QITS_AUTH_MACHINE_")
+        assertThat(extras("qits-githost")).contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-githost")
                 .doesNotContain("QUARKUS_OIDC_");
     }
 
@@ -685,12 +684,14 @@ class ComposeTemplateTest {
         String compose = ComposeTemplate.compose(tokens());
         String host = "http://prod-qits-githost:8080";
 
-        // ci appends /git/<repoId> itself, so its two keys are the ROOT with no path.
+        // ci itself uses the direct bearer route; its untrusted step containers use the edge.
         assertThat(serviceBlock(compose, ENV + "-qits-ci"))
                 .contains("QITS_CI_GIT_HOST_URL: " + host)
-                .contains("QITS_CI_CONTAINER_GIT_URL: " + host);
+                .contains("QITS_CI_CONTAINER_GIT_URL: http://qits-platform-edge:8080")
+                .contains("QITS_CI_CONTAINER_GIT_AUDIENCE: prod-qits-githost");
         assertThat(extras("qits-ci")).contains("env.QITS_CI_GIT_HOST_URL=" + host)
-                .contains("env.QITS_CI_CONTAINER_GIT_URL=" + host);
+                .contains("env.QITS_CI_CONTAINER_GIT_URL=http://qits-platform-edge:8080")
+                .contains("env.QITS_CI_CONTAINER_GIT_AUDIENCE=prod-qits-githost");
         // The two services that push. Their key was renamed with the split — a deployment still
         // passing qits.artifacts.url configures nothing and silently takes the default.
         assertThat(extras("qits-projects")).contains("env.QITS_GITHOST_URL=" + host)

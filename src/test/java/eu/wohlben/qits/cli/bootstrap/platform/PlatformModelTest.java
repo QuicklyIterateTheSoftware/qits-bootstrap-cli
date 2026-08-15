@@ -322,8 +322,7 @@ class PlatformModelTest {
         // Each name once. The audience list is derived from the clients now, and a duplicate would
         // be a key that says the same thing twice to a service that replaces the shipped list.
         assertThat(PlatformModel.idpAudiences("prod").split(",")).doesNotHaveDuplicates();
-        // Empty, and the seam is kept for the next service that validates without a credential.
-        assertThat(PlatformModel.RECEIVE_ONLY_APPS).isEmpty();
+        assertThat(PlatformModel.RECEIVE_ONLY_APPS).containsExactly("githost");
     }
 
     @Test
@@ -332,17 +331,17 @@ class PlatformModelTest {
         // the token request is invalid_client and nothing says it was a typo. qits-projects
         // joined for orchestration round 2: its agent containers start through qits-containers.
         assertThat(PlatformModel.idpClients("prod")).containsExactly(
-                "prod-qits-ci", "prod-qits-artifacts", "prod-qits-workspaces",
+                "prod-qits-bootstrap", "prod-qits-ci", "prod-qits-artifacts", "prod-qits-workspaces",
                 "prod-qits-gateway", "prod-qits-projects", "prod-qits-deployments",
                 "prod-qits-containers", "prod-qits-edge");
         assertThat(PlatformModel.idpAudiences("prod")).isEqualTo(
-                "prod-qits-ci,prod-qits-artifacts,prod-qits-workspaces,prod-qits-gateway,"
+                "prod-qits-bootstrap,prod-qits-ci,prod-qits-artifacts,prod-qits-workspaces,prod-qits-gateway,"
                         + "prod-qits-projects,prod-qits-deployments,prod-qits-containers,"
-                        + "prod-qits-edge");
+                        + "prod-qits-edge,prod-qits-githost");
         // Every one of them follows the environment now: the artifacts client was the one platform
         // id in this list, and the byte-plane split made that service a tier's again.
         assertThat(PlatformModel.idpClients("preprod")).containsExactly(
-                "preprod-qits-ci", "preprod-qits-artifacts", "preprod-qits-workspaces",
+                "preprod-qits-bootstrap", "preprod-qits-ci", "preprod-qits-artifacts", "preprod-qits-workspaces",
                 "preprod-qits-gateway", "preprod-qits-projects", "preprod-qits-deployments",
                 "preprod-qits-containers", "preprod-qits-edge");
         // The two new byte services hold no client at all: the mirror has no auth surface, and the

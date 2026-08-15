@@ -122,7 +122,7 @@ public class OverridableConfig implements BootstrapConfig {
         return base.mirrorPort();
     }
 
-    /** The git host's host door: what a person clones and pushes through. */
+    /** The githost's loopback diagnostic port; user Git goes through the edge. */
     @Override
     public int gitHostPort() {
         return base.gitHostPort();

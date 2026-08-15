@@ -129,15 +129,19 @@ public class Git {
      *                the bootstrap's standing exception to "release is the only door into main"
      */
     public ProcessResult push(Path repo, String url, List<String> options, String refspec,
-                              String maskedToken, Consumer<String> out) {
-        List<String> command = new ArrayList<>(List.of("git", "-C", repo.toString(), "push"));
+                              String pushToken, String bearer, Consumer<String> out) {
+        if (bearer == null || bearer.isBlank() || bearer.indexOf('\r') >= 0 || bearer.indexOf('\n') >= 0) {
+            throw new IllegalArgumentException("A qits-githost bearer is required");
+        }
+        List<String> command = new ArrayList<>(List.of("git", "-C", repo.toString(), "-c",
+                "http.extraHeader=Authorization: Bearer " + bearer, "push"));
         for (String option : options) {
             command.add("-o");
             command.add(option);
         }
         command.add(url);
         command.add(refspec);
-        return runner.run(Cmd.of(command).timeout(Duration.ofMinutes(60)).mask(maskedToken), out);
+        return runner.run(Cmd.of(command).timeout(Duration.ofMinutes(60)).mask(pushToken).mask(bearer), out);
     }
 
     public ProcessResult add(Path repo, String path, Consumer<String> out) {

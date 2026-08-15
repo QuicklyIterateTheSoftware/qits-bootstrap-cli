@@ -12,6 +12,7 @@ import eu.wohlben.qits.cli.bootstrap.engine.Waiter;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.Git;
 import eu.wohlben.qits.cli.bootstrap.platform.RunState;
+import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessRunner;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
@@ -112,7 +113,7 @@ public class Boot {
     public ProcessResult push(PhaseContext ctx, String what, Path repo, String url,
                               List<String> options, String refspec) throws Exception {
         return pushRetrying(ctx, what, PUSH_WINDOW, PUSH_RETRY,
-                () -> git.push(repo, url, options, refspec, config.pushToken(), ctx::log),
+                () -> git.push(repo, url, options, refspec, config.pushToken(), githostToken(), ctx::log),
                 System::currentTimeMillis, Thread::sleep);
     }
 
@@ -170,6 +171,20 @@ public class Boot {
                     + " client — .qits-bootstrap.env and the running idp disagree");
         }
         return idp.token(clientId, secret, audience);
+    }
+
+    /**
+     * The bootstrap is a machine client in its own right. qits-githost is always protected, so
+     * this intentionally has no machineAuth-off or anonymous arm.
+     */
+    public String githostToken() {
+        String clientId = PlatformModel.wireAlias("bootstrap", config.envName());
+        String secret = state.secrets.get(clientId);
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException("no secret for the " + clientId
+                    + " client — .qits-bootstrap.env and the running idp disagree");
+        }
+        return idp.token(clientId, secret, PlatformModel.wireAlias("githost", config.envName()));
     }
 
     /** Waits for a health endpoint, saying which one and what it last answered. */

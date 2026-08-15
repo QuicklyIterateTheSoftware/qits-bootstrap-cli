@@ -559,7 +559,7 @@ public class PipelinePhases {
             for (String name : PlatformModel.platformRepos()) {
                 String repo = PlatformModel.repo(name);
                 ctx.status("PUT " + boot.githost.gitUrl(repo));
-                Http.Response response = boot.githost.createRepository(repo);
+                Http.Response response = boot.githost.createRepository(repo, boot.githostToken());
                 if (response.status() != 200 && response.status() != 201) {
                     throw new IllegalStateException("create of " + repo + " answered "
                             + response.describe());
