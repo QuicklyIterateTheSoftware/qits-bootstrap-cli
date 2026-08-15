@@ -235,7 +235,7 @@
                      initializer unpacks libjlinenative.so into /tmp. Run at build time it fails
                      outright ("Content differs"), and this CLI's exec provider never calls it.
                      Deferring the initializer to run time is enough to keep it out of the way. -->
-                <quarkus.native.additional-build-args>--initialize-at-run-time=org.jline.nativ,eu.wohlben.qits.cli.bootstrap.workstation.Pkce${native.extra-build-args}</quarkus.native.additional-build-args>
+                <quarkus.native.additional-build-args>--initialize-at-run-time=org.jline.nativ\\,eu.wohlben.qits.cli.bootstrap.workstation.Pkce${native.extra-build-args}</quarkus.native.additional-build-args>
             </properties>
         </profile>
     </profiles>
