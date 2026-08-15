@@ -25,13 +25,10 @@ import java.util.function.Consumer;
  * services that need it.
  */
 public class Docker {
+    static final String BUILDER = "qits-bootstrap-builder";
 
     /** Long enough for a cold GraalVM native build, which is what most of these are. */
     public static final Duration BUILD_TIMEOUT = Duration.ofHours(4);
-
-    /** One enforced daemon budget for every seed and step build. */
-    private static final List<String> BUILD_LIMITS = List.of("--memory", "4g", "--cpu-quota",
-            "200000");
 
     /** The only driver a network of this platform has: see {@link #ensureNetwork}. */
     public static final String OVERLAY = "overlay";
@@ -43,6 +40,7 @@ public class Docker {
     private static final Path SELF = Path.of("/etc/hostname");
 
     private final ProcessRunner runner;
+    private boolean builderReady;
 
     /**
      * <b>What every image build this program runs carries, whatever the image is.</b> A build
@@ -408,24 +406,50 @@ public class Docker {
      */
     public ProcessResult buildFromStdin(String tag, String dockerfile, Path context,
                                         List<String> extraArgs, Consumer<String> out) {
+        ProcessResult ready = ensureBuilder(out);
+        if (!ready.ok()) {
+            return ready;
+        }
         List<String> command = new ArrayList<>(List.of(
-                "docker", "build", "--network", "host", "-t", tag, "-f", "-"));
-        command.addAll(BUILD_LIMITS);
+                "docker", "buildx", "build", "--builder", BUILDER, "--load",
+                "--network", "host", "-t", tag, "-f", "-"));
         command.addAll(buildArgs);
         command.addAll(extraArgs);
         command.add(context.toString());
         return runner.run(Cmd.of(command)
                 .stdin(dockerfile)
-                .timeout(BUILD_TIMEOUT)
-                .env("DOCKER_BUILDKIT", "0"), out);
+                .timeout(BUILD_TIMEOUT), out);
     }
 
     public ProcessResult build(List<String> args, Consumer<String> out) {
-        List<String> command = new ArrayList<>(List.of("docker", "build"));
-        command.addAll(BUILD_LIMITS);
+        ProcessResult ready = ensureBuilder(out);
+        if (!ready.ok()) {
+            return ready;
+        }
+        List<String> command = new ArrayList<>(List.of(
+                "docker", "buildx", "build", "--builder", BUILDER, "--load"));
         command.addAll(buildArgs);
         command.addAll(args);
-        return runner.run(Cmd.of(command).timeout(BUILD_TIMEOUT).env("DOCKER_BUILDKIT", "0"), out);
+        return runner.run(Cmd.of(command).timeout(BUILD_TIMEOUT), out);
+    }
+
+    /** A BuildKit container whose cgroup is the enforceable limit for every build it executes. */
+    private synchronized ProcessResult ensureBuilder(Consumer<String> out) {
+        if (builderReady) {
+            return new ProcessResult(0, List.of(), List.of(), false, false);
+        }
+        ProcessResult existing = runner.run(Cmd.of(
+                "docker", "buildx", "inspect", BUILDER), null);
+        ProcessResult ready = existing.ok() ? existing : runner.run(Cmd.of(
+                "docker", "buildx", "create", "--name", BUILDER,
+                "--driver", "docker-container", "--driver-opt",
+                "memory=4g,cpu-quota=200000"), out);
+        if (ready.ok()) {
+            ready = runner.run(Cmd.of(
+                    "docker", "buildx", "inspect", "--bootstrap", BUILDER), out);
+        }
+        builderReady = ready.ok();
+        return ready;
     }
 
     public ProcessResult exec(Consumer<String> out, String... args) {
