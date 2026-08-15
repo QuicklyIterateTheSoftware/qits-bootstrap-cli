@@ -44,10 +44,9 @@ public final class BootstrapPlan {
             // qits-ci consumes qits-eventstream from the Maven repository it will use in steady
             // state, so artifacts is brought up alone and the dependencies are published before
             // the CI image builds.
-            phases.add(seed.seedImage("gateway"));
             // The edge is in the first half because it needs nothing from the platform: it has no
             // client to place a bundle for and no qits dependency to resolve, so its image builds
-            // from Maven Central alone. Beside the gateway because that is what it fronts.
+            // from Maven Central alone and is the platform's direct ingress.
             phases.add(seed.seedImage("platform-edge"));
             // THE BYTE PLANE'S THREE, together and here rather than after the publishes below: all
             // three are built out of qits-blobstore and qits-registries, which the maven-seed phase

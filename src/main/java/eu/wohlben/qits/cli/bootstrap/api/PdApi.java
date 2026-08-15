@@ -11,7 +11,7 @@ import java.util.Optional;
  * component now — the merge-back of qits-cd and qits-serviceregistry — so an environment write is
  * a row here rather than a proxied call to a second service.
  * <p>
- * Every route sits under {@code /platform-deployments/api}, which is what the gateway routes
+ * Every route sits under {@code /platform-deployments/api}, which is what the edge projects
  * verbatim; the base this is built with carries the segment and nothing repeats it.
  */
 public class PdApi {

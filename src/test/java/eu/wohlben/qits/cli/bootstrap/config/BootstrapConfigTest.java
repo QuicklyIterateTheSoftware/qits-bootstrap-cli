@@ -128,14 +128,11 @@ class BootstrapConfigTest {
         // Scheme, host and port with NO path: this service answers under /mirror/q for health and
         // under the registries' own literals for content, so each caller appends what it wants.
         assertThat(config.mirrorUrl()).isEqualTo("http://qits-platform-mirror:8080");
-        // Through the EDGE, not straight at prod-qits-ci: the edge and the gateway's route table
-        // are the path this run has to keep exercising.
-        assertThat(config.ciUrl()).isEqualTo("http://qits-platform-edge:8080/ci");
+        // Seed services are reached at fixed aliases before deployment endpoints are projected.
+        assertThat(config.ciUrl()).isEqualTo("http://preprod-qits-ci:8080/ci");
         assertThat(config.platformDeploymentsUrl())
-                .isEqualTo("http://qits-platform-edge:8080/platform-deployments");
-        // The bus, through the edge like the two above. It is a seed service now, so the boot waits
-        // for it — and it serves everything under one segment, health included.
-        assertThat(config.eventsUrl()).isEqualTo("http://qits-platform-edge:8080/events");
+                .isEqualTo("http://preprod-qits-deployments:8080/platform-deployments");
+        assertThat(config.eventsUrl()).isEqualTo("http://preprod-qits-events:8080/events");
         // The ONE deploy ref, on both planes: platform/main is retired.
         assertThat(config.envBranch()).isEqualTo("environment/preprod");
         // The issuer is a value consumers validate as well as an address this program dials.

@@ -203,10 +203,9 @@ public class PipelinePhases {
      * an environment operation — it owns the topology and the socket both, so nothing else can
      * answer for it.
      * <p>
-     * The EDGE is the first hop of every call this program makes to ci and the deployer, so it is
-     * the second thing asked and the first thing asked over the path the rest of the run uses. A
-     * gateway that is up behind an edge that is not is unreachable, so the two are probed
-     * separately, each by its own alias.
+     * The edge comes up before any projected deployment route exists. Seed services are therefore
+     * checked through their fixed qits-net aliases; public routing is only authoritative after
+     * deployment events have been projected.
      */
     public Phase seedHealth() {
         return new Phase("seed-health", "wait for the seed services", ctx -> {
@@ -219,9 +218,6 @@ public class PipelinePhases {
             // run is on qits-net, and the published port is for a person's browser.
             boot.awaitHealth(ctx, "qits-platform-edge (the door, on qits-net)",
                     () -> boot.http.get("http://qits-platform-edge:8080/q/health/ready", Map.of()));
-            boot.awaitHealth(ctx, env + "-qits-gateway (on qits-net, behind the edge)",
-                    () -> boot.http.get("http://" + env + "-qits-gateway:8080/q/health/ready",
-                            Map.of()));
             // THE BYTE PLANE'S THREE, each at its own alias. They are polled together because they
             // fail together in the same way — a store, a cache and a git host are three services
             // now, and "the registry answers" stopped being one question at the split.
@@ -235,43 +231,23 @@ public class PipelinePhases {
             // without, which is exactly what those calls need.
             boot.awaitHealth(ctx, env + "-qits-githost (the git host, on qits-net)",
                     boot.githost::health);
-            // Through the edge and the gateway's route table, and at the service's own alias if
-            // that route is not up yet. Either answer means the service is ready; the first also
-            // proves the whole path the rest of this run calls ci and the deployer through, which
-            // is why the direct alias is the FALLBACK and never the address.
-            boot.awaitHealth(ctx, env + "-qits-ci (through the edge, else direct)", () -> {
-                Http.Response viaGateway = boot.ci.health();
-                return viaGateway.ok() ? viaGateway
-                        : boot.http.get("http://" + env + "-qits-ci:8080/ci/q/health/ready",
-                                Map.of());
-            });
-            boot.awaitHealth(ctx, env + "-qits-deployments (through the edge, else direct)", () -> {
-                Http.Response viaGateway = boot.pd.health();
-                return viaGateway.ok() ? viaGateway : boot.http.get("http://" + env
-                        + "-qits-deployments:8080/platform-deployments/q/health/ready", Map.of());
-            });
+            boot.awaitHealth(ctx, env + "-qits-ci (on qits-net)", boot.ci::health);
+            boot.awaitHealth(ctx, env + "-qits-deployments (on qits-net)", boot.pd::health);
             // THE BUS, and it is waited for here rather than trusted to arrive: every green build
             // of this run travels ci -> outbox -> this service -> the deployer's subscriber, and
-            // the first push is two phases away. Through the edge with the direct alias as the
-            // fallback, exactly as ci and the deployer above — the service serves everything it
-            // has under /events, health included, and the gateway routes that prefix verbatim.
+            // the first push is two phases away. Its fixed alias is available before the edge has
+            // projected any deployment endpoint.
             //
             // No auth-plane probe below for it: it enforces no machine gate, so there is no tenant
             // to warm.
-            boot.awaitHealth(ctx, env + "-qits-events (the bus, through the edge, else direct)",
-                    () -> {
-                        Http.Response viaGateway = boot.http.get(
-                                boot.config.eventsUrl() + "/q/health/ready", Map.of());
-                        return viaGateway.ok() ? viaGateway
-                                : boot.http.get("http://" + env
-                                        + "-qits-events:8080/events/q/health/ready", Map.of());
-                    });
+            boot.awaitHealth(ctx, env + "-qits-events (the bus, on qits-net)",
+                    () -> boot.http.get(boot.config.eventsUrl() + "/q/health/ready", Map.of()));
             // THE CONTAINER ORCHESTRATOR, and it is waited for BEFORE the first pipeline of this
             // boot rather than trusted to arrive: qits-ci runs every step as a container it asks
             // this service for, so a pipeline that starts first has nowhere to run a step.
             //
             // At its OWN alias, the one exception to "everything through the edge", and for one
-            // reason: there is no gateway route to this service and there must not be one. Every caller is a machine on qits-net, and a route would put a
+            // reason: there is no public route to this service and there must not be one. Every caller is a machine on qits-net, and a route would put a
             // socket-holding orchestrator behind the platform's public door. Health lives under
             // /containers/q because that is the service's own non-application root path, and
             // readiness includes the two databases it refuses to boot without.
@@ -282,7 +258,7 @@ public class PipelinePhases {
             // ci asks this service for every pipeline step now, and the first pipeline of this boot
             // is two phases away, so the first request to touch its OIDC tenant would be a build's.
             boot.awaitHealth(ctx, PlatformModel.wireAlias("containers", env)
-                            + " (on qits-net, no gateway route)",
+                            + " (on qits-net, no public route)",
                     () -> boot.http.get("http://" + PlatformModel.wireAlias("containers", env)
                             + ":8080/containers/q/health/ready", Map.of()));
             // Health is not enough with the machine gate on: a freshly (re)created service
@@ -1434,8 +1410,8 @@ public class PipelinePhases {
     }
 
     /**
-     * Retried: the edge AND the gateway this call travels through are both applications this run
-     * deploys, so a call can meet either one mid-cutover.
+     * Retried: the edge this public call travels through is an application this run deploys, so a
+     * call can meet it mid-cutover.
      */
     private void postBuildEvent(PhaseContext ctx, String repo, String sha, String ref) {
         Http.Response last = null;
@@ -1546,8 +1522,6 @@ public class PipelinePhases {
                     + "this one. EVERY");
             report.add("           method on all three names needs a bearer, reads included, "
                     + "since 2026-08-14.");
-            report.add("gateway:   " + env + "-qits-gateway on qits-net "
-                    + "(variant: local, UNAUTHENTICATED) — no host port of its own");
             report.add("registry:  " + boot.config.registryVhost()
                     + " — the platform's OWN images and packages (" + env + "-qits-artifacts)");
             report.add("mirror:    " + boot.config.mirrorVhost()
@@ -1567,7 +1541,7 @@ public class PipelinePhases {
             report.add("           the idp issues one per context, so no static pair is handed "
                     + "out. Ask for yours");
             report.add("           from a container, because the idp answers on qits-net and has "
-                    + "no gateway route:");
+                    + "no public route:");
             report.add("             docker run --rm --network qits-net curlimages/curl -s "
                     + "-u <client>:<secret> \\");
             report.add("               -H 'Content-Type: application/json' \\");
@@ -1604,7 +1578,7 @@ public class PipelinePhases {
                     + "survive a reboot.");
             report.add("workloads: " + PlatformModel.wireAlias("containers", env)
                     + " on qits-net — the orchestrator that holds the");
-            report.add("           docker socket. No host port and no gateway route: every caller "
+            report.add("           docker socket. No host port and no public route: every caller "
                     + "is a machine");
             report.add("           on this network, and every route of it is behind the machine "
                     + "gate.");

@@ -8,8 +8,8 @@ import java.util.Map;
  * reconcile are the calls that need a token. The release replays needed one too, until they became
  * a tag push — a push authenticates with the git host's own token, not with a machine one.
  * <p>
- * qits-platform-idp publishes no host port and sits on no gateway route on purpose:
- * {@code /idp/token} behind an unauthenticated gateway is a token vending machine. That is why it
+ * qits-platform-idp publishes no host port and has no unauthenticated public token route on purpose:
+ * {@code /idp/token} exposed unauthenticated is a token vending machine. That is why it
  * used to be reached by a throwaway curl container on qits-net and is now dialled like everything
  * else — the exposure is unchanged, and the caller moved onto the network instead.
  */

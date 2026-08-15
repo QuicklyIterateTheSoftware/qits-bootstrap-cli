@@ -30,12 +30,9 @@ public final class PlatformModel {
      * the qits-cd and qits-serviceregistry pair the seed used to carry.
      * <p>
      * qits-platform-edge joined on 2026-08-08 and is the reason the set grew rather than moved:
-     * the EDGE binds the host's only published port now, and qits-gateway publishes none. Without
-     * a seed edge the CLI has no door — every call it makes to qits-ci and qits-deployments enters
-     * at the edge, so the edge has to be up before the first health poll, not after the first
-     * deployment. That is true whichever side of the edge the caller stands on: the CLI dials
-     * {@code qits-platform-edge:8080} from qits-net, a browser dials the published port, and both
-     * arrive at the same process.
+     * the EDGE binds the host's only published port and projects deployment endpoints. The CLI
+     * uses fixed service aliases until that projection is authoritative; a browser uses the
+     * published edge port.
      * <p>
      * qits-oci-postgresql is in here because qits-deployments refuses to boot without the database
      * it holds. It is the one member that is not a service of this platform's own making — the
@@ -65,7 +62,7 @@ public final class PlatformModel {
      * HEALTHY BEFORE THE FIRST PIPELINE, in the seed and in the deploy order both.
      */
     public static final List<String> CORE = List.of(
-            "gateway", "platform-edge", "platform-mirror", "artifacts", "githost", "ci",
+            "platform-edge", "platform-mirror", "artifacts", "githost", "ci",
             "containers", "deployments", "platform-idp", "events",
             "oci-postgresql");
 
@@ -77,15 +74,11 @@ public final class PlatformModel {
      * <p>
      * <b>qits-platform-edge is second to last, immediately before the deployer.</b> It is the door,
      * so its cutover is the one deployment that takes THIS PROGRAM's own door away for a beat:
-     * every remaining poll of a ci run or a deployment row travels qits-platform-edge:8080 -> the
-     * gateway -> the service. Three consequences decide the position:
+     * every remaining public request depends on it. Three consequences decide the position:
      * <ul>
      *   <li><b>Not early.</b> An edge deployed first would carry every later phase's traffic on a
      *       binder this run has not yet watched serve anything. Late, the applications it fronts
      *       are already deployed and a broken edge is the only thing left to look at.
-     *   <li><b>After qits-gateway.</b> The edge forwards to {@code <env>-qits-gateway}; deploying
-     *       it once the gateway it dials is the deployed one means the pair is never mid-cutover
-     *       together.
      *   <li><b>Before qits-deployments.</b> The deployer's own deployment is the self-update
      *       handoff and has to stay last — and the edge's cutover is better performed by the seed
      *       deployer that has already done every other cutover in this run than by a successor
@@ -119,7 +112,7 @@ public final class PlatformModel {
      */
     public static final List<String> DEPLOYABLES = List.of(
             "observability", "oci-postgresql", "platform-idp", "stt", "projects", "workspaces",
-            "events", "docs", "gateway", "platform-mirror", "artifacts", "githost",
+            "events", "docs", "platform-mirror", "artifacts", "githost",
             "containers", "ci", "platform-edge", "deployments");
 
     /**
@@ -132,9 +125,7 @@ public final class PlatformModel {
      * plane a service lives on.
      * <p>
      * <b>The set shrank to four on 2026-08-08 and every member now says so in its own name.</b>
-     * qits-gateway, qits-ci, qits-events, qits-projects and qits-observability went back to being
-     * environment services of the one environment: the only reason the gateway was ever up here
-     * was that it bound the host's port, and qits-platform-edge took that job. What is left is
+     * qits-ci, qits-events, qits-projects and qits-observability are environment services. What is left is
      * what genuinely cannot be per-tier — the edge (one host port), the idp (one issuer and one
      * signing key), qits-platform-artifacts (one registry, one git host, one blob store) and
      * qits-platform-docs (one docs repository inside that store, so a second reader per tier would
@@ -334,7 +325,7 @@ public final class PlatformModel {
      * {@code http://prod-qits-ci:8080} is wrong for the seven minutes before ci is deployed unless
      * the seed ci is already reachable under that name.
      * <ul>
-     *   <li><b>An environment service</b> is {@code <env>-<app>} — {@code prod-qits-gateway}. The
+     *   <li><b>An environment service</b> is {@code <env>-<app>} — {@code prod-qits-ci}. The
      *       qualifier is what lets two tiers hold one application's address on the network they
      *       share.
      *   <li><b>A platform service</b> keeps the bare application name — {@code
@@ -379,7 +370,6 @@ public final class PlatformModel {
      */
     public static String seedUiPath(String name) {
         return switch (name) {
-            case "gateway" -> "src/main/webui/dist/qits-spa-home/browser";
             // The Angular PROJECT key names this directory, not the repository. The two agreed
             // again on 2026-08-13, when the project inside qits-spa-artifacts took the repository's
             // post-split name; they still move separately, so this path follows the project.
@@ -465,7 +455,7 @@ public final class PlatformModel {
      * is one line away if that ever changes.
      */
     public static final List<String> IDP_CLIENT_APPS =
-            List.of("bootstrap", "ci", "artifacts", "workspaces", "gateway", "projects", "deployments",
+            List.of("bootstrap", "ci", "artifacts", "workspaces", "projects", "deployments",
                     "containers", "edge");
 
     /**

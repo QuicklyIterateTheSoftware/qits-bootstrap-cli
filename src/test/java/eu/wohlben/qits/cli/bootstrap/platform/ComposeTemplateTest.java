@@ -195,10 +195,9 @@ class ComposeTemplateTest {
      * to be down to come up. Ingress is start-first: the predecessor keeps answering.
      */
     @Test
-    void theEdgeBindsTheHostPortInIngressModeAndTheGatewayNoLongerDoes() {
+    void theEdgeBindsTheHostPortInIngressModeWithoutAGatewayService() {
         String compose = ComposeTemplate.compose(tokens());
         String edge = serviceBlock(compose, "qits-platform-edge");
-        String gateway = serviceBlock(compose, ENV + "-qits-gateway");
 
         // The publish itself, whole: the comment above it names the mode it is NOT, so the port
         // block is what has to be read rather than the word.
@@ -210,13 +209,12 @@ class ComposeTemplateTest {
                 """.stripTrailing());
         assertThat(edge).contains("QITS_EDGE_ENVIRONMENTS: prod")
                 .contains("QITS_EDGE_DEFAULT_ENVIRONMENT: prod")
-                .contains("QITS_EDGE_UPSTREAM_HOST_PATTERN: \"{env}-qits-gateway\"");
-        // Two binders for one port is a conflict that only shows up on the second cutover.
-        assertThat(gateway).doesNotContain("ports:");
+                .doesNotContain("QITS_EDGE_UPSTREAM_HOST_PATTERN");
+        assertThat(compose).doesNotContain("\n  " + ENV + "-qits-gateway:\n");
         // The extras name no mode: it is the edge's own deployment spec (publish_mode: ingress),
         // because it is a property of the service rather than of one port.
         assertThat(extras("qits-platform-edge")).contains(".publishes[0]=8080:8080");
-        assertThat(extras("qits-gateway")).doesNotContain(".publishes[");
+        assertThat(ComposeTemplate.extras(tokens())).doesNotContain(EXTRAS + "qits-gateway.");
     }
 
     /**
@@ -709,40 +707,13 @@ class ComposeTemplateTest {
     }
 
     @Test
-    void theRouteTableClaimsTheDeployersSegmentAndNotTheRetiredOne() {
+    void theGeneratedSeedAndExtrasContainNoGatewayRouteTable() {
         String compose = ComposeTemplate.compose(tokens());
-
-        // The route SEGMENT names the component and did not move; only the host did.
-        assertThat(compose).contains(
-                "QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS: prod-qits-deployments");
-        // Both byte-plane hosts carry the tier now, and the docs segment moved with its
-        // repository.
-        assertThat(compose).contains(
-                "QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS: prod-qits-artifacts");
-        assertThat(compose).contains("QITS_GATEWAY_PROXY_HOSTS_DOCS: prod-qits-docs");
-        // THE SEGMENT IS `githost`, NOT `git`. The gateway composes the key from the segment, and
-        // the segment names the service; /git rides the same entry as a second prefix, so every
-        // clone url keeps working without a key of its own. The old key is an unknown service and
-        // fails the gateway's startup, so this rename and the gateway's land in one release.
-        assertThat(compose).contains("QITS_GATEWAY_PROXY_HOSTS_GITHOST: prod-qits-githost");
-        // THE MIRROR IS ON THE TABLE, at its own segment only — a platform service, so no tier in
-        // the alias. Its share of the store's prefixes is still unrouted: two services cannot share
-        // one prefix behind one entry.
-        assertThat(compose).contains("QITS_GATEWAY_PROXY_HOSTS_MIRROR: qits-platform-mirror");
-        // The idp joins it: same platform-service rule, and the key that puts /idp/login in front
-        // of a browser. Machine callers keep dialling qits-platform-idp on qits-net.
-        assertThat(compose).contains("QITS_GATEWAY_PROXY_HOSTS_IDP: qits-platform-idp");
-        assertThat(compose).doesNotContain("QITS_GATEWAY_PROXY_HOSTS_CD:")
-                .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_GIT:");
-        assertThat(extras("qits-gateway"))
-                .contains("QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS=prod-qits-deployments")
-                .contains("QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=prod-qits-artifacts")
-                .contains("QITS_GATEWAY_PROXY_HOSTS_DOCS=prod-qits-docs")
-                .contains("QITS_GATEWAY_PROXY_HOSTS_GITHOST=prod-qits-githost")
-                .contains("QITS_GATEWAY_PROXY_HOSTS_MIRROR=qits-platform-mirror")
-                .contains("QITS_GATEWAY_PROXY_HOSTS_IDP=qits-platform-idp")
-                .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_CD=")
-                .doesNotContain("QITS_GATEWAY_PROXY_HOSTS_GIT=");
+        assertThat(compose).doesNotContain("\n  " + ENV + "-qits-gateway:\n")
+                .doesNotContain("QITS_GATEWAY_PROXY_HOSTS");
+        assertThat(ComposeTemplate.extras(tokens())).doesNotContain(EXTRAS + "qits-gateway.")
+                .doesNotContain("QITS_GATEWAY_PROXY_HOSTS")
+                .doesNotContain("QITS_EDGE_UPSTREAM_HOST_PATTERN");
     }
 
     /**
@@ -854,7 +825,7 @@ class ComposeTemplateTest {
         // No gateway route, and there must not be one: every caller is a machine on qits-net, and a
         // route would put a socket-holding orchestrator behind the platform's public door.
         assertThat(compose).doesNotContain("QITS_GATEWAY_PROXY_HOSTS_CONTAINERS");
-        assertThat(extras("qits-gateway")).doesNotContain("CONTAINERS");
+        assertThat(ComposeTemplate.extras(tokens())).doesNotContain("QITS_GATEWAY_PROXY_HOSTS_CONTAINERS");
     }
 
     /**
@@ -916,7 +887,7 @@ class ComposeTemplateTest {
     void theExtrasCoverEveryApplicationThatNeedsMoreThanItsImage() {
         String properties = ComposeTemplate.extras(tokens());
 
-        for (String application : new String[]{"qits-platform-edge", "qits-gateway",
+        for (String application : new String[]{"qits-platform-edge",
                 "qits-artifacts", "qits-platform-mirror", "qits-githost", "qits-containers",
                 "qits-ci", "qits-deployments", "qits-platform-idp",
                 "qits-stt", "qits-projects", "qits-workspaces", "qits-events",
@@ -943,9 +914,8 @@ class ComposeTemplateTest {
         assertThat(properties).doesNotContain("${DOCKER_GID}")
                 .doesNotContain("${ENV_NAME}")
                 .doesNotContain("${ENV_KEY}");
-        // {env} is the edge's own placeholder and is NOT a token of this file: it is read at
-        // runtime by the process the key configures.
-        assertThat(properties).contains("QITS_EDGE_UPSTREAM_HOST_PATTERN={env}-qits-gateway");
+        assertThat(properties).doesNotContain("QITS_EDGE_UPSTREAM_HOST_PATTERN")
+                .doesNotContain(EXTRAS + "qits-gateway.");
     }
 
     /**
@@ -1419,7 +1389,8 @@ class ComposeTemplateTest {
         assertThat(ComposeTemplate.extras(other))
                 .contains("env.QITS_ARTIFACTS_REGISTRY_HOST=registry.preprod.localhost:8080")
                 .contains("env.QITS_AUTH_MACHINE_AUDIENCE=preprod-qits-ci")
-                .contains("QITS_GATEWAY_PROXY_HOSTS_CI=preprod-qits-ci")
+                .contains("env.QITS_EVENTS_URL=http://preprod-qits-events:8080")
+                .doesNotContain("QITS_GATEWAY_PROXY_HOSTS")
                 .contains("env.QITS_OBSERVABILITY_URL=http://preprod-qits-observability:8080");
     }
 }

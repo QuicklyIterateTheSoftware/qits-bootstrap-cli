@@ -85,9 +85,8 @@ class BootstrapPlanTest {
         assertThat(ids).containsSubsequence("seed-image-platform-mirror", "seed-postgres",
                 "seed-mirror", "seed-artifacts", "publish-qits-blobstore");
         // The edge needs nothing from the platform — no client bundle, no qits dependency — so its
-        // image is built in the first half, beside the gateway it fronts.
-        assertThat(ids).containsSubsequence("seed-image-gateway", "seed-image-platform-edge",
-                "seed-image-artifacts");
+        // image is built in the first half and needs no service image before it.
+        assertThat(ids).containsSubsequence("seed-image-platform-edge", "seed-image-artifacts");
         // The bus is in the first half too: qits-events declares no qits Maven dependency, so it
         // waits on none of the publishes below it.
         assertThat(ids).containsSubsequence("seed-image-events", "seed-artifacts");
@@ -116,7 +115,7 @@ class BootstrapPlanTest {
         assertThat(ids).containsSubsequence("environment", "deploy-observability",
                 "deploy-oci-postgresql",
                 "deploy-platform-idp", "deploy-stt", "deploy-projects", "deploy-workspaces",
-                "deploy-events", "deploy-docs", "deploy-gateway",
+                "deploy-events", "deploy-docs",
                 "deploy-platform-mirror", "deploy-artifacts", "deploy-githost",
                 // The orchestrator immediately before ci: ci runs every step as a container it asks
                 // that service for, so a ci cutover inside the orchestrator's window is a pipeline

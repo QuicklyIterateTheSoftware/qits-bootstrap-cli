@@ -154,15 +154,7 @@ public class SeedPhases {
                 throw new IllegalStateException("docker compose plugin missing");
             }
             ctx.log("  docker compose: present");
-            // Loudly, because the failure it prevents is silent: without buildx the client falls
-            // back to the legacy builder and every image this run builds is built by something
-            // else, with no line anywhere saying so.
-            if (!boot.docker.buildxPresent()) {
-                throw new IllegalStateException("docker buildx missing — every seed image would be "
-                        + "built by the legacy builder instead, silently. The payload image ships "
-                        + "the plugin, so this run is not the payload image this program builds");
-            }
-            ctx.log("  docker buildx: present");
+            ctx.log("  docker build: enforced 4g memory and 2 cpu limits");
             boot.state.swarm = ensureSwarm(boot.docker, ctx::log);
             ctx.log("  swarm: " + boot.state.swarm);
             warnAboutInsecureRegistries(ctx);
@@ -737,11 +729,6 @@ public class SeedPhases {
             }
 
             List<String> extra = new ArrayList<>();
-            if ("gateway".equals(name)) {
-                // A shipped gateway must say whether it authenticates; `local` is the
-                // unauthenticated workstation variant. Never publish that image or its port.
-                extra.addAll(List.of("--build-arg", "QITS_VARIANT=local"));
-            }
             String dockerfile =
                     SeedDockerfile.read(repo.resolve(PlatformModel.dockerfilePath(name)));
             // An image repository is its Dockerfile and nothing else, so the warning about the

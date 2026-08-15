@@ -47,9 +47,8 @@ public interface BootstrapConfig {
      * <b>The host's one HTTP port, bound by qits-platform-edge, and now the door of the whole
      * platform.</b> It is what a PERSON types into a browser, what the host's docker daemon dials
      * at {@link #registryVhost()} and {@link #mirrorVhost()}, and what a clone of
-     * {@link #gitHostVhost()} arrives on. This CLI dials the edge's wire alias instead, because it
-     * runs on qits-net. qits-gateway publishes nothing itself any more, and neither does the byte
-     * plane.
+     * {@link #gitHostVhost()} arrives on. Seed calls use their fixed service aliases on qits-net;
+     * neither those services nor the byte plane publishes another host port.
      */
     @WithDefault("8080")
     int port();
@@ -402,45 +401,40 @@ public interface BootstrapConfig {
      * Two prefixes rather than one, because they answer to different owners. {@code /githost} is
      * the service's {@code quarkus.http.non-application-root-path} and moves with a config key;
      * {@code /git} is the git wire protocol, which treats the base as opaque and no key can move.
-     * The gateway carries both on one route entry, so nothing here has to choose between them.
+     * The two prefixes belong to the git host and are dialled at its fixed seed alias.
      */
     default String gitHostHealthUrl() {
         return "http://" + envName() + "-qits-githost:8080/githost";
     }
 
     /**
-     * qits-ci, <b>through qits-platform-edge</b> and the gateway's route table behind it.
-     * <p>
-     * Not {@code <env>-qits-ci:8080} directly, which the network would resolve just as well: the
-     * edge and the gateway's route table are the path every other client takes, and a bootstrap
-     * that stopped exercising it would stop noticing when it breaks. Only the first hop's address
-     * moved off the host port.
+     * qits-ci at its fixed seed alias. Deployment routes are not present until the edge projects
+     * deployment events, so the bootstrap cannot use a public route for this call.
      */
     default String ciUrl() {
-        return "http://qits-platform-edge:8080/ci";
+        return "http://" + envName() + "-qits-ci:8080/ci";
     }
 
     /**
-     * qits-deployments, through the edge and the gateway's route table, for the reason above.
+     * qits-deployments at its fixed seed alias, for the reason above.
      * The route segment stayed {@code /platform-deployments} when the repository was renamed —
      * it names the component, not the repository, and every route of the service (its API, its
      * health, its client) hangs off it. Only the hostname moved.
      */
     default String platformDeploymentsUrl() {
-        return "http://qits-platform-edge:8080/platform-deployments";
+        return "http://" + envName() + "-qits-deployments:8080/platform-deployments";
     }
 
     /**
-     * qits-events — the BUS — through the edge and the gateway's route table, like ci and the
-     * deployer above. The gateway routes {@code /events/*} verbatim, and this service serves
-     * everything it has under that one segment, health included.
+     * qits-events — the BUS — at its fixed seed alias. This service serves everything it has
+     * under that one segment, health included.
      * <p>
      * Dialled for one purpose: the seed health wait. Nothing this program does publishes or reads
      * an event over HTTP — the announcements travel ci's outbox and the deployer's subscriber — but
      * a bus nobody waited for is a bus the first green build can outrun.
      */
     default String eventsUrl() {
-        return "http://qits-platform-edge:8080/events";
+        return "http://" + envName() + "-qits-events:8080/events";
     }
 
     /**

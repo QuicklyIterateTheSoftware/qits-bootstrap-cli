@@ -455,12 +455,9 @@ off the LAN), and `QITS_WEB=0`, which turns it off entirely — no server, no po
 was. That is the one thing to know: a second run while one is going needs `QITS_WEB_PORT=8481` or
 `QITS_WEB=0`.
 
-**Proxying it through qits-gateway** — for a bootstrap watched from another machine — is a possible
-follow-up, not something this does. It would need two things: the gateway container reaching the
-host, `--add-host=host.docker.internal:host-gateway` plus a route entry pointing at it, and the
-gateway's own handling of a streamed response checked first. The page already sends
-`X-Accel-Buffering: no` and asks for no transform; a proxy that buffers anyway turns a live view
-into a page that arrives when the run is over, so that is what to verify before wiring it.
+The status port is deliberately independent of the platform route plane. It stays available while
+the edge catches up deployment events or the bootstrap payload has stopped, and it exposes no
+platform route or secret.
 
 ## What it does, in order
 
@@ -582,11 +579,10 @@ seed SERVICES are named after it — a stack ignores `container_name`, and a ser
 `qits_<alias>` and under the bare alias both — which is what makes the generated stack file's own
 addresses right from the first second rather than from the first cutover.
 
-**qits-platform-edge binds the host's only HTTP port** and hands each request to the gateway of the
-environment its Host name names — or, for the three byte-plane names, straight to the service the
-name belongs to, because a docker client and a git client own their own roots (`/v2`, `/git`) and
-cannot be given a path prefix. qits-gateway publishes nothing: it was on the platform plane only
-because it used to bind that port.
+**qits-platform-edge binds the host's only HTTP port** and dispatches each request from its
+projected deployment endpoints. The three byte-plane names route straight to their services,
+because a docker client and a git client own their own roots (`/v2`, `/git`) and cannot be given a
+path prefix. An authoritative route miss is a 404; a projection that has not caught up is a 503.
 
 **qits-deployments owns both halves**: the topology (environments, services, links) and the
 execution (deployment rows, the health-gated cutover, the rollback pins). It is the merge-back of

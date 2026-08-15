@@ -212,8 +212,8 @@ public final class ComposeTemplate {
             # them either holds a volume no second writer may open or binds a host port a second task
             # would collide on — the deployer's config volume most of all.
             services:
-              # The issuer. No published host port and no gateway route: in phase 1 nothing outside qits-net
-              # talks to it, and /idp/token reachable from the host through an unauthenticated gateway would be
+              # The issuer. No published host port or public token route: in phase 1 nothing outside qits-net
+              # talks to it, and /idp/token reachable from the host unauthenticated would be
               # a token vending machine. Phase 3's user flows are what put it on the route table.
               #
               # First in this file because it is first in the order that matters: every service below mints or
@@ -250,11 +250,7 @@ public final class ComposeTemplate {
                   # qits-artifacts' id carries the tier since the byte-plane split made it an
                   # environment service again. The key embeds the id, so this line moved with it.
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_SECRET: "${IDP_SECRET_ARTIFACTS}"
-                  # The gateway's user flows are a later phase; seeded anyway: the cost is a config
-                  # line, and the cost of the omission is invalid_client on a path nobody was
-                  # looking at.
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_SECRET: "${IDP_SECRET_WORKSPACES}"
-                  QITS_IDP_CLIENT_${ENV_KEY}_QITS_GATEWAY_SECRET: "${IDP_SECRET_GATEWAY}"
                   # qits-projects mints since it starts its agent containers through
                   # qits-containers (orchestration round 2).
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_SECRET: "${IDP_SECRET_PROJECTS}"
@@ -313,7 +309,6 @@ public final class ComposeTemplate {
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_ROLES: "qits:system,qits-platform:system"
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_ROLES: "qits:system,qits-platform:system"
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_ROLES: "qits:system,qits-platform:system"
-                  QITS_IDP_CLIENT_${ENV_KEY}_QITS_GATEWAY_ROLES: "qits:system,qits-platform:system"
                   # The one wildcard grant, and it is kept for a PERSON. qits-ci's manual trigger names
                   # no repository, so it demands them all — a token granted project=*. This bootstrap
                   # used to present one, for the release replays; they push the release tag now and
@@ -339,15 +334,12 @@ public final class ComposeTemplate {
                     condition: any
                     delay: 5s
 
-              # THE HOST'S ONE HTTP PORT, and now the door of the byte plane too. Every address this
-              # bootstrap dials on 127.0.0.1:${PORT} arrives here first and is handed to the gateway of the
-              # environment the request's Host name names — which for an unlabelled name is the default,
-              # because localhost carries no environment label. It serves no paths of its own beyond /q,
-              # holds no state and has no client, so the seed needs no volume and no placeholder bundle.
+              # THE HOST'S ONE HTTP PORT, and the direct deployment-route door. An unlabelled host
+              # resolves to the default environment; before deployment endpoints are projected the
+              # edge answers a retryable readiness response rather than proxying to a catch-all.
               #
-              # In the seed because it is the door: qits-ci and qits-deployments publish no host port, the
-              # three byte services publish none either, and the CLI reaches all of them through this
-              # process. Without it the first health poll has nothing to ask.
+              # In the seed because it owns public routing and catches up deployment endpoints. Seed
+              # health checks use fixed service aliases because routes do not exist yet.
               qits-platform-edge:
                 image: qits/platform-edge:latest
                 ports:
@@ -367,16 +359,10 @@ public final class ComposeTemplate {
                   # refuses to start otherwise, rather than letting each request find out.
                   QITS_EDGE_ENVIRONMENTS: ${ENV_NAME}
                   QITS_EDGE_DEFAULT_ENVIRONMENT: ${ENV_NAME}
-                  # How an environment name becomes an address. {env} is the only placeholder and this is
-                  # the platform's own naming convention, so it equals the shipped default — spelled for the
-                  # reason every address here is spelled, and because it is the ONE line that ties the edge
-                  # to the wire aliases the rest of this file hands out.
-                  QITS_EDGE_UPSTREAM_HOST_PATTERN: "{env}-qits-gateway"
-                  QITS_EDGE_UPSTREAM_PORT: "8080"
                   # THE THREE APPS THAT ARE REACHED BY NAME RATHER THAN BY PATH, and this block is
                   # what closed three host ports. A request for registry.<env>.localhost goes to the
                   # first pattern, mirror.<env>.localhost to the second, githost.<env>.localhost to
-                  # the third — each straight to the service, not through the gateway's route table,
+                  # the third — each straight to the service,
                   # because a docker client and a git client own their own root paths (/v2, /git) and
                   # cannot be given a prefix.
                   #
@@ -507,7 +493,7 @@ public final class ComposeTemplate {
               # socket. It is the merge-back of qits-cd and qits-serviceregistry, so it stands where both
               # used to. In the seed because the '${ENV_NAME}' environment is created through it minutes
               # from now and because nothing else can start a container. No published host port of its own —
-              # the edge and the gateway's /platform-deployments route are the door. Ready at
+              # the edge's deployment route is the public door. Ready at
               # /platform-deployments/q/health/ready.
               #
               # An ENVIRONMENT service: one deployer per tier, deploying its own tier. Its route segment is
@@ -624,66 +610,9 @@ public final class ComposeTemplate {
      * "constant string too long", at the declaration rather than at the line that grew. The two
      * halves are joined with {@code concat} rather than {@code +} because the compiler folds a
      * concatenation of two constants back into one constant and refuses it again. Split at a
-     * service boundary so no block is cut in half; the head ends with the deployer, this begins
-     * with the blank line above the gateway's comment.
+     * service boundary so no block is cut in half.
      */
     private static final String COMPOSE_REST = """
-
-              # No ports. The gateway is behind the edge now, and an environment service of ${ENV_NAME}
-              # rather than a platform one: it was only ever on the platform plane because it bound the
-              # host's port, and it does not.
-              ${ENV_NAME}-qits-gateway:
-                image: qits/gateway:latest
-                environment:
-                  # The route table: an entry is both the on-switch and the target. Every value is a WIRE
-                  # ALIAS — this tier's own services carry the tier's name, the platform's four do not.
-                  # Aliases of the pipeline-deployed services resolve the moment the deployer cuts them
-                  # over; until then those routes 502.
-                  # The HOSTED registries, and root-level /v2 with them.
-                  QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS: ${ENV_NAME}-qits-artifacts   # also claims root-level /v2 (OCI registry)
-                  # THE CACHES, at their OWN segment and nothing else. qits-platform-mirror answers the
-                  # store's three prefixes too, and those are deliberately not routed here: two services
-                  # cannot share one prefix behind one gateway entry, so third-party traffic picks the
-                  # mirror by its own published port and its own client configuration. /mirror is the
-                  # service's own segment — its view and its health — and nothing else claims it. A
-                  # PLATFORM service, so the alias carries no tier: one cache serves every environment.
-                  QITS_GATEWAY_PROXY_HOSTS_MIRROR: qits-platform-mirror
-                  # THE IDENTITY PROVIDER — a PLATFORM service like the mirror, so no tier on the
-                  # alias. This is what puts /idp/login and /idp/register in front of a browser;
-                  # machine callers keep dialling qits-platform-idp on qits-net and never pass
-                  # here. The key needs the gateway's IDP enum entry (same rule as DOCS below).
-                  QITS_GATEWAY_PROXY_HOSTS_IDP: qits-platform-idp
-                  QITS_GATEWAY_PROXY_HOSTS_CI: ${ENV_NAME}-qits-ci
-                  QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS: ${ENV_NAME}-qits-deployments
-                  QITS_GATEWAY_PROXY_HOSTS_OBSERVABILITY: ${ENV_NAME}-qits-observability
-                  QITS_GATEWAY_PROXY_HOSTS_PROJECTS: ${ENV_NAME}-qits-projects
-                  QITS_GATEWAY_PROXY_HOSTS_WORKSPACES: ${ENV_NAME}-qits-workspaces
-                  QITS_GATEWAY_PROXY_HOSTS_STT: ${ENV_NAME}-qits-stt
-                  QITS_GATEWAY_PROXY_HOSTS_EVENTS: ${ENV_NAME}-qits-events
-                  # The docs reader followed the shelf it reads: qits-docs is an environment service now,
-                  # so the host carries the tier — and the KEY moved with the repository, because the
-                  # gateway's route SEGMENT did (/platform-docs -> /docs). A segment that is not a known
-                  # service is a configuration error caught at the gateway's startup, so this key and the
-                  # gateway's own enum have to land in the same release. A key that is MISSING is not an
-                  # error: an entry is the on-switch, so absence is a prefix nothing claims and a 404.
-                  QITS_GATEWAY_PROXY_HOSTS_DOCS: ${ENV_NAME}-qits-docs
-                  # THE GIT HOST, at the segment that names it. /githost carries its view, its API and
-                  # its health; the git WIRE PROTOCOL stays at /git, which the gateway carries as a
-                  # second prefix on this same entry — every clone url already hardcodes it and git
-                  # treats the base as opaque. One entry, two prefixes, one key. This is the entry that
-                  # makes QITS_WORKSPACE_GIT_HOST work: a workspace container reaches this platform
-                  # through the gateway and through nothing else, so without this line its clone is a
-                  # 404 from the tier's own front door.
-                  QITS_GATEWAY_PROXY_HOSTS_GITHOST: ${ENV_NAME}-qits-githost
-                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
-                networks: [qits-net]
-                # No depends_on: on later runs this file carries only the services the deployer does not
-                # already manage, and a dependency would resurrect a seed sibling next to its replacement.
-                deploy:
-                  replicas: 1
-                  restart_policy:
-                    condition: any
-                    delay: 5s
 
               # THE PLATFORM'S OWN PACKAGES, and nothing third-party: the hosted npm registry, the hosted
               # maven repository, the hosted OCI registry, the daemon binaries and the docs bundles. An
@@ -1201,8 +1130,8 @@ public final class ComposeTemplate {
             # qits-platform-artifacts, a name that resolves to nothing; the spec read is how a green build
             # becomes a deployment, so a deployer without this line deploys nothing and says only "timeout".
             qits.platform.deployments.git-host-url=http://${ENV_NAME}-qits-githost:8080
-            # THE HOST PORT IS THE EDGE'S, AND IT IS THE ONLY HTTP ONE. qits-gateway publishes nothing at
-            # all, and neither do the three byte services below — they are reached through this process
+            # THE HOST PORT IS THE EDGE'S, AND IT IS THE ONLY HTTP ONE. Neither do the three byte services
+            # below publish a port — they are reached through this process
             # under names of their own. Publishing one port from two applications is a bind conflict that
             # only shows up on the second cutover.
             #
@@ -1234,8 +1163,6 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_ENVIRONMENTS=${ENV_NAME}
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_DEFAULT_ENVIRONMENT=${ENV_NAME}
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
-            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_UPSTREAM_HOST_PATTERN={env}-qits-gateway
-            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_UPSTREAM_PORT=8080
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_REGISTRY_HOST_PATTERN={env}-qits-artifacts
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN=qits-platform-mirror
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost
@@ -1246,20 +1173,6 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_CLIENT_ID=${ENV_NAME}-qits-edge
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_CLIENT_SECRET=${IDP_SECRET_EDGE}
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080${EDGE_TLS_ARGS}
-            # THE ROUTE TABLE. Every value is a wire alias, and the image's defaults cannot carry the tier.
-            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_ARTIFACTS=${ENV_NAME}-qits-artifacts
-            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_MIRROR=qits-platform-mirror
-            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_IDP=qits-platform-idp
-            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_CI=${ENV_NAME}-qits-ci
-            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_PLATFORM_DEPLOYMENTS=${ENV_NAME}-qits-deployments
-            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_OBSERVABILITY=${ENV_NAME}-qits-observability
-            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_PROJECTS=${ENV_NAME}-qits-projects
-            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_WORKSPACES=${ENV_NAME}-qits-workspaces
-            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_STT=${ENV_NAME}-qits-stt
-            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_EVENTS=${ENV_NAME}-qits-events
-            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_DOCS=${ENV_NAME}-qits-docs
-            qits.platform.deployments.extras.qits-gateway.env.QITS_GATEWAY_PROXY_HOSTS_GITHOST=${ENV_NAME}-qits-githost
-            qits.platform.deployments.extras.qits-gateway.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE HOSTED HALF OF THE BYTE PLANE, and a stateless deployment: metadata and blob bytes are
             # both rows in qits_artifacts, so there is no mount and no /data left to give it.
             #
@@ -1547,7 +1460,6 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_SECRET=${IDP_SECRET_CI}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_SECRET=${IDP_SECRET_ARTIFACTS}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_SECRET=${IDP_SECRET_WORKSPACES}
-            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_GATEWAY_SECRET=${IDP_SECRET_GATEWAY}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_SECRET=${IDP_SECRET_PROJECTS}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_DEPLOYMENTS_SECRET=${IDP_SECRET_DEPLOYMENTS}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_CONTAINERS_SECRET=${IDP_SECRET_CONTAINERS}
@@ -1568,7 +1480,6 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_ROLES=qits:system,qits-platform:system
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_ROLES=qits:system,qits-platform:system
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_ROLES=qits:system,qits-platform:system
-            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_GATEWAY_ROLES=qits:system,qits-platform:system
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_CLAIMS_PROJECT=*
             # The passkey binding, as on the seed block: the rp id is a HOST a credential is bound
             # to, the origins are what a ceremony is checked against, and both are the address a
@@ -1654,10 +1565,8 @@ public final class ComposeTemplate {
             # "auto" is wrong on this topology and wrong silently: auto detects WSL2 and answers the primary
             # LAN IPv4, which is the address of the machine when qits runs ON the host — but qits-workspaces
             # runs in a container here, so what it measures is its OWN container's address and every
-            # container->platform URL 404s. The gateway, not qits-workspaces or the artifacts service: it is
-            # the one name on qits-net that fronts a WHOLE environment. Not the edge either — a workspace
-            # belongs to a tier, and the gateway is the tier's own front door, while the edge exists to pick
-            # between tiers for traffic that arrived from outside.
+            # container->platform URL 404s. The tier's githost alias is the fixed internal target for
+            # workspace Git traffic; public routing remains the edge's job.
             # NO SOCKET AND NO SOCKET GROUP any more: workspace containers start through
             # qits-containers (orchestration round 2), so this service holds a machine-token
             # client instead of the host daemon.
@@ -1678,7 +1587,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-workspaces.env.QITS_GITHOST_AUDIENCE=${ENV_NAME}-qits-githost
             qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_CONTAINER_GIT_URL=http://qits-platform-edge:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
-            qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_GIT_HOST=${ENV_NAME}-qits-gateway
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_GIT_HOST=${ENV_NAME}-qits-githost
             qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/${ENV_NAME}
             qits.platform.deployments.extras.qits-workspaces.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The reading surface over qits-artifacts' docs repository. Two variables and no volume, because

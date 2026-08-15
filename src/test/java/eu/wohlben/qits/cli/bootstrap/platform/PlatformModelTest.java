@@ -130,12 +130,11 @@ class PlatformModelTest {
         assertThat(PlatformModel.isPlatformService("artifacts")).isFalse();
         assertThat(PlatformModel.isPlatformService("docs")).isFalse();
         assertThat(PlatformModel.isPlatformService("githost")).isFalse();
-        // Everything else is a service of the one environment — the gateway included, since
-        // qits-platform-edge took the host port that was its only reason to be up here.
+        // Everything else is a service of the one environment.
         assertThat(PlatformModel.DEPLOYABLES)
                 .filteredOn(name -> !PlatformModel.isPlatformService(name))
                 .containsExactlyInAnyOrder("observability", "oci-postgresql", "stt", "projects",
-                        "workspaces", "events", "gateway", "ci", "containers", "deployments",
+                        "workspaces", "events", "ci", "containers", "deployments",
                         "artifacts", "githost", "docs");
         // Every environment runs its own database, so postgres is an environment service like the
         // rest of them — the platform plane is what genuinely cannot be per-tier.
@@ -155,7 +154,7 @@ class PlatformModelTest {
         // minutes after the seed comes up. Deployed at its own place in the train it would not be
         // there in time.
         assertThat(PlatformModel.CORE).containsExactlyInAnyOrder(
-                "gateway", "platform-edge", "platform-mirror", "artifacts", "githost", "ci",
+                "platform-edge", "platform-mirror", "artifacts", "githost", "ci",
                 "containers", "deployments", "platform-idp", "events",
                 "oci-postgresql");
         // Every seed service is also deployed through the pipeline afterwards; nothing stays
@@ -187,8 +186,6 @@ class PlatformModelTest {
                 .isEqualTo("service/src/main/webui/dist/qits-spa-artifacts/browser");
         assertThat(PlatformModel.seedUiPath("deployments"))
                 .isEqualTo("service/src/main/webui/dist/qits-spa-deployments/browser");
-        assertThat(PlatformModel.seedUiPath("gateway"))
-                .isEqualTo("src/main/webui/dist/qits-spa-home/browser");
         assertThat(PlatformModel.seedUiPath("ci"))
                 .isEqualTo("service/src/main/webui/dist/qits-spa-ci/browser");
         // The bus joined the seed on 2026-08-10 and it HAS a client, so it needs a placeholder: its
@@ -295,9 +292,9 @@ class PlatformModelTest {
         // cutover is never queued beside a consumer's.
         assertThat(PlatformModel.DEPLOYABLES.get(1)).isEqualTo("oci-postgresql");
         // The edge is the host port, so its cutover takes the CLI's own door away for a beat. It
-        // goes as late as it can — after the gateway it forwards to, before the self-update.
+        // goes as late as it can, before the self-update.
         assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
-                "gateway", "platform-edge", "deployments");
+                "platform-edge", "deployments");
         // The mirror before everything whose build resolves through it, and the git host between
         // the store and ci — ci reads pipeline config out of the git host and clones from it.
         assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
@@ -332,17 +329,17 @@ class PlatformModelTest {
         // joined for orchestration round 2: its agent containers start through qits-containers.
         assertThat(PlatformModel.idpClients("prod")).containsExactly(
                 "prod-qits-bootstrap", "prod-qits-ci", "prod-qits-artifacts", "prod-qits-workspaces",
-                "prod-qits-gateway", "prod-qits-projects", "prod-qits-deployments",
+                "prod-qits-projects", "prod-qits-deployments",
                 "prod-qits-containers", "prod-qits-edge");
         assertThat(PlatformModel.idpAudiences("prod")).isEqualTo(
-                "prod-qits-bootstrap,prod-qits-ci,prod-qits-artifacts,prod-qits-workspaces,prod-qits-gateway,"
+                "prod-qits-bootstrap,prod-qits-ci,prod-qits-artifacts,prod-qits-workspaces,"
                         + "prod-qits-projects,prod-qits-deployments,prod-qits-containers,"
                         + "prod-qits-edge,prod-qits-githost");
         // Every one of them follows the environment now: the artifacts client was the one platform
         // id in this list, and the byte-plane split made that service a tier's again.
         assertThat(PlatformModel.idpClients("preprod")).containsExactly(
                 "preprod-qits-bootstrap", "preprod-qits-ci", "preprod-qits-artifacts", "preprod-qits-workspaces",
-                "preprod-qits-gateway", "preprod-qits-projects", "preprod-qits-deployments",
+                "preprod-qits-projects", "preprod-qits-deployments",
                 "preprod-qits-containers", "preprod-qits-edge");
         // The two new byte services hold no client at all: the mirror has no auth surface, and the
         // git host validates a push option rather than a token.

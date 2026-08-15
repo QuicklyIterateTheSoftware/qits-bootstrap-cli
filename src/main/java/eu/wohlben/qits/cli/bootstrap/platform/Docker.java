@@ -29,9 +29,9 @@ public class Docker {
     /** Long enough for a cold GraalVM native build, which is what most of these are. */
     public static final Duration BUILD_TIMEOUT = Duration.ofHours(4);
 
-    /** One host budget for every seed, step and payload build the bootstrap starts. */
-    private static final List<String> BUILD_LIMITS = List.of("--resource", "memory=4g",
-            "--resource", "cpu-quota=200000");
+    /** One enforced daemon budget for every seed and step build. */
+    private static final List<String> BUILD_LIMITS = List.of("--memory", "4g", "--cpu-quota",
+            "200000");
 
     /** The only driver a network of this platform has: see {@link #ensureNetwork}. */
     public static final String OVERLAY = "overlay";
@@ -85,12 +85,9 @@ public class Docker {
     }
 
     /**
-     * Whether this client has buildx. Asked because a client without it does not fail: it falls
-     * back to the legacy builder, which reads build flags differently and reports nothing.
-     * qits-deployments carries a scar from exactly that. The payload image ships the plugin, so a
-     * false here means the image was built wrong or the run is not the payload — both worth
-     * stopping for, because the alternative is images that differ from the ones the platform
-     * expects and no message saying so.
+     * Whether this client has buildx. The bootstrap does not require it: docker's classic build
+     * flags are used deliberately because they enforce the memory and CPU cgroup limits on every
+     * daemon version the recovery image must support.
      */
     public boolean buildxPresent() {
         return runner.run(Cmd.of("docker", "buildx", "version"), null).ok();
@@ -412,7 +409,7 @@ public class Docker {
     public ProcessResult buildFromStdin(String tag, String dockerfile, Path context,
                                         List<String> extraArgs, Consumer<String> out) {
         List<String> command = new ArrayList<>(List.of(
-                "docker", "buildx", "build", "--load", "--network", "host", "-t", tag, "-f", "-"));
+                "docker", "build", "--network", "host", "-t", tag, "-f", "-"));
         command.addAll(BUILD_LIMITS);
         command.addAll(buildArgs);
         command.addAll(extraArgs);
@@ -420,18 +417,15 @@ public class Docker {
         return runner.run(Cmd.of(command)
                 .stdin(dockerfile)
                 .timeout(BUILD_TIMEOUT)
-                // Line-oriented build output. Honoured by buildkit, ignored by the legacy builder,
-                // which is what makes it safe to set unconditionally.
-                .env("BUILDKIT_PROGRESS", "plain"), out);
+                .env("DOCKER_BUILDKIT", "0"), out);
     }
 
     public ProcessResult build(List<String> args, Consumer<String> out) {
-        List<String> command = new ArrayList<>(List.of("docker", "buildx", "build", "--load"));
+        List<String> command = new ArrayList<>(List.of("docker", "build"));
         command.addAll(BUILD_LIMITS);
         command.addAll(buildArgs);
         command.addAll(args);
-        return runner.run(Cmd.of(command).timeout(BUILD_TIMEOUT)
-                .env("BUILDKIT_PROGRESS", "plain"), out);
+        return runner.run(Cmd.of(command).timeout(BUILD_TIMEOUT).env("DOCKER_BUILDKIT", "0"), out);
     }
 
     public ProcessResult exec(Consumer<String> out, String... args) {

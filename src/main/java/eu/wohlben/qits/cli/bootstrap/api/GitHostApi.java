@@ -34,7 +34,7 @@ public class GitHostApi {
 
     /**
      * Readiness at the service's own non-application root path, which is {@code /githost} and not
-     * the {@code /git} the wire protocol answers on. The two prefixes ride one gateway entry, so a
+     * the {@code /git} the wire protocol answers on. Both prefixes are served directly by the git host, so a
      * caller reaches both; only this program has to know they are two.
      */
     public Http.Response health() {
