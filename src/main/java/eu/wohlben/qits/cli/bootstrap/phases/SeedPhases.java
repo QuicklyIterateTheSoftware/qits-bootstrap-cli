@@ -713,7 +713,8 @@ public class SeedPhases {
         return new Phase("seed-image-" + name, "build the seed image qits/" + name + ":latest", ctx -> {
             Path repo = boot.state.repoDir(name);
             ctx.status("fetching submodules of qits-" + name);
-            boot.git.submodulesShallow(repo, ctx::log);
+            Boot.must(boot.git.submodulesShallow(repo, ctx::log),
+                    "submodule checkout of qits-" + name + " failed");
 
             String seedUi = PlatformModel.seedUiPath(name);
             if (!seedUi.isEmpty()) {
