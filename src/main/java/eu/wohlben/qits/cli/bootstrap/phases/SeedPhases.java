@@ -879,7 +879,6 @@ public class SeedPhases {
                 Boot.must(boot.docker.run(Cmd.of(List.of(
                                 "docker", "run", "-d", "--name", artifacts,
                                 "--network", Boot.NETWORK,
-                                "-p", "127.0.0.1:" + boot.config.registryPort() + ":8080",
                                 "-e", "QITS_RESOURCE_DB_URL=jdbc:postgresql://"
                                         + PlatformModel.wireAlias("oci-postgresql",
                                                 boot.config.envName())
