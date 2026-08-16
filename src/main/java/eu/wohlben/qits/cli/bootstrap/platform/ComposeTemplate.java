@@ -276,6 +276,7 @@ public final class ComposeTemplate {
                   # credentials were — turning user sessions on must be a configuration change, not
                   # a redeploy of the idp and the door together.
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_EDGE_SECRET: "${IDP_SECRET_EDGE}"
+                  QITS_IDP_CLIENT_${ENV_KEY}_QITS_EDGE_ROLES: "qits:system,qits-platform:system"
                   # THE PASSKEY BINDING. A credential is bound to the rp id and asserts under no
                   # other host, and the origins are what the browser's ceremony is checked against.
                   # Both are the address a person's browser arrives at: localhost and the edge's
@@ -1483,6 +1484,7 @@ public final class ComposeTemplate {
             # edge's own extras above. It gets no audience list: it introspects with Basic and asks
             # the idp for no token.
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_EDGE_SECRET=${IDP_SECRET_EDGE}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_EDGE_ROLES=qits:system,qits-platform:system
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_BOOTSTRAP_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_AUDIENCES=${IDP_AUDIENCES}

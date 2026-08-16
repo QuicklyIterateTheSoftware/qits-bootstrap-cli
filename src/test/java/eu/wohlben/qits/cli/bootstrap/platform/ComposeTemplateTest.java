@@ -510,12 +510,14 @@ class ComposeTemplateTest {
         String idp = serviceBlock(compose, "qits-platform-idp");
 
         assertThat(idp).contains(
-                "QITS_IDP_CLIENT_PROD_QITS_EDGE_SECRET: \"secret-prod-qits-edge\"");
+                "QITS_IDP_CLIENT_PROD_QITS_EDGE_SECRET: \"secret-prod-qits-edge\"")
+                .contains("QITS_IDP_CLIENT_PROD_QITS_EDGE_ROLES: \"qits:system,qits-platform:system\"");
         assertThat(edge).contains("QITS_EDGE_SESSIONS_ENABLED: \"true\"")
                 .contains("QITS_EDGE_SESSIONS_CLIENT_ID: prod-qits-edge")
                 .contains("QITS_EDGE_SESSIONS_CLIENT_SECRET: \"secret-prod-qits-edge\"");
         assertThat(extras("qits-platform-idp"))
-                .contains("env.QITS_IDP_CLIENT_PROD_QITS_EDGE_SECRET=secret-prod-qits-edge");
+                .contains("env.QITS_IDP_CLIENT_PROD_QITS_EDGE_SECRET=secret-prod-qits-edge")
+                .contains("env.QITS_IDP_CLIENT_PROD_QITS_EDGE_ROLES=qits:system,qits-platform:system");
         assertThat(extras("qits-platform-edge"))
                 .contains("env.QITS_EDGE_SESSIONS_ENABLED=true")
                 .contains("env.QITS_EDGE_SESSIONS_CLIENT_ID=prod-qits-edge")
