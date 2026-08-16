@@ -140,17 +140,14 @@ public interface BootstrapConfig {
      * <p>
      * Staging by default, deliberately: the production directory rate-limits failed orders per
      * registered domain per week, and the thing most likely to fail on a first boot is the
-     * dns — a name whose records the world has not seen yet answers nothing, and an
-     * HTTP-01 challenge is fetched over exactly that name. The staging directory has generous limits
-     * and issues from an untrusted root, so a browser still refuses the certificate; it proves the
-     * path and costs nothing when it fails.
+     * DNS — a zone whose records the world has not seen yet cannot pass DNS-01. The staging
+     * directory has generous limits and issues from an untrusted root, so a browser still refuses
+     * the certificate; it proves the path and costs nothing when it fails.
      * <p>
-     * Flipping to production is one rerun with this set — <b>no redeploy</b>. The PEM files land on
-     * the {@code qits-edge-letsencrypt} volume under the same two names and the edge's TLS registry
-     * reloads them within the hour, so the switch is a file change and nothing restarts.
+     * Flipping to production is one rerun with this set. The edge notices the new mode, orders the
+     * production certificate, atomically switches the PEM lineage and its TLS registry reloads it.
      * <p>
-     * {@code off} keeps the placeholder certificate and prints the manual command, which is what
-     * this program did before issuance was part of it. Read by {@link Acme}, which refuses any other
+     * {@code off} keeps the placeholder certificate. Read by {@link Acme}, which refuses any other
      * word. Ignored with no domain, because there is nothing to issue for.
      */
     @WithDefault("staging")
@@ -166,6 +163,14 @@ public interface BootstrapConfig {
      * in. Set this when the mail for that domain is not read.
      */
     Optional<String> acmeEmail();
+
+    /** Hetzner Cloud DNS token used only by the edge's DNS-01 certificate manager. */
+    Optional<String> dnsHetznerToken();
+
+    /** Legacy HTTP-01 helper URL, retained only while old bootstrap compatibility code compiles. */
+    default String edgeLetsEncryptUrl() {
+        return "http://qits-platform-edge:9000/q/lets-encrypt";
+    }
 
     /** 1 = the seed images and the daemon binary exist; skip to compose and the pushes. */
     @WithDefault("false")
@@ -435,26 +440,6 @@ public interface BootstrapConfig {
      */
     default String eventsUrl() {
         return "http://" + envName() + "-qits-events:8080/events";
-    }
-
-    /**
-     * <b>qits-platform-edge's MANAGEMENT interface, and the Let's Encrypt endpoints on it</b> — the
-     * challenge slot and the certificate reload.
-     * <p>
-     * Port 9000, a second listener of the same process, and <b>published nowhere</b>: the endpoints
-     * are unauthenticated and a swarm publish cannot be bound to loopback, so the edge binds
-     * 0.0.0.0 inside its container and the address is reachable on qits-net and nowhere else. This
-     * run is on qits-net, which is the whole reason it can issue a certificate at all.
-     * <p>
-     * {@code /q} is the management root path and {@code lets-encrypt} is the extension's own
-     * segment, so the two endpoints are {@code .../challenge} and {@code .../certs}.
-     * <p>
-     * <b>The edge is not an ACME client and this address is not an ACME one.</b> The extension adds
-     * three routes and holds ONE challenge in memory; the protocol — the account, the order, the
-     * key, the certificate — is run entirely by whoever is issuing. See the {@code edge-acme} phase.
-     */
-    default String edgeLetsEncryptUrl() {
-        return "http://qits-platform-edge:9000/q/lets-encrypt";
     }
 
     /**

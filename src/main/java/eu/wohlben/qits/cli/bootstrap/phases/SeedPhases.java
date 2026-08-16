@@ -1776,6 +1776,33 @@ public class SeedPhases {
 
     // --- what a domain adds -----------------------------------------------------------------------
 
+    /** Creates the immutable, content-versioned Swarm secret consumed by the edge's DNS client. */
+    public Phase dnsHetznerSecret(String domain) {
+        return new Phase("edge-dns-secret", "store the edge DNS credential in Swarm", ctx -> {
+            if (Acme.mode(boot.config) == Acme.Mode.OFF) {
+                ctx.skip("QITS_ACME_MODE=off — no DNS credential is needed");
+            }
+            String token = boot.config.dnsHetznerToken()
+                    .map(String::strip)
+                    .filter(value -> !value.isEmpty())
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "QITS_DNS_HETZNER_TOKEN is required for DNS-01 on " + domain));
+            String name = DomainTokens.secretName(token);
+            ProcessResult existing = boot.docker.run(
+                    Cmd.of("docker", "secret", "inspect", name), null);
+            if (existing.ok()) {
+                ctx.note("kept " + name);
+                return;
+            }
+            ProcessResult created = boot.docker.run(
+                    Cmd.of("docker", "secret", "create", name, "-")
+                            .stdin(token)
+                            .mask(token), ctx::log);
+            Boot.must(created, "creating the edge DNS Swarm secret failed");
+            ctx.note("created " + name);
+        });
+    }
+
     /**
      * <b>A self-signed certificate for the domain, so the edge can start at all.</b>
      * <p>
@@ -1808,17 +1835,21 @@ public class SeedPhases {
             boot.docker.ensureVolume("qits-edge-letsencrypt", ctx::log);
             String script = """
                     set -eu
-                    if [ -f /cert/lets-encrypt.crt ]; then
+                    if [ -f /cert/current/lets-encrypt.crt ]; then
                       echo "a certificate is already there — leaving it alone"
                       exit 0
                     fi
                     apk add --no-cache openssl >/dev/null
+                    mkdir -p /cert/versions/placeholder
                     openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \\
                       -subj "/CN=%1$s" -addext "subjectAltName=DNS:%1$s,DNS:*.%1$s" \\
-                      -keyout /cert/lets-encrypt.key -out /cert/lets-encrypt.crt 2>/dev/null
-                    chown 1001:0 /cert/lets-encrypt.crt /cert/lets-encrypt.key
-                    chmod 644 /cert/lets-encrypt.crt
-                    chmod 640 /cert/lets-encrypt.key
+                      -keyout /cert/versions/placeholder/lets-encrypt.key \\
+                      -out /cert/versions/placeholder/lets-encrypt.crt 2>/dev/null
+                    ln -s versions/placeholder /cert/current
+                    chown 1001:0 /cert
+                    chown -R 1001:0 /cert/versions/placeholder
+                    chmod 644 /cert/versions/placeholder/lets-encrypt.crt
+                    chmod 640 /cert/versions/placeholder/lets-encrypt.key
                     echo "placeholder certificate written for %1$s"
                     """.formatted(domain);
             ProcessResult result = boot.docker.run(Cmd.of(List.of(
@@ -2148,7 +2179,9 @@ public class SeedPhases {
         values.put("SESSION_COOKIE_DOMAIN", boot.config.browserSsoCookieDomain());
         // What QITS_DOMAIN adds, and nothing when there is none: every one of these is empty then,
         // so both files render exactly as a platform with no public names always rendered them.
-        values.putAll(DomainTokens.of(DomainName.of(boot.config)));
+        values.putAll(DomainTokens.of(DomainName.of(boot.config), Acme.mode(boot.config).word(),
+                DomainName.of(boot.config).map(domain -> Acme.email(boot.config, domain)).orElse(""),
+                boot.config.dnsHetznerToken().orElse("")));
         // While the disposable edge owns the public domain, the seed edge remains an internal
         // service. The deployment extras deliberately keep 80/443 so the real edge can take them
         // at the explicit handoff near the end of the deployment train.

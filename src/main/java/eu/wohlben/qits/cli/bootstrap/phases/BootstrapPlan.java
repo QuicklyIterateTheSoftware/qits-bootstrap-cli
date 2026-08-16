@@ -133,6 +133,7 @@ public final class BootstrapPlan {
         // has no such phase and needs postgres only for the passwords both generated files carry.
         // One placement per arm, each the earliest point that arm needs.
         phases.add(seed.idpSecrets());
+        DomainName.of(boot.config).ifPresent(name -> phases.add(seed.dnsHetznerSecret(name)));
         phases.add(seed.composeFile());
         phases.add(seed.pdExtras());
         // BEFORE the edge is started with a keystore, which is what the next phase does: a keystore
@@ -146,14 +147,8 @@ public final class BootstrapPlan {
         // postgres, so it outlives every redeploy that follows. Once per installation — a rerun
         // that finds one recorded mints nothing.
         phases.add(pipeline.registerToken());
-        // NOTE: this could be a hook to register the domain's dns records (apex and wildcard at
-        // QITS_PUBLIC_IP) with an external dns provider. qits-platform-dns used to be seeded here.
-        // The records are a person's job now, and the closing report prints the set.
-        //
-        // Then the certificate. The edge has to be up and holding 80 (seed-health), because the CA
-        // fetches the HTTP-01 challenge over the public name — and that name has to resolve to this
-        // host already, which is what the records above are for.
-        domain.ifPresent(name -> phases.add(seed.edgeCertificate(name)));
+        // DNS-01 issuance belongs to the running edge now. It starts asynchronously after the seed
+        // stack is healthy and renews there; bootstrap neither runs certbot nor holds a challenge.
         phases.add(pipeline.daemonPublish());
         phases.add(pipeline.gitRepositories());
         // Every deployable's gitlinks must be advertised before CI clones it. In particular,

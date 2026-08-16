@@ -278,8 +278,8 @@ class SeedPhasesTest {
         Map<String, String> tokens = new SeedPhases(boot).tokens();
 
         assertThat(tokens).containsEntry("EDGE_SEED_TLS_PORTS", "");
-        assertThat(tokens.get("EDGE_TLS_ARGS")).contains("publishes[1]=80:8080")
-                .contains("publishes[2]=443:8443");
+        assertThat(tokens.get("EDGE_TLS_ARGS")).contains("publishes[1]=443:8443")
+                .doesNotContain("80:8080");
     }
 
     private static final List<String> TAGS = List.of("2026.812.153438", "2026.811.090000");

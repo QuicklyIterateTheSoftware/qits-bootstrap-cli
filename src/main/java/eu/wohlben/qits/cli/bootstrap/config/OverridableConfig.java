@@ -149,6 +149,11 @@ public class OverridableConfig implements BootstrapConfig {
     }
 
     @Override
+    public Optional<String> dnsHetznerToken() {
+        return base.dnsHetznerToken();
+    }
+
+    @Override
     public Duration deployTimeout() {
         return base.deployTimeout();
     }

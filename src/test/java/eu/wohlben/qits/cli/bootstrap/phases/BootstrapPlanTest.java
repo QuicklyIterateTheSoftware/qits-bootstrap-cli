@@ -181,13 +181,12 @@ class BootstrapPlanTest {
      * held at the domain's own provider, before the run.
      */
     @Test
-    void aDomainAddsThePlaceholderThenTheRealCertificate() {
+    void aDomainAddsThePlaceholderAndTheRunningEdgeOwnsIssuance() {
         List<String> ids = ids(plan(Map.of("QITS_DOMAIN", "qits-dev.eu",
                 "QITS_PUBLIC_IP", "203.0.113.7")));
 
-        assertThat(ids).containsSubsequence("pd-extras", "edge-cert", "seed-stack", "seed-health",
-                "edge-acme");
-        assertThat(ids).doesNotContain("dns-zone");
+        assertThat(ids).containsSubsequence("pd-extras", "edge-cert", "seed-stack", "seed-health");
+        assertThat(ids).doesNotContain("dns-zone", "edge-acme");
     }
 
     /** No domain is the default, and then neither phase exists — nothing to skip at runtime. */

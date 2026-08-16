@@ -1390,36 +1390,32 @@ class ComposeTemplateTest {
         String edge = serviceBlock(compose, "qits-platform-edge");
         String edgeExtras = extras("qits-platform-edge", tokens(DOMAIN));
 
-        // The host's own port stays; 80 is the ACME challenge and 443 the TLS listener. The
-        // management interface is NOT published: it is unauthenticated, and a swarm publish has no
-        // ip field to keep it on loopback with.
+        // DNS-01 needs neither the old port-80 challenge route nor its management interface.
         assertThat(edge).contains("published: 8080")
-                .contains("published: 80")
                 .contains("published: 443")
+                .doesNotContain("published: 80\n")
                 .doesNotContain("published: 9000");
         assertThat(edge).contains(
-                        "QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT: /work/.letsencrypt/lets-encrypt.crt")
-                .contains("QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY: /work/.letsencrypt/lets-encrypt.key")
-                .contains("QUARKUS_TLS_RELOAD_PERIOD: 1h")
+                        "QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT: /work/.letsencrypt/current/lets-encrypt.crt")
+                .contains("QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY: /work/.letsencrypt/current/lets-encrypt.key")
+                .contains("QUARKUS_TLS_RELOAD_PERIOD: 1m")
+                .contains("QITS_EDGE_ACME_ENABLED: true")
                 .contains("- qits-edge-letsencrypt:/work/.letsencrypt");
         // A mounted volume has to be declared, or compose refuses the file.
         assertThat(compose).contains("qits-edge-letsencrypt:\n    name: qits-edge-letsencrypt");
         // insecure-requests stays at its default: every health poll in the boot speaks plain HTTP.
         assertThat(compose).doesNotContain("INSECURE_REQUESTS");
 
-        // 9000 is not published in the extras either: the swarm driver refuses a loopback
-        // publish, and every caller dials qits-platform-edge:9000 on qits-net. The first
-        // bare-server domain boot found the stale loopback line here refusing the edge cutover.
+        // DNS-01 needs neither a public port 80 listener nor a management listener.
         assertThat(edgeExtras).contains(".publishes[0]=8080:8080")
-                .contains(".publishes[1]=80:8080")
-                .contains(".publishes[2]=443:8443")
+                .contains(".publishes[1]=443:8443")
+                .doesNotContain(".publishes[2]=80:8080")
                 .doesNotContain("9000")
                 .contains(".mounts[0]=volume:qits-edge-letsencrypt:/work/.letsencrypt")
-                .contains("env.QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT=/work/.letsencrypt/lets-encrypt.crt")
-                .contains("env.QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY=/work/.letsencrypt/lets-encrypt.key")
-                .contains("env.QUARKUS_TLS_RELOAD_PERIOD=1h");
-        assertThat(ComposeTemplate.extras(tokens(DOMAIN)))
-                .contains("9000 IS NOT PUBLISHED");
+                .contains("env.QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT=/work/.letsencrypt/current/lets-encrypt.crt")
+                .contains("env.QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY=/work/.letsencrypt/current/lets-encrypt.key")
+                .contains("env.QUARKUS_TLS_RELOAD_PERIOD=1m")
+                .contains("env.QITS_EDGE_ACME_ENABLED=true");
     }
 
     @Test
