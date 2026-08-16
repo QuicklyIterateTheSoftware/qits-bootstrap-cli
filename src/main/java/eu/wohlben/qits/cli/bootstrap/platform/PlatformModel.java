@@ -197,6 +197,9 @@ public final class PlatformModel {
      * DOCKER IMAGES, added on 2026-08-10 after a fresh registry was measured to hold no
      * qits/workspace-base at all, which fails every workspace launch:
      * <ul>
+     *   <li><b>qits-integrations-quarkus before qits-eventstream.</b> Eventstream's released POM
+     *       pins {@code qits-db-core} to the Quarkus integration release; replaying eventstream
+     *       first therefore asks the empty registry for an artifact the next phase would publish.
      *   <li><b>qits-oci-workspace strictly before qits-workspace-daemon.</b> The daemon's
      *       {@code docker/Dockerfile} carries {@code ARG WORKSPACE_BASE=…/qits/workspace-base:<pin>}
      *       and its build PULLS that image through the registry — which the base's own replay is what
@@ -214,8 +217,8 @@ public final class PlatformModel {
      * the consumer poms move onto the calvers.
      */
     public static final List<String> RELEASE_PUBLISHERS =
-            List.of("spa-ui-components", "integrations-angular", "eventstream",
-                    "integrations-quarkus",
+            List.of("spa-ui-components", "integrations-angular", "integrations-quarkus",
+                    "eventstream",
                     "oci-workspace", "workspace-daemon", "projects-daemon");
 
     private PlatformModel() {

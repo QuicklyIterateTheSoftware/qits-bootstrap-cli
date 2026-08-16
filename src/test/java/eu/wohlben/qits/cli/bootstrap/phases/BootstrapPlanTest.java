@@ -134,8 +134,8 @@ class BootstrapPlanTest {
 
         assertThat(ids).containsSubsequence("preseed",
                 "release-spa-ui-components",
-                "release-integrations-angular", "release-eventstream",
-                "release-integrations-quarkus", "environment", "deploy-observability");
+                "release-integrations-angular", "release-integrations-quarkus",
+                "release-eventstream", "environment", "deploy-observability");
     }
 
     /**
