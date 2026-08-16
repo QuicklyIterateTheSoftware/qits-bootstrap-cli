@@ -11,6 +11,9 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * The platform's HTTP, spoken directly with java.net.http. <b>Everything the bootstrap calls is a
@@ -156,10 +159,25 @@ public class Http {
                 .connectTimeout(Duration.ofSeconds(10))
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build()) {
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            // HttpRequest.timeout is a transport timeout, not a reliable wall-clock bound: a
+            // connection that disappears while HttpClient's synchronous send is settling can
+            // leave its CompletableFuture parked indefinitely. The bootstrap's one phase thread
+            // then freezes forever although the polled CI run and deployment both completed.
+            // Bound the future from outside as well and cancel it so closing this one-use client
+            // has no outstanding exchange to await.
+            var pending = client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+            Duration deadline = request.timeout().orElse(timeout).plusSeconds(2);
+            HttpResponse<String> response;
+            try {
+                response = pending.get(deadline.toMillis(), TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                pending.cancel(true);
+                return new Response(0, "timed out after " + deadline);
+            }
             return new Response(response.statusCode(), response.body() == null ? "" : response.body());
-        } catch (IOException e) {
-            return new Response(0, e.toString());
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            return new Response(0, cause == null ? e.toString() : cause.toString());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return new Response(0, "interrupted");
