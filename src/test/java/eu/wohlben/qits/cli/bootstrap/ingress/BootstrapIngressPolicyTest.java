@@ -22,6 +22,8 @@ class BootstrapIngressPolicyTest {
                 .isEqualTo(BootstrapIngressPolicy.Target.GIT);
         assertThat(decide("POST", "/git/qits-bootstrap/git-upload-pack").target())
                 .isEqualTo(BootstrapIngressPolicy.Target.GIT);
+        assertThat(decide("GET", "/artifacts/maven/maven/eu/wohlben/qits/example/1/example.pom")
+                .target()).isEqualTo(BootstrapIngressPolicy.Target.MAVEN);
     }
 
     @Test
@@ -29,6 +31,7 @@ class BootstrapIngressPolicyTest {
         assertThat(policy.authorize("GET", "localhost", "/", basic("wrong")).status()).isEqualTo(401);
         assertThat(policy.authorize("GET", "wrong.example", "/", basic(PASSWORD)).status()).isEqualTo(421);
         assertThat(decide("GET", "/githost/api/repositories").status()).isEqualTo(403);
+        assertThat(decide("POST", "/artifacts/maven/maven/x").status()).isEqualTo(403);
         assertThat(decide("CONNECT", "/").status()).isEqualTo(405);
         assertThat(decide("GET", "/git/../idp/token").status()).isEqualTo(403);
         assertThat(decide("GET", "/git/%2e%2e/idp/token").status()).isEqualTo(403);

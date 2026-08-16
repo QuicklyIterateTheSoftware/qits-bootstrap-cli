@@ -27,6 +27,11 @@ public final class BootstrapPlan {
         // Before the first address is dialled, and after preflight, which is where the daemon is
         // proved reachable at all.
         phases.add(seed.joinNetwork());
+        // The bootstrap edge is the first public component. It owns the normal public door while
+        // the seed is built, and it stays there across worker retries until platform-edge cuts it
+        // over near the end of this plan.
+        phases.add(seed.bootstrapIngressPrepare());
+        phases.add(seed.bootstrapIngressStart());
         // Before the sources, because the sources are read out of it — and on a cold machine there
         // is no wrapper to read. Skipped whenever there is one, which is every rerun.
         phases.add(seed.wrapper());
@@ -128,12 +133,7 @@ public final class BootstrapPlan {
         // has no such phase and needs postgres only for the passwords both generated files carry.
         // One placement per arm, each the earliest point that arm needs.
         phases.add(seed.idpSecrets());
-        phases.add(seed.bootstrapIngressPrepare());
         phases.add(seed.composeFile());
-        // Its UI upstream is the already-running bootstrap CLI. Its Git upstream is fixed to the
-        // seed githost and answers 503 until that service starts; it never depends on the normal
-        // edge, so the temporary door is up before that stack exists.
-        phases.add(seed.bootstrapIngressStart());
         phases.add(seed.pdExtras());
         // BEFORE the edge is started with a keystore, which is what the next phase does: a keystore
         // naming files that do not exist fails startup, so the volume has to hold a certificate

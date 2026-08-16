@@ -155,20 +155,17 @@ public final class HostLauncher {
         if (docker.allNames().contains(SUPERVISOR)) {
             docker.removeContainer(SUPERVISOR, out::println);
         }
-        String host = config.webHost();
-        String bind = host == null || host.isBlank() || "0.0.0.0".equals(host) ? "" : host + ":";
         ProcessResult result = docker.exec(out::println, "run", "-d", "--name", SUPERVISOR,
                 "--restart", "unless-stopped", "--user", user, "-v", workDir + ":" + workDir,
                 "-w", workDir.toString(), "-e", "QITS_WEB_BIND=true", "-e",
-                "QITS_WEB_HOST=0.0.0.0", "-p", bind + config.webPort() + ":" + config.webPort(),
+                "QITS_WEB_HOST=0.0.0.0",
                 image, "progress-supervisor", "--state", state.toString());
         if (!result.ok()) {
             out.println("the bootstrap progress supervisor did not start (exit "
                     + result.exitCode() + ")");
             return false;
         }
-        out.println("browser view: http://" + (bind.isEmpty() ? "0.0.0.0" : host)
-                + ":" + config.webPort() + " (durable supervisor)");
+        out.println("browser view: served by the bootstrap edge (durable supervisor)");
         return true;
     }
 

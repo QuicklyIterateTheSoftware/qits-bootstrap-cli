@@ -88,6 +88,12 @@ public class Boot {
         return List.of("--build-arg", "QITS_MAVEN_REPOSITORY_URL=" + config.seedMavenRepositoryUrl());
     }
 
+    /** The edge replaces the seed port before the first seed image is built. */
+    public void useBootstrapMavenRepository(String url, String capability) {
+        docker.withBuildArgs(List.of("--build-arg", "QITS_MAVEN_REPOSITORY_URL=" + url),
+                List.of(capability));
+    }
+
     /** Fails the phase, with the command's own last words attached. */
     public static void must(ProcessResult result, String what) {
         if (!result.ok()) {

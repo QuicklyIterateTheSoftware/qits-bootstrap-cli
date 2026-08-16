@@ -15,7 +15,7 @@ import java.util.Set;
  */
 public final class BootstrapIngressPolicy {
 
-    public enum Target { UI, GIT }
+    public enum Target { UI, MAVEN, GIT }
 
     public record Decision(int status, Target target, String path) {
         public boolean permitted() {
@@ -67,6 +67,11 @@ public final class BootstrapIngressPolicy {
         if (UI_PATHS.contains(path) && ("GET".equals(verb) || "HEAD".equals(verb))) {
             return new Decision(0, Target.UI, path);
         }
+        // The Maven seed is the only pre-IdP API exposed to a host build. It still needs the
+        // run-scoped Basic capability; the platform registry itself remains off the host.
+        if (mavenPath(path) && ("GET".equals(verb) || "HEAD".equals(verb))) {
+            return new Decision(0, Target.MAVEN, path);
+        }
         if (gitPath(path) && gitMethod(verb, path)) {
             return new Decision(0, Target.GIT, path);
         }
@@ -91,6 +96,7 @@ public final class BootstrapIngressPolicy {
         }
         String verb = method.toUpperCase(Locale.ROOT);
         return (UI_PATHS.contains(path) && "GET".equals(verb))
+                || (mavenPath(path) && ("GET".equals(verb) || "HEAD".equals(verb)))
                 || (gitPath(path) && gitMethod(verb, path));
     }
 
@@ -126,6 +132,11 @@ public final class BootstrapIngressPolicy {
             return false;
         }
         return GIT_SERVICE_SUFFIXES.stream().anyMatch(path::endsWith);
+    }
+
+    private static boolean mavenPath(String path) {
+        return path.startsWith("/artifacts/maven/maven/")
+                || "/artifacts/maven/maven".equals(path);
     }
 
     private static boolean gitMethod(String method, String path) {

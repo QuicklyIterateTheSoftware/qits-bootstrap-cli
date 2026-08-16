@@ -649,10 +649,9 @@ public class SeedPhases {
                     //   --network qits-net  is for THIS CLI, which is on that network and can
                     //                       reach nothing that is not. The container name is the
                     //                       alias; AUTH_SEED_URL is what gets dialled.
-                    //   -p 127.0.0.1:PORT   is for the HOST'S DOCKER DAEMON. The seed image builds
-                    //                       run with --network host and resolve Maven through
-                    //                       localhost:REGISTRY_PORT, and that consumer did not
-                    //                       move onto the network with the CLI.
+                    //   qits-bootstrap-edge is for the HOST'S DOCKER DAEMON. The seed image builds
+                    //                       run with --network host and reach this container through
+                    //                       that capability-gated edge; no seed port is published.
                     //
                     // THE PUBLISH IS THIS PHASE'S ALONE NOW. The platform's own store publishes no
                     // host port at all since unify-ingress — it is reached at
@@ -666,7 +665,6 @@ public class SeedPhases {
                     // build resolves nothing.
                     Boot.must(boot.docker.exec(ctx::log, "run", "-d", "--name", container,
                                     "--network", Boot.NETWORK,
-                                    "-p", "127.0.0.1:" + boot.config.registryPort() + ":80",
                                     "-v", "qits-maven-seed:/usr/share/nginx/html/artifacts/maven/maven:ro",
                                     "nginx:alpine"),
                             "the temporary maven registry did not start");
@@ -772,10 +770,6 @@ public class SeedPhases {
                                 "--network", Boot.NETWORK,
                                 // SEED-ONLY, and the platform does not take it over: the deployed
                                 // mirror publishes nothing, and the host dials
-                                // mirror.<env>.localhost through the edge. What needs a port here
-                                // is the seed image builds, which run --network host before an
-                                // edge exists.
-                                "-p", "127.0.0.1:" + boot.config.mirrorPort() + ":8080",
                                 // The seed's own credential, on the same terms as the idp's and the
                                 // bus's: this container starts before any deployer exists, so the
                                 // role and the database were created by seed-postgres and handed

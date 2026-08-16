@@ -37,8 +37,8 @@ class BootstrapPlanTest {
         // first address is dialled: every address this CLI uses is a wire alias on qits-net.
         // The wrapper comes before the sources because the sources are read out of it, and a cold
         // machine has none: that phase clones it from the org.
-        assertThat(ids(phases)).startsWith("preflight", "network", "wrapper", "sources",
-                "recorded-state", "maven-seed");
+        assertThat(ids(phases)).startsWith("preflight", "network", "bootstrap-ingress-prepare",
+                "bootstrap-ingress", "wrapper", "sources", "recorded-state", "maven-seed");
         assertThat(ids(phases)).endsWith("release-train-push", "summary");
         assertThat(phases).allSatisfy(phase -> assertThat(phase.title()).isNotBlank());
     }
@@ -92,8 +92,8 @@ class BootstrapPlanTest {
         assertThat(ids).containsSubsequence("seed-image-events", "seed-artifacts");
         // The daemon digest is written into the compose file and the deployer's extras, so it is
         // measured before either is generated.
-        assertThat(ids).containsSubsequence("ci-daemon", "idp-secrets", "bootstrap-ingress-prepare",
-                "compose-file", "bootstrap-ingress", "pd-extras", "seed-stack", "seed-health",
+        assertThat(ids).containsSubsequence("ci-daemon", "idp-secrets", "compose-file",
+                "pd-extras", "seed-stack", "seed-health",
                 "register-token");
         // postgres before every file that addresses it: the deployer refuses to boot without the
         // database, and seed-stack is what starts the deployer.

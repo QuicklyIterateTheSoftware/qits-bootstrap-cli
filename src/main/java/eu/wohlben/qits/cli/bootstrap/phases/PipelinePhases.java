@@ -971,6 +971,12 @@ public class PipelinePhases {
                         + "), waiting for the deployment (a cold native build — be patient)");
             }
             awaitDeployment(ctx, name, repo, sha, ref, baselineRowId, baselineRunId, !upToDate);
+            if ("platform-edge".equals(name)) {
+                // The real edge is healthy at the normal public door now. This is the one and only
+                // handoff: keeping the bootstrap edge through a worker retry is intentional;
+                // keeping it past this successor would leave two authorities for the same door.
+                boot.ingress.stop(ctx::log);
+            }
         });
     }
 

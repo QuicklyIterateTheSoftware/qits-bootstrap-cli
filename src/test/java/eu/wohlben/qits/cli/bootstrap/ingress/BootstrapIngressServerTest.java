@@ -35,6 +35,7 @@ class BootstrapIngressServerTest {
     @Test
     void streamsTheUiAndTranslatesCloneAndPushWithoutForwardingBasic() throws Exception {
         int uiPort = port();
+        int mavenPort = port();
         int gitPort = port();
         int edgePort = port();
         HttpServer ui = vertx.createHttpServer().requestHandler(request -> {
@@ -43,6 +44,11 @@ class BootstrapIngressServerTest {
             request.response().end();
         });
         listen(ui, uiPort);
+        HttpServer maven = vertx.createHttpServer().requestHandler(request -> {
+            assertThat(request.getHeader("Authorization")).isNull();
+            request.response().end("jar");
+        });
+        listen(maven, mavenPort);
         HttpServer git = vertx.createHttpServer().requestHandler(request -> {
             assertThat(request.path()).isEqualTo("/bootstrap-git/qits-bootstrap/" + suffix(request.path()));
             assertThat(request.getHeader("X-Qits-Bootstrap-Git-Capability")).isEqualTo("internal-capability");
@@ -52,7 +58,8 @@ class BootstrapIngressServerTest {
         listen(git, gitPort);
         ingress = new BootstrapIngressServer(vertx, new BootstrapIngressServer.Settings(edgePort,
                 "127.0.0.1", password(), "internal-capability", URI.create("http://127.0.0.1:" + uiPort),
-                URI.create("http://127.0.0.1:" + gitPort)));
+                URI.create("http://127.0.0.1:" + mavenPort),
+                URI.create("http://127.0.0.1:" + gitPort), null));
         ingress.start().toCompletionStage().toCompletableFuture().join();
 
         HttpResponse<String> sse = send(edgePort, "GET", "/events", "");
@@ -62,6 +69,11 @@ class BootstrapIngressServerTest {
 
         HttpResponse<String> publicState = send(edgePort, "GET", "/state.json", "", null);
         assertThat(publicState.statusCode()).isEqualTo(200);
+
+        HttpResponse<String> artifact = send(edgePort, "GET",
+                "/artifacts/maven/maven/eu/wohlben/qits/example/1/example-1.pom", "");
+        assertThat(artifact.statusCode()).isEqualTo(200);
+        assertThat(artifact.body()).isEqualTo("jar");
 
         HttpResponse<String> clone = send(edgePort, "GET", "/git/qits-bootstrap/info/refs?service=git-upload-pack", "");
         assertThat(clone.statusCode()).isEqualTo(200);

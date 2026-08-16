@@ -24,6 +24,7 @@ public final class BootstrapIngressLifecycle {
 
     public static final String CONTAINER = "qits-bootstrap-edge";
     private static final String LABEL = "qits.bootstrap.ingress";
+    private static final String STATE_FILE = ".qits-bootstrap-edge.env";
     private final Boot boot;
 
     public BootstrapIngressLifecycle(Boot boot) {
@@ -44,6 +45,11 @@ public final class BootstrapIngressLifecycle {
             throw new IllegalStateException("QITS_BOOTSTRAP_INGRESS_PUBLIC requires QITS_DOMAIN: "
                     + "the public ingress accepts exactly that Host header");
         }
+        Path file = Path.of(STATE_FILE).toAbsolutePath().normalize();
+        if (Files.isRegularFile(file) && restore(file, out)) {
+            boot.state.bootstrapIngressEnvFile = file;
+            return;
+        }
         String password = random();
         String capability = random();
         long expiresAt = Instant.now().plus(config.bootstrapIngressTtl()).getEpochSecond();
@@ -55,11 +61,12 @@ public final class BootstrapIngressLifecycle {
         boot.state.bootstrapIngressRepository = "qits-bootstrap";
         boot.state.bootstrapIngressRefPattern = "refs/heads/bootstrap/*";
         boot.state.bootstrapIngressExpiresAt = expiresAt;
-        Path file = Files.createTempFile(boot.state.wrapperDir, ".qits-bootstrap-ingress-", ".env");
+        Files.writeString(file, "", StandardCharsets.UTF_8);
         secure(file);
         boot.state.bootstrapIngressEnvFile = file;
-        out.accept("  bootstrap ingress capability prepared (expires " + Instant.ofEpochSecond(expiresAt)
-                + ", credential file " + file + ")");
+        boot.useBootstrapMavenRepository(mavenRepositoryUrl(), password);
+        out.accept("  bootstrap edge capability prepared (expires " + Instant.ofEpochSecond(expiresAt)
+                + ")");
     }
 
     /** Before the seed stack: start independently of the normal edge and its deployment configuration. */
@@ -68,14 +75,25 @@ public final class BootstrapIngressLifecycle {
             return;
         }
         reconcile(out);
+        if (boot.docker.allNames().contains(CONTAINER)) {
+            out.accept("  bootstrap edge retained across worker retry");
+            return;
+        }
         String image = boot.docker.selfImage();
         if (image == null) {
             throw new IllegalStateException("cannot identify this bootstrap payload image for bootstrap ingress");
         }
         writeEnvironment();
-        List<String> argv = new ArrayList<>(List.of("docker", "run", "-d", "--rm", "--name", CONTAINER,
+        // The supervisor starts before qits-net exists, so the edge attaches it after the worker's
+        // network phase. Its browser port is never published independently.
+        if (boot.docker.allNames().contains("qits-bootstrap-progress")
+                && !boot.docker.networksOf("qits-bootstrap-progress").contains(Boot.NETWORK)) {
+            boot.docker.exec(out, "network", "connect", Boot.NETWORK, "qits-bootstrap-progress");
+        }
+        List<String> argv = new ArrayList<>(List.of("docker", "run", "-d", "--name", CONTAINER,
                 "--label", LABEL + "=true", "--label", LABEL + ".expires-at="
-                        + boot.state.bootstrapIngressExpiresAt, "--network", Boot.NETWORK,
+                        + boot.state.bootstrapIngressExpiresAt, "--restart", "unless-stopped",
+                "--network", Boot.NETWORK,
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges"));
         if (boot.config.bootstrapIngressPublic()) {
             // The only ingress mount is the retained certificate pair, read-only. This container
@@ -145,7 +163,9 @@ public final class BootstrapIngressLifecycle {
                 "QITS_BOOTSTRAP_INGRESS_HOST=" + ingressHost(),
                 "QITS_BOOTSTRAP_INGRESS_PASSWORD=" + boot.state.bootstrapIngressPassword,
                 "QITS_BOOTSTRAP_INGRESS_GITHOST_CAPABILITY=" + boot.state.bootstrapIngressGitCapability,
-                "QITS_BOOTSTRAP_INGRESS_UI_UPSTREAM=http://qits-bootstrap-cli:" + boot.config.webPort(),
+                "QITS_BOOTSTRAP_INGRESS_EXPIRES_AT=" + boot.state.bootstrapIngressExpiresAt,
+                "QITS_BOOTSTRAP_INGRESS_UI_UPSTREAM=http://qits-bootstrap-progress:" + boot.config.webPort(),
+                "QITS_BOOTSTRAP_INGRESS_MAVEN_UPSTREAM=http://qits-maven-seed-http:80",
                 "QITS_BOOTSTRAP_INGRESS_GIT_UPSTREAM=http://"
                         + PlatformModel.wireAlias("githost", env) + ":8080");
         if (boot.config.bootstrapIngressPublic()) {
@@ -158,9 +178,40 @@ public final class BootstrapIngressLifecycle {
         secure(boot.state.bootstrapIngressEnvFile);
     }
 
+    /** Reuses the only credential the retained edge can still present on a retry. */
+    private boolean restore(Path file, Consumer<String> out) throws IOException {
+        java.util.Map<String, String> values = new java.util.HashMap<>();
+        for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+            int equals = line.indexOf('=');
+            if (equals > 0) values.put(line.substring(0, equals), line.substring(equals + 1));
+        }
+        String password = values.get("QITS_BOOTSTRAP_INGRESS_PASSWORD");
+        String capability = values.get("QITS_BOOTSTRAP_INGRESS_GITHOST_CAPABILITY");
+        String expiry = values.get("QITS_BOOTSTRAP_INGRESS_EXPIRES_AT");
+        if (password == null || capability == null || expiry == null) return false;
+        long expiresAt;
+        try { expiresAt = Long.parseLong(expiry); } catch (NumberFormatException bad) { return false; }
+        if (expiresAt <= Instant.now().getEpochSecond()) return false;
+        boot.state.bootstrapIngressPassword = password;
+        boot.state.bootstrapIngressGitCapability = capability;
+        boot.state.bootstrapIngressGitCapabilityHash = sha256(capability);
+        boot.state.bootstrapIngressRepository = "qits-bootstrap";
+        boot.state.bootstrapIngressRefPattern = "refs/heads/bootstrap/*";
+        boot.state.bootstrapIngressExpiresAt = expiresAt;
+        boot.useBootstrapMavenRepository(mavenRepositoryUrl(), password);
+        out.accept("  bootstrap edge capability retained (expires " + Instant.ofEpochSecond(expiresAt) + ")");
+        return true;
+    }
+
     private String ingressHost() {
         return boot.config.bootstrapIngressPublic()
                 ? boot.config.domain().orElseThrow() : boot.config.bootstrapIngressHost();
+    }
+
+    private String mavenRepositoryUrl() {
+        String authority = "bootstrap:" + boot.state.bootstrapIngressPassword + "@"
+                + boot.config.bootstrapIngressHost() + ":" + boot.config.bootstrapIngressPort();
+        return "http://" + authority + "/artifacts/maven/maven";
     }
 
     private static boolean expired(String value, long now) {

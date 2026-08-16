@@ -20,6 +20,7 @@ public class BootstrapIngressCommand implements Callable<Integer> {
                 required("QITS_BOOTSTRAP_INGRESS_PASSWORD"),
                 required("QITS_BOOTSTRAP_INGRESS_GITHOST_CAPABILITY"),
                 URI.create(required("QITS_BOOTSTRAP_INGRESS_UI_UPSTREAM")),
+                URI.create(required("QITS_BOOTSTRAP_INGRESS_MAVEN_UPSTREAM")),
                 URI.create(required("QITS_BOOTSTRAP_INGRESS_GIT_UPSTREAM")), tls());
         Vertx vertx = Vertx.vertx();
         BootstrapIngressServer server = new BootstrapIngressServer(vertx, settings);

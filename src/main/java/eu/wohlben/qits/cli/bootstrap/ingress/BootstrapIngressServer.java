@@ -27,10 +27,14 @@ public final class BootstrapIngressServer implements AutoCloseable {
             "x-forwarded-proto");
 
     public record Settings(int port, String host, String password, String githostCapability,
-                           URI uiUpstream, URI gitUpstream, Tls tls) {
+                           URI uiUpstream, URI mavenUpstream, URI gitUpstream, Tls tls) {
         public Settings(int port, String host, String password, String githostCapability,
                         URI uiUpstream, URI gitUpstream) {
-            this(port, host, password, githostCapability, uiUpstream, gitUpstream, null);
+            this(port, host, password, githostCapability, uiUpstream, null, gitUpstream, null);
+        }
+        public Settings(int port, String host, String password, String githostCapability,
+                        URI uiUpstream, URI gitUpstream, Tls tls) {
+            this(port, host, password, githostCapability, uiUpstream, null, gitUpstream, tls);
         }
         public Settings {
             if (port < 1 || port > 65535) {
@@ -103,7 +107,13 @@ public final class BootstrapIngressServer implements AutoCloseable {
             return;
         }
         URI upstream = decision.target() == BootstrapIngressPolicy.Target.UI
-                ? settings.uiUpstream() : settings.gitUpstream();
+                ? settings.uiUpstream() : decision.target() == BootstrapIngressPolicy.Target.MAVEN
+                ? settings.mavenUpstream() : settings.gitUpstream();
+        if (upstream == null) {
+            unavailable(incoming.response());
+            incoming.resume();
+            return;
+        }
         String path = decision.target() == BootstrapIngressPolicy.Target.GIT
                 ? "/bootstrap-git" + decision.path().substring("/git".length())
                 : decision.path();

@@ -48,6 +48,7 @@ public class Docker {
      * for one that MOST builds need is all of them — see {@link #withBuildArgs}.
      */
     private List<String> buildArgs = List.of();
+    private List<String> buildArgMasks = List.of();
 
     public Docker(ProcessRunner runner) {
         this.runner = runner;
@@ -67,6 +68,14 @@ public class Docker {
      */
     public Docker withBuildArgs(List<String> args) {
         this.buildArgs = List.copyOf(args);
+        this.buildArgMasks = List.of();
+        return this;
+    }
+
+    /** A bootstrap capability can be in a repository URL without becoming build output. */
+    public Docker withBuildArgs(List<String> args, List<String> masks) {
+        this.buildArgs = List.copyOf(args);
+        this.buildArgMasks = List.copyOf(masks);
         return this;
     }
 
@@ -416,9 +425,11 @@ public class Docker {
         command.addAll(buildArgs);
         command.addAll(extraArgs);
         command.add(context.toString());
-        return runner.run(Cmd.of(command)
+        Cmd cmd = Cmd.of(command)
                 .stdin(dockerfile)
-                .timeout(BUILD_TIMEOUT), out);
+                .timeout(BUILD_TIMEOUT);
+        buildArgMasks.forEach(cmd::mask);
+        return runner.run(cmd, out);
     }
 
     public ProcessResult build(List<String> args, Consumer<String> out) {
@@ -430,7 +441,9 @@ public class Docker {
                 "docker", "buildx", "build", "--builder", BUILDER, "--load"));
         command.addAll(buildArgs);
         command.addAll(args);
-        return runner.run(Cmd.of(command).timeout(BUILD_TIMEOUT), out);
+        Cmd cmd = Cmd.of(command).timeout(BUILD_TIMEOUT);
+        buildArgMasks.forEach(cmd::mask);
+        return runner.run(cmd, out);
     }
 
     /** A BuildKit container whose cgroup is the enforceable limit for every build it executes. */

@@ -20,12 +20,13 @@ four-hour cold start is no longer four hours of silence.
     │  … the running step's own output, live                                     │
     └────────────────────────────────────────────────────────────────────────────┘
 
-The same run is also served to a browser at `http://<host>:8480` while it runs — see
+The same run is also served at the bootstrap edge while it runs — see
 [The browser view](#the-browser-view).
 
 The progress endpoint is deliberately public: only `GET /`, `GET /state.json`, and `GET /events`
-(SSE) exist, and progress text is redacted before it is published. There is no catch-all proxy.
-Git stays separate and requires the run-scoped Basic capability.
+(SSE) exist, and progress text is redacted before it is published. The durable supervisor itself
+publishes no host port. The bootstrap edge also carries the seed Maven repository and bootstrap
+Git route, both behind its run-scoped capability; there is no catch-all proxy.
 
 ## Two modes
 
@@ -421,9 +422,9 @@ was. Exit codes: `0` all good, `1` something warned (a deployment that never lan
 
 ## The browser view
 
-The same run, in a browser, from phase 1:
+The same run, in a browser, through the bootstrap edge from its first phase on the network:
 
-    http://<server-ip-or-name>:8480
+    http://<bootstrap ingress host>:<bootstrap ingress port>
 
 It is printed on the first line of every run. The page is the terminal display in HTML — the phase
 list with the finished ones dimmed, the running one with its elapsed time counting, the wait line,
@@ -445,19 +446,12 @@ program whose whole job is that the platform is not up yet:
 | `GET /events` | the run as it happens: one `snapshot` on connect, then `phase`, `status`, `line`, `ev` (a platform event) and `done` as server-sent events, with a comment every 15s so nothing in the middle calls it dead |
 | `GET /state.json` | the same state in one answer, for `curl` |
 
-Knobs: `QITS_WEB_PORT` (default `8480` — 8080 is the edge and therefore the whole platform, 8081
-to 8083 belong to the seed containers and the break-glass, and 8090 is taken often enough to be a
-poor default), `QITS_WEB_HOST` (default `0.0.0.0` — on WSL2 the
-Windows-side browser cannot reliably reach a WSL-loopback bind; set `127.0.0.1` to keep the view
-off the LAN), and `QITS_WEB=0`, which turns it off entirely — no server, no port.
+`QITS_WEB_PORT` remains the supervisor's private port (default `8480`); it is not published.
+`QITS_WEB=0` turns the view and therefore its bootstrap-edge route off.
 
-**A port already in use stops the CLI before the boot starts**, with Quarkus saying which port it
-was. That is the one thing to know: a second run while one is going needs `QITS_WEB_PORT=8481` or
-`QITS_WEB=0`.
-
-The status port is deliberately independent of the platform route plane. It stays available while
-the edge catches up deployment events or the bootstrap payload has stopped, and it exposes no
-platform route or secret.
+The edge is retained when a worker fails or is retried. Its persisted, owner-readable capability is
+reused by the next worker, and it is removed only after the real `qits-platform-edge` deployment
+is healthy.
 
 ## What it does, in order
 
