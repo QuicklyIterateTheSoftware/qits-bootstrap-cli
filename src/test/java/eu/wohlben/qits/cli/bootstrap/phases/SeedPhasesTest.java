@@ -268,6 +268,20 @@ class SeedPhasesTest {
                 .containsEntry("WEBAUTHN_ORIGINS", "http://localhost:8080");
     }
 
+    @Test
+    void aPublicBootstrapEdgeKeepsSeedTlsPortsOutOfComposeButNotDeploymentExtras() {
+        Boot boot = new Boot(TestConfig.from(Map.of(
+                "QITS_DOMAIN", "wohlben.eu",
+                "QITS_BOOTSTRAP_INGRESS_PUBLIC", "true")),
+                new RunLog(temp.resolve("run.log")));
+
+        Map<String, String> tokens = new SeedPhases(boot).tokens();
+
+        assertThat(tokens).containsEntry("EDGE_SEED_TLS_PORTS", "");
+        assertThat(tokens.get("EDGE_TLS_ARGS")).contains("publishes[1]=80:8080")
+                .contains("publishes[2]=443:8443");
+    }
+
     private static final List<String> TAGS = List.of("2026.812.153438", "2026.811.090000");
 
     /**

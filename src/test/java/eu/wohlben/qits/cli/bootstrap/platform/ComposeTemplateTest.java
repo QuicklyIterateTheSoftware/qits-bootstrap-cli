@@ -153,7 +153,7 @@ class ComposeTemplateTest {
         // The domain fragments are filled even when they are empty: a leftover placeholder would
         // reach the file as literal text and compose would refuse it.
         assertThat(compose).doesNotContain("${LETSENCRYPT_VOLUME}")
-                .doesNotContain("${EDGE_TLS_PORTS}")
+                .doesNotContain("${EDGE_SEED_TLS_PORTS}")
                 .doesNotContain("${EDGE_TLS}");
         assertThat(compose).doesNotContain("${ENV_NAME}");
         assertThat(compose).doesNotContain("${ENV_KEY}");

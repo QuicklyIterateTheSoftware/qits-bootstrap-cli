@@ -941,6 +941,13 @@ public class PipelinePhases {
                     (boot.config.shipMains() ? "" : "+") + sha + ":refs/heads/" + ref);
             boolean upToDate = upToDate(push);
 
+            if ("platform-edge".equals(name)) {
+                // Both edges need the same host ports. Release them only after the real edge's
+                // source and deploy ref are safely in githost, but before its service is created.
+                // The cutover is intentionally a short closed interval, never two authorities.
+                boot.ingress.stop(ctx::log);
+            }
+
             if (alreadyLive(ctx, name, repo, sha)) {
                 ctx.note("already live at " + sha.substring(0, 7));
                 return;
@@ -971,12 +978,6 @@ public class PipelinePhases {
                         + "), waiting for the deployment (a cold native build — be patient)");
             }
             awaitDeployment(ctx, name, repo, sha, ref, baselineRowId, baselineRunId, !upToDate);
-            if ("platform-edge".equals(name)) {
-                // The real edge is healthy at the normal public door now. This is the one and only
-                // handoff: keeping the bootstrap edge through a worker retry is intentional;
-                // keeping it past this successor would leave two authorities for the same door.
-                boot.ingress.stop(ctx::log);
-            }
         });
     }
 

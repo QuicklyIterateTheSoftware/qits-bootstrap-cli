@@ -2146,6 +2146,12 @@ public class SeedPhases {
         // What QITS_DOMAIN adds, and nothing when there is none: every one of these is empty then,
         // so both files render exactly as a platform with no public names always rendered them.
         values.putAll(DomainTokens.of(DomainName.of(boot.config)));
+        // While the disposable edge owns the public domain, the seed edge remains an internal
+        // service. The deployment extras deliberately keep 80/443 so the real edge can take them
+        // at the explicit handoff near the end of the deployment train.
+        if (boot.config.bootstrapIngress() && boot.config.bootstrapIngressPublic()) {
+            values.put("EDGE_SEED_TLS_PORTS", "");
+        }
         return values;
     }
 

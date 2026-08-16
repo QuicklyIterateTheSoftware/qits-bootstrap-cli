@@ -37,7 +37,7 @@ public final class DomainTokens {
         // and nothing here writes them. qits-platform-dns used to be given its own SOA and NS
         // identity here.
         values.put("LETSENCRYPT_VOLUME", domain.isPresent() ? LETSENCRYPT_VOLUME : "");
-        values.put("EDGE_TLS_PORTS", domain.isPresent() ? EDGE_TLS_PORTS : "");
+        values.put("EDGE_SEED_TLS_PORTS", domain.isPresent() ? EDGE_TLS_PORTS : "");
         values.put("EDGE_TLS", domain.isPresent() ? EDGE_TLS : "");
         values.put("EDGE_TLS_NOTE", domain.isPresent() ? EDGE_TLS_NOTE : "");
         values.put("EDGE_TLS_ARGS", domain.isPresent() ? EDGE_TLS_ARGS : "");

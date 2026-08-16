@@ -352,7 +352,7 @@ public final class ComposeTemplate {
                   - target: 8080
                     published: ${PORT}
                     protocol: tcp
-                    mode: ingress${EDGE_TLS_PORTS}
+                    mode: ingress${EDGE_SEED_TLS_PORTS}
                 environment:
                   # The whole routing surface: which environments exist, and which one an unlabelled host
                   # (localhost, an IP) resolves to. The default MUST be a member of the list — the process
