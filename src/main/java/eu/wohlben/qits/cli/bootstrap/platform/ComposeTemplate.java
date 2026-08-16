@@ -1622,6 +1622,11 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_CLIENT_GITHOST_CLIENT_ID=${ENV_NAME}-qits-workspaces
             qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_CLIENT_GITHOST_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-githost
             qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_CLIENT_GITHOST_CREDENTIALS_SECRET=${IDP_SECRET_WORKSPACES}
+            qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_CLIENT_PROJECTS_CLIENT_ENABLED=${MACHINE_CLIENT}
+            qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_CLIENT_PROJECTS_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_CLIENT_PROJECTS_CLIENT_ID=${ENV_NAME}-qits-workspaces
+            qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_CLIENT_PROJECTS_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-projects
+            qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_CLIENT_PROJECTS_CREDENTIALS_SECRET=${IDP_SECRET_WORKSPACES}
             qits.platform.deployments.extras.qits-workspaces.env.QITS_PROJECTS_URL=http://${ENV_NAME}-qits-projects:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_GITHOST_AUDIENCE=${ENV_NAME}-qits-githost
