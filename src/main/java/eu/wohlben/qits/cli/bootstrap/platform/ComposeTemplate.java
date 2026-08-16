@@ -239,6 +239,12 @@ public final class ComposeTemplate {
                   # this file is spelled: an address a deployment inherits silently is one nobody knows to
                   # change. Consumers below carry the same string; a mismatch is rejected at validation.
                   QITS_IDP_ISSUER: ${IDP}
+                  # The sole WebAuthn origin and the same strict return-host list the edge reads.
+                  # In domain mode the cookie shares only this parent domain; locally its empty
+                  # value means host-only, because localhost has no parent domain.
+                  QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN: ${PUBLIC_ORIGIN}
+                  QITS_IDP_BROWSER_SSO_BROWSER_HOSTS: "${BROWSER_HOSTS}"
+                  QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN: "${SESSION_COOKIE_DOMAIN}"
                   # WHICH CLIENTS EXIST. The key REPLACES the shipped list rather than extending it, and an
                   # id that is not on it is unknown — invalid_client, with nothing to say it was a typo. It is
                   # spelled because a client id is a wire alias now, so it moves with the environment name.
@@ -306,7 +312,7 @@ public final class ComposeTemplate {
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_DEPLOYMENTS_AUDIENCES: "${IDP_AUDIENCES}"
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_CONTAINERS_AUDIENCES: "${IDP_AUDIENCES}"
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_BOOTSTRAP_ROLES: "qits:system,qits-platform:system"
-                  QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_ROLES: "qits:system,qits-platform:system"
+                  QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_ROLES: "qits:system,qits-platform:system,qits:admin"
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_ROLES: "qits:system,qits-platform:system"
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_ROLES: "qits:system,qits-platform:system"
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_ROLES: "qits:system,qits-platform:system"
@@ -415,6 +421,11 @@ public final class ComposeTemplate {
                   QITS_EDGE_SESSIONS_ENABLED: "true"
                   QITS_EDGE_SESSIONS_CLIENT_ID: ${ENV_NAME}-qits-edge
                   QITS_EDGE_SESSIONS_CLIENT_SECRET: "${IDP_SECRET_EDGE}"
+                  # One WebAuthn origin, then a strict return-host allow-list. The apex is where
+                  # login happens; the environment host is the only sibling a person may return
+                  # to. Registry, mirror and git host are deliberately absent: they are machines.
+                  QITS_EDGE_SESSIONS_CANONICAL_ORIGIN: ${PUBLIC_ORIGIN}
+                  QITS_EDGE_SESSIONS_BROWSER_HOSTS: "${BROWSER_HOSTS}"
                   QITS_RESOURCE_EDGE_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_platform_edge
                   QITS_RESOURCE_EDGE_USERNAME: qits_platform_edge
                   QITS_RESOURCE_EDGE_PASSWORD: "${PG_PLATFORM_EDGE_PASSWORD}"
@@ -1187,6 +1198,8 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_ENABLED=true
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_CLIENT_ID=${ENV_NAME}-qits-edge
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_CLIENT_SECRET=${IDP_SECRET_EDGE}
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_CANONICAL_ORIGIN=${PUBLIC_ORIGIN}
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_BROWSER_HOSTS=${BROWSER_HOSTS}
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080${EDGE_TLS_ARGS}
             # THE HOSTED HALF OF THE BYTE PLANE, and a stateless deployment: metadata and blob bytes are
             # both rows in qits_artifacts, so there is no mount and no /data left to give it.
@@ -1471,6 +1484,12 @@ public final class ComposeTemplate {
             # shipped list rather than extending it — and every id in them is a wire alias, so they move with
             # the environment name while the image's defaults cannot.
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_ISSUER=${IDP}
+            # Browser SSO is configured in both halves. The IdP is the authority that validates a
+            # return target after the SPA signs in; the edge uses the identical values to construct
+            # the initial canonical-login redirect.
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN=${PUBLIC_ORIGIN}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_BROWSER_SSO_BROWSER_HOSTS=${BROWSER_HOSTS}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN=${SESSION_COOKIE_DOMAIN}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENTS=${IDP_CLIENTS}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_BOOTSTRAP_SECRET=${IDP_SECRET_BOOTSTRAP}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_SECRET=${IDP_SECRET_CI}
@@ -1493,7 +1512,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_DEPLOYMENTS_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_CONTAINERS_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_BOOTSTRAP_ROLES=qits:system,qits-platform:system
-            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_ROLES=qits:system,qits-platform:system
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_CI_ROLES=qits:system,qits-platform:system,qits:admin
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_ROLES=qits:system,qits-platform:system
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_ROLES=qits:system,qits-platform:system
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_ROLES=qits:system,qits-platform:system
@@ -1551,6 +1570,9 @@ public final class ComposeTemplate {
             # control of that daemon, and only the orchestrator is granted it now.
             qits.platform.deployments.extras.qits-projects.mounts[0]=volume:qits-projects-data:/data
             qits.platform.deployments.extras.qits-projects.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
+            qits.platform.deployments.extras.qits-projects.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_CLIENT}
+            qits.platform.deployments.extras.qits-projects.env.QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-projects
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT}
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL=${IDP}
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_CLIENT_ID=${ENV_NAME}-qits-projects
@@ -1566,6 +1588,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-projects.env.QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN}
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_OWN_HOST=${ENV_NAME}-qits-projects
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_AGENT_GIT_BASE=http://${ENV_NAME}-qits-githost:8080/git
+            qits.platform.deployments.extras.qits-projects.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
             qits.platform.deployments.extras.qits-projects.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The volume stays for the same reason qits-projects' does: /data is this service's own tree of
             # per-repository files, not a database. Both its stores — its own and the eventstream outbox —

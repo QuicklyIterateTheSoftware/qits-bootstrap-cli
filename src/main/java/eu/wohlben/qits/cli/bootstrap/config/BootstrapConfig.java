@@ -523,6 +523,22 @@ public interface BootstrapConfig {
     }
 
     /**
+     * The exact browser authorities a completed IdP ceremony may return to. The domain's apex is
+     * the canonical WebAuthn origin and the one environment host is its browser-facing sibling;
+     * direct app hosts remain absent because they are machine planes.
+     */
+    default String browserSsoHosts() {
+        return DomainName.of(this)
+                .map(domain -> domain + "," + envName() + "." + domain)
+                .orElse("localhost:" + port());
+    }
+
+    /** A public platform shares its session with named browser hosts; localhost stays host-only. */
+    default String browserSsoCookieDomain() {
+        return DomainName.of(this).orElse("");
+    }
+
+    /**
      * <b>Where an image built by THIS BOOTSTRAP resolves {@code eu.wohlben.qits} from, and it is the
      * seed's loopback port on purpose.</b>
      * <p>

@@ -312,14 +312,12 @@ that, each measured on this host rather than assumed:
   prints the one-liner that asks for one. **The platform's postgres publishes nothing either**: its one consumer was this
   CLI's cold-boot DDL, which dials the wire alias on 5432 like everything else. An operator with a
   `psql` goes in through `docker exec`. No publish binds loopback — neither mode has an ip field.
-- **User sessions are seeded DARK.** Both generated files carry the edge's own idp client
-  (`<env>-qits-edge`, as `QITS_EDGE_SESSIONS_CLIENT_ID` / `_SECRET`) and pin
-  `qits.edge.sessions.enabled` to **false**, so browser traffic is exactly what it always was until
-  the rollout flips that one value. The idp is told which host a passkey binds to
-  (`QITS_IDP_WEBAUTHN_RP_ID` / `_ORIGINS`: localhost and the edge's port, or the domain over TLS),
-  and the boot mints the one-time token the first account registers with. The gateway stays on
-  `QITS_VARIANT=local`, and the order is not free: a gateway reading identity headers before the
-  edge injects any would refuse every request.
+- **User sessions use canonical apex SSO.** Both generated formats seed the edge's own IdP client
+  (`<env>-qits-edge`) and enable the session gate. They configure one WebAuthn/login origin —
+  `http://localhost:<port>` locally or `https://<domain>` in domain mode — plus an exact return-host
+  allow-list (the apex and `<env>.<domain>`). Domain mode sets the parent cookie domain; the edge
+  strips that named cookie before proxying to registry, mirror, or git host. The boot mints the
+  one-time token the first account registers with.
 - **A rerun deploys a SUBSET by leaving services out of the file**, because `docker stack deploy`
   takes no service list. Nothing is pruned — what the file omits is the deployer's — and a seed
   service whose application the deployer has taken over is removed outright: swarm restarts a task
