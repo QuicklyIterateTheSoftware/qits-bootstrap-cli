@@ -694,11 +694,11 @@ class ComposeTemplateTest {
                 .doesNotContain("QITS_ARTIFACTS_URL");
         assertThat(extras("qits-workspaces")).contains("env.QITS_GITHOST_URL=" + host)
                 .doesNotContain("QITS_ARTIFACTS_URL");
-        // The deployer's OWN address for the same host — a plain property, because this file is its
-        // configuration. It goes through the edge's stable alias: a qits-githost cutover removes the
-        // direct service while this read is still pending, but must not remove its own source URL.
+        // The deployer's OWN trusted address for the same host — a plain property, because this
+        // file is its configuration. Specs are read before the runtime mutation begins, so this
+        // remains available for qits-githost's own cutover without crossing the public edge.
         assertThat(ComposeTemplate.extras(tokens()))
-                .contains("\nqits.platform.deployments.git-host-url=http://githost.prod.internal:8080\n");
+                .contains("\nqits.platform.deployments.git-host-url=" + host + "\n");
         // The KEYS, not the comments: the git host's own block says in prose where its clone url
         // used to be, and that sentence is why the reader knows what moved.
         assertThat(extrasKeys()).allSatisfy(line -> assertThat(line)

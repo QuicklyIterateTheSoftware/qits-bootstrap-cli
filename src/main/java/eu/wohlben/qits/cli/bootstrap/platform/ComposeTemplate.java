@@ -1138,10 +1138,11 @@ public final class ComposeTemplate {
             # this file is the deployer's own configuration. The image still ships the pre-split
             # qits-platform-artifacts, a name that resolves to nothing; the spec read is how a green build
             # becomes a deployment, so a deployer without this line deploys nothing and says only "timeout".
-            # Read deployment specs through the edge's stable Git vhost. In particular, deploying
-            # qits-githost replaces its service before the deployer has read that commit's spec;
-            # addressing the service directly makes the deployment destroy its own source URL.
-            qits.platform.deployments.git-host-url=http://githost.${ENV_NAME}.internal:8080
+            # This is a trusted service-to-service read. The deployer reads and parses the spec
+            # before applying any runtime mutation, so even qits-githost's own cutover can use the
+            # direct authenticated route. The public edge correctly rejects forwarded identity
+            # headers from arbitrary network peers and must not be used for this trust boundary.
+            qits.platform.deployments.git-host-url=http://${ENV_NAME}-qits-githost:8080
             # THE HOST PORT IS THE EDGE'S, AND IT IS THE ONLY HTTP ONE. Neither do the three byte services
             # below publish a port — they are reached through this process
             # under names of their own. Publishing one port from two applications is a bind conflict that
