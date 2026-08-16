@@ -1599,14 +1599,15 @@ public final class ComposeTemplate {
             # qits.artifacts.url, which named one service back when one service was both; the old key is
             # gone from the image, so passing it configures nothing at all. QITS_EVENTS_URL is where the
             # outbox drains to.
-            # QITS_WORKSPACE_GIT_HOST (qits.workspace.git-host) is the address a WORKSPACE container uses to
-            # reach this platform — git clone/push, OTLP, the agent's MCP servers and the daemon control
-            # socket are all composed as http://<this>:8080/... It must be spelled, because the sentinel
+            # QITS_WORKSPACE_GIT_HOST is the historical name of the host used for the workspace-daemon
+            # control socket. Git has its own explicit QITS_WORKSPACE_CONTAINER_GIT_URL below, so this must
+            # name qits-workspaces itself; pointing it at qits-githost makes every daemon dial
+            # /workspaces/daemon/<id> on the wrong service and provisioning times out. It must be spelled,
+            # because the sentinel
             # "auto" is wrong on this topology and wrong silently: auto detects WSL2 and answers the primary
             # LAN IPv4, which is the address of the machine when qits runs ON the host — but qits-workspaces
             # runs in a container here, so what it measures is its OWN container's address and every
-            # container->platform URL 404s. The tier's githost alias is the fixed internal target for
-            # workspace Git traffic; public routing remains the edge's job.
+            # container->platform URL 404s.
             # NO SOCKET AND NO SOCKET GROUP any more: workspace containers start through
             # qits-containers (orchestration round 2), so this service holds a machine-token
             # client instead of the host daemon.
@@ -1632,7 +1633,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-workspaces.env.QITS_GITHOST_AUDIENCE=${ENV_NAME}-qits-githost
             qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_CONTAINER_GIT_URL=http://githost.${ENV_NAME}.internal:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_EVENTS_URL=http://${ENV_NAME}-qits-events:8080
-            qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_GIT_HOST=${ENV_NAME}-qits-githost
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_GIT_HOST=${ENV_NAME}-qits-workspaces
             qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/${ENV_NAME}
             qits.platform.deployments.extras.qits-workspaces.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The reading surface over qits-artifacts' docs repository. Two variables and no volume, because
