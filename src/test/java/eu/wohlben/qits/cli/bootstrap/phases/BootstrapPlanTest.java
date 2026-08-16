@@ -39,7 +39,9 @@ class BootstrapPlanTest {
         // machine has none: that phase clones it from the org.
         assertThat(ids(phases)).startsWith("preflight", "network", "bootstrap-ingress-prepare",
                 "bootstrap-ingress", "wrapper", "sources", "recorded-state", "maven-seed");
-        assertThat(ids(phases)).endsWith("release-train-push", "summary");
+        assertThat(ids(phases)).containsSubsequence(
+                "git-repos", "release-train-push", "preseed");
+        assertThat(ids(phases)).endsWith("deploy-deployments", "summary");
         assertThat(phases).allSatisfy(phase -> assertThat(phase.title()).isNotBlank());
     }
 

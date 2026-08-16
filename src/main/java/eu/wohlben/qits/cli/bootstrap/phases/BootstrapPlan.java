@@ -156,6 +156,10 @@ public final class BootstrapPlan {
         domain.ifPresent(name -> phases.add(seed.edgeCertificate(name)));
         phases.add(pipeline.daemonPublish());
         phases.add(pipeline.gitRepositories());
+        // Every deployable's gitlinks must be advertised before CI clones it. In particular,
+        // qits-ci points at qits-spa-ci; pushing that SPA after the deployment train makes the
+        // githost correctly refuse CI's request for an unadvertised object.
+        phases.add(pipeline.releaseTrainPush());
         phases.add(pipeline.releaseTrainPreseed());
         for (String publisher : PlatformModel.RELEASE_PUBLISHERS) {
             phases.add(pipeline.releaseReplay(publisher));
@@ -164,7 +168,6 @@ public final class BootstrapPlan {
         for (String deployable : PlatformModel.DEPLOYABLES) {
             phases.add(pipeline.deploy(deployable));
         }
-        phases.add(pipeline.releaseTrainPush());
         phases.add(pipeline.summary());
 
         return List.copyOf(phases);
