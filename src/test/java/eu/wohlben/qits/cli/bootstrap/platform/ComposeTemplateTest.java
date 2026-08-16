@@ -695,11 +695,10 @@ class ComposeTemplateTest {
         assertThat(extras("qits-workspaces")).contains("env.QITS_GITHOST_URL=" + host)
                 .doesNotContain("QITS_ARTIFACTS_URL");
         // The deployer's OWN address for the same host — a plain property, because this file is its
-        // configuration. Its shipped default is the pre-split qits-platform-artifacts, and this read
-        // is how a green build becomes a deployment: without the line every build-succeeded event
-        // dies on a connect timeout and nothing deploys.
+        // configuration. It goes through the edge's stable alias: a qits-githost cutover removes the
+        // direct service while this read is still pending, but must not remove its own source URL.
         assertThat(ComposeTemplate.extras(tokens()))
-                .contains("\nqits.platform.deployments.git-host-url=" + host + "\n");
+                .contains("\nqits.platform.deployments.git-host-url=http://githost.prod.internal:8080\n");
         // The KEYS, not the comments: the git host's own block says in prose where its clone url
         // used to be, and that sentence is why the reader knows what moved.
         assertThat(extrasKeys()).allSatisfy(line -> assertThat(line)

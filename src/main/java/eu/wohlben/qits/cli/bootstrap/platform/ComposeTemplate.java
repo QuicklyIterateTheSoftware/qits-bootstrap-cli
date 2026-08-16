@@ -841,6 +841,7 @@ public final class ComposeTemplate {
                   QITS_CI_NETWORK: qits-net
                   QITS_CI_CONCURRENT_BUILDS: "2"
                   QITS_CI_MEMORY_LIMIT: 4g
+                  QITS_CI_CPUS: "4"
                   # WHERE STEP CONTAINERS COME FROM NOW. ci starts nothing itself: it asks this tier's
                   # orchestrator, which is the only service on the host holding a docker socket. The
                   # image ships the unqualified qits-containers:8080, which resolves to nothing here —
@@ -1137,7 +1138,10 @@ public final class ComposeTemplate {
             # this file is the deployer's own configuration. The image still ships the pre-split
             # qits-platform-artifacts, a name that resolves to nothing; the spec read is how a green build
             # becomes a deployment, so a deployer without this line deploys nothing and says only "timeout".
-            qits.platform.deployments.git-host-url=http://${ENV_NAME}-qits-githost:8080
+            # Read deployment specs through the edge's stable Git vhost. In particular, deploying
+            # qits-githost replaces its service before the deployer has read that commit's spec;
+            # addressing the service directly makes the deployment destroy its own source URL.
+            qits.platform.deployments.git-host-url=http://githost.${ENV_NAME}.internal:8080
             # THE HOST PORT IS THE EDGE'S, AND IT IS THE ONLY HTTP ONE. Neither do the three byte services
             # below publish a port — they are reached through this process
             # under names of their own. Publishing one port from two applications is a bind conflict that
@@ -1315,6 +1319,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_NETWORK=qits-net
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONCURRENT_BUILDS=2
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_MEMORY_LIMIT=4g
+            qits.platform.deployments.extras.qits-ci.env.QITS_CI_CPUS=4
             qits.platform.deployments.extras.qits-ci.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_REGISTRY_HOST=registry.${ENV_NAME}.localhost:${PORT}
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_DOCKER_AUTH_HOSTS=registry.${ENV_NAME}.localhost:${PORT},mirror.${ENV_NAME}.localhost:${PORT}
