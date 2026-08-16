@@ -45,7 +45,7 @@ public final class BootstrapIngressLifecycle {
             throw new IllegalStateException("QITS_BOOTSTRAP_INGRESS_PUBLIC requires QITS_DOMAIN: "
                     + "the public ingress accepts exactly that Host header");
         }
-        Path file = Path.of(STATE_FILE).toAbsolutePath().normalize();
+        Path file = stateFile();
         if (Files.isRegularFile(file) && restore(file, out)) {
             boot.state.bootstrapIngressEnvFile = file;
             return;
@@ -206,6 +206,22 @@ public final class BootstrapIngressLifecycle {
     private String ingressHost() {
         return boot.config.bootstrapIngressPublic()
                 ? boot.config.domain().orElseThrow() : boot.config.bootstrapIngressHost();
+    }
+
+    /** Keep the capability on the same durable host mount as the supervisor journal. */
+    private static Path stateFile() {
+        return stateFile(System.getenv("QITS_PROGRESS_FILE"));
+    }
+
+    static Path stateFile(String progress) {
+        if (progress != null && !progress.isBlank()) {
+            Path journal = Path.of(progress).toAbsolutePath().normalize();
+            Path parent = journal.getParent();
+            if (parent != null) {
+                return parent.resolve(STATE_FILE);
+            }
+        }
+        return Path.of(STATE_FILE).toAbsolutePath().normalize();
     }
 
     String mavenRepositoryUrl() {

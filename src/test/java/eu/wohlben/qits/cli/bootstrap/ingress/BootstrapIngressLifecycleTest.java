@@ -36,4 +36,11 @@ class BootstrapIngressLifecycleTest {
         assertThat(new BootstrapIngressLifecycle(boot).mavenRepositoryUrl())
                 .isEqualTo("http://localhost:8481/artifacts/maven/maven");
     }
+
+    @Test
+    void capabilityStateLivesBesideTheDurableProgressJournal() {
+        assertThat(BootstrapIngressLifecycle.stateFile(
+                "/root/qits/.qits-bootstrap-progress.json"))
+                .isEqualTo(Path.of("/root/qits/.qits-bootstrap-edge.env"));
+    }
 }
