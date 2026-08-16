@@ -47,6 +47,8 @@ class BootstrapConfigTest {
         // No default value, because the default is DERIVED: hostmaster@<domain>, the same role the
         // zone's SOA already names.
         assertThat(config.acmeEmail()).isEmpty();
+        assertThat(config.dnsHetznerToken()).isEmpty();
+        assertThat(config.dnsHetznerSecret()).isEmpty();
         assertThat(config.pushToken()).isEqualTo("local-dev");
         assertThat(config.machineAuth()).isTrue();
         assertThat(config.skipBuild()).isFalse();

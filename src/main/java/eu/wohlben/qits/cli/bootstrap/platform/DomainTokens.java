@@ -38,17 +38,23 @@ public final class DomainTokens {
     /** The complete edge runtime contract for an externally served domain. */
     public static Map<String, String> of(Optional<String> domain, String mode, String email,
             String hetznerToken) {
+        return of(domain, mode, email, hetznerToken, Optional.empty());
+    }
+
+    /** The complete edge runtime contract, optionally reusing an existing Swarm secret. */
+    public static Map<String, String> of(Optional<String> domain, String mode, String email,
+            String hetznerToken, Optional<String> existingSecret) {
         Map<String, String> values = new LinkedHashMap<>();
+        String secret = existingSecret.map(String::strip).filter(value -> !value.isEmpty())
+                .orElseGet(() -> secretName(hetznerToken));
         // NOTE: this could be a hook to register the domain's dns records with an external dns
         // provider. Domain mode assumes dns is configured OUTSIDE this platform now: the names it
         // serves have to resolve to QITS_PUBLIC_IP before the certificate order can be answered,
         // and nothing here writes them. qits-platform-dns used to be given its own SOA and NS
         // identity here.
-        values.put("LETSENCRYPT_VOLUME", domain
-                .map(ignored -> letsEncryptVolume(secretName(hetznerToken))).orElse(""));
+        values.put("LETSENCRYPT_VOLUME", domain.map(ignored -> letsEncryptVolume(secret)).orElse(""));
         values.put("EDGE_SEED_TLS_PORTS", domain.isPresent() ? EDGE_TLS_PORTS : "");
-        values.put("EDGE_TLS", domain.map(value -> edgeTls(value, mode, email,
-                secretName(hetznerToken))).orElse(""));
+        values.put("EDGE_TLS", domain.map(value -> edgeTls(value, mode, email, secret)).orElse(""));
         values.put("EDGE_TLS_NOTE", domain.isPresent() ? EDGE_TLS_NOTE : "");
         values.put("EDGE_TLS_ARGS", domain.map(value -> edgeTlsArgs(value, mode, email)).orElse(""));
         return values;

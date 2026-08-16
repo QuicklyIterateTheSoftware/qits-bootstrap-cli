@@ -167,6 +167,9 @@ public interface BootstrapConfig {
     /** Hetzner Cloud DNS token used only by the edge's DNS-01 certificate manager. */
     Optional<String> dnsHetznerToken();
 
+    /** Existing Swarm secret containing the Hetzner token, for repeat bootstraps. */
+    Optional<String> dnsHetznerSecret();
+
     /** Legacy HTTP-01 helper URL, retained only while old bootstrap compatibility code compiles. */
     default String edgeLetsEncryptUrl() {
         return "http://qits-platform-edge:9000/q/lets-encrypt";

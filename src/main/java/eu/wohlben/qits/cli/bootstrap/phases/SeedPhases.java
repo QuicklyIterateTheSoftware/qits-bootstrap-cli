@@ -1782,6 +1782,15 @@ public class SeedPhases {
             if (Acme.mode(boot.config) == Acme.Mode.OFF) {
                 ctx.skip("QITS_ACME_MODE=off — no DNS credential is needed");
             }
+            Optional<String> configuredSecret = boot.config.dnsHetznerSecret()
+                    .map(String::strip).filter(value -> !value.isEmpty());
+            if (configuredSecret.isPresent()) {
+                String name = configuredSecret.orElseThrow();
+                Boot.must(boot.docker.run(Cmd.of("docker", "secret", "inspect", name), null),
+                        "configured edge DNS Swarm secret " + name + " does not exist");
+                ctx.note("kept " + name);
+                return;
+            }
             String token = boot.config.dnsHetznerToken()
                     .map(String::strip)
                     .filter(value -> !value.isEmpty())
@@ -2181,7 +2190,7 @@ public class SeedPhases {
         // so both files render exactly as a platform with no public names always rendered them.
         values.putAll(DomainTokens.of(DomainName.of(boot.config), Acme.mode(boot.config).word(),
                 DomainName.of(boot.config).map(domain -> Acme.email(boot.config, domain)).orElse(""),
-                boot.config.dnsHetznerToken().orElse("")));
+                boot.config.dnsHetznerToken().orElse(""), boot.config.dnsHetznerSecret()));
         // While the disposable edge owns the public domain, the seed edge remains an internal
         // service. The deployment extras deliberately keep 80/443 so the real edge can take them
         // at the explicit handoff near the end of the deployment train.

@@ -1419,6 +1419,19 @@ class ComposeTemplateTest {
     }
 
     @Test
+    void aDomainCanReuseAnExistingDnsSecret() {
+        String existing = "qits-dns-hetzner-token-v1";
+        Map<String, String> values = tokens(DOMAIN);
+        values.putAll(DomainTokens.of(Optional.of(DOMAIN), "staging",
+                "hostmaster@" + DOMAIN, "", Optional.of(existing)));
+
+        String compose = ComposeTemplate.compose(values);
+        assertThat(compose).contains("secrets:\n  " + existing + ":\n    external: true")
+                .contains("- source: " + existing)
+                .doesNotContain("qits-dns-hetzner-token-e3b0c44298fc");
+    }
+
+    @Test
     void theEnvironmentNameReachesEveryGeneratedAddress() {
         Map<String, String> other = tokens();
         other.put("ENV_NAME", "preprod");
