@@ -621,38 +621,12 @@ public class SeedPhases {
         return new Phase("maven-seed",
                 "seed the qits libraries for the first byte-plane image builds",
                 ctx -> {
-                    // Version-agnostic on purpose: the checkouts publish their real calver, so a
-                    // pinned-version probe never matches and a rerun collides with whoever holds
-                    // the registry port. Metadata present = qits-containers-client is served,
-                    // whatever version — and it is the LAST entry of SEED_LIBRARIES, deployed by
-                    // the last line of the one script below, so its presence answers for the whole
-                    // set. The sentinel has to be the last entry and nothing else: an earlier one
-                    // is served halfway through a run that then died, and the probe would skip a
-                    // phase that never finished.
-                    //
-                    // TWO ADDRESSES, because in-network there are two servers rather than one
-                    // port. On the host both answered 127.0.0.1:REGISTRY_PORT, so one probe found
-                    // whoever held it. Here the platform's own store answers under its wire alias
-                    // and a previous run's temporary registry under its container name, and either
-                    // one means this phase has nothing left to do.
-                    if (boot.http.get(boot.config.artifactsUrl() + SEED_SENTINEL_METADATA,
-                                    Map.of()).ok()
-                            || boot.http.get(AUTH_SEED_URL + SEED_SENTINEL_METADATA, Map.of()).ok()) {
-                        ctx.skip("qits-containers-client is already served");
-                    }
-                    // A store that is already up makes this phase pointless: it IS the Maven
-                    // registry the seed builds resolve against, and every one of these libraries is
-                    // published into it by every bootstrap that gets past phase 10. If a store this
-                    // far along somehow has not got one, the seed build below fails by name rather
-                    // than resolving nothing quietly.
-                    //
-                    // It is also the older half of a bind conflict that is gone: while the platform
-                    // published the registry port, a temporary registry beside a running store
-                    // could not bind at all. The store publishes nothing now — the host reaches it
-                    // through the edge — so the port is free either way, and this is a skip on
-                    // merit rather than on a bind.
-                    storeAlreadyServing().ifPresent(who ->
-                            ctx.skip(who + " is the registry — it serves these libraries already"));
+                    // Rebuild this small file repository on every worker start. The host-side seed
+                    // image builds always resolve through localhost:REGISTRY_PORT, while the real
+                    // artifacts store deliberately publishes no host port. A previous worker's
+                    // shutdown hook removes the nginx proxy, so treating either an existing volume
+                    // or the in-network store as a reason to skip leaves localhost unserved on the
+                    // very next retry.
                     boot.docker.ensureVolume("qits-maven-seed", ctx::log);
                     boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
                     String cid = create(ctx, List.of(
