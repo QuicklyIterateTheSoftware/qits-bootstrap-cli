@@ -337,6 +337,13 @@ class ComposeTemplateTest {
         assertThat(extras("qits-artifacts"))
                 .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-artifacts")
                 .doesNotContain("QUARKUS_OIDC_CLIENT_");
+        // Workspaces is both a machine caller and a machine resource: the commissioned workspace
+        // daemon dials its control socket directly, so the inbound audience must be the same
+        // environment-qualified service id the IdP minted for that socket.
+        assertThat(extras("qits-workspaces"))
+                .contains("env.QITS_AUTH_MACHINE_REQUIRED=true")
+                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-workspaces")
+                .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp");
         // The mirror remains anonymous; githost validates machine bearers and user-forwarded roles.
         assertThat(extras("qits-platform-mirror")).doesNotContain("QITS_AUTH_MACHINE_")
                 .doesNotContain("QUARKUS_OIDC_");

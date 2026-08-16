@@ -1613,6 +1613,9 @@ public final class ComposeTemplate {
             # client instead of the host daemon.
             qits.platform.deployments.extras.qits-workspaces.mounts[0]=volume:qits-workspaces-data:/data
             qits.platform.deployments.extras.qits-workspaces.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_CLIENT}
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-workspaces
+            qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
             qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=${MACHINE_CLIENT}
             qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL=${IDP}
             qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_CLIENT_CLIENT_ID=${ENV_NAME}-qits-workspaces
