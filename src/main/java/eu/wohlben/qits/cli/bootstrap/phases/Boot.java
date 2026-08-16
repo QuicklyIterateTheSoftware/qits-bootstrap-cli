@@ -90,8 +90,7 @@ public class Boot {
 
     /** The edge replaces the seed port before the first seed image is built. */
     public void useBootstrapMavenRepository(String url, String capability) {
-        docker.withBuildArgs(List.of("--build-arg", "QITS_MAVEN_REPOSITORY_URL=" + url),
-                List.of(capability));
+        docker.withBootstrapMavenRepository(url, "bootstrap", capability);
     }
 
     /** Fails the phase, with the command's own last words attached. */

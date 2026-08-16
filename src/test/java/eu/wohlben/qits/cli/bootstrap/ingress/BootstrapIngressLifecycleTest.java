@@ -25,7 +25,7 @@ class BootstrapIngressLifecycleTest {
         boot.state.bootstrapIngressPassword = "run-secret";
 
         assertThat(new BootstrapIngressLifecycle(boot).mavenRepositoryUrl())
-                .isEqualTo("https://bootstrap:run-secret@wohlben.eu/artifacts/maven/maven");
+                .isEqualTo("https://wohlben.eu/artifacts/maven/maven");
     }
 
     @Test
@@ -34,6 +34,6 @@ class BootstrapIngressLifecycleTest {
         boot.state.bootstrapIngressPassword = "run-secret";
 
         assertThat(new BootstrapIngressLifecycle(boot).mavenRepositoryUrl())
-                .isEqualTo("http://bootstrap:run-secret@localhost:8481/artifacts/maven/maven");
+                .isEqualTo("http://localhost:8481/artifacts/maven/maven");
     }
 }

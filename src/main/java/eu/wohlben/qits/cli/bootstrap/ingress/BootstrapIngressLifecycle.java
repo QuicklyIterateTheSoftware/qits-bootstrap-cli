@@ -209,13 +209,12 @@ public final class BootstrapIngressLifecycle {
     }
 
     String mavenRepositoryUrl() {
-        String authority = "bootstrap:" + boot.state.bootstrapIngressPassword + "@";
         if (boot.config.bootstrapIngressPublic()) {
             // Host-networked seed builds use the same normal TLS door as an operator. There is no
             // hidden 8481 publish in public mode.
-            return "https://" + authority + ingressHost() + "/artifacts/maven/maven";
+            return "https://" + ingressHost() + "/artifacts/maven/maven";
         }
-        return "http://" + authority + boot.config.bootstrapIngressHost() + ":"
+        return "http://" + boot.config.bootstrapIngressHost() + ":"
                 + boot.config.bootstrapIngressPort() + "/artifacts/maven/maven";
     }
 

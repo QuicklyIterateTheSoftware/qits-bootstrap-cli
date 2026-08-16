@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 /**
@@ -49,6 +50,7 @@ public class Docker {
      */
     private List<String> buildArgs = List.of();
     private List<String> buildArgMasks = List.of();
+    private Map<String, String> buildEnvironment = Map.of();
 
     public Docker(ProcessRunner runner) {
         this.runner = runner;
@@ -69,6 +71,7 @@ public class Docker {
     public Docker withBuildArgs(List<String> args) {
         this.buildArgs = List.copyOf(args);
         this.buildArgMasks = List.of();
+        this.buildEnvironment = Map.of();
         return this;
     }
 
@@ -76,6 +79,20 @@ public class Docker {
     public Docker withBuildArgs(List<String> args, List<String> masks) {
         this.buildArgs = List.copyOf(args);
         this.buildArgMasks = List.copyOf(masks);
+        this.buildEnvironment = Map.of();
+        return this;
+    }
+
+    /** Supplies the capability through the secret ids already mounted by every Maven Dockerfile. */
+    public Docker withBootstrapMavenRepository(String url, String username, String password) {
+        this.buildArgs = List.of(
+                "--build-arg", "QITS_MAVEN_REPOSITORY_URL=" + url,
+                "--secret", "id=qits-client-id,env=QITS_BOOTSTRAP_MAVEN_USER",
+                "--secret", "id=qits-client-secret,env=QITS_BOOTSTRAP_MAVEN_PASSWORD");
+        this.buildArgMasks = List.of(password);
+        this.buildEnvironment = Map.of(
+                "QITS_BOOTSTRAP_MAVEN_USER", username,
+                "QITS_BOOTSTRAP_MAVEN_PASSWORD", password);
         return this;
     }
 
@@ -428,6 +445,7 @@ public class Docker {
         Cmd cmd = Cmd.of(command)
                 .stdin(dockerfile)
                 .timeout(BUILD_TIMEOUT);
+        buildEnvironment.forEach(cmd::env);
         buildArgMasks.forEach(cmd::mask);
         return runner.run(cmd, out);
     }
@@ -442,6 +460,7 @@ public class Docker {
         command.addAll(buildArgs);
         command.addAll(args);
         Cmd cmd = Cmd.of(command).timeout(BUILD_TIMEOUT);
+        buildEnvironment.forEach(cmd::env);
         buildArgMasks.forEach(cmd::mask);
         return runner.run(cmd, out);
     }

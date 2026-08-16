@@ -92,6 +92,21 @@ class DockerBuildTest {
                 "-f", "/src/qits-oci/ci-base/Dockerfile", "/src/qits-oci");
     }
 
+    @Test
+    void bootstrapRepositoryCredentialsUseTheDockerfilesExistingSecretMounts() {
+        ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok("done"));
+        Docker docker = new Docker(runner).withBootstrapMavenRepository(
+                "https://wohlben.eu/artifacts/maven/maven", "bootstrap", "run-secret");
+
+        docker.buildFromStdin("qits/platform-edge:latest", "FROM quay.io/x\n",
+                Path.of("/src/qits-platform-edge"), List.of(), null);
+
+        assertThat(runner.argv.getLast()).containsSubsequence(
+                "--build-arg", "QITS_MAVEN_REPOSITORY_URL=https://wohlben.eu/artifacts/maven/maven",
+                "--secret", "id=qits-client-id,env=QITS_BOOTSTRAP_MAVEN_USER",
+                "--secret", "id=qits-client-secret,env=QITS_BOOTSTRAP_MAVEN_PASSWORD");
+    }
+
     /** The knob moves it, because the seed containers publish whatever the knob says. */
     @Test
     void theSeedRegistryPortKnobMovesTheUrl() {
