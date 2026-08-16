@@ -2162,7 +2162,10 @@ public class SeedPhases {
     // --- small helpers ----------------------------------------------------------------------------
 
     private String create(PhaseContext ctx, List<String> command) {
-        ProcessResult result = boot.docker.run(Cmd.of(command).timeout(Duration.ofMinutes(30)), ctx::log);
+        List<String> labelled = new ArrayList<>(command);
+        labelled.add(2, "qits.bootstrap.temporary=true");
+        labelled.add(2, "--label");
+        ProcessResult result = boot.docker.run(Cmd.of(labelled).timeout(Duration.ofMinutes(30)), ctx::log);
         Boot.must(result, "docker create failed");
         List<String> lines = result.captured();
         if (lines.isEmpty()) {

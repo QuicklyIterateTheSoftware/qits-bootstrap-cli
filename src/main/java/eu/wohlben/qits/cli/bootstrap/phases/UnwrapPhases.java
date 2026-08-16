@@ -202,6 +202,7 @@ public class UnwrapPhases {
                 ids.addAll(byFilter("label=" + namespace + ".target"));
             }
             ids.addAll(byFilter("label=com.docker.compose.project=qits"));
+            ids.addAll(byFilter("label=qits.bootstrap.temporary=true"));
             ids.addAll(namedQits());
             // NOT THIS ONE. The CLI runs as a container called qits-bootstrap-cli, which the sweep
             // above matches like any other — and removing it is `docker rm -f` on the process doing
@@ -329,28 +330,37 @@ public class UnwrapPhases {
     private Phase selfDetach() {
         return new Phase("self-detach", "leave the platform's networks", ctx -> {
             String self = boot.docker.selfName();
-            List<String> attached = self == null || !boot.docker.containerExists(self)
-                    ? List.of()
-                    : boot.docker.networksOf(self).stream()
-                            .filter(UnwrapPhases::isPlatformNetwork).toList();
+            List<String> occupants = new ArrayList<>();
+            if (self != null && boot.docker.containerExists(self)) occupants.add(self);
+            if (boot.docker.containerExists(HostLauncher.SUPERVISOR)) {
+                occupants.add(HostLauncher.SUPERVISOR);
+            }
+            List<String> attached = occupants.stream()
+                    .flatMap(container -> boot.docker.networksOf(container).stream()
+                            .filter(UnwrapPhases::isPlatformNetwork)
+                            .map(network -> container + "|" + network))
+                    .toList();
             if (attached.isEmpty()) {
                 ctx.skip("this run is on none of the platform's networks");
             }
-            ctx.log("  " + self + " is on " + String.join(", ", attached));
+            ctx.log("  " + attached.size() + " bootstrap endpoint(s) to detach");
             int left = 0;
-            for (String network : attached) {
+            for (String endpoint : attached) {
+                String[] pair = endpoint.split("\\|", 2);
+                String container = pair[0];
+                String network = pair[1];
                 if (dryRun) {
-                    ctx.log("  would disconnect from " + network);
+                    ctx.log("  would disconnect " + container + " from " + network);
                     continue;
                 }
                 ProcessResult result = boot.docker.exec(Duration.ofMinutes(1), null,
-                        "network", "disconnect", network, self);
+                        "network", "disconnect", network, container);
                 if (result.ok()) {
                     left++;
-                    ctx.log("  left " + network);
+                    ctx.log("  disconnected " + container + " from " + network);
                 } else {
-                    ctx.warn("still on " + network + ", which cannot be removed while this run is "
-                            + "an endpoint on it: " + result.tailText(1));
+                    ctx.warn(container + " is still on " + network + ", which cannot be removed: "
+                            + result.tailText(1));
                 }
             }
             ctx.note(dryRun ? attached.size() + " would go" : left + " left");
