@@ -3,6 +3,7 @@ package eu.wohlben.qits.cli.bootstrap.phases;
 import eu.wohlben.qits.cli.bootstrap.api.ArtifactsApi;
 import eu.wohlben.qits.cli.bootstrap.api.PdApi;
 import eu.wohlben.qits.cli.bootstrap.api.CiApi;
+import eu.wohlben.qits.cli.bootstrap.api.ConfigurationApi;
 import eu.wohlben.qits.cli.bootstrap.api.GitHostApi;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.IdpApi;
@@ -47,6 +48,8 @@ public class Boot {
     public final CiApi ci;
     public final PdApi pd;
     public final IdpApi idp;
+    /** Deployment configuration as platform state, seeded by this run and read by the deployer. */
+    public final ConfigurationApi configuration;
 
     public Boot(BootstrapConfig config, RunLog log) {
         this(config, log, new ProcessRunner(log));
@@ -69,6 +72,7 @@ public class Boot {
         this.ci = new CiApi(http, config.ciUrl());
         this.pd = new PdApi(http, config.platformDeploymentsUrl());
         this.idp = new IdpApi(http, config.idpIssuer());
+        this.configuration = new ConfigurationApi(http, config.configurationUrl());
     }
 
     /**

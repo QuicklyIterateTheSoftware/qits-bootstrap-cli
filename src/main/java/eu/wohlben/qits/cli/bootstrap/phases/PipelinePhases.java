@@ -13,6 +13,7 @@ import eu.wohlben.qits.cli.bootstrap.platform.BootstrapState;
 import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
+import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 
 import java.io.IOException;
@@ -1512,6 +1513,138 @@ public class PipelinePhases {
             }
             ctx.note(PlatformModel.SEEDED_REPOS.size() + " repositories");
         });
+    }
+
+    // --- deployment configuration as platform state -------------------------------------------------
+
+    /**
+     * The application the two phases below hang off, and the reason its position in
+     * {@link PlatformModel#DEPLOYABLES} is not a preference: everything deployed after it is
+     * deployed from what it serves.
+     */
+    public static final String CONFIGURATION = "configuration";
+
+    /**
+     * <b>The same bytes, in the service.</b> This imports the extras this boot rendered — the whole
+     * properties file, comments and all — into qits-configuration, so the deployer can be told to
+     * read its configuration from there instead of from the file on its config volume.
+     * <p>
+     * <b>The file stays exactly as it is.</b> It is the cold-boot source — the seed deployer runs
+     * from it for every deployment before this phase — and it remains the fallback for a platform
+     * that never flips. Nothing here rewrites, filters or re-spells it: what is imported is what
+     * {@code pd-extras} wrote, rendered from the same tokens, so the two cannot disagree.
+     * <p>
+     * <b>Idempotent, so a rerun costs one request.</b> A line whose value is already stored writes
+     * no revision, which is what keeps the history a record of changes rather than of boots.
+     * <p>
+     * <b>The identity is asserted on a private hop</b>, the way this program talks to the deployer's
+     * read API: {@code X-Qits-User} and {@code X-Qits-Roles} on qits-net, at the service's own alias.
+     * Deliberately not through the edge — it strips client-supplied identity headers from what it
+     * proxies, which is the property that makes it safe as a public door.
+     */
+    public Phase configurationImport() {
+        return new Phase("configuration-import",
+                "import the deployment extras into qits-configuration", ctx -> {
+            String properties = ComposeTemplate.extras(new SeedPhases(boot).tokens());
+            boot.awaitHealth(ctx, "qits-configuration at " + boot.config.configurationUrl(),
+                    () -> boot.configuration.health());
+            Http.Response answer = boot.configuration.importProperties(properties);
+            if (!answer.ok()) {
+                // A failure here STOPS the boot rather than warning, and the flip below is why: a
+                // deployer pointed at a service that does not hold this platform's configuration
+                // refuses every deployment left in the train.
+                throw new IllegalStateException("importing the extras into qits-configuration "
+                        + "failed: " + answer.describe());
+            }
+            ctx.log("  " + answer.body());
+            ctx.note("imported");
+        });
+    }
+
+    /**
+     * <b>THE FLIP, and it is deliberately its own phase after the import.</b> The deployer's
+     * {@code QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL} makes qits-configuration AUTHORITATIVE: a
+     * resolved read per deployment, and an unreachable or unpopulated service refuses the
+     * deployment rather than shipping a stale value. So the order is load-bearing in both
+     * directions — a deployer holding this url before qits-configuration is deployed and imported
+     * refuses every deployment including qits-configuration's own, and a deployer that never gets
+     * it goes on deploying from the file.
+     * <p>
+     * <b>Two halves, and only this one is live.</b> The other is in the generated extras, on the
+     * deployer's own application, so every later self-update inherits the keys — a live
+     * {@code service update} alone is exactly the fix the old model kept reverting at the next
+     * deploy. This half exists because the deployer running RIGHT NOW was started before the
+     * service existed, and the rest of this run's deploy train is what proves the read.
+     * <p>
+     * The values come out of the rendered extras rather than being spelled again here: one source,
+     * so the running deployer and its successor cannot be configured differently.
+     */
+    public Phase configurationFlip() {
+        return new Phase("configuration-flip",
+                "point the running deployer at qits-configuration", ctx -> {
+            String extras = ComposeTemplate.extras(new SeedPhases(boot).tokens());
+            List<String> env = flipEnv(extras, PlatformModel.repo("deployments"));
+            String alias = PlatformModel.wireAlias("deployments", boot.config.envName());
+            List<String> services = boot.docker.serviceNames();
+            // The seed's stack-qualified name first, then the bare alias — which is what the
+            // deployer names its own service when it has already taken this application over.
+            String service = List.of(Docker.stackService(Docker.STACK, alias), alias).stream()
+                    .filter(services::contains).findFirst().orElse(null);
+            if (service == null) {
+                ctx.warn("no running qits-deployments service to point at qits-configuration. The "
+                        + "extras carry the keys, so the next deployer to start reads them — but "
+                        + "nothing in THIS run deploys from the service");
+                return;
+            }
+            String secret = boot.state.secrets.getOrDefault(alias, "");
+            if (alreadyFlipped(service, env, secret)) {
+                ctx.skip(service + " already reads " + boot.config.configurationUrl());
+            }
+            ctx.log("  " + service + " is older than the flip — updating it so the rest of this "
+                    + "train deploys from qits-configuration");
+            List<String> command = new ArrayList<>(List.of("docker", "service", "update"));
+            env.forEach(pair -> {
+                command.add("--env-add");
+                command.add(pair);
+            });
+            command.add(service);
+            Boot.must(boot.docker.run(Cmd.of(command)
+                    .timeout(Duration.ofMinutes(10))
+                    .mask(secret), ctx::log),
+                    "pointing " + service + " at qits-configuration failed");
+            ctx.note(env.size() + " values on " + service);
+        });
+    }
+
+    /**
+     * The env pairs of the flip, read back out of the extras this boot rendered. Filtered by what
+     * they MEAN rather than listed: the url that moves the authority, and the named oidc client that
+     * is the credential the moved read presents. Nothing else on the deployer's block is this
+     * phase's to touch — the rest is already in the file the running deployer read at its boot.
+     */
+    static List<String> flipEnv(String extras, String application) {
+        String prefix = "qits.platform.deployments.extras." + application + ".env.";
+        return extras.lines()
+                .filter(line -> line.startsWith(prefix))
+                .map(line -> line.substring(prefix.length()))
+                .filter(pair -> pair.startsWith("QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=")
+                        || pair.startsWith("QUARKUS_OIDC_CLIENT_CONFIGURATION_"))
+                .toList();
+    }
+
+    /**
+     * Whether the service already carries every pair, so a rerun costs a read rather than a task
+     * restart — the same courtesy {@code pd-extras} pays with its digest. The secret is masked
+     * because this reads the whole environment back, and every line a command prints reaches the
+     * run log.
+     */
+    private boolean alreadyFlipped(String service, List<String> env, String secret) {
+        List<String> current = boot.docker.run(Cmd.of(List.of("docker", "service", "inspect",
+                        "--format",
+                        "{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}",
+                        service))
+                .mask(secret), null).captured();
+        return Set.copyOf(current.stream().map(String::trim).toList()).containsAll(env);
     }
 
     // --- the closing report ------------------------------------------------------------------------

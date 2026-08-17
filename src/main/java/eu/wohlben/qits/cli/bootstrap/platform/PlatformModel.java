@@ -109,10 +109,20 @@ public final class PlatformModel {
      * orchestrator is mid-cutover is a pipeline with nowhere to run. Deploying the orchestrator first
      * puts its window before ci's rather than inside it, and leaves the run's own remaining
      * deployments — the edge and the deployer — behind a ci that already has a working step host.
+     * <p>
+     * <b>qits-configuration is FOURTH, and every neighbour of that position is load-bearing.</b> It
+     * holds deployment configuration as platform state, and the deployer READS it once the boot has
+     * flipped {@code QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL} — so it has to be deployed and imported
+     * before that flip, and the flip has to be before the deployer's own deployment, which inherits
+     * the url from its extras. It goes after postgres, because its store is provisioned from the
+     * {@code resources: postgresql:db} line in its own deployments.yml, and after the idp, whose
+     * cutover must not fall inside the deploy window of a service that validates its tokens. Every
+     * deployable BELOW it is what proves the flip: each of them is deployed from configuration the
+     * service served rather than from the file on the volume.
      */
     public static final List<String> DEPLOYABLES = List.of(
-            "observability", "oci-postgresql", "platform-idp", "stt", "projects", "workspaces",
-            "events", "docs", "platform-mirror", "artifacts", "githost",
+            "observability", "oci-postgresql", "platform-idp", "configuration", "stt", "projects",
+            "workspaces", "events", "docs", "platform-mirror", "artifacts", "githost",
             "containers", "ci", "platform-edge", "deployments");
 
     /**
@@ -478,15 +488,18 @@ public final class PlatformModel {
      * and nothing else, which is what this list adds to {@link #idpAudiences}: a caller refused
      * {@code invalid_target} never reaches the service's own gate at all.
      * <p>
-     * <b>It is empty since 2026-08-14, and the seam stays.</b> qits-deployments and qits-containers
-     * were its two members, and both are clients now — not because either mints a token, but
-     * because each pulls images and a docker {@code config.json} is a client id and a secret. They
-     * still validate exactly as they did; an audience is now something they get for being clients.
-     * The list is kept because "validates and holds no credential" is a real shape for the next
-     * service that has it, and because an audience that is not derived from a client has nowhere
-     * else to be named.
+     * <b>qits-deployments and qits-containers left it on 2026-08-14</b> — not because either mints
+     * a token, but because each pulls images and a docker {@code config.json} is a client id and a
+     * secret. They still validate exactly as they did; an audience is now something they get for
+     * being clients.
+     * <p>
+     * <b>qits-configuration joined on 2026-08-17</b>, and it is the shape this list was kept for.
+     * It validates the deployer's bearer on every read of an application's configuration and mints
+     * nothing at all, so it holds no client — but the deployer asks for {@code
+     * <env>-qits-configuration} as an audience, and an audience no client may ask for is
+     * {@code invalid_target} rather than a call that reaches the service's own gate.
      */
-    public static final List<String> RECEIVE_ONLY_APPS = List.of("githost");
+    public static final List<String> RECEIVE_ONLY_APPS = List.of("githost", "configuration");
 
     /** The env-var spelling of a client id: uppercase, dashes as underscores. */
     public static String clientKey(String clientId) {

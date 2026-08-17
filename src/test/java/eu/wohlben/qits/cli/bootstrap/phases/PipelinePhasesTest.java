@@ -1,11 +1,17 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
 import eu.wohlben.qits.cli.bootstrap.config.Acme;
+import eu.wohlben.qits.cli.bootstrap.config.TestConfig;
+import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
+import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -418,5 +424,56 @@ class PipelinePhasesTest {
                 .toList();
 
         assertThat(PipelinePhases.seedPlan(running, List.of(), ENV).deploy()).isEmpty();
+    }
+
+    @TempDir
+    Path temp;
+
+    /** The extras exactly as a run renders them, with one client secret so the pair is readable. */
+    private String renderedExtras() {
+        Boot boot = new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log")));
+        boot.state.secrets.put(PlatformModel.wireAlias("deployments", ENV), "s3cr3t");
+        return ComposeTemplate.extras(new SeedPhases(boot).tokens());
+    }
+
+    /**
+     * <b>The flip's values are READ BACK out of the rendered extras, never spelled again.</b> The
+     * running deployer is patched live and its successor is configured from the same file, so a
+     * second spelling here would be a platform whose two deployers read different services.
+     */
+    @Test
+    void theFlipTakesItsValuesFromTheRenderedExtras() {
+        List<String> env = PipelinePhases.flipEnv(renderedExtras(), "qits-deployments");
+
+        assertThat(env).containsExactlyInAnyOrder(
+                "QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://prod-qits-configuration:8080",
+                "QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ENABLED=true",
+                "QUARKUS_OIDC_CLIENT_CONFIGURATION_AUTH_SERVER_URL="
+                        + "http://qits-platform-idp:8080/idp",
+                "QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ID=prod-qits-deployments",
+                "QUARKUS_OIDC_CLIENT_CONFIGURATION_CREDENTIALS_SECRET=s3cr3t",
+                "QUARKUS_OIDC_CLIENT_CONFIGURATION_GRANT_OPTIONS_CLIENT_AUDIENCE="
+                        + "prod-qits-configuration");
+    }
+
+    /**
+     * And nothing else of the deployer's block rides along. The rest is already in the file the
+     * running deployer read at its own boot; re-applying it would be a live patch nobody asked for,
+     * and one of those values is this platform's postgres superuser password.
+     */
+    @Test
+    void theFlipTouchesNothingElseOnTheDeployer() {
+        List<String> env = PipelinePhases.flipEnv(renderedExtras(), "qits-deployments");
+
+        assertThat(env).noneMatch(pair -> pair.startsWith("QITS_RESOURCE_DB_"))
+                .noneMatch(pair -> pair.contains("POSTGRES_ADMIN_PASSWORD"))
+                .noneMatch(pair -> pair.startsWith("DOCKER_CONFIG="))
+                .noneMatch(pair -> pair.startsWith("QITS_AUTH_MACHINE_"));
+    }
+
+    /** One application's keys only — the extras carry sixteen applications in one file. */
+    @Test
+    void theFlipReadsOneApplicationsKeys() {
+        assertThat(PipelinePhases.flipEnv(renderedExtras(), "qits-configuration")).isEmpty();
     }
 }

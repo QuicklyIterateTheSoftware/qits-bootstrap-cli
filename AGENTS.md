@@ -145,6 +145,19 @@ forced. Add to that list rather than deviating quietly.
   cutover removed its container, while a SERVICE's task is restarted within seconds. So a rerun
   leaves a deployer-managed application out of the FILE (a stack deploy takes no service list) and
   removes any seed service of it outright.
+- **Deployment configuration is platform state, and the ORDER that moves it there can lose a boot
+  in both directions.** qits-configuration holds each application's extras, and the deployer treats
+  it as AUTHORITATIVE the moment it is given `QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL`: a read it
+  cannot answer REFUSES the deployment rather than falling back to the file, which is the whole
+  point — a stale fall-back is the failure this service exists to kill. So the plan runs
+  `deploy-configuration`, then `configuration-import`, then `configuration-flip`, and each gap is
+  load-bearing. Flip earlier and the deployer refuses every deployment left in the train, that
+  service's own included. Flip later than qits-deployments' self-update and the successor comes up
+  holding the url over a service nobody imported into. The seed stack therefore spells NONE of
+  those keys — the seed deployer has to start without them — while the generated extras spell all
+  of them, because a live `service update --env-add` alone is exactly the fix the old model kept
+  reverting. **The file on the config volume is not going away**: it is the cold-boot source, it is
+  what the import is rendered from, and it is the fallback for a platform that never flips.
 - **One binary, two halves, ONE configuration contract.** Outside a container the binary launches
   itself inside one; inside it, it runs the phases. The host half reads the same `BootstrapConfig`
   and re-interprets no `QITS_*` value: the container's working directory is the launcher's, so

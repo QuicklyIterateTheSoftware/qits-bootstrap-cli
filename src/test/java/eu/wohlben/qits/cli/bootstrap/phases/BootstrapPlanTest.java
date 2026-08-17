@@ -116,7 +116,8 @@ class BootstrapPlanTest {
 
         assertThat(ids).containsSubsequence("environment", "deploy-observability",
                 "deploy-oci-postgresql",
-                "deploy-platform-idp", "deploy-stt", "deploy-projects", "deploy-workspaces",
+                "deploy-platform-idp", "deploy-configuration",
+                "deploy-stt", "deploy-projects", "deploy-workspaces",
                 "deploy-events", "deploy-docs",
                 "deploy-platform-mirror", "deploy-artifacts", "deploy-githost",
                 // The orchestrator immediately before ci: ci runs every step as a container it asks
@@ -128,6 +129,48 @@ class BootstrapPlanTest {
         // Pre-rename spellings deploy nothing and would push to repositories nobody reads.
         assertThat(ids).doesNotContain("deploy-idp", "deploy-platform-deployments",
                 "deploy-platform-artifacts", "deploy-platform-docs");
+    }
+
+    /**
+     * <b>The one ordering in this plan where BOTH directions can lose a boot.</b>
+     * <p>
+     * qits-configuration holds deployment configuration as platform state, and the deployer treats
+     * it as AUTHORITATIVE the moment it is given the url: an unreachable or unpopulated service
+     * refuses the deployment rather than shipping a stale value. So:
+     * <ul>
+     *   <li><b>The flip must be after the deployment and after the import.</b> Flipped earlier, the
+     *       deployer refuses every deployment left in the train — qits-configuration's own included,
+     *       which is a boot that cannot recover by carrying on.
+     *   <li><b>The flip must be before the deployer deploys itself.</b> The successor inherits the
+     *       url from its own extras, so a deployer that starts holding it over a service nobody
+     *       imported into refuses everything after it.
+     * </ul>
+     */
+    @Test
+    void theConfigurationServiceIsDeployedThenImportedThenFlippedAndOnlyThen() {
+        List<String> ids = ids(plan(Map.of()));
+
+        assertThat(ids).containsSubsequence("deploy-configuration", "configuration-import",
+                "configuration-flip", "deploy-deployments");
+        // Its own deployment is made by a deployer that is still reading the file — the flip is two
+        // phases later, and nothing between them deploys anything.
+        assertThat(ids.indexOf("configuration-flip"))
+                .isGreaterThan(ids.indexOf("deploy-configuration"));
+        // And the store it needs, and the issuer it validates against, are already cut over.
+        assertThat(ids).containsSubsequence("deploy-oci-postgresql", "deploy-platform-idp",
+                "deploy-configuration");
+        // Everything after the flip is deployed from what the service serves. The train is long
+        // enough that this is a real proof rather than one deployment's.
+        assertThat(ids).containsSubsequence("configuration-flip", "deploy-ci",
+                "deploy-platform-edge", "deploy-deployments");
+    }
+
+    /** A warm rerun flips too: the seed stack deploy resets the env the last run added live. */
+    @Test
+    void aWarmRerunStillImportsAndFlips() {
+        assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1"))))
+                .containsSubsequence("deploy-configuration", "configuration-import",
+                        "configuration-flip");
     }
 
     @Test

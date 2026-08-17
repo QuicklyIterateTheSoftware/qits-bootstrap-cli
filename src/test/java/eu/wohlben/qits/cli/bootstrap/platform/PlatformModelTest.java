@@ -135,7 +135,11 @@ class PlatformModelTest {
                 .filteredOn(name -> !PlatformModel.isPlatformService(name))
                 .containsExactlyInAnyOrder("observability", "oci-postgresql", "stt", "projects",
                         "workspaces", "events", "ci", "containers", "deployments",
-                        "artifacts", "githost", "docs");
+                        "artifacts", "githost", "docs", "configuration");
+        // And qits-configuration is one of them rather than a platform service, which is the whole
+        // point of it: two tiers sharing one configuration store would make an edit in dev an edit
+        // in prod.
+        assertThat(PlatformModel.isPlatformService("configuration")).isFalse();
         // Every environment runs its own database, so postgres is an environment service like the
         // rest of them — the platform plane is what genuinely cannot be per-tier.
         assertThat(PlatformModel.isPlatformService("oci-postgresql")).isFalse();
@@ -319,7 +323,42 @@ class PlatformModelTest {
         // Each name once. The audience list is derived from the clients now, and a duplicate would
         // be a key that says the same thing twice to a service that replaces the shipped list.
         assertThat(PlatformModel.idpAudiences("prod").split(",")).doesNotHaveDuplicates();
-        assertThat(PlatformModel.RECEIVE_ONLY_APPS).containsExactly("githost");
+        assertThat(PlatformModel.RECEIVE_ONLY_APPS).containsExactly("githost", "configuration");
+    }
+
+    /**
+     * <b>qits-configuration is an audience and never a client.</b> It validates the deployer's
+     * bearer on every read of an application's configuration and mints nothing at all — so it holds
+     * no credential, and the one thing it needs from the idp is to be a value the deployer's client
+     * may ASK for. An audience no client may ask for is {@code invalid_target} rather than a call
+     * that reaches the service's own gate.
+     */
+    @Test
+    void theConfigurationServiceIsAnAudienceTheDeployerMayAskFor() {
+        assertThat(PlatformModel.idpAudiences("prod")).contains("prod-qits-configuration");
+        assertThat(PlatformModel.idpClients("prod")).doesNotContain("prod-qits-configuration");
+        // It follows the environment name like every other id here, which is why the deployer's
+        // audience is spelled from the same derivation rather than defaulted in an image.
+        assertThat(PlatformModel.idpAudiences("preprod")).contains("preprod-qits-configuration");
+        assertThat(PlatformModel.wireAlias("configuration", "prod"))
+                .isEqualTo("prod-qits-configuration");
+        assertThat(PlatformModel.repoPath("configuration"))
+                .isEqualTo("services/qits-configuration");
+    }
+
+    /**
+     * <b>Where qits-configuration sits in the train, and every neighbour is load-bearing.</b> After
+     * postgres, because its store is provisioned there; after the idp, whose cutover must not fall
+     * inside the deploy window of a service that validates its tokens; and before the deployer's own
+     * self-update, which inherits the extras url the boot flips.
+     */
+    @Test
+    void configurationIsDeployedAfterPostgresAndTheIdpAndLongBeforeTheDeployer() {
+        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
+                "oci-postgresql", "platform-idp", "configuration", "deployments");
+        // Everything below it is deployed from what it serves, which is what proves the read.
+        assertThat(PlatformModel.DEPLOYABLES.indexOf("configuration"))
+                .isLessThan(PlatformModel.DEPLOYABLES.indexOf("ci"));
     }
 
     @Test
@@ -331,10 +370,12 @@ class PlatformModelTest {
                 "prod-qits-bootstrap", "prod-qits-ci", "prod-qits-artifacts", "prod-qits-workspaces",
                 "prod-qits-projects", "prod-qits-deployments",
                 "prod-qits-containers", "prod-qits-edge");
+        // The clients, then the receive-only applications: the git host, which validates and mints
+        // nothing, and qits-configuration, which the deployer asks for on every deployment.
         assertThat(PlatformModel.idpAudiences("prod")).isEqualTo(
                 "prod-qits-bootstrap,prod-qits-ci,prod-qits-artifacts,prod-qits-workspaces,"
                         + "prod-qits-projects,prod-qits-deployments,prod-qits-containers,"
-                        + "prod-qits-edge,prod-qits-githost");
+                        + "prod-qits-edge,prod-qits-githost,prod-qits-configuration");
         // Every one of them follows the environment now: the artifacts client was the one platform
         // id in this list, and the byte-plane split made that service a tier's again.
         assertThat(PlatformModel.idpClients("preprod")).containsExactly(

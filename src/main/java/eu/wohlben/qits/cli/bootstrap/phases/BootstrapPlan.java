@@ -162,6 +162,18 @@ public final class BootstrapPlan {
         phases.add(pipeline.environment());
         for (String deployable : PlatformModel.DEPLOYABLES) {
             phases.add(pipeline.deploy(deployable));
+            // THE TWO PHASES THAT MOVE DEPLOYMENT CONFIGURATION INTO THE PLATFORM, and they sit
+            // here rather than at the end of the train because both directions of the order are
+            // load-bearing. AFTER qits-configuration's own deployment: a deployer told to read a
+            // service that is not up refuses every deployment, that one included. BEFORE the rest
+            // of the train, and in particular before qits-deployments' own self-update, which
+            // inherits the url from its extras — a successor holding it over a service nobody
+            // imported into would refuse everything after it. Every deployable below this line is
+            // deployed from what the service serves, which is what proves the read.
+            if (PipelinePhases.CONFIGURATION.equals(deployable)) {
+                phases.add(pipeline.configurationImport());
+                phases.add(pipeline.configurationFlip());
+            }
         }
         phases.add(pipeline.summary());
 

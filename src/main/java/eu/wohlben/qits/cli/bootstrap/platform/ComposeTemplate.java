@@ -316,6 +316,12 @@ public final class ComposeTemplate {
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_ROLES: "qits:system,qits-platform:system"
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_ROLES: "qits:system,qits-platform:system"
                   QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_ROLES: "qits:system,qits-platform:system"
+                  # THE DEPLOYER'S ROLES, and it needed none until it had a guarded peer to read.
+                  # Every route of qits-configuration is @RolesAllowed({qits:admin, qits:system})
+                  # and the idp puts a client's roles in the token's `groups` claim — so a deployer
+                  # client with no roles mints a token that validates and is then refused 403 on the
+                  # read that decides what a deployment is configured with.
+                  QITS_IDP_CLIENT_${ENV_KEY}_QITS_DEPLOYMENTS_ROLES: "qits:system,qits-platform:system"
                   # The one wildcard grant, and it is kept for a PERSON. qits-ci's manual trigger names
                   # no repository, so it demands them all — a token granted project=*. This bootstrap
                   # used to present one, for the release replays; they push the release tag now and
@@ -1400,6 +1406,25 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-containers.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
             qits.platform.deployments.extras.qits-containers.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
             qits.platform.deployments.extras.qits-containers.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # DEPLOYMENT CONFIGURATION AS PLATFORM STATE, and the service the block below reads. It
+            # is an ordinary environment application: no mount, no publish, and no datasource env —
+            # `resources: postgresql:db` in its own deployments.yml is what gets it a store, and the
+            # deployer injects QITS_RESOURCE_DB_* before the successor starts.
+            #
+            # THE THREE VARIABLES ARE ITS GATE. The image ships the bare qits-configuration as its
+            # audience, because an environment-qualified default would bake one tier into an image
+            # every tier shares — so the alias has to be spelled here or every bearer the deployer
+            # mints is refused. QITS_AUTH_MACHINE_REQUIRED carries the platform's own switch: off,
+            # the service starts no OIDC tenant and the deployer's read arrives on forward-auth
+            # headers alone, which is the supported posture of a platform with the gate down.
+            #
+            # THIS IS CREDENTIAL-BEARING INFRASTRUCTURE. What it stores is what every deployment's
+            # environment is read from, so its write surface carries the sensitivity of the
+            # qits-deployments-config volume it replaces. There is no anonymous route on it.
+            qits.platform.deployments.extras.qits-configuration.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
+            qits.platform.deployments.extras.qits-configuration.env.QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-configuration
+            qits.platform.deployments.extras.qits-configuration.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-configuration.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The platform's PostgreSQL, deployed like everything else.
             #
             # AND IT PUBLISHES NOTHING, here or in the seed. Every consumer dials the wire alias on
@@ -1468,6 +1493,34 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-deployments.env.QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-deployments
             qits.platform.deployments.extras.qits-deployments.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
             qits.platform.deployments.extras.qits-deployments.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            # THE FLIP: WHERE THIS DEPLOYER READS AN APPLICATION'S EXTRAS FROM. Set, qits-configuration
+            # is AUTHORITATIVE — a resolved read per deployment, layered over this file, and an
+            # unreachable service REFUSES the deployment rather than shipping a stale value. That
+            # refusal is the point: a hand-edited file snapshotted at deployer boot is the failure
+            # class this whole service exists to kill.
+            #
+            # IT IS STATED HERE SO IT SURVIVES. The boot also applies it to the RUNNING deployer, and
+            # that alone would be lost at the deployer's next self-update — the same live
+            # `service update --env-add` fix the old model kept reverting. These lines are what every
+            # later successor inherits.
+            #
+            # ORDERING IS LOAD-BEARING AND IT IS THE PLAN'S, NOT THIS FILE'S. A deployer holding this
+            # url before qits-configuration is deployed and imported refuses every deployment,
+            # qits-configuration's own included. The seed deployer is therefore started WITHOUT it
+            # (the seed stack spells none of these) and the boot flips it after the import phase.
+            qits.platform.deployments.extras.qits-deployments.env.QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://${ENV_NAME}-qits-configuration:8080
+            # THE CREDENTIAL THAT READ PRESENTS, as the NAMED oidc client `configuration` — the
+            # deployer's one guarded peer. The client id is this deployer's own idp client, never a
+            # borrowed one: a read that is refused has to name the service that was refused. The
+            # audience is the tier's, and the image deliberately defaults it to nothing, because an
+            # environment-qualified default would bake one tier into an image every tier shares.
+            # Enabled by the platform's machine switch: with the gate down the client stays off and
+            # the read goes out on forward-auth headers alone, which qits-configuration accepts.
+            qits.platform.deployments.extras.qits-deployments.env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ENABLED=${MACHINE_CLIENT}
+            qits.platform.deployments.extras.qits-deployments.env.QUARKUS_OIDC_CLIENT_CONFIGURATION_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-deployments.env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ID=${ENV_NAME}-qits-deployments
+            qits.platform.deployments.extras.qits-deployments.env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CREDENTIALS_SECRET=${IDP_SECRET_DEPLOYMENTS}
+            qits.platform.deployments.extras.qits-deployments.env.QUARKUS_OIDC_CLIENT_CONFIGURATION_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-configuration
             qits.platform.deployments.extras.qits-deployments.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The idp's own deployment. NO DATASOURCE ENV AND NO VOLUME: `resources: postgresql:db` in its
             # deployments.yml is what gets it a store, and the deployer injects the triple from the
@@ -1516,6 +1569,12 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_ROLES=qits:system,qits-platform:system
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_PROJECTS_ROLES=qits:system,qits-platform:system
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_WORKSPACES_ROLES=qits:system,qits-platform:system
+            # THE DEPLOYER'S ROLES, and it needed none until it had a guarded peer to read. Every
+            # route of qits-configuration is @RolesAllowed({qits:admin, qits:system}) and the idp
+            # puts a client's roles in the token's `groups` claim — so a deployer client with no
+            # roles mints a token that validates and is then refused 403 on the read that decides
+            # what a deployment is configured with.
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_DEPLOYMENTS_ROLES=qits:system,qits-platform:system
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${ENV_KEY}_QITS_ARTIFACTS_CLAIMS_PROJECT=*
             # The passkey binding, as on the seed block: the rp id is a HOST a credential is bound
             # to, the origins are what a ceremony is checked against, and both are the address a

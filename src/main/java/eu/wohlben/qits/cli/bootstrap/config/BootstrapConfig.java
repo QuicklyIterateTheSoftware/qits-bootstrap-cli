@@ -446,6 +446,23 @@ public interface BootstrapConfig {
     }
 
     /**
+     * qits-configuration at its fixed seed alias, with <b>no path</b> — the same shape
+     * {@link #mirrorUrl()} has and for a related reason: this exact string is also what the deployer
+     * is handed as {@code QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL}, and that reader appends
+     * {@code /configuration/api/applications/<app>/resolved} itself. A base carrying the segment
+     * would be right here and doubled there.
+     * <p>
+     * <b>Its own alias rather than the edge, and that is deliberate.</b> The bootstrap's import
+     * asserts {@code X-Qits-User} / {@code X-Qits-Roles} on a private qits-net hop, the way it does
+     * to the deployer — and the edge strips client-supplied identity headers from every request it
+     * proxies, which is exactly the property that makes it safe as a public door. Sending this
+     * through it would put the write behind a header the door is built to throw away.
+     */
+    default String configurationUrl() {
+        return "http://" + envName() + "-qits-configuration:8080";
+    }
+
+    /**
      * <b>The three names the HOST reaches this platform's byte plane by, and the one address shape
      * in this file that is not a wire alias.</b> Each is {@code <app>.<env>.localhost:<edge port>}:
      * every {@code *.localhost} name resolves to the loopback address (systemd-resolved synthesises

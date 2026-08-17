@@ -352,6 +352,118 @@ class ComposeTemplateTest {
     }
 
     /**
+     * <b>qits-configuration is an ordinary environment application with a gate and nothing else.</b>
+     * Its image ships the bare {@code qits-configuration} as the audience, deliberately — an
+     * environment-qualified default would bake one tier into an image every tier shares — so the
+     * alias has to be spelled here or every bearer the deployer mints is refused.
+     * <p>
+     * No mount, no publish and no datasource: {@code resources: postgresql:db} in its own
+     * deployments.yml is what provisions its store, and a triple here would be an operator pin that
+     * outlives the deployer's next rotation.
+     */
+    @Test
+    void theConfigurationServiceIsGatedAndOtherwisePlain() {
+        String configuration = extras("qits-configuration");
+
+        assertThat(configuration)
+                .contains("env.QITS_AUTH_MACHINE_REQUIRED=true")
+                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-configuration")
+                .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp")
+                .contains("env.QITS_OBSERVABILITY_URL=http://prod-qits-observability:8080");
+        assertThat(configuration).doesNotContain(".mounts[")
+                .doesNotContain(".publishes[")
+                .doesNotContain(".groups[")
+                .doesNotContain("QITS_RESOURCE_DB_")
+                // It validates and mints nothing, so it holds no oidc client of its own.
+                .doesNotContain("QUARKUS_OIDC_CLIENT_");
+    }
+
+    /**
+     * <b>THE FLIP, stated as configuration so it survives.</b> The boot also applies these values to
+     * the RUNNING deployer, and that alone would be reverted by the deployer's own next deployment
+     * — which is precisely the failure class qits-configuration exists to kill. These lines are what
+     * every successor inherits.
+     */
+    @Test
+    void theDeployerIsPointedAtTheConfigurationService() {
+        String deployer = extras("qits-deployments");
+
+        assertThat(deployer).contains("env.QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL="
+                + "http://prod-qits-configuration:8080");
+        // The credential that read presents: the deployer's OWN client, and a tier-qualified
+        // audience the image deliberately does not default.
+        assertThat(deployer)
+                .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ENABLED=true")
+                .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_AUTH_SERVER_URL="
+                        + "http://qits-platform-idp:8080/idp")
+                .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ID=prod-qits-deployments")
+                .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CREDENTIALS_SECRET="
+                        + "secret-prod-qits-deployments")
+                .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_GRANT_OPTIONS_CLIENT_AUDIENCE="
+                        + "prod-qits-configuration");
+        // The DEFAULT unnamed client stays off: the extension creates it whether or not anything
+        // injects it, and an enabled client with no auth-server-url fails the deployer's boot.
+        assertThat(deployer).doesNotContain("env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED");
+    }
+
+    /**
+     * <b>The seed deployer must start WITHOUT the flip, and the stack file is where that is kept
+     * true.</b> A deployer holding the extras url before qits-configuration is deployed and imported
+     * refuses every deployment, qits-configuration's own included — so the boot flips the running
+     * service after the import phase and the seed spells none of it.
+     */
+    @Test
+    void theSeedDeployerStartsBeforeThereIsAConfigurationServiceToRead() {
+        String compose = ComposeTemplate.compose(tokens());
+
+        assertThat(serviceBlock(compose, ENV + "-qits-deployments"))
+                .doesNotContain("QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL")
+                .doesNotContain("QUARKUS_OIDC_CLIENT_CONFIGURATION_");
+        // And there is no seed service for it either: it is deployed through the pipeline like every
+        // other ordinary environment application.
+        assertThat(compose).doesNotContain("\n  " + ENV + "-qits-configuration:\n");
+        assertThat(PlatformModel.CORE).doesNotContain("configuration");
+    }
+
+    /**
+     * <b>The deployer's client needs ROLES now, and it needed none until it had a guarded peer.</b>
+     * Every route of qits-configuration is {@code @RolesAllowed({qits:admin, qits:system})} and the
+     * idp puts a client's roles in the token's {@code groups} claim — so a deployer client with no
+     * roles mints a token that validates and is then refused 403 on the read that decides what a
+     * deployment is configured with.
+     */
+    @Test
+    void theDeployersIdpClientCarriesTheSystemRoleInBothFiles() {
+        assertThat(serviceBlock(ComposeTemplate.compose(tokens()), "qits-platform-idp"))
+                .contains("QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_ROLES: "
+                        + "\"qits:system,qits-platform:system\"");
+        assertThat(extras("qits-platform-idp"))
+                .contains("env.QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_ROLES="
+                        + "qits:system,qits-platform:system");
+        // And the audience it may ask for, which is what keeps the mint out of invalid_target.
+        assertThat(extras("qits-platform-idp"))
+                .contains("env.QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_AUDIENCES="
+                        + PlatformModel.idpAudiences(ENV));
+        assertThat(PlatformModel.idpAudiences(ENV)).contains("prod-qits-configuration");
+    }
+
+    /**
+     * <b>Every application the deploy train reaches has a block here.</b> Once the flip is on, the
+     * deployer reads each one out of qits-configuration — which the boot fills from this very file —
+     * so an application with no lines is an application the import never mentions.
+     */
+    @Test
+    void everyDeployableIsConfiguredInThisFile() {
+        List<String> keys = extrasKeys();
+
+        for (String application : PlatformModel.DEPLOYABLES) {
+            String prefix = EXTRAS + PlatformModel.repo(application) + ".";
+            assertThat(keys).as("extras of %s", application)
+                    .anyMatch(line -> line.startsWith(prefix));
+        }
+    }
+
+    /**
      * <b>THE BYTE PLANE, in the seed stack.</b> Three services where there was one, each with its
      * own store and none with a door of its own — the edge is the door for all three — and the split
      * runs through every client's configuration, which is what the rest of this class checks one
