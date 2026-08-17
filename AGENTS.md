@@ -232,12 +232,18 @@ forced. Add to that list rather than deviating quietly.
   not the spelling**: qits-deployments and qits-events joined the platform plane on 2026-08-17 and
   their repositories are renamed only after the local proof, so both answer to a bare name that
   says no plane at all.
-- **Nothing outside `PlatformModel` spells a wire alias or a client-id key.** Both change shape when
-  an application moves plane, so `wireAlias`, `pdNamePrefix` and `PlatformModel.nameTokens` are the
-  only places either is built — the generated stack and extras carry `${ALIAS_<APP>}` and
-  `${CLIENT_KEY_<APP>}` placeholders, and `BootstrapConfig`'s urls derive too. A concatenated copy
-  is a peer dialling a name nothing answers to, or an audience the idp never mints, and both fail
-  as a silent 401.
+- **Nothing outside `PlatformModel` decides a wire alias, a client-id key or whether a service is
+  told its tier.** All three change when an application moves plane, so `wireAlias`,
+  `pdNamePrefix` and `PlatformModel.modelTokens` are the only places any of them is built — the
+  generated stack and extras carry `${ALIAS_<APP>}`, `${CLIENT_KEY_<APP>}` and `${TIER_ENV_<APP>}`
+  placeholders, and `BootstrapConfig`'s urls derive too. A concatenated copy is a peer dialling a
+  name nothing answers to, or an audience the idp never mints, and both fail as a silent 401.
+- **`QITS_ENVIRONMENT` is a statement of tier membership, and a platform service is handed none.**
+  The deployer records a resource row per application under that environment, `orElse(null)`, and
+  looks a platform-target service's rows up by the null key. Tell a platform service it has a tier
+  and its rows land under one: its own first self-deploy finds nothing, reconciles instead, and
+  rotates the database passwords this bootstrap issued, mid-boot. The line is a
+  `${TIER_ENV_<APP>}` fragment that renders empty for the platform plane — never spelled by hand.
 - **A source this program cannot trust stops the boot.** It decides which sha the whole platform is
   built from, so a wrapper path that is not a checkout and a refresh that will not fast-forward are
   both failures, not log lines. What is ABSENT is a different question and has a different answer:

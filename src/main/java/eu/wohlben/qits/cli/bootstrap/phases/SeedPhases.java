@@ -2122,11 +2122,13 @@ public class SeedPhases {
         String env = boot.config.envName();
         Map<String, String> values = new LinkedHashMap<>();
         values.put("ENV_NAME", env);
-        // EVERY WIRE ALIAS AND EVERY CLIENT-ID KEY, derived rather than pasted together in the
-        // templates. Both shapes move when an application changes plane — qits-deployments and
-        // qits-events did on 2026-08-17 — so a template that spelled `${ENV_NAME}-qits-deployments`
-        // was a second copy of PlatformModel.wireAlias that could not follow it.
-        values.putAll(PlatformModel.nameTokens(env));
+        // EVERY WIRE ALIAS, EVERY CLIENT-ID KEY AND EVERY TIER LINE, derived rather than written
+        // into the templates. All three move when an application changes plane — qits-deployments
+        // and qits-events did on 2026-08-17 — so a template that spelled
+        // `${ENV_NAME}-qits-deployments` was a second copy of PlatformModel.wireAlias that could
+        // not follow it, and one that spelled QITS_ENVIRONMENT told a platform service it had a
+        // tier.
+        values.putAll(PlatformModel.modelTokens(env));
         values.put("COMPOSE_FILE", boot.state.composeFile == null ? "docker-compose.qits.yml"
                 : boot.state.composeFile.getFileName().toString());
         values.put("PORT", String.valueOf(boot.config.port()));

@@ -581,13 +581,7 @@ public final class ComposeTemplate {
                   # moves both sides at once. The deployer SUBSCRIBES durably here — a BuildSuccessful it
                   # never receives is a deployment that never happens — so a wrong value costs more than
                   # a lost publish.
-                  QITS_EVENTS_URL: http://${ALIAS_EVENTS}:8080
-                  # WHICH TIER'S POSTGRES, and it stays spelled although the deployer belongs to no tier
-                  # any more: it is how this service resolves the database host of an environment
-                  # application without asking itself first. The platform-plane fallback in the deployer
-                  # is what answers when it is absent; naming the platform environment here keeps a
-                  # cold boot on the one postgres this run created.
-                  QITS_ENVIRONMENT: ${ENV_NAME}
+                  QITS_EVENTS_URL: http://${ALIAS_EVENTS}:8080${TIER_ENV_DEPLOYMENTS}
                   # WHERE IT READS A DEPLOYMENT SPEC. It was a plain property in the extras file, which
                   # this service reads at boot from its config volume — and the demotion is what moved
                   # it: that file holds extras and nothing else now, so what the deployer configures
@@ -1540,8 +1534,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-deployments.groups[0]=${DOCKER_GID}
             qits.platform.deployments.extras.qits-deployments.env.QITS_RESOURCE_DB_URL=jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_deployments
             qits.platform.deployments.extras.qits-deployments.env.QITS_RESOURCE_DB_USERNAME=qits_deployments
-            qits.platform.deployments.extras.qits-deployments.env.QITS_RESOURCE_DB_PASSWORD=${PG_DEPLOYMENTS_PASSWORD}
-            qits.platform.deployments.extras.qits-deployments.env.QITS_ENVIRONMENT=${ENV_NAME}
+            qits.platform.deployments.extras.qits-deployments.env.QITS_RESOURCE_DB_PASSWORD=${PG_DEPLOYMENTS_PASSWORD}${TIER_ENV_EXTRAS_DEPLOYMENTS}
             # WHERE IT READS A DEPLOYMENT SPEC, as env since the demotion. It was a plain property of
             # this file, which worked only because the successor mounted the same volume and Quarkus read
             # it at boot — and that is exactly what "the file is unread after the flip" cannot mean. A

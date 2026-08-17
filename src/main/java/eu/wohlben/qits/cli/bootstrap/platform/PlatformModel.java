@@ -517,35 +517,77 @@ public final class PlatformModel {
     }
 
     /**
-     * <b>Every name the generated files must not spell for themselves.</b> A wire alias and a
-     * client-id-derived config key both change shape when an application moves plane, so the
-     * templates carry a placeholder and this method answers it — which is what makes
-     * {@link #PLATFORM_SERVICES} the one place a plane is decided.
+     * <b>Everything the generated files must not decide for themselves.</b> A wire alias, a
+     * client-id-derived config key and whether an application is told its tier all change when an
+     * application moves plane, so the templates carry placeholders and this method answers them —
+     * which is what makes {@link #PLATFORM_SERVICES} the one place a plane is decided.
      * <p>
-     * Two families. {@code ALIAS_<APP>} is the address peers dial, for every application this
-     * platform has; {@code CLIENT_KEY_<APP>} is the env-var infix the idp's per-client keys are
-     * built from ({@code QITS_IDP_CLIENT_<key>_SECRET}), which embeds the client ID and therefore
-     * the alias. Both are keyed by the APPLICATION, because that name never moves.
+     * Three families, every one keyed by the APPLICATION because that name never moves:
+     * <ul>
+     *   <li>{@code ALIAS_<APP>} — the address peers dial.
+     *   <li>{@code CLIENT_KEY_<APP>} — the env-var infix the idp's per-client keys are built from
+     *       ({@code QITS_IDP_CLIENT_<key>_SECRET}), which embeds the client id and so the alias.
+     *   <li>{@code TIER_ENV_<APP>} and {@code TIER_ENV_EXTRAS_<APP>} — the {@code QITS_ENVIRONMENT}
+     *       line in the stack file's words and in the extras', or NOTHING at all. See
+     *       {@link #tierEnv}.
+     * </ul>
      * <p>
      * It replaced a single {@code ENV_KEY} token the templates pasted a repository name after —
      * {@code ${ENV_KEY}_QITS_DEPLOYMENTS} — which was a copy of this derivation that could not
      * follow it. The 2026-08-17 flip is what proved that: the deployer's key is
      * {@code QITS_DEPLOYMENTS} now, with no tier in front of it.
      */
-    public static Map<String, String> nameTokens(String envName) {
+    public static Map<String, String> modelTokens(String envName) {
         Map<String, String> tokens = new LinkedHashMap<>();
-        for (String app : platformRepos()) {
-            tokens.put("ALIAS_" + clientKey(app), wireAlias(app, envName));
-        }
         // The seed carries one application no pipeline deploys — the postgres image — so CORE is
         // asked as well as the deployables.
-        for (String app : CORE) {
+        List<String> applications = new ArrayList<>(platformRepos());
+        CORE.stream().filter(app -> !applications.contains(app)).forEach(applications::add);
+        for (String app : applications) {
             tokens.put("ALIAS_" + clientKey(app), wireAlias(app, envName));
+            tokens.put("TIER_ENV_" + clientKey(app), tierEnv(app, envName, "      ", ""));
+            tokens.put("TIER_ENV_EXTRAS_" + clientKey(app), tierEnv(app, envName, "",
+                    "qits.platform.deployments.extras." + repo(app) + ".env."));
         }
         for (String app : IDP_CLIENT_APPS) {
             tokens.put("CLIENT_KEY_" + clientKey(app), clientKey(wireAlias(app, envName)));
         }
         return tokens;
+    }
+
+    /**
+     * <b>{@code QITS_ENVIRONMENT} states which tier an application belongs to, and a platform
+     * service belongs to none</b> — so this is the whole line for an environment application and
+     * the EMPTY STRING for a platform one. It is appended to the end of the line above it, the way
+     * every conditional fragment in these templates is, so the absent case leaves no blank line and
+     * no orphan comment behind. The fragment carries the OUTPUT's indentation, because a text
+     * block's own indent is stripped before a value is substituted into it.
+     * <p>
+     * <b>The absence is load-bearing, and this is the hazard it exists to prevent.</b>
+     * qits-deployments records a resource row per application under the environment this variable
+     * names, {@code orElse(null)} — and it looks a PLATFORM-target service's rows up by that null
+     * key, which the unique index treats as one value rather than as many. A platform service
+     * handed a tier therefore records rows nothing will look for again: its first self-deploy finds
+     * no null-keyed row, takes the reconcile arm instead, and rotates the deployer's own database
+     * passwords in the middle of a boot. The rows the bootstrap records exist to prevent exactly
+     * that, so a fresh boot must never write this line for a platform service.
+     * <p>
+     * It is not how a postgres HOST is resolved, which is what this comment used to claim: the
+     * deployer reads the TARGET application's environment for that, or the platform-designated
+     * environment's row for a platform target — never its own {@code QITS_ENVIRONMENT}.
+     */
+    private static String tierEnv(String app, String envName, String indent, String keyPrefix) {
+        if (isPlatformService(app)) {
+            return "";
+        }
+        return "\n"
+                + indent + "# WHICH TIER THIS APPLICATION BELONGS TO. A PLATFORM SERVICE GETS NO\n"
+                + indent + "# SUCH LINE: it belongs to no tier, and the deployer keys its platform\n"
+                + indent + "# resource rows by the absence of this value. Written for one, those\n"
+                + indent + "# rows land under a tier instead, the next self-deploy does not find\n"
+                + indent + "# them, and it rotates the database passwords the bootstrap issued.\n"
+                + indent + keyPrefix + "QITS_ENVIRONMENT" + (keyPrefix.isEmpty() ? ": " : "=")
+                + envName;
     }
 
     /**

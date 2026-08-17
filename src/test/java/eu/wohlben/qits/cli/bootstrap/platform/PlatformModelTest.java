@@ -409,7 +409,7 @@ class PlatformModelTest {
      */
     @Test
     void everyAliasAndClientKeyTheTemplatesNeedComesOutOfTheModel() {
-        Map<String, String> tokens = PlatformModel.nameTokens("prod");
+        Map<String, String> tokens = PlatformModel.modelTokens("prod");
 
         // An environment service carries the tier; a platform one has no tier to carry.
         assertThat(tokens).containsEntry("ALIAS_CI", "prod-qits-ci")
@@ -426,7 +426,7 @@ class PlatformModelTest {
                 .containsAll(PlatformModel.platformRepos().stream()
                         .map(app -> "ALIAS_" + PlatformModel.clientKey(app)).toList());
         // And it follows the environment name, which the templates cannot.
-        assertThat(PlatformModel.nameTokens("preprod"))
+        assertThat(PlatformModel.modelTokens("preprod"))
                 .containsEntry("ALIAS_CI", "preprod-qits-ci")
                 .containsEntry("ALIAS_EVENTS", "qits-events");
     }

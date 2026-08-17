@@ -21,7 +21,7 @@ class ComposeTemplateTest {
         // The same derivation SeedPhases.tokens fills these from, and it is asked here rather than
         // restated: an alias or a client-id key spelled twice is a plane move that lands in the
         // generated file and not in the test that guards it.
-        values.putAll(PlatformModel.nameTokens(ENV));
+        values.putAll(PlatformModel.modelTokens(ENV));
         values.put("COMPOSE_FILE", "docker-compose.qits.yml");
         values.put("PORT", "8080");
         values.put("REGISTRY_PORT", "8081");
@@ -167,7 +167,8 @@ class ComposeTemplateTest {
         assertThat(compose).doesNotContain("${ENV_NAME}");
         // The alias and client-key families, which replaced a single ENV_KEY the template pasted a
         // repository name after. One left unfilled is an address or a config key rendered as text.
-        assertThat(compose).doesNotContain("${ALIAS_").doesNotContain("${CLIENT_KEY_");
+        assertThat(compose).doesNotContain("${ALIAS_").doesNotContain("${CLIENT_KEY_")
+                .doesNotContain("${TIER_ENV_");
         assertThat(compose).doesNotContain("${IDP_SECRET_");
         assertThat(compose).doesNotContain("${IDP_AUDIENCES}");
         assertThat(compose).doesNotContain("${IDP_CLIENTS}");
@@ -309,6 +310,47 @@ class ComposeTemplateTest {
         assertThat(PlatformModel.idpAudiences(ENV)).contains("qits-deployments");
     }
 
+    /**
+     * <b>QITS_ENVIRONMENT states which tier an application belongs to, and a platform service is
+     * handed no such line.</b> The deployer records a resource row per application under the
+     * environment this variable names, {@code orElse(null)}, and looks a platform-target service's
+     * rows up by that null key — so a platform service told it has a tier records rows its own
+     * first self-deploy will not find, takes the reconcile arm and rotates the database passwords
+     * this bootstrap issued, mid-boot. The rows the bootstrap records exist to prevent that.
+     */
+    @Test
+    void aPlatformServiceIsNeverToldItHasATier() {
+        String compose = ComposeTemplate.compose(tokens());
+        String extras = ComposeTemplate.extras(tokens());
+
+        // The deployer's own two blocks, which were the only writers of this line in either file.
+        assertThat(serviceBlock(compose, "qits-deployments")).doesNotContain("QITS_ENVIRONMENT");
+        assertThat(extras("qits-deployments")).doesNotContain("QITS_ENVIRONMENT");
+        // And the bus, the other application that moved plane on the same day.
+        assertThat(serviceBlock(compose, "qits-events")).doesNotContain("QITS_ENVIRONMENT");
+        assertThat(extras("qits-events")).doesNotContain("QITS_ENVIRONMENT");
+        // Not a platform service anywhere in either file, which is the rule rather than two names.
+        for (String app : PlatformModel.PLATFORM_SERVICES) {
+            assertThat(serviceBlock(compose, PlatformModel.wireAlias(app, ENV)))
+                    .as("the seed block of %s", app)
+                    .doesNotContain("QITS_ENVIRONMENT");
+            assertThat(extras(PlatformModel.repo(app))).as("the extras of %s", app)
+                    .doesNotContain("QITS_ENVIRONMENT");
+        }
+        // AN ENVIRONMENT APPLICATION STILL GETS IT, and the line is what says which tier it is —
+        // so this asserts the fragment renders rather than that the variable is simply gone.
+        assertThat(PlatformModel.modelTokens(ENV))
+                .containsEntry("TIER_ENV_DEPLOYMENTS", "")
+                .containsEntry("TIER_ENV_EXTRAS_DEPLOYMENTS", "");
+        assertThat(PlatformModel.modelTokens(ENV).get("TIER_ENV_CI"))
+                .endsWith("      QITS_ENVIRONMENT: prod");
+        assertThat(PlatformModel.modelTokens(ENV).get("TIER_ENV_EXTRAS_CI"))
+                .endsWith("qits.platform.deployments.extras.qits-ci.env.QITS_ENVIRONMENT=prod");
+        // An empty fragment leaves no blank line and no orphan comment where it used to render.
+        assertThat(compose).doesNotContain("\n\n\n");
+        assertThat(extras).doesNotContain("\n\n\n");
+    }
+
     @Test
     void theDeployerCarriesItsDatabaseItsConfigVolumeAndTheSocket() {
         String compose = ComposeTemplate.compose(tokens());
@@ -330,7 +372,7 @@ class ComposeTemplateTest {
         // The bus, at its wire alias — bare since the bus moved plane, and stated anyway because
         // this service SUBSCRIBES: a BuildSuccessful never received deploys nothing.
         assertThat(block).contains("QITS_EVENTS_URL: http://qits-events:8080");
-        assertThat(block).contains("QITS_ENVIRONMENT: prod");
+        assertThat(block).doesNotContain("QITS_ENVIRONMENT");
         // What makes it a provisioner rather than only a consumer.
         assertThat(block).contains("QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD: "
                 + "\"0123456789abcdef\"");
@@ -1162,7 +1204,8 @@ class ComposeTemplateTest {
         assertThat(properties).doesNotContain("${DOCKER_GID}")
                 .doesNotContain("${ENV_NAME}")
                 .doesNotContain("${ALIAS_")
-                .doesNotContain("${CLIENT_KEY_");
+                .doesNotContain("${CLIENT_KEY_")
+                .doesNotContain("${TIER_ENV_");
         assertThat(properties).doesNotContain("QITS_EDGE_UPSTREAM_HOST_PATTERN")
                 .doesNotContain(EXTRAS + "qits-gateway.");
     }
@@ -1273,7 +1316,7 @@ class ComposeTemplateTest {
                 + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_deployments");
         assertThat(deployer).contains("env.QITS_RESOURCE_DB_USERNAME=qits_deployments");
         assertThat(deployer).contains("env.QITS_RESOURCE_DB_PASSWORD=fedcba9876543210");
-        assertThat(deployer).contains("env.QITS_ENVIRONMENT=prod");
+        assertThat(deployer).doesNotContain("QITS_ENVIRONMENT");
         assertThat(deployer).contains(
                 "env.QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD=0123456789abcdef");
         // The bus, and the ONLY thing the deployer's bus membership adds to this line: the wire
@@ -1640,7 +1683,7 @@ class ComposeTemplateTest {
     void theEnvironmentNameReachesEveryGeneratedAddress() {
         Map<String, String> other = tokens();
         other.put("ENV_NAME", "preprod");
-        other.putAll(PlatformModel.nameTokens("preprod"));
+        other.putAll(PlatformModel.modelTokens("preprod"));
 
         assertThat(ComposeTemplate.compose(other))
                 .contains("\n  preprod-qits-ci:\n")
