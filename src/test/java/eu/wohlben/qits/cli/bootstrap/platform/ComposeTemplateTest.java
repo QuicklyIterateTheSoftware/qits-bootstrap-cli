@@ -851,15 +851,65 @@ class ComposeTemplateTest {
                 .doesNotContain("QITS_ARTIFACTS_URL");
         assertThat(extras("qits-workspaces")).contains("env.QITS_GITHOST_URL=" + host)
                 .doesNotContain("QITS_ARTIFACTS_URL");
-        // The deployer's OWN trusted address for the same host — a plain property, because this
-        // file is its configuration. Specs are read before the runtime mutation begins, so this
-        // remains available for qits-githost's own cutover without crossing the public edge.
+        // The deployer's OWN trusted address for the same host, and it is ENV on both sides of the
+        // demotion: the extras file holds extras and nothing else now. Specs are read before the
+        // runtime mutation begins, so this stays available for qits-githost's own cutover without
+        // crossing the public edge.
         assertThat(ComposeTemplate.extras(tokens()))
-                .contains("\nqits.platform.deployments.git-host-url=" + host + "\n");
+                .doesNotContain("\nqits.platform.deployments.git-host-url=")
+                .contains(EXTRAS + "qits-deployments.env.QITS_PLATFORM_DEPLOYMENTS_GIT_HOST_URL="
+                        + host + "\n");
+        assertThat(ComposeTemplate.compose(tokens()))
+                .contains("QITS_PLATFORM_DEPLOYMENTS_GIT_HOST_URL: " + host);
         // The KEYS, not the comments: the git host's own block says in prose where its clone url
         // used to be, and that sentence is why the reader knows what moved.
         assertThat(extrasKeys()).allSatisfy(line -> assertThat(line)
                 .doesNotContain("/artifacts/git"));
+    }
+
+    /**
+     * <b>The demoted file states extras and nothing else.</b> Every other line is a comment. A plain
+     * {@code qits.platform.deployments.<key>} here would be a setting the deployer still has to read
+     * this file for, on a platform where the flip has made the file unread — so it would configure
+     * nothing and the failure would be silent.
+     */
+    @Test
+    void theExtrasFileCarriesOnlyExtras() {
+        List<String> settings = ComposeTemplate.extras(tokens()).lines()
+                .map(String::strip)
+                .filter(line -> !line.isEmpty() && !line.startsWith("#"))
+                .filter(line -> !line.startsWith(EXTRAS))
+                .toList();
+
+        assertThat(settings).as("every non-comment line is an extras key").isEmpty();
+    }
+
+    /**
+     * <b>The deployer's own settings are env, and they are spelled TWICE on purpose.</b> The seed
+     * stack starts a deployer that has read no extras at all; the extras are what every self-update's
+     * successor inherits — and since the update argv removes what the extras do not state, a variable
+     * on the seed service alone would be gone at the deployer's first self-deploy.
+     */
+    @Test
+    void theDeployersOwnSettingsAreEnvOnBothTheSeedServiceAndItsExtras() {
+        String deployer = serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-deployments");
+        String extras = extras("qits-deployments");
+
+        for (String pair : List.of(
+                "QITS_PLATFORM_DEPLOYMENTS_GIT_HOST_URL: http://prod-qits-githost:8080",
+                "QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH: \"true\"")) {
+            assertThat(deployer).contains(pair);
+        }
+        assertThat(extras)
+                .contains("env.QITS_PLATFORM_DEPLOYMENTS_GIT_HOST_URL=http://prod-qits-githost:8080")
+                .contains("env.QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH=true")
+                .contains("env.QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD=");
+        // The flip's own two stay OFF the seed service: a seed deployer holding the url before
+        // qits-configuration is deployed and imported refuses every deployment in the train.
+        assertThat(deployer).doesNotContain("QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL")
+                .doesNotContain("QUARKUS_OIDC_CLIENT_CONFIGURATION_");
+        assertThat(extras)
+                .contains("env.QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://prod-qits-configuration:8080");
     }
 
     @Test

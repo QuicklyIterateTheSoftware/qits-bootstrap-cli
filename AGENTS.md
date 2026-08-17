@@ -156,8 +156,26 @@ forced. Add to that list rather than deviating quietly.
   holding the url over a service nobody imported into. The seed stack therefore spells NONE of
   those keys — the seed deployer has to start without them — while the generated extras spell all
   of them, because a live `service update --env-add` alone is exactly the fix the old model kept
-  reverting. **The file on the config volume is not going away**: it is the cold-boot source, it is
-  what the import is rendered from, and it is the fallback for a platform that never flips.
+  reverting.
+- **The extras file is BOOTSTRAP-ONLY, and after the flip it is unread.** It is what the seed
+  deployer runs from before qits-configuration exists and what `configuration-import` imports whole,
+  so the store and the file cannot disagree at the moment authority moves. From the flip on, the
+  deployer reads the service and NOT the file — authoritative means sole, or a key deleted from the
+  store comes back out of whatever nobody emptied on the volume. Editing it on a flipped platform
+  changes nothing. Unsetting `QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL` is the rollback, and the file it
+  falls back to may be months stale by then: re-render before leaning on it.
+- **The file holds EXTRAS and nothing else.** The deployer's own settings — the ones spelled
+  `qits.platform.deployments.<key>` rather than `...extras.<app>.<key>` — are env now,
+  `QITS_PLATFORM_DEPLOYMENTS_*`, and each is spelled **twice**: on the seed stack's deployer service,
+  which starts before any extras are read, and on the deployer's own extras block, which is what
+  every self-update's successor inherits. Twice is not belt and braces since 2026-08-17: the update
+  argv `--env-rm`s what the extras do not state, so a variable on the seed service alone would be
+  gone at the deployer's first self-deploy. **The extras family is the one thing that cannot move to
+  env**, and `ServiceExtras` says why — an underscore cannot tell `qits-ci`'s keys from
+  `qits-ci-daemon`'s, because a dash and a dot both become one. Never render extras as env.
+  The volume itself stays whatever happens: `config.json`, the credential `DOCKER_CONFIG` names, is a
+  second file on it with a phase of its own. `demotion-rollout.md` is the hand procedure for a
+  platform that is already flipped.
 - **One binary, two halves, ONE configuration contract.** Outside a container the binary launches
   itself inside one; inside it, it runs the phases. The host half reads the same `BootstrapConfig`
   and re-interprets no `QITS_*` value: the container's working directory is the launcher's, so
