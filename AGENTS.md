@@ -226,9 +226,18 @@ forced. Add to that list rather than deviating quietly.
   builds reuse calvers across runs.
 - **A name in `PlatformModel` is the repository name without `qits-`, and it is load-bearing four
   times over**: the wrapper directory, the git-host repository, the seed image tag and the
-  deployer's application key. The plane lives in the name itself (`platform-idp`,
-  `platform-artifacts`) and the tier lives in the WIRE ALIAS derived from it
-  (`prod-qits-ci`) — never the other way round.
+  deployer's application key. The plane is DECIDED by `PlatformModel.PLATFORM_SERVICES` and
+  usually also said by the name (`platform-idp`, `platform-mirror`); the tier lives in the WIRE
+  ALIAS derived from it (`prod-qits-ci`) — never the other way round. **The list is the authority,
+  not the spelling**: qits-deployments and qits-events joined the platform plane on 2026-08-17 and
+  their repositories are renamed only after the local proof, so both answer to a bare name that
+  says no plane at all.
+- **Nothing outside `PlatformModel` spells a wire alias or a client-id key.** Both change shape when
+  an application moves plane, so `wireAlias`, `pdNamePrefix` and `PlatformModel.nameTokens` are the
+  only places either is built — the generated stack and extras carry `${ALIAS_<APP>}` and
+  `${CLIENT_KEY_<APP>}` placeholders, and `BootstrapConfig`'s urls derive too. A concatenated copy
+  is a peer dialling a name nothing answers to, or an audience the idp never mints, and both fail
+  as a silent 401.
 - **A source this program cannot trust stops the boot.** It decides which sha the whole platform is
   built from, so a wrapper path that is not a checkout and a refresh that will not fast-forward are
   both failures, not log lines. What is ABSENT is a different question and has a different answer:

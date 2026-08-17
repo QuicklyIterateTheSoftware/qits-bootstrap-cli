@@ -6,6 +6,12 @@ this file is for the machine that is already running.
 
 Read it in order. Every step is safe to repeat.
 
+**The service names below are the pre-re-plane ones.** qits-deployments became a platform service on
+2026-08-17, so on a platform bootstrapped after that its swarm service is `qits-deployments` and its
+container prefix `qits-pd-qits-deployments-`, with no `dev-` in front of either. Read every
+`dev-qits-deployments` here as `qits-deployments` on such a machine; `docker service ls` says which
+one stands there.
+
 ## What changes, and why the order matters
 
 Two things landed together:

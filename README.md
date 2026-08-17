@@ -561,8 +561,15 @@ Those repositories stay on main in both modes.
 
 | plane | applications | wire alias | container |
 | --- | --- | --- | --- |
-| environment | ci, deployments, events, projects, observability, workspaces, stt, configuration, artifacts, githost, docs, containers, oci-postgresql | `<env>-qits-<app>` | `qits-pd-<env>-qits-<app>-<id8>` |
-| platform | platform-edge, platform-idp, platform-mirror | `qits-platform-<x>` | `qits-pd-qits-platform-<x>-<id8>` |
+| environment | ci, projects, observability, workspaces, stt, configuration, artifacts, githost, docs, containers, oci-postgresql | `<env>-qits-<app>` | `qits-pd-<env>-qits-<app>-<id8>` |
+| platform | platform-edge, platform-idp, platform-mirror, deployments, events | `qits-<app>` | `qits-pd-qits-<app>-<id8>` |
+
+**qits-deployments and qits-events moved to the platform plane on 2026-08-17**, and their aliases
+are the bare repository names rather than `qits-platform-*` ones: the repositories are renamed after
+the local proof, not before it. The deployer moved because an environment is becoming a
+cross-environment entity — one tier gating another — which cannot live inside one tier's deployer;
+the bus moved because which broker a service dials WAS the scope, so a platform deployer on a
+per-tier bus could announce to one tier only.
 
 A **platform** service is one instance for the whole platform, joined to every environment's
 networks, belonging to no tier — so it appears in no per-environment deployment listing, and the
