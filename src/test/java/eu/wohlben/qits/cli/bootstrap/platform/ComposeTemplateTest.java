@@ -18,7 +18,10 @@ class ComposeTemplateTest {
     static Map<String, String> tokens() {
         Map<String, String> values = new LinkedHashMap<>();
         values.put("ENV_NAME", ENV);
-        values.put("ENV_KEY", PlatformModel.clientKey(ENV));
+        // The same derivation SeedPhases.tokens fills these from, and it is asked here rather than
+        // restated: an alias or a client-id key spelled twice is a plane move that lands in the
+        // generated file and not in the test that guards it.
+        values.putAll(PlatformModel.nameTokens(ENV));
         values.put("COMPOSE_FILE", "docker-compose.qits.yml");
         values.put("PORT", "8080");
         values.put("REGISTRY_PORT", "8081");
@@ -162,7 +165,9 @@ class ComposeTemplateTest {
                 .doesNotContain("${EDGE_SEED_TLS_PORTS}")
                 .doesNotContain("${EDGE_TLS}");
         assertThat(compose).doesNotContain("${ENV_NAME}");
-        assertThat(compose).doesNotContain("${ENV_KEY}");
+        // The alias and client-key families, which replaced a single ENV_KEY the template pasted a
+        // repository name after. One left unfilled is an address or a config key rendered as text.
+        assertThat(compose).doesNotContain("${ALIAS_").doesNotContain("${CLIENT_KEY_");
         assertThat(compose).doesNotContain("${IDP_SECRET_");
         assertThat(compose).doesNotContain("${IDP_AUDIENCES}");
         assertThat(compose).doesNotContain("${IDP_CLIENTS}");
@@ -267,10 +272,47 @@ class ComposeTemplateTest {
         }
     }
 
+    /**
+     * <b>The deployer and the bus are PLATFORM services, and every name derived from that is in the
+     * two generated files.</b> Both moved on 2026-08-17, and the whole point of the move landing in
+     * PlatformModel is that no template spells either alias for itself: an environment-qualified
+     * copy left anywhere is a peer dialling a name nothing answers to, or an audience the idp never
+     * mints — the silent-401 class, run backwards.
+     */
+    @Test
+    void theDeployerAndTheBusCarryNoTierInEitherGeneratedFile() {
+        String compose = ComposeTemplate.compose(tokens());
+        String extras = ComposeTemplate.extras(tokens());
+
+        // The seed service keys, which are what every address in both files resolves to.
+        assertThat(compose).contains("\n  qits-deployments:\n").contains("\n  qits-events:\n");
+        // And nowhere a tier-qualified spelling of either, in either file.
+        assertThat(compose).doesNotContain(ENV + "-qits-deployments")
+                .doesNotContain(ENV + "-qits-events");
+        assertThat(extras).doesNotContain(ENV + "-qits-deployments")
+                .doesNotContain(ENV + "-qits-events");
+        // The values that flipped with them, each one an address or an identity a peer holds:
+        // the fleet-wide bus url, the artifacts GC's pin source — kept, because the jar defaults to
+        // the post-rename qits-platform-deployments, which nothing answers to — the deployer's
+        // inbound audience, and its idp client id.
+        assertThat(extras).contains("env.QITS_EVENTS_URL=http://qits-events:8080")
+                .contains("qits-artifacts.env.QITS_ARTIFACTS_GC_PINS_CD_BASE_URL="
+                        + "http://qits-deployments:8080/platform-deployments/api")
+                .contains("qits-deployments.env.QITS_AUTH_MACHINE_AUDIENCE=qits-deployments")
+                .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ID=qits-deployments");
+        // The idp seeds the same bare id, and its per-client keys embed it — so the key loses the
+        // tier too, in both files.
+        assertThat(compose).contains("QITS_IDP_CLIENT_QITS_DEPLOYMENTS_SECRET")
+                .doesNotContain("QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_");
+        assertThat(extras).contains("env.QITS_IDP_CLIENT_QITS_DEPLOYMENTS_ROLES=")
+                .doesNotContain("QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_");
+        assertThat(PlatformModel.idpAudiences(ENV)).contains("qits-deployments");
+    }
+
     @Test
     void theDeployerCarriesItsDatabaseItsConfigVolumeAndTheSocket() {
         String compose = ComposeTemplate.compose(tokens());
-        String block = serviceBlock(compose, ENV + "-qits-deployments");
+        String block = serviceBlock(compose, "qits-deployments");
 
         assertThat(compose).contains("image: qits/deployments:latest");
         // Adopter #1 of the generic resource contract: its own store arrives as the same triple it
@@ -285,9 +327,9 @@ class ComposeTemplateTest {
                         + "prod-qits-oci-postgresql:5432/qits_deployments_eventstream")
                 .contains("QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_deployments_eventstream")
                 .contains("QITS_RESOURCE_EVENTSTREAM_PASSWORD: \"1111222233334444\"");
-        // The bus, at the name that resolves. The jar's default is the pre-rename qits-events:8080,
-        // and this service SUBSCRIBES — a BuildSuccessful never received deploys nothing.
-        assertThat(block).contains("QITS_EVENTS_URL: http://prod-qits-events:8080");
+        // The bus, at its wire alias — bare since the bus moved plane, and stated anyway because
+        // this service SUBSCRIBES: a BuildSuccessful never received deploys nothing.
+        assertThat(block).contains("QITS_EVENTS_URL: http://qits-events:8080");
         assertThat(block).contains("QITS_ENVIRONMENT: prod");
         // What makes it a provisioner rather than only a consumer.
         assertThat(block).contains("QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD: "
@@ -319,8 +361,8 @@ class ComposeTemplateTest {
                 .contains("QUARKUS_OIDC_CLIENT_CLIENT_ID: prod-qits-ci")
                 .contains("QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE: "
                         + "prod-qits-containers");
-        assertThat(serviceBlock(compose, ENV + "-qits-deployments"))
-                .contains("QITS_AUTH_MACHINE_AUDIENCE: prod-qits-deployments");
+        assertThat(serviceBlock(compose, "qits-deployments"))
+                .contains("QITS_AUTH_MACHINE_AUDIENCE: qits-deployments");
         // The artifacts service validates a tier-qualified audience since the split, and mints
         // nothing at all: the git host's announcement was the only token it ever asked for.
         assertThat(serviceBlock(compose, ENV + "-qits-artifacts"))
@@ -333,7 +375,7 @@ class ComposeTemplateTest {
                 .contains("env.QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE="
                         + "prod-qits-containers");
         assertThat(extras("qits-deployments"))
-                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-deployments");
+                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=qits-deployments");
         assertThat(extras("qits-artifacts"))
                 .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-artifacts")
                 .doesNotContain("QUARKUS_OIDC_CLIENT_");
@@ -396,9 +438,9 @@ class ComposeTemplateTest {
                 .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ENABLED=true")
                 .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_AUTH_SERVER_URL="
                         + "http://qits-platform-idp:8080/idp")
-                .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ID=prod-qits-deployments")
+                .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ID=qits-deployments")
                 .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CREDENTIALS_SECRET="
-                        + "secret-prod-qits-deployments")
+                        + "secret-qits-deployments")
                 .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_GRANT_OPTIONS_CLIENT_AUDIENCE="
                         + "prod-qits-configuration");
         // The DEFAULT unnamed client stays off: the extension creates it whether or not anything
@@ -416,7 +458,7 @@ class ComposeTemplateTest {
     void theSeedDeployerStartsBeforeThereIsAConfigurationServiceToRead() {
         String compose = ComposeTemplate.compose(tokens());
 
-        assertThat(serviceBlock(compose, ENV + "-qits-deployments"))
+        assertThat(serviceBlock(compose, "qits-deployments"))
                 .doesNotContain("QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL")
                 .doesNotContain("QUARKUS_OIDC_CLIENT_CONFIGURATION_");
         // And there is no seed service for it either: it is deployed through the pipeline like every
@@ -435,14 +477,14 @@ class ComposeTemplateTest {
     @Test
     void theDeployersIdpClientCarriesTheSystemRoleInBothFiles() {
         assertThat(serviceBlock(ComposeTemplate.compose(tokens()), "qits-platform-idp"))
-                .contains("QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_ROLES: "
+                .contains("QITS_IDP_CLIENT_QITS_DEPLOYMENTS_ROLES: "
                         + "\"qits:system,qits-platform:system\"");
         assertThat(extras("qits-platform-idp"))
-                .contains("env.QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_ROLES="
+                .contains("env.QITS_IDP_CLIENT_QITS_DEPLOYMENTS_ROLES="
                         + "qits:system,qits-platform:system");
         // And the audience it may ask for, which is what keeps the mint out of invalid_target.
         assertThat(extras("qits-platform-idp"))
-                .contains("env.QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_AUDIENCES="
+                .contains("env.QITS_IDP_CLIENT_QITS_DEPLOYMENTS_AUDIENCES="
                         + PlatformModel.idpAudiences(ENV));
         assertThat(PlatformModel.idpAudiences(ENV)).contains("prod-qits-configuration");
     }
@@ -519,7 +561,7 @@ class ComposeTemplateTest {
                 .doesNotContain("QITS_ARTIFACTS_BLOBS_DIR")
                 .doesNotContain("volumes:")
                 // A push is a durable event now, not an HTTP call to two consumers.
-                .contains("QITS_EVENTS_URL: http://prod-qits-events:8080")
+                .contains("QITS_EVENTS_URL: http://qits-events:8080")
                 .doesNotContain("QITS_CI_INTAKE_URL")
                 // Without the resolver the name-addressed scheme 404s and every agent container
                 // starts with an empty workspace.
@@ -599,18 +641,18 @@ class ComposeTemplateTest {
         String idpExtras = extras("qits-platform-idp");
         String audiences = PlatformModel.idpAudiences(ENV);
 
-        assertThat(idp).contains("QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_SECRET: "
-                        + "\"secret-prod-qits-deployments\"")
+        assertThat(idp).contains("QITS_IDP_CLIENT_QITS_DEPLOYMENTS_SECRET: "
+                        + "\"secret-qits-deployments\"")
                 .contains("QITS_IDP_CLIENT_PROD_QITS_CONTAINERS_SECRET: "
                         + "\"secret-prod-qits-containers\"")
-                .contains("QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_AUDIENCES: \"" + audiences + "\"")
+                .contains("QITS_IDP_CLIENT_QITS_DEPLOYMENTS_AUDIENCES: \"" + audiences + "\"")
                 .contains("QITS_IDP_CLIENT_PROD_QITS_CONTAINERS_AUDIENCES: \"" + audiences + "\"");
         assertThat(idpExtras)
-                .contains("env.QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_SECRET="
-                        + "secret-prod-qits-deployments")
+                .contains("env.QITS_IDP_CLIENT_QITS_DEPLOYMENTS_SECRET="
+                        + "secret-qits-deployments")
                 .contains("env.QITS_IDP_CLIENT_PROD_QITS_CONTAINERS_SECRET="
                         + "secret-prod-qits-containers")
-                .contains("env.QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_AUDIENCES=" + audiences)
+                .contains("env.QITS_IDP_CLIENT_QITS_DEPLOYMENTS_AUDIENCES=" + audiences)
                 .contains("env.QITS_IDP_CLIENT_PROD_QITS_CONTAINERS_AUDIENCES=" + audiences);
         // And both are on the list that says which clients exist: an id not on it is
         // invalid_client, with nothing to say it was a typo.
@@ -619,7 +661,7 @@ class ComposeTemplateTest {
         assertThat(idpExtras).contains("env.QITS_IDP_CLIENTS="
                 + String.join(",", PlatformModel.idpClients(ENV)));
         assertThat(PlatformModel.idpClients(ENV))
-                .contains("prod-qits-deployments", "prod-qits-containers");
+                .contains("qits-deployments", "prod-qits-containers");
     }
 
     /**
@@ -723,7 +765,7 @@ class ComposeTemplateTest {
     @Test
     void bothPullersAreGivenADockerConfigHome() {
         String compose = ComposeTemplate.compose(tokens());
-        String deployer = serviceBlock(compose, ENV + "-qits-deployments");
+        String deployer = serviceBlock(compose, "qits-deployments");
         String containers = serviceBlock(compose, ENV + "-qits-containers");
 
         assertThat(deployer).contains("DOCKER_CONFIG: /work/config")
@@ -769,7 +811,7 @@ class ComposeTemplateTest {
 
         // The deployer authenticates its own pull AND serialises the credential into every service
         // spec it creates. Spelled in the seed too: that deployer pulls before it reads any extras.
-        assertThat(serviceBlock(compose, ENV + "-qits-deployments"))
+        assertThat(serviceBlock(compose, "qits-deployments"))
                 .contains("QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH: \"true\"");
         assertThat(extras("qits-deployments"))
                 .contains("env.QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH=true");
@@ -844,7 +886,7 @@ class ComposeTemplateTest {
         // passing qits.artifacts.url configures nothing and silently takes the default.
         assertThat(extras("qits-projects")).contains("env.QITS_GITHOST_URL=" + host)
                 .contains("env.QITS_PROJECTS_AGENT_GIT_BASE=" + host + "/git")
-                .contains("env.QITS_EVENTS_URL=http://prod-qits-events:8080")
+                .contains("env.QITS_EVENTS_URL=http://qits-events:8080")
                 .contains("env.QITS_AUTH_MACHINE_REQUIRED=true")
                 .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-projects")
                 .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp")
@@ -892,7 +934,7 @@ class ComposeTemplateTest {
      */
     @Test
     void theDeployersOwnSettingsAreEnvOnBothTheSeedServiceAndItsExtras() {
-        String deployer = serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-deployments");
+        String deployer = serviceBlock(ComposeTemplate.compose(tokens()), "qits-deployments");
         String extras = extras("qits-deployments");
 
         for (String pair : List.of(
@@ -942,8 +984,8 @@ class ComposeTemplateTest {
                 .doesNotContain("env.QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL=");
 
         assertThat(serviceBlock(compose, ENV + "-qits-ci"))
-                .contains("QITS_EVENTS_URL: http://prod-qits-events:8080");
-        assertThat(extras("qits-ci")).contains("env.QITS_EVENTS_URL=http://prod-qits-events:8080");
+                .contains("QITS_EVENTS_URL: http://qits-events:8080");
+        assertThat(extras("qits-ci")).contains("env.QITS_EVENTS_URL=http://qits-events:8080");
     }
 
     /**
@@ -955,7 +997,7 @@ class ComposeTemplateTest {
     @Test
     void theBusIsInTheSeedAndIsHandedItsDatabase() {
         String compose = ComposeTemplate.compose(tokens());
-        String block = serviceBlock(compose, ENV + "-qits-events");
+        String block = serviceBlock(compose, "qits-events");
 
         assertThat(compose).contains("image: qits/events:latest");
         // The deployer's own default derivation of the database name, so the row it registers on the
@@ -1001,7 +1043,7 @@ class ComposeTemplateTest {
                         + "prod-qits-oci-postgresql:5432/qits_containers_eventstream")
                 .contains("QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_containers_eventstream")
                 .contains("QITS_RESOURCE_EVENTSTREAM_PASSWORD: \"0f0f0f0f0f0f0f0f\"");
-        assertThat(block).contains("QITS_EVENTS_URL: http://prod-qits-events:8080");
+        assertThat(block).contains("QITS_EVENTS_URL: http://qits-events:8080");
         // Every route of this service is guarded, so the audience is not decoration: the image ships
         // the bare qits-containers and the idp mints prod-qits-containers. No oidc-client — it
         // validates and mints nothing, exactly like the deployer.
@@ -1022,7 +1064,7 @@ class ComposeTemplateTest {
         assertThat(orchestrator)
                 .contains(".mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock")
                 .contains(".groups[0]=988")
-                .contains("env.QITS_EVENTS_URL=http://prod-qits-events:8080")
+                .contains("env.QITS_EVENTS_URL=http://qits-events:8080")
                 .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-containers")
                 .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp");
         // Both stores are declared in its deployments.yml, so the deployer injects the six
@@ -1119,7 +1161,8 @@ class ComposeTemplateTest {
         assertThat(properties).contains(".groups[0]=988");
         assertThat(properties).doesNotContain("${DOCKER_GID}")
                 .doesNotContain("${ENV_NAME}")
-                .doesNotContain("${ENV_KEY}");
+                .doesNotContain("${ALIAS_")
+                .doesNotContain("${CLIENT_KEY_");
         assertThat(properties).doesNotContain("QITS_EDGE_UPSTREAM_HOST_PATTERN")
                 .doesNotContain(EXTRAS + "qits-gateway.");
     }
@@ -1188,7 +1231,7 @@ class ComposeTemplateTest {
 
         assertThat(serviceBlock(compose, ENV + "-qits-ci"))
                 .contains("QITS_ARTIFACTS_REGISTRY_HOST: " + vhost);
-        assertThat(serviceBlock(compose, ENV + "-qits-deployments"))
+        assertThat(serviceBlock(compose, "qits-deployments"))
                 .contains("QITS_ARTIFACTS_REGISTRY_HOST: " + vhost);
         assertThat(extras("qits-ci")).contains("env.QITS_ARTIFACTS_REGISTRY_HOST=" + vhost);
         assertThat(extras("qits-deployments")).contains("env.QITS_ARTIFACTS_REGISTRY_HOST=" + vhost);
@@ -1235,7 +1278,7 @@ class ComposeTemplateTest {
                 "env.QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD=0123456789abcdef");
         // The bus, and the ONLY thing the deployer's bus membership adds to this line: the wire
         // name. A subscriber pointed at the pre-rename qits-events:8080 receives nothing.
-        assertThat(deployer).contains("env.QITS_EVENTS_URL=http://prod-qits-events:8080");
+        assertThat(deployer).contains("env.QITS_EVENTS_URL=http://qits-events:8080");
         // ONE TRIPLE, NOT TWO. The outbox is declared in the deployer's own deployments.yml, so a
         // running deployer provisions it for its successor and injects the triple from the registry
         // row that holds the current password — pinning it here would outlive the next rotation.
@@ -1298,7 +1341,7 @@ class ComposeTemplateTest {
         assertThat(idp).contains("QITS_IDP_CLIENTS=" + String.join(",", PlatformModel.idpClients(ENV)));
         assertThat(idp).contains("QITS_IDP_CLIENT_PROD_QITS_CI_AUDIENCES=")
                 .contains("QITS_IDP_CLIENT_PROD_QITS_ARTIFACTS_AUDIENCES=")
-                .contains("prod-qits-deployments");
+                .contains("qits-deployments");
         // The wildcard project claim, under the id it moved to when the store became an
         // environment service. Nobody in this bootstrap presents it any more — the release replays
         // push a tag — and it stays for the person who triggers a run by hand.
@@ -1597,7 +1640,7 @@ class ComposeTemplateTest {
     void theEnvironmentNameReachesEveryGeneratedAddress() {
         Map<String, String> other = tokens();
         other.put("ENV_NAME", "preprod");
-        other.put("ENV_KEY", "PREPROD");
+        other.putAll(PlatformModel.nameTokens("preprod"));
 
         assertThat(ComposeTemplate.compose(other))
                 .contains("\n  preprod-qits-ci:\n")
@@ -1608,7 +1651,9 @@ class ComposeTemplateTest {
         assertThat(ComposeTemplate.extras(other))
                 .contains("env.QITS_ARTIFACTS_REGISTRY_HOST=registry.preprod.localhost:8080")
                 .contains("env.QITS_AUTH_MACHINE_AUDIENCE=preprod-qits-ci")
-                .contains("env.QITS_EVENTS_URL=http://preprod-qits-events:8080")
+                // The bus is a PLATFORM service, so this one address does NOT carry the tier —
+                // which is the whole point of deriving it rather than spelling the environment in.
+                .contains("env.QITS_EVENTS_URL=http://qits-events:8080")
                 .doesNotContain("QITS_GATEWAY_PROXY_HOSTS")
                 .contains("env.QITS_OBSERVABILITY_URL=http://preprod-qits-observability:8080");
     }

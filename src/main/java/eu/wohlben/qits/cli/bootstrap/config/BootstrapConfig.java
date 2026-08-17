@@ -1,5 +1,6 @@
 package eu.wohlben.qits.cli.bootstrap.config;
 
+import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithDefault;
 
@@ -428,9 +429,16 @@ public interface BootstrapConfig {
      * The route segment stayed {@code /platform-deployments} when the repository was renamed —
      * it names the component, not the repository, and every route of the service (its API, its
      * health, its client) hangs off it. Only the hostname moved.
+     * <p>
+     * <b>The hostname is DERIVED, and that is what the 2026-08-17 plane move cost.</b> This method
+     * spelled {@code <env>-qits-deployments} and therefore did not follow
+     * {@link PlatformModel#PLATFORM_SERVICES}: the moment the deployer moved plane, every call this
+     * program makes to it — the environment reconcile, the build-event replay, the auth-plane probe
+     * — would have gone to a name nothing answers to.
      */
     default String platformDeploymentsUrl() {
-        return "http://" + envName() + "-qits-deployments:8080/platform-deployments";
+        return "http://" + PlatformModel.wireAlias("deployments", envName())
+                + ":8080/platform-deployments";
     }
 
     /**
@@ -440,9 +448,11 @@ public interface BootstrapConfig {
      * Dialled for one purpose: the seed health wait. Nothing this program does publishes or reads
      * an event over HTTP — the announcements travel ci's outbox and the deployer's subscriber — but
      * a bus nobody waited for is a bus the first green build can outrun.
+     * <p>
+     * Derived for the same reason the deployer's url is: the bus moved plane on the same day.
      */
     default String eventsUrl() {
-        return "http://" + envName() + "-qits-events:8080/events";
+        return "http://" + PlatformModel.wireAlias("events", envName()) + ":8080/events";
     }
 
     /**

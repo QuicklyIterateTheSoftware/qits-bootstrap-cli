@@ -3,6 +3,7 @@ package eu.wohlben.qits.cli.bootstrap.platform;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -94,8 +95,12 @@ class PlatformModelTest {
                 .isEqualTo("qits-pd-qits-platform-edge-");
         assertThat(PlatformModel.pdNamePrefix("gateway", "prod"))
                 .isEqualTo("qits-pd-prod-qits-gateway-");
+        // The deployer took the platform shape on 2026-08-17, and its own container name is what
+        // this run's deploy wait matches on — DeployLogStream follows the same prefix.
         assertThat(PlatformModel.pdNamePrefix("deployments", "prod"))
-                .isEqualTo("qits-pd-prod-qits-deployments-");
+                .isEqualTo("qits-pd-qits-deployments-");
+        assertThat(PlatformModel.pdNamePrefix("events", "prod"))
+                .isEqualTo("qits-pd-qits-events-");
     }
 
     @Test
@@ -104,8 +109,11 @@ class PlatformModelTest {
         // containers are named after it, so a wrong answer here is a seed nothing can reach.
         assertThat(PlatformModel.wireAlias("ci", "prod")).isEqualTo("prod-qits-ci");
         assertThat(PlatformModel.wireAlias("gateway", "prod")).isEqualTo("prod-qits-gateway");
-        assertThat(PlatformModel.wireAlias("deployments", "prod"))
-                .isEqualTo("prod-qits-deployments");
+        // The deployer and the bus dropped the tier on 2026-08-17, and neither carries the plane
+        // in its name yet: the repository rename comes after the local proof.
+        assertThat(PlatformModel.wireAlias("deployments", "prod")).isEqualTo("qits-deployments");
+        assertThat(PlatformModel.wireAlias("events", "prod")).isEqualTo("qits-events");
+        assertThat(PlatformModel.wireAlias("events", "preprod")).isEqualTo("qits-events");
         assertThat(PlatformModel.wireAlias("platform-edge", "prod"))
                 .isEqualTo("qits-platform-edge");
         // The byte plane, split across both shapes: the store and the git host went back to being
@@ -122,9 +130,11 @@ class PlatformModelTest {
 
     @Test
     void thePlatformPlaneIsWhatCannotBePerTier() {
-        // Three: the nameserver left with qits-platform-dns, and this platform serves no dns.
+        // Five: the nameserver left with qits-platform-dns, and the deployer and the bus joined on
+        // 2026-08-17. A cross-environment hierarchy cannot live inside one tier's deployer, and
+        // which broker a service dials WAS the bus's only scoping.
         assertThat(PlatformModel.PLATFORM_SERVICES).containsExactlyInAnyOrder(
-                "platform-edge", "platform-idp", "platform-mirror");
+                "platform-edge", "platform-idp", "platform-mirror", "deployments", "events");
         // The byte-plane split settled the pair that used to be here: the caches were the only
         // reason either could not be per-tier, and they are qits-platform-mirror now.
         assertThat(PlatformModel.isPlatformService("artifacts")).isFalse();
@@ -134,7 +144,7 @@ class PlatformModelTest {
         assertThat(PlatformModel.DEPLOYABLES)
                 .filteredOn(name -> !PlatformModel.isPlatformService(name))
                 .containsExactlyInAnyOrder("observability", "oci-postgresql", "stt", "projects",
-                        "workspaces", "events", "ci", "containers", "deployments",
+                        "workspaces", "ci", "containers",
                         "artifacts", "githost", "docs", "configuration");
         // And qits-configuration is one of them rather than a platform service, which is the whole
         // point of it: two tiers sharing one configuration store would make an edit in dev an edit
@@ -316,10 +326,11 @@ class PlatformModelTest {
      */
     @Test
     void thePullersValidateAndHoldACredentialOfTheirOwn() {
+        // The deployer's id lost its tier with the plane move; the orchestrator is still a tier's.
         assertThat(PlatformModel.idpClients("prod"))
-                .contains("prod-qits-deployments", "prod-qits-containers");
+                .contains("qits-deployments", "prod-qits-containers");
         assertThat(PlatformModel.idpAudiences("prod"))
-                .contains("prod-qits-deployments", "prod-qits-containers");
+                .contains("qits-deployments", "prod-qits-containers");
         // Each name once. The audience list is derived from the clients now, and a duplicate would
         // be a key that says the same thing twice to a service that replaces the shipped list.
         assertThat(PlatformModel.idpAudiences("prod").split(",")).doesNotHaveDuplicates();
@@ -368,24 +379,56 @@ class PlatformModelTest {
         // joined for orchestration round 2: its agent containers start through qits-containers.
         assertThat(PlatformModel.idpClients("prod")).containsExactly(
                 "prod-qits-bootstrap", "prod-qits-ci", "prod-qits-artifacts", "prod-qits-workspaces",
-                "prod-qits-projects", "prod-qits-deployments",
+                "prod-qits-projects", "qits-deployments",
                 "prod-qits-containers", "prod-qits-edge");
         // The clients, then the receive-only applications: the git host, which validates and mints
         // nothing, and qits-configuration, which the deployer asks for on every deployment.
         assertThat(PlatformModel.idpAudiences("prod")).isEqualTo(
                 "prod-qits-bootstrap,prod-qits-ci,prod-qits-artifacts,prod-qits-workspaces,"
-                        + "prod-qits-projects,prod-qits-deployments,prod-qits-containers,"
+                        + "prod-qits-projects,qits-deployments,prod-qits-containers,"
                         + "prod-qits-edge,prod-qits-githost,prod-qits-configuration");
         // Every one of them follows the environment now: the artifacts client was the one platform
         // id in this list, and the byte-plane split made that service a tier's again.
+        // Every one but the deployer's, whose service belongs to no tier and so takes no name from
+        // one — which is exactly what makes this a derivation rather than a list.
         assertThat(PlatformModel.idpClients("preprod")).containsExactly(
                 "preprod-qits-bootstrap", "preprod-qits-ci", "preprod-qits-artifacts", "preprod-qits-workspaces",
-                "preprod-qits-projects", "preprod-qits-deployments",
+                "preprod-qits-projects", "qits-deployments",
                 "preprod-qits-containers", "preprod-qits-edge");
         // The two new byte services hold no client at all: the mirror has no auth surface, and the
         // git host validates a push option rather than a token.
         assertThat(PlatformModel.idpClients("prod"))
                 .doesNotContain("qits-platform-mirror", "prod-qits-githost");
+    }
+
+    /**
+     * <b>The generated files spell no alias and no client-id key for themselves.</b> Both shapes
+     * move when an application changes plane, so both are tokens the model fills — which is what
+     * makes PLATFORM_SERVICES the one place a plane is decided. Before this, the templates pasted
+     * a repository name after an ENV_KEY token and the deployer's flip landed in neither file.
+     */
+    @Test
+    void everyAliasAndClientKeyTheTemplatesNeedComesOutOfTheModel() {
+        Map<String, String> tokens = PlatformModel.nameTokens("prod");
+
+        // An environment service carries the tier; a platform one has no tier to carry.
+        assertThat(tokens).containsEntry("ALIAS_CI", "prod-qits-ci")
+                .containsEntry("ALIAS_DEPLOYMENTS", "qits-deployments")
+                .containsEntry("ALIAS_EVENTS", "qits-events")
+                .containsEntry("ALIAS_PLATFORM_IDP", "qits-platform-idp");
+        // The env-var infix of the idp's per-client keys, which embed the client ID — so the
+        // deployer's key is QITS_IDP_CLIENT_QITS_DEPLOYMENTS_SECRET with no tier in front of it.
+        assertThat(tokens).containsEntry("CLIENT_KEY_CI", "PROD_QITS_CI")
+                .containsEntry("CLIENT_KEY_DEPLOYMENTS", "QITS_DEPLOYMENTS")
+                .containsEntry("CLIENT_KEY_EDGE", "PROD_QITS_EDGE");
+        // Every application, so a service added to the model needs no second edit here.
+        assertThat(tokens.keySet())
+                .containsAll(PlatformModel.platformRepos().stream()
+                        .map(app -> "ALIAS_" + PlatformModel.clientKey(app)).toList());
+        // And it follows the environment name, which the templates cannot.
+        assertThat(PlatformModel.nameTokens("preprod"))
+                .containsEntry("ALIAS_CI", "preprod-qits-ci")
+                .containsEntry("ALIAS_EVENTS", "qits-events");
     }
 
     /**

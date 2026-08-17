@@ -1,7 +1,9 @@
 package eu.wohlben.qits.cli.bootstrap.platform;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
@@ -153,12 +155,20 @@ public final class PlatformModel {
      * is gone, and the platform serves no dns of its own. A domain's records are held by an external
      * provider now.
      * <p>
+     * <b>qits-deployments and qits-events joined on 2026-08-17, and neither name says its plane
+     * yet</b> — the repository rename comes after the local proof, so their wire alias is the bare
+     * {@code qits-deployments} and {@code qits-events} rather than a {@code qits-platform-*} one.
+     * Two reasons, one each. The DEPLOYER: an environment is becoming a cross-environment entity —
+     * one tier gating another — and a hierarchy cannot live inside one tier's deployer. The BUS:
+     * scoping today is which broker instance a service dials, so a platform deployer on a per-tier
+     * bus could publish {@code DeploymentActive} onto one tier only.
+     * <p>
      * There is no platform deploy ref any more. Both planes answer the same question of a green
      * build — does an environment listen to this ref — so {@code environment/<name>} is the whole
      * set and {@code platform/main} is retired.
      */
     public static final List<String> PLATFORM_SERVICES = List.of(
-            "platform-edge", "platform-idp", "platform-mirror");
+            "platform-edge", "platform-idp", "platform-mirror", "deployments", "events");
 
     /**
      * Repositories that need a repository on the platform git host and a main push, but are not
@@ -504,6 +514,38 @@ public final class PlatformModel {
     /** The env-var spelling of a client id: uppercase, dashes as underscores. */
     public static String clientKey(String clientId) {
         return clientId.toUpperCase().replace('-', '_');
+    }
+
+    /**
+     * <b>Every name the generated files must not spell for themselves.</b> A wire alias and a
+     * client-id-derived config key both change shape when an application moves plane, so the
+     * templates carry a placeholder and this method answers it — which is what makes
+     * {@link #PLATFORM_SERVICES} the one place a plane is decided.
+     * <p>
+     * Two families. {@code ALIAS_<APP>} is the address peers dial, for every application this
+     * platform has; {@code CLIENT_KEY_<APP>} is the env-var infix the idp's per-client keys are
+     * built from ({@code QITS_IDP_CLIENT_<key>_SECRET}), which embeds the client ID and therefore
+     * the alias. Both are keyed by the APPLICATION, because that name never moves.
+     * <p>
+     * It replaced a single {@code ENV_KEY} token the templates pasted a repository name after —
+     * {@code ${ENV_KEY}_QITS_DEPLOYMENTS} — which was a copy of this derivation that could not
+     * follow it. The 2026-08-17 flip is what proved that: the deployer's key is
+     * {@code QITS_DEPLOYMENTS} now, with no tier in front of it.
+     */
+    public static Map<String, String> nameTokens(String envName) {
+        Map<String, String> tokens = new LinkedHashMap<>();
+        for (String app : platformRepos()) {
+            tokens.put("ALIAS_" + clientKey(app), wireAlias(app, envName));
+        }
+        // The seed carries one application no pipeline deploys — the postgres image — so CORE is
+        // asked as well as the deployables.
+        for (String app : CORE) {
+            tokens.put("ALIAS_" + clientKey(app), wireAlias(app, envName));
+        }
+        for (String app : IDP_CLIENT_APPS) {
+            tokens.put("CLIENT_KEY_" + clientKey(app), clientKey(wireAlias(app, envName)));
+        }
+        return tokens;
     }
 
     /**
