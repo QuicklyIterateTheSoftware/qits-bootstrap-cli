@@ -1173,8 +1173,13 @@ public class PipelinePhases {
         // parses as one field and no container ever matches. Found by the v3 proving run.
         for (String line : boot.docker.ps("{{.Names}}|{{.Image}}|{{.Status}}")) {
             String[] parts = line.split("\\|");
+            // The seed stack owns the very first deployer service, so its swarm tasks carry the
+            // stack prefix: qits_<alias>.<slot>.<taskid>. A self-update keeps that name — the
+            // driver replaces the service in place — so the platform shape has THREE spellings.
             if (parts.length < 3
-                    || !(parts[0].startsWith(prefix) || parts[0].startsWith(alias + "."))) {
+                    || !(parts[0].startsWith(prefix)
+                            || parts[0].startsWith(alias + ".")
+                            || parts[0].startsWith("qits_" + alias + "."))) {
                 continue;
             }
             // A swarm task's image carries the manifest digest after the tag; the sha this wait
