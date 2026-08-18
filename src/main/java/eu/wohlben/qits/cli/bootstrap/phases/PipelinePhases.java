@@ -233,7 +233,8 @@ public class PipelinePhases {
             boot.awaitHealth(ctx, env + "-qits-githost (the git host, on qits-net)",
                     boot.githost::health);
             boot.awaitHealth(ctx, env + "-qits-ci (on qits-net)", boot.ci::health);
-            boot.awaitHealth(ctx, env + "-qits-deployments (on qits-net)", boot.pd::health);
+            boot.awaitHealth(ctx, PlatformModel.wireAlias("deployments", env) + " (on qits-net)",
+                    boot.pd::health);
             // THE BUS, and it is waited for here rather than trusted to arrive: every green build
             // of this run travels ci -> outbox -> this service -> the deployer's subscriber, and
             // the first push is two phases away. Its fixed alias is available before the edge has
@@ -241,7 +242,7 @@ public class PipelinePhases {
             //
             // No auth-plane probe below for it: it enforces no machine gate, so there is no tenant
             // to warm.
-            boot.awaitHealth(ctx, env + "-qits-events (the bus, on qits-net)",
+            boot.awaitHealth(ctx, PlatformModel.wireAlias("events", env) + " (the bus, on qits-net)",
                     () -> boot.http.get(boot.config.eventsUrl() + "/q/health/ready", Map.of()));
             // THE CONTAINER ORCHESTRATOR, and it is waited for BEFORE the first pipeline of this
             // boot rather than trusted to arrive: qits-ci runs every step as a container it asks
@@ -280,7 +281,8 @@ public class PipelinePhases {
             boot.awaitHealth(ctx, env + "-qits-ci auth plane (junk bearer -> 401)",
                     () -> warmWhenGuardRefused(boot.http.postJson(
                             boot.config.ciUrl() + "/api/events/trigger", "{}", PROBE_BEARER)));
-            boot.awaitHealth(ctx, env + "-qits-deployments auth plane (junk bearer -> 401)",
+            boot.awaitHealth(ctx, PlatformModel.wireAlias("deployments", env)
+                            + " auth plane (junk bearer -> 401)",
                     () -> warmWhenGuardRefused(boot.http.postJson(
                             boot.config.platformDeploymentsUrl() + "/api/events/build-succeeded",
                             "{}", PROBE_BEARER)));
@@ -1171,8 +1173,13 @@ public class PipelinePhases {
         // parses as one field and no container ever matches. Found by the v3 proving run.
         for (String line : boot.docker.ps("{{.Names}}|{{.Image}}|{{.Status}}")) {
             String[] parts = line.split("\\|");
+            // The seed stack owns the very first deployer service, so its swarm tasks carry the
+            // stack prefix: qits_<alias>.<slot>.<taskid>. A self-update keeps that name — the
+            // driver replaces the service in place — so the platform shape has THREE spellings.
             if (parts.length < 3
-                    || !(parts[0].startsWith(prefix) || parts[0].startsWith(alias + "."))) {
+                    || !(parts[0].startsWith(prefix)
+                            || parts[0].startsWith(alias + ".")
+                            || parts[0].startsWith("qits_" + alias + "."))) {
                 continue;
             }
             // A swarm task's image carries the manifest digest after the tag; the sha this wait

@@ -246,9 +246,26 @@ class PipelinePhasesTest {
     void thePredecessorServiceOfADeployedApplicationIsRemoved() {
         PipelinePhases.SeedPlan plan = PipelinePhases.seedPlan(
                 List.of("qits-pd-prod-qits-ci-a1b2c3d4"),
-                List.of("qits_prod-qits-ci", "qits_prod-qits-events"), ENV);
+                List.of("qits_prod-qits-ci", "qits_qits-events"), ENV);
 
         assertThat(plan.stale()).containsExactly("qits_prod-qits-ci");
+    }
+
+    /**
+     * <b>The deployer is a platform service since 2026-08-17, and every name this rule matches on
+     * moved with it.</b> Its seed service is the bare {@code qits-deployments} and its deployed
+     * container carries no tier segment — so a copy of either spelling left behind would have this
+     * run start a seed deployer beside the one that already manages the application.
+     */
+    @Test
+    void theDeployerIsRecognisedUnderItsPlatformNames() {
+        PipelinePhases.SeedPlan plan = PipelinePhases.seedPlan(
+                List.of("qits-pd-qits-deployments-a1b2c3d4"),
+                List.of("qits_qits-deployments"), ENV);
+
+        assertThat(plan.managed()).contains("qits-deployments");
+        assertThat(plan.deploy()).doesNotContain("qits-deployments");
+        assertThat(plan.stale()).containsExactly("qits_qits-deployments");
     }
 
     /** A platform service's container drops the tier segment, and the prefix has to match that. */
@@ -450,7 +467,9 @@ class PipelinePhasesTest {
                 "QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ENABLED=true",
                 "QUARKUS_OIDC_CLIENT_CONFIGURATION_AUTH_SERVER_URL="
                         + "http://qits-platform-idp:8080/idp",
-                "QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ID=prod-qits-deployments",
+                // The deployer's own client id, which lost the tier when it moved plane, while
+                // qits-configuration it reads is still one tier's — so the pair is asymmetric.
+                "QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ID=qits-deployments",
                 "QUARKUS_OIDC_CLIENT_CONFIGURATION_CREDENTIALS_SECRET=s3cr3t",
                 "QUARKUS_OIDC_CLIENT_CONFIGURATION_GRANT_OPTIONS_CLIENT_AUDIENCE="
                         + "prod-qits-configuration");

@@ -343,10 +343,10 @@ class SeedPhasesTest {
     @Test
     void aPullersConfigJsonIsWhatDockerLoginWouldHaveWritten() {
         String json = SeedPhases.dockerConfigJson(
-                "registry.prod.localhost:8080", "prod-qits-deployments", "s3cr3t");
+                "registry.prod.localhost:8080", "qits-deployments", "s3cr3t");
 
         String auth = Base64.getEncoder().encodeToString(
-                "prod-qits-deployments:s3cr3t".getBytes(StandardCharsets.UTF_8));
+                "qits-deployments:s3cr3t".getBytes(StandardCharsets.UTF_8));
         assertThat(json).isEqualTo(
                 "{\"auths\":{\"registry.prod.localhost:8080\":{\"auth\":\"" + auth + "\"}}}\n");
         // The raw secret is not in the file: what travels is the base64, which is an encoding and
