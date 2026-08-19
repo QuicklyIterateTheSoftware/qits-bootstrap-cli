@@ -646,6 +646,38 @@ class ComposeTemplateTest {
     }
 
     /**
+     * <b>A workspace builds against the same two registries a CI step does.</b> The addresses are
+     * asserted against ci's own so the two cannot drift: a workspace that resolved a different
+     * npmjs cache, or a different maven store, would build something CI cannot reproduce — and the
+     * failure would not look like a configuration difference, it would look like a flaky test.
+     *
+     * <p>They are wire aliases and never a {@code *.localhost} name: the consumer is a container on
+     * qits-net, whose resolver knows no such name. That is the same rule ci's block follows, and
+     * the reason the registry HOST (which the host daemon resolves) is absent here — a workspace
+     * pushes no image.
+     */
+    @Test
+    void aWorkspaceIsToldTheSameRegistriesCiUses() {
+        String workspaces = extras("qits-workspaces");
+        String ci = extras("qits-ci");
+
+        assertThat(workspaces)
+                .contains("env.QITS_WORKSPACE_MAVEN_REPOSITORY_URL=http://prod-qits-artifacts:8080"
+                        + "/artifacts/maven/maven")
+                .contains("env.QITS_WORKSPACE_NPM_REGISTRY_URL=http://prod-qits-artifacts:8080"
+                        + "/artifacts/npm/npm/")
+                .contains("env.QITS_WORKSPACE_NPM_PROXY_URL=http://qits-platform-mirror:8080"
+                        + "/artifacts/npm/npmjs/");
+        // Same addresses, stated once per consumer: if ci's move and a workspace's do not, this
+        // fails rather than leaving one of them pointed at a registry that no longer serves.
+        for (String suffix : new String[]{
+                "/artifacts/maven/maven", "/artifacts/npm/npm/", "/artifacts/npm/npmjs/"}) {
+            assertThat(ci).contains(suffix);
+            assertThat(workspaces).contains(suffix);
+        }
+    }
+
+    /**
      * <b>ci HOLDS NO STATIC REGISTRY CREDENTIAL, in either file.</b> The pair this generator
      * carried for half a day lent the store's own client to every publish step, so one leaked step
      * secret was the identity that may write to every registry on the platform. ci commissions a
