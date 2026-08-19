@@ -1753,6 +1753,18 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-workspaces.env.QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_GITHOST_AUDIENCE=${ENV_NAME}-qits-githost
             qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_CONTAINER_GIT_URL=http://githost.${ENV_NAME}.internal:8080
+            # The package registries a WORKSPACE CONTAINER builds against — the same three addresses
+            # qits-ci's block above carries, and for the same reason: they are dialled by a container
+            # on qits-net, so they are wire aliases and never a *.localhost name the host resolves.
+            # qits-workspaces passes them through to each container it creates.
+            #
+            # Told here because they cannot be defaulted in the service: the artifacts alias carries
+            # the environment name. Without them a workspace can reach both registries and knows
+            # neither, so `./mvnw verify` dies on Maven's plain-http blocker and npm resolves the
+            # public registry, where the @qits scope does not exist.
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_MAVEN_REPOSITORY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_NPM_REGISTRY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_NPM_PROXY_URL=http://qits-platform-mirror:8080/artifacts/npm/npmjs/
             qits.platform.deployments.extras.qits-workspaces.env.QITS_EVENTS_URL=http://${ALIAS_EVENTS}:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_GIT_HOST=${ENV_NAME}-qits-workspaces
             qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/${ENV_NAME}
