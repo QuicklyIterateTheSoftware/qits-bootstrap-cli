@@ -313,10 +313,21 @@ public final class ComposeTemplate {
                   QITS_IDP_CLIENT_${CLIENT_KEY_DEPLOYMENTS}_AUDIENCES: "${IDP_AUDIENCES}"
                   QITS_IDP_CLIENT_${CLIENT_KEY_CONTAINERS}_AUDIENCES: "${IDP_AUDIENCES}"
                   QITS_IDP_CLIENT_${CLIENT_KEY_BOOTSTRAP}_ROLES: "qits:system,qits-platform:system"
+                  # THE TWO CONTEXT-COMMISSIONING CLIENTS CARRY qits:admin, and it is the contexts that
+                  # need it. The idp issues a commissioned client its OWNER's roles (ClientRegistry:
+                  # full access for now, per-context scoping is the declared follow-up), so a ci run's
+                  # credential is qits-ci's and a workspace container's is qits-workspaces'. Both
+                  # contexts drive the platform the way a person does — a run's maintenance step and
+                  # an agent in a workspace both POST the release door, read ci runs and deployments
+                  # — and every one of those routes is @RolesAllowed("qits:admin"). Without the grant
+                  # the bearer authenticates and is refused 403, which is exactly how agents were
+                  # stranded on 2026-08-20 (integrator.md, ad-hoc workspace 351): green branches,
+                  # no door. Narrowing what a workspace may do is the scoping follow-up's job, on the
+                  # commissioned row; it is not done by withholding the role from the owner.
                   QITS_IDP_CLIENT_${CLIENT_KEY_CI}_ROLES: "qits:system,qits-platform:system,qits:admin"
                   QITS_IDP_CLIENT_${CLIENT_KEY_ARTIFACTS}_ROLES: "qits:system,qits-platform:system"
                   QITS_IDP_CLIENT_${CLIENT_KEY_PROJECTS}_ROLES: "qits:system,qits-platform:system"
-                  QITS_IDP_CLIENT_${CLIENT_KEY_WORKSPACES}_ROLES: "qits:system,qits-platform:system"
+                  QITS_IDP_CLIENT_${CLIENT_KEY_WORKSPACES}_ROLES: "qits:system,qits-platform:system,qits:admin"
                   # THE DEPLOYER'S ROLES, and it needed none until it had a guarded peer to read.
                   # Every route of qits-configuration is @RolesAllowed({qits:admin, qits:system})
                   # and the idp puts a client's roles in the token's `groups` claim — so a deployer
@@ -1627,7 +1638,8 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_CI}_ROLES=qits:system,qits-platform:system,qits:admin
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_ARTIFACTS}_ROLES=qits:system,qits-platform:system
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PROJECTS}_ROLES=qits:system,qits-platform:system
-            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_WORKSPACES}_ROLES=qits:system,qits-platform:system
+            # qits:admin on the two context-commissioning clients — the seed block above says why.
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_WORKSPACES}_ROLES=qits:system,qits-platform:system,qits:admin
             # THE DEPLOYER'S ROLES, and it needed none until it had a guarded peer to read. Every
             # route of qits-configuration is @RolesAllowed({qits:admin, qits:system}) and the idp
             # puts a client's roles in the token's `groups` claim — so a deployer client with no
