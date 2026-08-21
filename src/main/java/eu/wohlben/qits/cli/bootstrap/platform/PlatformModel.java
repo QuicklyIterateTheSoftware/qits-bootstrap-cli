@@ -121,11 +121,21 @@ public final class PlatformModel {
      * cutover must not fall inside the deploy window of a service that validates its tokens. Every
      * deployable BELOW it is what proves the flip: each of them is deployed from configuration the
      * service served rather than from the file on the volume.
+     * <p>
+     * <b>qits-platform-orchestrator is LATE, after every service it calls.</b> It runs technical
+     * processes — multi-step jobs that only send requests to peers — so it is a caller and nothing
+     * calls it. Its first process is the platform's unified deletion run, which drives
+     * qits-artifacts, qits-containers, qits-ci and the deployer, and each of those four is above it
+     * here. The order is not a startup dependency: it holds a scheduler, so a cutover that lands
+     * while a peer is mid-cutover is a run whose steps fail against a service that is being
+     * replaced. Deploying it after them puts its first scheduled window behind their last one.
+     * It stays ABOVE the edge and the deployer for the reason everything does: the edge's cutover
+     * takes this program's door away and the deployer's is the self-update handoff.
      */
     public static final List<String> DEPLOYABLES = List.of(
             "observability", "oci-postgresql", "platform-idp", "configuration", "stt", "projects",
             "workspaces", "events", "docs", "platform-mirror", "artifacts", "githost",
-            "containers", "ci", "platform-edge", "deployments");
+            "containers", "ci", "platform-orchestrator", "platform-edge", "deployments");
 
     /**
      * The deployables on the PLATFORM plane: one instance for the whole platform, deployed once
@@ -166,9 +176,16 @@ public final class PlatformModel {
      * There is no platform deploy ref any more. Both planes answer the same question of a green
      * build — does an environment listen to this ref — so {@code environment/<name>} is the whole
      * set and {@code platform/main} is retired.
+     * <p>
+     * <b>qits-platform-orchestrator joined on 2026-08-21, and a technical process is
+     * platform-wide by construction.</b> Its first one is the deletion run, and what it deletes —
+     * the host's image store, its volumes, its build cache, the registry's blobs — is ONE machine's
+     * however many tiers run on it. A per-tier copy would be two schedulers pruning the same docker
+     * daemon on their own clocks, each blind to what the other pinned.
      */
     public static final List<String> PLATFORM_SERVICES = List.of(
-            "platform-edge", "platform-idp", "platform-mirror", "deployments", "events");
+            "platform-edge", "platform-idp", "platform-mirror", "deployments", "events",
+            "platform-orchestrator");
 
     /**
      * Repositories that need a repository on the platform git host and a main push, but are not
@@ -198,6 +215,11 @@ public final class PlatformModel {
      * inventories them and qits-workspaces can release them. Neither is a release publisher and
      * neither is a deployable: their bundles ship inside qits-githost's and qits-platform-mirror's
      * own images, as webui submodules.
+     * <p>
+     * <b>qits-platform-spa-orchestrator joined on 2026-08-21</b>, and only the client is here: its
+     * service is a {@link #DEPLOYABLES} entry, and that list already gets a repository, a checkout
+     * and a main push. The two lists are disjoint on purpose — {@link #platformRepos} adds them —
+     * so an application named in both would be created twice and pushed twice.
      */
     public static final List<String> SEEDED_REPOS = List.of(
             "oci", "ci-daemon", "eventstream", "blobstore", "registries", "spa-ui-components",
@@ -205,7 +227,8 @@ public final class PlatformModel {
             "integrations-angular", "integrations-quarkus", "spa-home", "spa-projects",
             "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events",
             "spa-ci", "spa-githost", "spa-configuration", "platform-spa-idp",
-            "platform-spa-mirror", "oci-workspace", "workspace-daemon", "projects-daemon");
+            "platform-spa-mirror", "platform-spa-orchestrator",
+            "oci-workspace", "workspace-daemon", "projects-daemon");
 
     /**
      * The publishers whose released versions the platform pins, replayed on a fresh platform because
@@ -476,10 +499,17 @@ public final class PlatformModel {
      * It gets a secret and no audience list: it introspects a browser session with Basic, the way a
      * static client calls the commission API, and asks the idp for no token at all. The full list
      * is one line away if that ever changes.
+     * <p>
+     * <b>qits-platform-orchestrator joined on 2026-08-21, and it MINTS more than anything else
+     * here.</b> A technical process is nothing but calls to peers, so this one service holds a
+     * named oidc client per peer — qits-artifacts, qits-containers, qits-ci and the deployer — and
+     * asks the idp for a token per audience. One client with one audience would not do: a bearer
+     * minted for {@code <env>-qits-artifacts} is refused by every other peer, so a run's every step
+     * but one would be a 401. All four present THIS application's id, never a borrowed one.
      */
     public static final List<String> IDP_CLIENT_APPS =
             List.of("bootstrap", "ci", "artifacts", "workspaces", "projects", "deployments",
-                    "containers", "edge");
+                    "containers", "edge", "platform-orchestrator");
 
     /**
      * The {@code aud} values the platform's clients may ask for: every client above plus the

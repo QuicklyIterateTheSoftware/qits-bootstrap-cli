@@ -330,10 +330,14 @@ class ComposeTemplateTest {
         assertThat(serviceBlock(compose, "qits-events")).doesNotContain("QITS_ENVIRONMENT");
         assertThat(extras("qits-events")).doesNotContain("QITS_ENVIRONMENT");
         // Not a platform service anywhere in either file, which is the rule rather than two names.
+        // The stack file is asked only about the seed, because that is all it holds:
+        // qits-platform-orchestrator is deployed near the end of the train and has no seed block.
         for (String app : PlatformModel.PLATFORM_SERVICES) {
-            assertThat(serviceBlock(compose, PlatformModel.wireAlias(app, ENV)))
-                    .as("the seed block of %s", app)
-                    .doesNotContain("QITS_ENVIRONMENT");
+            if (PlatformModel.CORE.contains(app)) {
+                assertThat(serviceBlock(compose, PlatformModel.wireAlias(app, ENV)))
+                        .as("the seed block of %s", app)
+                        .doesNotContain("QITS_ENVIRONMENT");
+            }
             assertThat(extras(PlatformModel.repo(app))).as("the extras of %s", app)
                     .doesNotContain("QITS_ENVIRONMENT");
         }
@@ -529,6 +533,103 @@ class ComposeTemplateTest {
                 .contains("env.QITS_IDP_CLIENT_QITS_DEPLOYMENTS_AUDIENCES="
                         + PlatformModel.idpAudiences(ENV));
         assertThat(PlatformModel.idpAudiences(ENV)).contains("prod-qits-configuration");
+    }
+
+    /**
+     * <b>The technical processes service, and the four credentials one process needs.</b> Its gc
+     * run asks the deployer and ci for the pins, hands them to qits-artifacts, and tells
+     * qits-containers what to reclaim — four peers behind four different audiences, so four named
+     * oidc clients rather than one reused token. All four present this service's own id, and the
+     * targets are wire aliases in both shapes: the three environment services carry the tier, the
+     * deployer carries none.
+     */
+    @Test
+    void theOrchestratorHoldsAClientPerPeerAndDialsEachOneByItsAlias() {
+        String orchestrator = extras("qits-platform-orchestrator");
+
+        // Its own gate. The audience is the bare alias: it is a platform service, so there is no
+        // tier in the name a peer would validate against.
+        assertThat(orchestrator)
+                .contains("env.QITS_AUTH_MACHINE_REQUIRED=true")
+                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=qits-platform-orchestrator")
+                .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp")
+                .contains("env.QITS_OBSERVABILITY_URL=http://prod-qits-observability:8080");
+        // Where each step goes. The deployer's is the one with no tier in it.
+        assertThat(orchestrator)
+                .contains("env.QITS_ORCHESTRATOR_TARGETS_ARTIFACTS_URL="
+                        + "http://prod-qits-artifacts:8080")
+                .contains("env.QITS_ORCHESTRATOR_TARGETS_CONTAINERS_URL="
+                        + "http://prod-qits-containers:8080")
+                .contains("env.QITS_ORCHESTRATOR_TARGETS_CI_URL=http://prod-qits-ci:8080")
+                .contains("env.QITS_ORCHESTRATOR_TARGETS_DEPLOYMENTS_URL="
+                        + "http://qits-deployments:8080");
+        // Four clients, and the AUDIENCE is what makes them four: each peer validates its own, so
+        // one client with one audience would be a run whose every step but one is a 401.
+        assertThat(orchestrator)
+                .contains("env.QUARKUS_OIDC_CLIENT_ARTIFACTS_GRANT_OPTIONS_CLIENT_AUDIENCE="
+                        + "prod-qits-artifacts")
+                .contains("env.QUARKUS_OIDC_CLIENT_CONTAINERS_GRANT_OPTIONS_CLIENT_AUDIENCE="
+                        + "prod-qits-containers")
+                .contains("env.QUARKUS_OIDC_CLIENT_CI_GRANT_OPTIONS_CLIENT_AUDIENCE="
+                        + "prod-qits-ci")
+                .contains("env.QUARKUS_OIDC_CLIENT_DEPLOYMENTS_GRANT_OPTIONS_CLIENT_AUDIENCE="
+                        + "qits-deployments");
+        for (String client : List.of("ARTIFACTS", "CONTAINERS", "CI", "DEPLOYMENTS")) {
+            assertThat(orchestrator).as("the %s client", client)
+                    .contains("env.QUARKUS_OIDC_CLIENT_" + client + "_CLIENT_ENABLED=true")
+                    .contains("env.QUARKUS_OIDC_CLIENT_" + client + "_AUTH_SERVER_URL="
+                            + "http://qits-platform-idp:8080/idp")
+                    // This service's OWN id, never a borrowed one: a refused step has to name the
+                    // service that was refused.
+                    .contains("env.QUARKUS_OIDC_CLIENT_" + client + "_CLIENT_ID="
+                            + "qits-platform-orchestrator")
+                    .contains("env.QUARKUS_OIDC_CLIENT_" + client + "_CREDENTIALS_SECRET="
+                            + "secret-qits-platform-orchestrator");
+        }
+        // The DEFAULT unnamed client stays off: the extension creates it whether or not anything
+        // injects it, and an enabled client with no auth-server-url fails the boot.
+        assertThat(orchestrator).doesNotContain("env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED");
+        // It starts no container and holds no store of anyone else's: no socket, no group, no
+        // publish, and its own run history is declared in its deployments.yml rather than pinned.
+        assertThat(orchestrator).doesNotContain(".mounts[")
+                .doesNotContain(".publishes[")
+                .doesNotContain(".groups[")
+                .doesNotContain("QITS_RESOURCE_DB_");
+        // And no seed service either: it is deployed through the pipeline like every other
+        // ordinary application, near the end of the train.
+        assertThat(ComposeTemplate.compose(tokens()))
+                .doesNotContain("\n  qits-platform-orchestrator:\n");
+    }
+
+    /**
+     * <b>The orchestrator's client carries BOTH planes' system roles, and its process is why.</b>
+     * The gc routes of qits-artifacts, qits-containers and qits-ci are {@code qits:system}; the
+     * deployer's pin union at {@code /platform-deployments/api/pins} is {@code qits-platform:system}.
+     * The idp puts a client's roles in the token's {@code groups} claim, so one missing role is a
+     * step that authenticates and is then refused 403 — and a run that cannot read the pins refuses
+     * to delete anything at all.
+     */
+    @Test
+    void theOrchestratorsIdpClientCarriesBothSystemRolesInBothFiles() {
+        assertThat(serviceBlock(ComposeTemplate.compose(tokens()), "qits-platform-idp"))
+                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_ORCHESTRATOR_SECRET: "
+                        + "\"secret-qits-platform-orchestrator\"")
+                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_ORCHESTRATOR_ROLES: "
+                        + "\"qits:system,qits-platform:system\"")
+                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_ORCHESTRATOR_AUDIENCES: \""
+                        + PlatformModel.idpAudiences(ENV) + "\"");
+        assertThat(extras("qits-platform-idp"))
+                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_ORCHESTRATOR_SECRET="
+                        + "secret-qits-platform-orchestrator")
+                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_ORCHESTRATOR_ROLES="
+                        + "qits:system,qits-platform:system")
+                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_ORCHESTRATOR_AUDIENCES="
+                        + PlatformModel.idpAudiences(ENV));
+        // Every peer it mints for is on that list. An audience a client may not ask for is
+        // invalid_target, which never reaches the peer's own gate.
+        assertThat(PlatformModel.idpAudiences(ENV)).contains("prod-qits-artifacts")
+                .contains("prod-qits-containers").contains("prod-qits-ci")
+                .contains("qits-deployments");
     }
 
     /**
