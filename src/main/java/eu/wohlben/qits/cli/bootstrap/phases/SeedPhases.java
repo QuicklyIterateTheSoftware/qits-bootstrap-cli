@@ -737,6 +737,14 @@ public class SeedPhases {
                     "-f", oci.resolve(name).resolve("Dockerfile").toString(),
                     oci.toString()), ctx::log);
             Boot.must(result, "build of qits/build-images/" + name + " failed");
+            // qits-ci resolves an unqualified qits/* step image against the registry host, so a run
+            // pulls registry.<env>.localhost/qits/build-images/<name>. The seed builds it --load as
+            // the bare tag and the fresh registry has not got it, so tag it under the registry host
+            // too: docker run then finds it locally, before any pull. This is the seed's pull+retag.
+            Boot.must(boot.docker.exec(ctx::log, "tag",
+                    "qits/build-images/" + name + ":latest",
+                    boot.config.registryVhost() + "/qits/build-images/" + name + ":latest"),
+                    "tagging qits/build-images/" + name + " under the registry host failed");
         });
     }
 
