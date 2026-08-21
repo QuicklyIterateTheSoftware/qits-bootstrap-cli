@@ -41,10 +41,6 @@ public final class BootstrapIngressLifecycle {
             throw new IllegalStateException("QITS_BOOTSTRAP_INGRESS requires QITS_WEB=1: its fixed UI "
                     + "upstream is qits-bootstrap-cli:" + config.webPort());
         }
-        if (config.bootstrapIngressPublic() && config.domain().isEmpty()) {
-            throw new IllegalStateException("QITS_BOOTSTRAP_INGRESS_PUBLIC requires QITS_DOMAIN: "
-                    + "the public ingress accepts exactly that Host header");
-        }
         Path file = stateFile();
         if (Files.isRegularFile(file) && restore(file, out)) {
             boot.state.bootstrapIngressEnvFile = file;
@@ -95,7 +91,7 @@ public final class BootstrapIngressLifecycle {
                         + boot.state.bootstrapIngressExpiresAt, "--restart", "unless-stopped",
                 "--network", Boot.NETWORK,
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges"));
-        if (boot.config.bootstrapIngressPublic()) {
+        if (boot.config.bootstrapIngressPublicEffective()) {
             // The only ingress mount is the retained certificate pair, read-only. This container
             // receives neither the Docker socket nor any platform/configuration volume.
             argv.addAll(List.of("-p", "80:8080", "-p", "443:8443", "-v",
@@ -110,11 +106,11 @@ public final class BootstrapIngressLifecycle {
                 .mask(boot.state.bootstrapIngressPassword)
                 .mask(boot.state.bootstrapIngressGitCapability);
         Boot.must(boot.docker.run(command, out), "starting the bootstrap ingress failed");
-        String address = boot.config.bootstrapIngressPublic()
+        String address = boot.config.bootstrapIngressPublicEffective()
                 ? "https://" + ingressHost() : "http://" + boot.config.bootstrapIngressHost() + ":"
                         + boot.config.bootstrapIngressPort();
         out.accept("  bootstrap ingress: " + address + " ("
-                + (boot.config.bootstrapIngressPublic() ? "TLS domain handoff" : "loopback-published")
+                + (boot.config.bootstrapIngressPublicEffective() ? "TLS domain handoff" : "loopback-published")
                 + ", expires "
                 + Instant.ofEpochSecond(boot.state.bootstrapIngressExpiresAt) + ")");
     }
@@ -168,7 +164,7 @@ public final class BootstrapIngressLifecycle {
                 "QITS_BOOTSTRAP_INGRESS_MAVEN_UPSTREAM=http://qits-maven-seed-http:80",
                 "QITS_BOOTSTRAP_INGRESS_GIT_UPSTREAM=http://"
                         + PlatformModel.wireAlias("githost", env) + ":8080");
-        if (boot.config.bootstrapIngressPublic()) {
+        if (boot.config.bootstrapIngressPublicEffective()) {
             text += "\nQITS_BOOTSTRAP_INGRESS_TLS_PORT=8443"
                     + "\nQITS_BOOTSTRAP_INGRESS_TLS_CERTIFICATE=/cert/lets-encrypt.crt"
                     + "\nQITS_BOOTSTRAP_INGRESS_TLS_KEY=/cert/lets-encrypt.key";
@@ -204,7 +200,7 @@ public final class BootstrapIngressLifecycle {
     }
 
     private String ingressHost() {
-        return boot.config.bootstrapIngressPublic()
+        return boot.config.bootstrapIngressPublicEffective()
                 ? boot.config.domain().orElseThrow() : boot.config.bootstrapIngressHost();
     }
 
@@ -225,7 +221,7 @@ public final class BootstrapIngressLifecycle {
     }
 
     String mavenRepositoryUrl() {
-        if (boot.config.bootstrapIngressPublic()) {
+        if (boot.config.bootstrapIngressPublicEffective()) {
             // Host-networked seed builds use the same normal TLS door as an operator. There is no
             // hidden 8481 publish in public mode.
             return "https://" + ingressHost() + "/artifacts/maven/maven";

@@ -331,12 +331,26 @@ public interface BootstrapConfig {
     boolean bootstrapIngress();
 
     /**
-     * Publish the disposable ingress on the platform domain while a recovery bootstrap runs.
-     * The ordinary local default remains loopback-only; this mode is for a remote operator who
-     * needs the live progress page at the same URL the normal edge will take over afterwards.
+     * Whether to publish the disposable ingress on the platform domain ({@code :80}/{@code :443}) so
+     * the live progress page is reachable at the same URL the normal edge takes over afterwards,
+     * rather than on loopback only. <b>Defaults to on, but only takes effect where a {@link #domain()}
+     * is set</b> — see {@link #bootstrapIngressPublicEffective()}. So a domain node is public by
+     * default with no per-node configuration, while a domainless local boot stays loopback with no
+     * error. Set to {@code false} to force loopback even on a domain node.
      */
-    @WithDefault("false")
+    @WithDefault("true")
     boolean bootstrapIngressPublic();
+
+    /**
+     * The effective decision every consumer reads: public only when it was requested (the default)
+     * AND a domain is configured, because public mode binds {@code :80}/{@code :443} and answers
+     * exactly the domain's Host header. Without a domain there is no public URL to serve, so it falls
+     * back to the loopback publish rather than failing — that is what lets the default be "public" on
+     * every node without breaking a domainless dev boot.
+     */
+    default boolean bootstrapIngressPublicEffective() {
+        return bootstrapIngressPublic() && domain().isPresent();
+    }
 
     /** The loopback host port of the short-lived bootstrap ingress, kept away from the edge. */
     @WithDefault("8481")
