@@ -154,7 +154,7 @@ public class SeedPhases {
                 throw new IllegalStateException("docker compose plugin missing");
             }
             ctx.log("  docker compose: present");
-            ctx.log("  bootstrap builders: enforced 6g memory and 4 cpu limits");
+            ctx.log("  bootstrap builders: enforced 9g memory and 4 cpu limits");
             boot.state.swarm = ensureSwarm(boot.docker, ctx::log);
             ctx.log("  swarm: " + boot.state.swarm);
             warnAboutInsecureRegistries(ctx);

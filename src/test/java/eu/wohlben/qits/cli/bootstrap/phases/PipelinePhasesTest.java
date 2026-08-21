@@ -653,13 +653,16 @@ class PipelinePhasesTest {
                 " \\_ qits-bootstrap-builder0    \\_ unix:///var/run/docker.sock   running",
                 "qits-bootstrap-builder-v3     docker-container",
                 " \\_ qits-bootstrap-builder-v30  \\_ unix:///var/run/docker.sock  running",
-                "qits-bootstrap-builder-v4*    docker-container",
+                "qits-bootstrap-builder-v4     docker-container",
                 " \\_ qits-bootstrap-builder-v40  \\_ unix:///var/run/docker.sock  running",
+                "qits-bootstrap-builder-v5*    docker-container",
+                " \\_ qits-bootstrap-builder-v50  \\_ unix:///var/run/docker.sock  running",
                 "default                       docker",
                 " \\_ default                      \\_ default                     running");
 
         assertThat(Docker.staleBuilders(table, Docker.BUILDER))
-                .containsExactly("qits-bootstrap-builder", "qits-bootstrap-builder-v3");
+                .containsExactly(
+                    "qits-bootstrap-builder", "qits-bootstrap-builder-v3", "qits-bootstrap-builder-v4");
     }
 
     /**
@@ -673,11 +676,11 @@ class PipelinePhasesTest {
         List<String> trimmed = List.of(
                 "qits-bootstrap-builder-v3     docker-container",
                 "\\_ qits-bootstrap-builder-v30  \\_ unix:///var/run/docker.sock  running",
-                "qits-bootstrap-builder-v4*    docker-container",
+                "qits-bootstrap-builder-v4     docker-container",
                 "\\_ qits-bootstrap-builder-v40  \\_ unix:///var/run/docker.sock  running");
 
         assertThat(Docker.staleBuilders(trimmed, Docker.BUILDER))
-                .containsExactly("qits-bootstrap-builder-v3");
+                .containsExactly("qits-bootstrap-builder-v3", "qits-bootstrap-builder-v4");
     }
 
     /** Somebody else's builder on a shared host is never ours, whatever it is called. */

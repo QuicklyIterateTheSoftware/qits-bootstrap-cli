@@ -37,7 +37,7 @@ public class Docker {
      * stands. Each bump stranded its predecessor's state volume, which is what
      * {@link #staleBuilders} now sweeps.
      */
-    public static final String BUILDER = "qits-bootstrap-builder-v4";
+    public static final String BUILDER = "qits-bootstrap-builder-v5";
 
     /**
      * What every builder this program has ever created is named after. It is the whole test for
@@ -504,7 +504,7 @@ public class Docker {
         ProcessResult ready = existing.ok() ? existing : runner.run(Cmd.of(
                 "docker", "buildx", "create", "--name", BUILDER,
                 "--driver", "docker-container", "--driver-opt",
-                "network=host,memory=6g,cpu-quota=400000,cpuset-cpus=0-3"), out);
+                "network=host,memory=9g,cpu-quota=400000,cpuset-cpus=0-3"), out);
         if (ready.ok()) {
             ready = runner.run(Cmd.of(
                     "docker", "buildx", "inspect", "--bootstrap", BUILDER), out);
@@ -537,7 +537,7 @@ public class Docker {
      * <p>
      * That table interleaves two kinds of row: a BUILDER at column zero, then its nodes indented
      * under {@code \_}. A docker-container builder names its node after itself with an index
-     * appended — {@code qits-bootstrap-builder-v4} has the node {@code qits-bootstrap-builder-v40}
+     * appended — {@code qits-bootstrap-builder-v5} has the node {@code qits-bootstrap-builder-v50}
      * — so a sweep that read every row would ask buildx to remove a node as if it were a builder.
      * A node row is marked twice over, and BOTH are checked because either one alone has been
      * wrong here: it is indented, and its first token is {@code \_}. The indent is the natural

@@ -45,11 +45,12 @@ class SeedDockerfileTest {
     }
 
     @Test
-    void boundsMavenAndLeavesTheNativeHeapIntact() {
+    void boundsMavenAndRaisesTheNativeHeap() {
         String dockerfile = "RUN ./mvnw package -Dquarkus.native.native-image-xmx=4g\n";
 
         assertThat(SeedDockerfile.rewrite(dockerfile))
-                .contains("-Dquarkus.native.native-image-xmx=4g")
+                .contains("-Dquarkus.native.native-image-xmx=6g")
+                .doesNotContain("native-image-xmx=4g")
                 .contains("MAVEN_OPTS=\"-Xmx384m\" ./mvnw");
     }
 

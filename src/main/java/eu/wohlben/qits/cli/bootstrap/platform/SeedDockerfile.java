@@ -65,8 +65,16 @@ public final class SeedDockerfile {
                 .replace(mirrorHost + "/redhat/", "registry.access.redhat.com/")
                 .replace(mirrorHost + "/hub/", "docker.io/")
                 // Maven waits for native-image but otherwise kept a large ergonomic heap alive.
-                // Bound the parent so the compiler can use 4 GB within the 6 GB recovery cgroup.
-                .replace("./mvnw", "MAVEN_OPTS=\"-Xmx384m\" ./mvnw");
+                // Bound the parent so the compiler can use its heap under the recovery cgroup.
+                .replace("./mvnw", "MAVEN_OPTS=\"-Xmx384m\" ./mvnw")
+                // The committed Dockerfiles cap native-image at 4 GB, which the smaller services
+                // build under. The largest (qits-projects, qits-workspaces) need more — native-image
+                // asks for >4.44 GB and is OOM-killed at 4 GB. A seed build runs one at a time and
+                // sees the whole host (no build cgroup cap here), so raise the ceiling to 6 GB for
+                // every seed image rather than editing each Dockerfile.
+                .replace(
+                    "-Dquarkus.native.native-image-xmx=4g",
+                    "-Dquarkus.native.native-image-xmx=6g");
     }
 
     public static String read(Path dockerfile, String mirrorHost) throws IOException {
