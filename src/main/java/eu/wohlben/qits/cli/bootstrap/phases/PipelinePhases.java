@@ -1791,7 +1791,13 @@ public class PipelinePhases {
                 Http.Response answer = boot.projects.adoptRepository(projectId, id, repo,
                         boot.config.orgUrl() + "/" + repo + ".git",
                         PlatformModel.archetype(name), token);
-                if (!answer.ok()) {
+                // A REFUSAL IS RE-ASKED AS THE QUESTION THAT MATTERS, and the race is real rather
+                // than defensive: qits-projects' own startup self-seed reconciles the wrapper at the
+                // boot this phase is waiting on, and its adopt arm registers the same pairs from
+                // the other side. Two writers of one row can leave the loser a 500 over a row that
+                // is now exactly right. What this phase owes the rest of the train is that the name
+                // RESOLVES — so that is what is asked, and only an answer of no is a failure.
+                if (!answer.ok() && !resolvesByName(projectId, repo)) {
                     throw new IllegalStateException("registering " + repo + " (/git/" + id
                             + ") under project " + projectId + " answered " + answer.describe()
                             + ". Without it /git/" + projectId + "/" + repo + " resolves nowhere "
