@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -170,8 +171,12 @@ class PlatformModelTest {
         // step as a container it asks that service for, and the first pipeline of a cold boot is
         // minutes after the seed comes up. Deployed at its own place in the train it would not be
         // there in time.
+        // qits-projects is in it since 2026-08-21, because a repository has a NAME: it owns the
+        // alias table, /git/<projectId>/<repoName> resolves through it and nowhere else, and every
+        // repository of this platform is created minutes into the boot. Deployed sixth of
+        // seventeen it answered nothing until half the boot was over.
         assertThat(PlatformModel.CORE).containsExactlyInAnyOrder(
-                "platform-edge", "platform-mirror", "artifacts", "githost", "ci",
+                "platform-edge", "platform-mirror", "artifacts", "githost", "projects", "ci",
                 "containers", "deployments", "platform-idp", "events",
                 "oci-postgresql");
         // Every seed service is also deployed through the pipeline afterwards; nothing stays
@@ -220,6 +225,10 @@ class PlatformModelTest {
         // The idp's login/register client landed on 2026-08-14, prebuilt-dist shape like the rest.
         assertThat(PlatformModel.seedUiPath("platform-idp"))
                 .isEqualTo("service/src/main/webui/dist/qits-platform-spa-idp/browser");
+        // qits-projects joined the seed on 2026-08-21 and has had its client all along: its
+        // Dockerfile stops the build at a `test -f` on this path before the native compile.
+        assertThat(PlatformModel.seedUiPath("projects"))
+                .isEqualTo("service/src/main/webui/dist/qits-spa-projects/browser");
         // No placeholder, and empty is the answer that says so: a seed build must not be made to
         // require a bundle that does not exist. Two different reasons here. qits-containers serves
         // machines and has no SPA at all. qits-platform-orchestrator HAS one — its process pages
@@ -239,6 +248,29 @@ class PlatformModelTest {
         assertThat(PlatformModel.dockerfilePath("oci-postgresql")).isEqualTo("Dockerfile");
         assertThat(PlatformModel.dockerfilePath("ci")).isEqualTo("docker/Dockerfile");
         assertThat(PlatformModel.dockerfilePath("platform-idp")).isEqualTo("docker/Dockerfile");
+    }
+
+    /**
+     * <b>A STORAGE ID IS MINTED, and every call mints another one.</b> That is the whole of the
+     * 2026-08-21 ruling at this seam: the key qits-githost stores a repository under is an opaque
+     * uuid with nothing in it that anyone above the seam says. The name lives in qits-projects'
+     * alias table and nowhere else, so nothing here may be derived from one — a second project
+     * holding a repository of the same name would collide in the store the moment it could be.
+     * <p>
+     * The memory is {@code Boot.storageId}, which mints once per repository per run and records
+     * what it minted. This method is asked exactly once per bare.
+     */
+    @Test
+    void aStorageIdIsAFreshUuidEveryTimeItIsAskedFor() {
+        String first = PlatformModel.seedStorageId();
+        String second = PlatformModel.seedStorageId();
+
+        assertThat(first).isNotEqualTo(second);
+        assertThat(UUID.fromString(first)).hasToString(first);
+        // And it is a value qits-projects' adopt route accepts: [A-Za-z0-9][A-Za-z0-9-]{0,63}.
+        assertThat(first).matches("[A-Za-z0-9][A-Za-z0-9-]{0,63}");
+        // Nothing about the repository is in it. The name used to BE it.
+        assertThat(first).doesNotContain("qits");
     }
 
     /**

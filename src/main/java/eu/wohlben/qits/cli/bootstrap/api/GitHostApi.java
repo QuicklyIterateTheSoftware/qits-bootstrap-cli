@@ -53,11 +53,11 @@ public class GitHostApi {
      * <b>The INTERNAL, id-addressed url</b> — {@code /git/<storage id>}, the address of the store
      * and not of a repository anyone may hold.
      * <p>
-     * It stays because two callers legitimately have nothing else: the lifecycle {@code PUT} above,
-     * which creates the bare a name will later be an alias for, and every push this run makes
-     * before qits-projects exists to resolve a name. Both are the bootstrap's own window. From
-     * {@code register-repos} onward the run addresses {@link #gitUrl(String, String)} instead, and
-     * the deployed git host closes this scheme to everything but qits-projects' own client
+     * It stays because ONE caller legitimately has nothing else: the lifecycle {@code PUT} above,
+     * which creates the bare a name is then registered as an alias for. That is the bootstrap's own
+     * window and it is a few seconds wide — the pairing is handed over immediately, and every PUSH
+     * this run makes addresses {@link #gitUrl(String, String)} instead. The deployed git host closes
+     * this scheme to everything but qits-projects' own client
      * ({@code qits.githost.storage-client}).
      */
     public String gitUrl(String repoId) {

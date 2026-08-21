@@ -1203,6 +1203,7 @@ public class SeedPhases {
             "qits_platform_idp", "qits_events",
             "qits_artifacts", "qits_platform_mirror",
             "qits_githost", "qits_githost_eventstream",
+            "qits_projects", "qits_epics", "qits_projects_eventstream",
             "qits_containers", "qits_containers_eventstream",
             "qits_platform_edge", "qits_platform_edge_eventstream");
 
@@ -1225,14 +1226,15 @@ public class SeedPhases {
      * the SEED STACK needs: the deployer's own store AND ITS OUTBOX, and the stores of the core
      * services that come up beside it — qits-ci (its database and its outbox), qits-platform-idp,
      * qits-events, qits-artifacts, qits-platform-mirror, qits-githost (its
-     * database and its outbox) and qits-containers (the same pair). Four of the twelve are
+     * database and its outbox), qits-projects (three: its own, the epics store beside it and its
+     * outbox) and qits-containers (the same pair). Five of them are
      * outboxes because the
      * eventstream library keeps its own Flyway lineage and cannot share a database with its host; ci
      * carried one from the start, the deployer joined the bus on 2026-08-10, and the git host and
      * the orchestrator are the newest publishers on it.
      * Every one of them runs Flyway at boot against a database that has to exist
      * already, and at that point in a cold boot no deployer exists to make one.
-     * Everything else — projects, workspaces, observability — is
+     * Everything else — workspaces, observability, configuration — is
      * pipeline-deployed only, so the deployer creates their roles and databases during their own
      * deployments from the {@code resources:} line in each repository's deployments.yml. Adding
      * them here would put a second authority on a credential that has exactly one.
@@ -1264,6 +1266,12 @@ public class SeedPhases {
                     "qits.pg.githost-password");
             String githostEventstream = pgPassword(ctx, state, "PG_GITHOST_EVENTSTREAM_PASSWORD",
                     "qits.pg.githost-eventstream-password");
+            String projects = pgPassword(ctx, state, "PG_PROJECTS_PASSWORD",
+                    "qits.pg.projects-password");
+            String epics = pgPassword(ctx, state, "PG_EPICS_PASSWORD", "qits.pg.epics-password");
+            String projectsEventstream = pgPassword(ctx, state,
+                    "PG_PROJECTS_EVENTSTREAM_PASSWORD",
+                    "qits.pg.projects-eventstream-password");
             String containers = pgPassword(ctx, state, "PG_CONTAINERS_PASSWORD",
                     "qits.pg.containers-password");
             String containersEventstream = pgPassword(ctx, state,
@@ -1285,6 +1293,9 @@ public class SeedPhases {
             boot.state.pgPlatformMirrorPassword = platformMirror;
             boot.state.pgGithostPassword = githost;
             boot.state.pgGithostEventstreamPassword = githostEventstream;
+            boot.state.pgProjectsPassword = projects;
+            boot.state.pgEpicsPassword = epics;
+            boot.state.pgProjectsEventstreamPassword = projectsEventstream;
             boot.state.pgContainersPassword = containers;
             boot.state.pgContainersEventstreamPassword = containersEventstream;
             boot.state.pgPlatformEdgePassword = platformEdge;
@@ -1310,6 +1321,9 @@ public class SeedPhases {
             state.put("PG_PLATFORM_MIRROR_PASSWORD", platformMirror);
             state.put("PG_GITHOST_PASSWORD", githost);
             state.put("PG_GITHOST_EVENTSTREAM_PASSWORD", githostEventstream);
+            state.put("PG_PROJECTS_PASSWORD", projects);
+            state.put("PG_EPICS_PASSWORD", epics);
+            state.put("PG_PROJECTS_EVENTSTREAM_PASSWORD", projectsEventstream);
             state.put("PG_CONTAINERS_PASSWORD", containers);
             state.put("PG_CONTAINERS_EVENTSTREAM_PASSWORD", containersEventstream);
             state.put("PG_PLATFORM_EDGE_PASSWORD", platformEdge);
@@ -1380,6 +1394,10 @@ public class SeedPhases {
             githost = registry.getOrDefault("qits_githost", githost);
             githostEventstream =
                     registry.getOrDefault("qits_githost_eventstream", githostEventstream);
+            projects = registry.getOrDefault("qits_projects", projects);
+            epics = registry.getOrDefault("qits_epics", epics);
+            projectsEventstream =
+                    registry.getOrDefault("qits_projects_eventstream", projectsEventstream);
             containers = registry.getOrDefault("qits_containers", containers);
             containersEventstream =
                     registry.getOrDefault("qits_containers_eventstream", containersEventstream);
@@ -1395,6 +1413,9 @@ public class SeedPhases {
                 boot.state.pgPlatformMirrorPassword = platformMirror;
                 boot.state.pgGithostPassword = githost;
                 boot.state.pgGithostEventstreamPassword = githostEventstream;
+                boot.state.pgProjectsPassword = projects;
+                boot.state.pgEpicsPassword = epics;
+                boot.state.pgProjectsEventstreamPassword = projectsEventstream;
                 boot.state.pgContainersPassword = containers;
                 boot.state.pgContainersEventstreamPassword = containersEventstream;
                 boot.state.pgPlatformEdgePassword = platformEdge;
@@ -1407,6 +1428,9 @@ public class SeedPhases {
                 state.put("PG_PLATFORM_MIRROR_PASSWORD", platformMirror);
                 state.put("PG_GITHOST_PASSWORD", githost);
                 state.put("PG_GITHOST_EVENTSTREAM_PASSWORD", githostEventstream);
+                state.put("PG_PROJECTS_PASSWORD", projects);
+                state.put("PG_EPICS_PASSWORD", epics);
+                state.put("PG_PROJECTS_EVENTSTREAM_PASSWORD", projectsEventstream);
                 state.put("PG_CONTAINERS_PASSWORD", containers);
                 state.put("PG_CONTAINERS_EVENTSTREAM_PASSWORD", containersEventstream);
                 state.put("PG_PLATFORM_EDGE_PASSWORD", platformEdge);
@@ -1475,6 +1499,16 @@ public class SeedPhases {
                 provision(ctx, admin, "qits_platform_mirror", platformMirror, false);
                 provision(ctx, admin, "qits_githost", githost, false);
                 provision(ctx, admin, "qits_githost_eventstream", githostEventstream, false);
+                // THE ALIAS TABLE'S OWNER, a seed service since 2026-08-21 and a THREE-database one
+                // — the only one here. Its own store, the epics store beside it and the eventstream
+                // outbox are three Flyway lineages, and its deployments.yml declares all three
+                // (`postgresql:db, postgresql:epics:qits_epics,
+                // postgresql:eventstream:qits_projects_eventstream`). Every name it is asked to
+                // resolve is a row in the first, so a boot with these missing is a boot where no
+                // clone url resolves at all.
+                provision(ctx, admin, "qits_projects", projects, false);
+                provision(ctx, admin, "qits_epics", epics, false);
+                provision(ctx, admin, "qits_projects_eventstream", projectsEventstream, false);
                 // THE ORCHESTRATOR, a seed service since 2026-08-11 and a two-database one for the
                 // same reason ci and the git host are: its registry of rows and the eventstream
                 // outbox are two Flyway lineages and cannot share a database. Both names are the
@@ -2162,6 +2196,10 @@ public class SeedPhases {
         values.put("PG_GITHOST_PASSWORD", orEmpty(boot.state.pgGithostPassword));
         values.put("PG_GITHOST_EVENTSTREAM_PASSWORD",
                 orEmpty(boot.state.pgGithostEventstreamPassword));
+        values.put("PG_PROJECTS_PASSWORD", orEmpty(boot.state.pgProjectsPassword));
+        values.put("PG_EPICS_PASSWORD", orEmpty(boot.state.pgEpicsPassword));
+        values.put("PG_PROJECTS_EVENTSTREAM_PASSWORD",
+                orEmpty(boot.state.pgProjectsEventstreamPassword));
         values.put("PG_CONTAINERS_PASSWORD", orEmpty(boot.state.pgContainersPassword));
         values.put("PG_CONTAINERS_EVENTSTREAM_PASSWORD",
                 orEmpty(boot.state.pgContainersEventstreamPassword));

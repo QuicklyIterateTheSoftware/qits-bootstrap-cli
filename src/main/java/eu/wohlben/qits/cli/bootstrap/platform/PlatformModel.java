@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
@@ -62,9 +63,19 @@ public final class PlatformModel {
      * vocabulary of its own. qits-ci hands it the step containers, so a ci that starts a pipeline
      * before the orchestrator answers has nowhere to run a step — which is why this service is
      * HEALTHY BEFORE THE FIRST PIPELINE, in the seed and in the deploy order both.
+     * <p>
+     * <b>qits-projects joined on 2026-08-21, and it is in the seed because a repository has a
+     * NAME.</b> It owns the alias table, and {@code /git/<projectId>/<repoName>} — the one clone url
+     * there is — resolves through it and nowhere else. Every repository of this platform is created
+     * minutes into the boot, so a qits-projects deployed sixth of seventeen meant every push of the
+     * boot's first half was id-addressed, carried no name onto its event, and had to be seeded under
+     * a storage id shaped like its own name for anything downstream to match it. Seeded, it answers
+     * before the first push: the storage ids are minted UUIDs, each pairing is registered before its
+     * bare is pushed to, and every push of the run is name-addressed. Three databases, the way the
+     * git host takes two — see {@link #seedStorageId}.
      */
     public static final List<String> CORE = List.of(
-            "platform-edge", "platform-mirror", "artifacts", "githost", "ci",
+            "platform-edge", "platform-mirror", "artifacts", "githost", "projects", "ci",
             "containers", "deployments", "platform-idp", "events",
             "oci-postgresql");
 
@@ -389,49 +400,32 @@ public final class PlatformModel {
     public static final String PROJECT = "qits";
 
     /**
-     * <b>The STORAGE ID a fresh boot creates a platform repository's bare under</b> — the key
-     * {@code PUT /git/<id>} uses, which is qits-githost's alone and never a clone url.
+     * <b>A FRESH STORAGE ID for a platform repository's bare</b> — the key {@code PUT /git/<id>}
+     * uses, which is qits-githost's alone and never a clone url.
      * <p>
-     * It is the repository NAME, and that is a decision rather than a leftover. The ruling of
-     * 2026-08-21 is that a storage id is an opaque UUID minted by qits-projects; a name is a valid
-     * opaque id, so the settled platform still satisfies every part of the ruling that is
-     * observable — the public clone url is {@code /git/<projectId>/<repoName>}, the alias table is
-     * the only resolution, and the id-addressed scheme is closed to everything but qits-projects'
-     * own client. What it does not satisfy is the ruling's preference that the two coordinates be
-     * unrelated for repositories THIS run seeds. Repositories created later, by qits-projects, mint
-     * UUIDs as the ruling says.
+     * It is a minted UUID, which is what the ruling of 2026-08-21 says a storage id is: opaque, and
+     * unrelated to the name the platform addresses the repository by. The public identity is
+     * {@code (projectId, repoName)} and qits-projects' alias table is its only authority, so a
+     * storage id shaped like a name would be one more place a name is spelled — and a second
+     * project holding a repository of the same name would collide in the store.
      * <p>
-     * <b>Two ordering facts make a minted UUID unreachable from here, and both are about
-     * qits-projects being deployed sixth of seventeen.</b> Everything this run pushes before that
-     * point is necessarily id-addressed, because a name-addressed route needs a resolver and the
-     * resolver is qits-projects:
-     * <ul>
-     *   <li><b>The release replays would select nothing.</b> qits-ci evaluates a trigger file's
-     *       {@code repoId: {exact: qits-eventstream}} against the event's {@code repoName} when the
-     *       payload carries one and against {@code repoId} when it does not — and an id-addressed
-     *       push carries no name. With the id equal to the name the legacy arm answers and the
-     *       seven release pipelines fire; with a UUID nothing matches and the first replay phase
-     *       fails the boot.
-     *   <li><b>qits-projects would clone the whole platform a second time.</b> Its startup
-     *       self-seed reconciles the wrapper at its FIRST boot — before anything can tell it what
-     *       this run minted — and adopts a component only when the git host answers
-     *       {@code GET /git/<entryName>}. Under UUID bares that is a 404 for every entry, so the
-     *       reconcile takes its clone arm instead: a fresh mirror of each repository from the org,
-     *       into a second bare under a second id, while the deployer and qits-ci keep building from
-     *       the ones this run pushed.
-     * </ul>
-     * Both are properties of the ORDER, not of this program. Making the preferred design reachable
-     * means qits-projects answering before the first push — a seed image, three databases and a
-     * stack service of its own, the way qits-githost joined the seed at the byte-plane split — or a
-     * qits-projects that can be told to hold its self-seed until it has been handed a catalogue.
-     * Either is its own work package.
+     * <b>Every call mints, and {@link eu.wohlben.qits.cli.bootstrap.phases.Boot#storageId} is the
+     * one place that remembers.</b> The pairing is recorded per run ({@code REPO_ID_<NAME>} in
+     * {@code .qits-bootstrap.env}) as each bare is created and read back at {@code recorded-state},
+     * so a resumed or repeated run addresses the bares it made rather than minting a second set
+     * beside them. Nothing else may call this method: an id derived twice is two bares.
      * <p>
-     * <b>This method is the seam that changes when one of them lands.</b> The id a repository is
-     * seeded under is recorded per run ({@code REPO_ID_<NAME>} in {@code .qits-bootstrap.env}) and
-     * read back from there on a rerun, so nothing downstream spells the name where it means the id.
+     * <b>What made a UUID reachable is qits-projects being in the seed</b> ({@link #CORE}). It
+     * answers before the first push, so {@code git-repos} registers each (uuid, name) pair the
+     * moment it creates the bare and every push of the run is name-addressed — which is what puts
+     * {@code repoName} on each push's event, and therefore what lets qits-ci's trigger selection
+     * match the release replays by name rather than falling back to the id.
+     * <p>
+     * It takes no repository name, and the absence is the point: a mint that read one would be a
+     * derivation someone could repeat.
      */
-    public static String seedStorageId(String name) {
-        return repo(name);
+    public static String seedStorageId() {
+        return UUID.randomUUID().toString();
     }
 
     public static boolean isPlatformService(String name) {
@@ -512,6 +506,11 @@ public final class PlatformModel {
             // like the rest — found by the first bare-server boot, whose seed build stopped at
             // the Dockerfile's `test -f` on this path.
             case "platform-idp" -> "service/src/main/webui/dist/qits-platform-spa-idp/browser";
+            // qits-projects joined the seed on 2026-08-21 and it has had a client all along, in the
+            // same prebuilt-dist shape: its Dockerfile stops the build with a `test -f` on this path
+            // before the native compile, because the bundle depends on @qits/ui-components and a
+            // docker build reaches no registry that holds it.
+            case "projects" -> "service/src/main/webui/dist/qits-spa-projects/browser";
             default -> "";
         };
     }

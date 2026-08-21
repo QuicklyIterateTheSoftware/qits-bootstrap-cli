@@ -232,6 +232,13 @@ public class PipelinePhases {
             // without, which is exactly what those calls need.
             boot.awaitHealth(ctx, env + "-qits-githost (the git host, on qits-net)",
                     boot.githost::health);
+            // THE ALIAS TABLE, waited for beside the store it names repositories in. Its readiness
+            // is its three databases, which is exactly what the two phases below need: one asks it
+            // for the qits project, the other registers every (storage id, name) pair against it
+            // before a single push. A name resolves through this service or nowhere.
+            String projectsToken = projectsToken();
+            boot.awaitHealth(ctx, env + "-qits-projects (the alias table, on qits-net)",
+                    () -> boot.projects.health(projectsToken));
             boot.awaitHealth(ctx, env + "-qits-ci (on qits-net)", boot.ci::health);
             boot.awaitHealth(ctx, PlatformModel.wireAlias("deployments", env) + " (on qits-net)",
                     boot.pd::health);
@@ -525,53 +532,85 @@ public class PipelinePhases {
     }
 
     /**
-     * Creating a repository is a wire call: qits-githost keeps every repository as blobs in its own
-     * store, so there is no volume to seed and nothing on disk to initialise.
-     * The PUT is idempotent — 201 when this call created it, 200 when one was already there.
+     * <b>EVERY REPOSITORY THIS PLATFORM HAS, created and given its public address in one pass.</b>
+     * Creating one is a wire call: qits-githost keeps a repository as blobs in its own store, so
+     * there is no volume to seed and nothing on disk to initialise. The PUT is idempotent — 201 when
+     * this call created it, 200 when one was already there.
      * <p>
-     * The address moved with the service at the byte-plane split — {@code <env>-qits-githost:8080/git}
-     * where it was {@code qits-platform-artifacts:8080/artifacts/git} — and the contract did not.
+     * <b>Three acts per repository, and the order inside them is the whole design.</b> MINT a
+     * storage id — an opaque UUID, {@link PlatformModel#seedStorageId} — then {@code PUT /git/<id>},
+     * then hand qits-projects the pair through the adopt route, before the next repository is
+     * touched. Adoption last of the three because that service checks the bare exists before it
+     * writes a row; adoption BEFORE ANY PUSH because a name resolves only through the row, and a
+     * push to a name that resolves nowhere is a 404 rather than a repository.
      * <p>
-     * <b>THE ID IS RECORDED, NOT RE-DECIDED.</b> What this phase creates is a bare under a STORAGE
-     * id ({@link PlatformModel#seedStorageId}), and the name the platform addresses it by is
-     * registered against that id later, by {@code register-repos}. The pairing is written to
-     * {@code .qits-bootstrap.env} as it is made, so a resumed or repeated run addresses the bares it
-     * created rather than minting a second set beside them.
+     * <b>It is the whole of what {@code register-repos} used to be, and it happens forty phases
+     * earlier.</b> That phase hung off qits-projects' own deployment, sixth of seventeen, because
+     * nothing before it could resolve a name — so every push of the boot's first half was
+     * id-addressed and carried no name onto its event. qits-projects is a seed service since
+     * 2026-08-21, so the alias table answers before the first push and {@code Boot.gitUrl} flips
+     * here, once, for the rest of the run.
      * <p>
-     * <b>A REPOSITORY ALREADY REGISTERED IS NOT PUT AGAIN, and that is what makes a rerun work at
+     * <b>THE ID IS RECORDED AS IT IS MINTED, NOT RE-DERIVED.</b> A UUID has nothing to derive it
+     * from, so the pairing is written to {@code .qits-bootstrap.env} per repository — before the
+     * next one is created — and read back at {@code recorded-state}. A run that lost it would
+     * address bares it never made and leave the platform's history in the ones it had.
+     * <p>
+     * <b>A NAME THAT ALREADY RESOLVES IS NOT CREATED AGAIN, and that is what makes a rerun work at
      * all.</b> The deployed git host closes {@code /git/<id>} to everything but qits-projects'
-     * client ({@code qits.githost.storage-client}), so this phase's own call is 403 there — it runs
+     * client ({@code qits.githost.storage-client}), so this phase's own PUT is 403 there — it runs
      * before that deployment on a cold boot and against a guarded host on every rerun. Asking
-     * qits-projects whether the name already resolves is the question that costs nothing when the
-     * answer is yes, and a repository nothing has registered still takes the PUT. One that is
-     * neither registered nor creatable fails here with both facts named, which is the honest end of
-     * a rerun that added a repository to the model after the cutover.
+     * qits-projects first costs nothing when the answer is yes, and the id it answers with is the
+     * one this run then uses. A repository that is neither registered nor creatable fails here with
+     * both facts named, which is the honest end of a rerun that added a repository to the model
+     * after the cutover.
      */
     public Phase gitRepositories() {
-        return new Phase("git-repos", "create the platform's repositories on the git host", ctx -> {
+        return new Phase("git-repos",
+                "create the platform's repositories and register their names", ctx -> {
             // The seed stack can replace a same-tag githost task after seed-health observed the
             // previous task. Close that rollout race at the point that needs the service: every
             // PUT below is idempotent, but the first one must not be sacrificed to a brief socket
             // gap between Swarm tasks.
             boot.awaitHealth(ctx, boot.config.envName() + "-qits-githost before repository PUTs",
                     boot.githost::health);
+            String token = projectsToken();
+            String projectId = boot.state.projectId;
+            if (projectId == null || projectId.isBlank()) {
+                throw new IllegalStateException("the " + PlatformModel.PROJECT + " project has no "
+                        + "id on this run — qits-project is the phase that reads it, and nothing "
+                        + "can be registered without one");
+            }
             BootstrapState recorded = new BootstrapState(
                     boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME));
             recorded.read();
-            String registeredUnder = registeredProject();
             int created = 0;
             int adopted = 0;
             for (String name : PlatformModel.platformRepos()) {
                 String repo = PlatformModel.repo(name);
-                String id = boot.storageId(name);
-                boot.state.repositoryIds.put(repo, id);
-                recorded.putRepositoryId(repo, id);
-                if (registeredUnder != null && resolvesByName(registeredUnder, repo)) {
+                String known = boot.state.repositoryIds.get(repo);
+                String resolved = resolvedStorageId(projectId, repo, token);
+                if (resolved != null) {
                     // qits-projects already answers for this name, so the bare it points at exists
-                    // and this run must not ask the storage scheme about it.
+                    // and this run must not ask the storage scheme about it. The id it names wins
+                    // over anything recorded: the row is what every clone url resolves through.
+                    if (known != null && !known.equals(resolved)) {
+                        ctx.warn(repo + " resolves to /git/" + resolved + " and this machine had "
+                                + "recorded /git/" + known + ". The row wins — every push of this "
+                                + "run goes to the bare qits-projects names, and the recorded one "
+                                + "is left behind holding whatever an earlier run put in it");
+                    }
+                    boot.state.repositoryIds.put(repo, resolved);
+                    recorded.putRepositoryId(repo, resolved);
+                    recorded.write();
                     adopted++;
                     continue;
                 }
+                String id = boot.storageId(name);
+                recorded.putRepositoryId(repo, id);
+                // WRITTEN BEFORE THE BARE IS MADE, not after the loop: an id this run minted and
+                // did not record is a bare nothing can address again.
+                recorded.write();
                 ctx.status("PUT " + boot.githost.gitUrl(id));
                 Http.Response response = boot.githost.createRepository(id, boot.githostToken());
                 if (response.status() == 403) {
@@ -586,10 +625,13 @@ public class PipelinePhases {
                             + response.describe());
                 }
                 created += response.status() == 201 ? 1 : 0;
+                register(ctx, projectId, name, repo, id, token);
                 ctx.log("  " + repo + " -> /git/" + id
-                        + (response.status() == 201 ? "  (created)" : ""));
+                        + (response.status() == 201 ? "  (created)" : "") + ", registered");
             }
-            recorded.write();
+            boot.state.repositoriesRegistered = true;
+            ctx.log("  every push from here on is " + boot.config.gitHostUrl() + "/" + projectId
+                    + "/<repo>");
             ctx.note(created + " created, "
                     + (PlatformModel.platformRepos().size() - created - adopted)
                     + " already there, " + adopted + " already registered");
@@ -597,30 +639,62 @@ public class PipelinePhases {
     }
 
     /**
-     * The {@code qits} project's id if qits-projects is standing here and holds one, and null
-     * otherwise — which is the whole of a cold boot, where that service is fourteen phases away.
+     * <b>Where the public clone url of one repository comes into existence.</b> The pair is what it
+     * actually is — the storage id the bare lives under, and the name the platform addresses it by —
+     * and qits-projects' alias table is the only place either fact is authoritative.
      * <p>
-     * Every failure answers null: this is a courtesy question asked to avoid a call, and a service
-     * that does not answer it is a service whose repositories this run is about to create anyway.
+     * <b>The url is the ORG's, not the platform's.</b> What qits-projects stores on a row is the
+     * forge the repository is BACKED UP to, and the wrapper's own reconcile derives exactly this
+     * value by folding {@code ../<name>.git} against the wrapper's origin. Writing the same thing
+     * means the two never disagree; writing a platform address would make every row name the host it
+     * already lives on.
+     * <p>
+     * <b>A REFUSAL IS RE-ASKED AS THE QUESTION THAT MATTERS.</b> What this run owes the rest of the
+     * train is that the name RESOLVES, so that is what is asked, and only an answer of no is a
+     * failure. The adopt route is idempotent on the storage id, so a rerun costs one request.
      */
-    private String registeredProject() {
-        if (boot.state.projectId != null && !boot.state.projectId.isBlank()) {
-            return boot.state.projectId;
+    private void register(PhaseContext ctx, String projectId, String name, String repo, String id,
+                          String token) {
+        ctx.status("registering " + repo + " (/git/" + id + ")");
+        Http.Response answer = boot.projects.adoptRepository(projectId, id, repo,
+                boot.config.orgUrl() + "/" + repo + ".git", PlatformModel.archetype(name), token);
+        if (!answer.ok() && resolvedStorageId(projectId, repo, token) == null) {
+            throw new IllegalStateException("registering " + repo + " (/git/" + id
+                    + ") under project " + projectId + " answered " + answer.describe()
+                    + ". Without it /git/" + projectId + "/" + repo + " resolves nowhere, and "
+                    + "every push this run has left to make is to that address.");
         }
+    }
+
+    /**
+     * <b>What this repository's name resolves to, or null.</b> Asked of the same route qits-githost
+     * asks on every name-addressed clone, so a value here is proof that the public url serves rather
+     * than an inference from a row this run wrote.
+     * <p>
+     * Every failure answers null — including a service that is not there. A name that cannot be
+     * resolved is a name this run is about to register anyway.
+     */
+    private String resolvedStorageId(String projectId, String repo, String token) {
         try {
-            return qitsProjectId(boot.projects.projects(projectsToken())).orElse(null);
+            return storageIdIn(boot.projects.repositoryByName(projectId, repo, token));
         } catch (RuntimeException unreachable) {
             return null;
         }
     }
 
-    /** Does the public clone url of this repository resolve? Asked of the route the git host asks. */
-    private boolean resolvesByName(String projectId, String repo) {
-        try {
-            return boot.projects.repositoryByName(projectId, repo, projectsToken()).ok();
-        } catch (RuntimeException unreachable) {
-            return false;
+    /**
+     * The storage id in a by-name answer, or null when the name resolves to nothing.
+     * <p>
+     * Kept static and pure so the shape of that answer is provable without a platform: it is the
+     * one read this run makes before deciding not to create a repository, so an answer read wrongly
+     * is either a bare made twice or a rerun that re-PUTs everything.
+     */
+    static String storageIdIn(Http.Response answer) {
+        if (!answer.ok()) {
+            return null;
         }
+        String id = Json.text(Json.parse(answer.body()), "repositoryId");
+        return id.isBlank() ? null : id;
     }
 
     /**
@@ -1605,10 +1679,11 @@ public class PipelinePhases {
     public static final String CONFIGURATION = "configuration";
 
     /**
-     * The application {@link #registerRepositories} hangs off, for the reason
-     * {@link #CONFIGURATION} is spelled here: its position in {@link PlatformModel#DEPLOYABLES} is
-     * not a preference. It owns the alias table, so nothing above it can address a repository by
-     * name — and the git host, six deployables below it, stops answering anything else.
+     * The application that owns the alias table — a SEED service since 2026-08-21, which is what
+     * lets {@code git-repos} give every repository its public address before the first push.
+     * Spelled here because two phases name the same service for two different reasons: the seed
+     * one's self-seed is released by {@code qits-project}, and its own deployment is still where
+     * the successor takes the alias table over.
      */
     public static final String PROJECTS = "projects";
 
@@ -1738,43 +1813,41 @@ public class PipelinePhases {
     // --- the public identity ------------------------------------------------------------------------
 
     /**
-     * <b>WHERE THE PUBLIC CLONE URL COMES INTO EXISTENCE.</b> Every repository this run created on
-     * the git host is handed to qits-projects as the pair it actually is — the storage id the bare
-     * lives under, and the name the platform addresses it by — so that
-     * {@code /git/<projectId>/<repoName>} starts resolving.
+     * <b>THE PROJECT EVERY PLATFORM REPOSITORY BELONGS TO, before the first one is created.</b>
+     * Nothing this run seeds has a public address until there is a project to hold it: the clone url
+     * is {@code /git/<projectId>/<repoName>} and the id in it is this project's.
      * <p>
-     * <b>It hangs off qits-projects' own deployment</b>, the way {@code configuration-import} hangs
-     * off qits-configuration's, and both neighbours of that position are load-bearing:
-     * <ul>
-     *   <li><b>AFTER qits-projects.</b> It is the only service that owns an alias table, and it is
-     *       deployed sixth of seventeen. Nothing before this point can resolve a name, which is why
-     *       every push above it is id-addressed.
-     *   <li><b>BEFORE qits-githost.</b> Six deployables later the git host is replaced by one whose
-     *       extras name {@code qits.githost.storage-client} — from that moment the id-addressed
-     *       scheme answers qits-projects' client and nobody else, this run included. Every push
-     *       after it has to be name-addressed, and a name only resolves because of this phase.
-     * </ul>
+     * <b>The project is qits-projects' OWN to create, and this phase releases it rather than making
+     * one.</b> Two seeds of one project are two projects with one name, so the service's startup
+     * self-seed is the single writer — it mints the id, names the project after the wrapper and
+     * creates the wrapper's own origin on the git host.
      * <p>
-     * <b>The url is the org's, not the platform's.</b> What qits-projects stores on a row is the
-     * forge the repository is BACKED UP to, and the wrapper's own reconcile derives exactly this
-     * value by folding {@code ../<name>.git} against the wrapper's origin. Writing the same thing
-     * means the two never disagree; writing a platform address would make every row name the host it
-     * already lives on.
+     * <b>The seed service starts with that self-seed HELD, and the reason is a race with no other
+     * cure.</b> Creating the wrapper origin needs a bearer for the git host, and the idp is a seed
+     * service starting in the same second. A self-seed that fired first would fail, roll its own
+     * transaction back — project row included — and not try again until the container restarted. So
+     * the stack file spells {@code QITS_STARTUP_SEED_ENABLED=false}, this phase turns it on once
+     * {@code seed-health} has watched the idp answer, and the wait below is then a wait on work
+     * that can succeed.
      * <p>
-     * <b>Idempotent per repository, and a rerun is the ordinary case</b>: an id qits-projects already
-     * holds answers 200 with the row it found. The phase is still not a skip — the alias table is
-     * what the rest of this train depends on, so it is asserted on every boot rather than assumed
-     * from a previous one.
+     * <b>Only the seed service is ever released.</b> On a platform whose qits-projects is deployed,
+     * there is no seed service to update and the project already exists — the phase is then the wait
+     * alone, which is what a rerun costs.
+     * <p>
+     * <b>It creates the project and NOT the catalogue.</b> The seed's other switch
+     * ({@code QITS_STARTUP_SEED_RECONCILE_REPOSITORIES=false}, see the stack file) keeps the wrapper
+     * reconcile out of the seed window: under the 2026-08-21 ruling no storage id is a name, so a
+     * reconcile against a platform whose repositories do not exist yet would mirror all of them in
+     * from the org. This run creates them, and the reconcile first runs on the DEPLOYED container,
+     * where every entry matches a row by alias.
      */
-    public Phase registerRepositories() {
-        return new Phase("register-repos", "register the platform's repositories under '"
-                + PlatformModel.PROJECT + "'", ctx -> {
+    public Phase qitsProject() {
+        return new Phase("qits-project", "the '" + PlatformModel.PROJECT
+                + "' project qits-projects seeds itself", ctx -> {
             String token = projectsToken();
             boot.awaitHealth(ctx, "qits-projects at " + boot.projects.base(),
                     () -> boot.projects.health(token));
-            // The project is qits-projects' OWN to create — its startup self-seed makes it on first
-            // boot — so this waits for it rather than creating one. Two seeds of the same project
-            // would be two projects with one name.
+            releaseSelfSeed(ctx);
             String projectId = Waiter.await(ctx, "the '" + PlatformModel.PROJECT + "' project in "
                             + boot.projects.base(), boot.config.healthTimeout(),
                     boot.config.pollInterval(),
@@ -1784,34 +1857,37 @@ public class PipelinePhases {
                                     "the self-seed has not created it yet")));
             boot.state.projectId = projectId;
             ctx.log("  project " + PlatformModel.PROJECT + " is " + projectId);
-            for (String name : PlatformModel.platformRepos()) {
-                String repo = PlatformModel.repo(name);
-                String id = boot.storageId(name);
-                ctx.status("registering " + repo + " (/git/" + id + ")");
-                Http.Response answer = boot.projects.adoptRepository(projectId, id, repo,
-                        boot.config.orgUrl() + "/" + repo + ".git",
-                        PlatformModel.archetype(name), token);
-                // A REFUSAL IS RE-ASKED AS THE QUESTION THAT MATTERS, and the race is real rather
-                // than defensive: qits-projects' own startup self-seed reconciles the wrapper at the
-                // boot this phase is waiting on, and its adopt arm registers the same pairs from
-                // the other side. Two writers of one row can leave the loser a 500 over a row that
-                // is now exactly right. What this phase owes the rest of the train is that the name
-                // RESOLVES — so that is what is asked, and only an answer of no is a failure.
-                if (!answer.ok() && !resolvesByName(projectId, repo)) {
-                    throw new IllegalStateException("registering " + repo + " (/git/" + id
-                            + ") under project " + projectId + " answered " + answer.describe()
-                            + ". Without it /git/" + projectId + "/" + repo + " resolves nowhere "
-                            + "and every deployment left in this train pushes to an address the "
-                            + "git host is about to close.");
-                }
-            }
-            // Only now: this is what Boot.gitUrl reads, and it must not be true for a repository
-            // the loop above did not reach.
-            boot.state.repositoriesRegistered = true;
-            ctx.log("  every push from here on is " + boot.config.gitHostUrl() + "/" + projectId
-                    + "/<repo>");
-            ctx.note(PlatformModel.platformRepos().size() + " repositories");
+            ctx.note(projectId);
         });
+    }
+
+    /** The key the seed stack holds qits-projects' startup self-seed with. */
+    static final String SELF_SEED_ENABLED = "QITS_STARTUP_SEED_ENABLED";
+
+    /**
+     * Turns the seed qits-projects' self-seed on, or says why there was nothing to turn on.
+     * <p>
+     * The seed SERVICE only: a deployed qits-projects was started by the deployer from extras that
+     * spell no such key, so its self-seed has been on since it booted and the project is already
+     * there. Asking for the stack-qualified name first and the bare alias second is the same
+     * two-step {@code configuration-flip} makes, and for the same reason — the deployer names its
+     * own service after the bare alias once it has taken the application over.
+     */
+    private void releaseSelfSeed(PhaseContext ctx) {
+        String alias = PlatformModel.wireAlias(PROJECTS, boot.config.envName());
+        List<String> services = boot.docker.serviceNames();
+        String service = Docker.stackService(Docker.STACK, alias);
+        if (!services.contains(service)) {
+            ctx.log("  no seed " + service + " — qits-projects is the deployer's, and its self-seed "
+                    + "has been on since it booted");
+            return;
+        }
+        ctx.log("  releasing the self-seed on " + service + ": the idp answers now, so the wrapper "
+                + "origin it creates can be authorised");
+        Boot.must(boot.docker.run(Cmd.of(List.of("docker", "service", "update",
+                                "--env-add", SELF_SEED_ENABLED + "=true", service))
+                        .timeout(Duration.ofMinutes(10)), ctx::log),
+                "releasing the self-seed on " + service + " failed");
     }
 
     /**
@@ -1928,10 +2004,16 @@ public class PipelinePhases {
             // THE PUBLIC FORM AND NOTHING ELSE. /git/<repoId> is the storage scheme — qits-projects'
             // internal address for the bare — and the deployed git host serves it to that service's
             // client alone. Printing it here would be printing an address a person is refused.
+            //
+            // THE SLUG IS THE PUBLIC SPELLING OF THE FIRST SEGMENT. qits-projects matches the
+            // project segment by id OR slug and the git host passes it through verbatim, so
+            // /git/qits/<repo>.git is the address a person is given — a name they can read and
+            // type, rather than the uuid a machine holds. The machine form is printed beside it,
+            // below, because that is what every service on qits-net dials.
             String project = boot.state.projectId == null || boot.state.projectId.isBlank()
                     ? "<projectId>" : boot.state.projectId;
-            report.add("git host:  http://" + boot.config.gitHostVhost() + "/git/" + project
-                    + "/<repo>.git — qits-githost, through the edge.");
+            report.add("git host:  http://" + boot.config.gitHostVhost() + "/git/"
+                    + PlatformModel.PROJECT + "/<repo>.git — qits-githost, through the edge.");
             report.add("           The first segment is the PROJECT (" + PlatformModel.PROJECT
                     + " holds every repository this run seeded)");
             report.add("           and the second is the repository's name. That pair is the only "
@@ -1946,10 +2028,12 @@ public class PipelinePhases {
                     + "answer)");
             report.add("             git -c http.extraHeader=\"Authorization: Bearer <token>\" "
                     + "clone \\");
-            report.add("               http://" + boot.config.gitHostVhost() + "/git/" + project
-                    + "/qits-qits.git");
+            report.add("               http://" + boot.config.gitHostVhost() + "/git/"
+                    + PlatformModel.PROJECT + "/qits-qits.git");
             report.add("           The clients and where their secrets are recorded are on the "
                     + "machines: line below.");
+            report.add("           The first segment is the SLUG above or the project's id, and "
+                    + "both always resolve.");
             report.add("           On qits-net it is " + boot.config.gitHostUrl() + "/" + project
                     + "/<repo>, which is what every service dials.");
             if (boot.config.shipMains()) {

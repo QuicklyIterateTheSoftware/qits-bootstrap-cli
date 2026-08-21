@@ -67,7 +67,8 @@ class BootstrapPlanTest {
                 // they resolve is already in the store.
                 "publish-qits-containers-client", "publish-ui-components",
                 "publish-angular", "seed-image-ci", "seed-image-deployments",
-                "seed-image-platform-idp", "seed-image-containers", "ci-daemon");
+                "seed-image-platform-idp", "seed-image-containers", "seed-image-projects",
+                "ci-daemon");
         // BEFORE the ci image, because ci pins qits-containers-client and a step-container image
         // build resolves from the platform's own Maven registry — there is no host ~/.m2 in this
         // run to fall back on.
@@ -167,36 +168,39 @@ class BootstrapPlanTest {
     }
 
     /**
-     * <b>WHERE THE PUBLIC CLONE URL COMES INTO EXISTENCE, and both neighbours are load-bearing.</b>
-     * Every repository this run creates on the git host is created under a storage id; the name it
-     * is addressed by is registered with qits-projects, which owns the only alias table there is.
+     * <b>WHERE THE PUBLIC CLONE URL COMES INTO EXISTENCE, and it is before the first push rather
+     * than forty phases into the deploy train.</b> qits-projects is a seed service, so the project
+     * is read and every (storage id, name) pair is registered while the bares are being made — and
+     * every push of the run is then name-addressed.
      * <ul>
-     *   <li><b>After qits-projects' own deployment</b>, because nothing before it can answer a
-     *       name at all — which is why every push above this point is id-addressed.
-     *   <li><b>Before qits-githost's</b>, six deployables later, whose extras close the
-     *       id-addressed scheme to qits-projects' client alone. Every push after that cutover has
-     *       to be name-addressed, and a name only resolves because of this phase.
+     *   <li><b>{@code qits-project} before {@code git-repos}</b>: a repository is registered under
+     *       a project, so the project has to be there before the first one is created.
+     *   <li><b>Both before every push</b>, which is what puts {@code projectId} and {@code repoName}
+     *       on each push's event.
+     *   <li><b>Both long before qits-githost's own deployment</b>, whose extras close the
+     *       id-addressed scheme to qits-projects' client alone. The lifecycle PUTs are the only
+     *       thing this run addresses that way, and they are all above that cutover.
      * </ul>
      */
     @Test
-    void theRepositoriesAreRegisteredAfterProjectsAndBeforeTheGitHostCloses() {
+    void theRepositoriesAreRegisteredBeforeTheyArePushedTo() {
         List<String> ids = ids(plan(Map.of()));
 
-        assertThat(ids).containsSubsequence("deploy-projects", "register-repos", "deploy-githost");
-        // And the whole tail of the train pushes through the address it created.
-        assertThat(ids).containsSubsequence("register-repos", "deploy-ci", "deploy-platform-edge",
-                "deploy-deployments");
-        // The bares themselves are made long before it, on the storage scheme, which is the window
-        // the guard cannot be closed in.
-        assertThat(ids).containsSubsequence("git-repos", "release-train-push", "preseed",
-                "register-repos");
+        assertThat(ids).containsSubsequence("qits-project", "git-repos", "release-train-push",
+                "preseed");
+        // And the whole train that follows pushes through the address it created.
+        assertThat(ids).containsSubsequence("git-repos", "deploy-projects", "deploy-githost",
+                "deploy-ci", "deploy-platform-edge", "deploy-deployments");
+        // The phase that used to hang off qits-projects' deployment is gone with the wait it was:
+        // the alias table answers from the seed on.
+        assertThat(ids).doesNotContain("register-repos");
     }
 
     /** A warm rerun registers too: the alias table is asserted on every boot, never assumed. */
     @Test
     void aWarmRerunStillRegistersTheRepositories() {
         assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1"))))
-                .containsSubsequence("deploy-projects", "register-repos", "deploy-githost");
+                .containsSubsequence("qits-project", "git-repos", "deploy-projects");
     }
 
     /** A warm rerun flips too: the seed stack deploy resets the env the last run added live. */

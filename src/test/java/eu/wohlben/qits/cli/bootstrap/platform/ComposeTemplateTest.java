@@ -39,6 +39,9 @@ class ComposeTemplateTest {
         values.put("PG_PLATFORM_MIRROR_PASSWORD", "1234123412341234");
         values.put("PG_GITHOST_PASSWORD", "5678567856785678");
         values.put("PG_GITHOST_EVENTSTREAM_PASSWORD", "9abc9abc9abc9abc");
+        values.put("PG_PROJECTS_PASSWORD", "7777888899990000");
+        values.put("PG_EPICS_PASSWORD", "3333444455556666");
+        values.put("PG_PROJECTS_EVENTSTREAM_PASSWORD", "abcdabcdabcdabcd");
         values.put("PG_CONTAINERS_PASSWORD", "def0def0def0def0");
         values.put("PG_CONTAINERS_EVENTSTREAM_PASSWORD", "0f0f0f0f0f0f0f0f");
         values.put("IDP", "http://qits-platform-idp:8080/idp");
@@ -156,6 +159,9 @@ class ComposeTemplateTest {
                 .doesNotContain("${PG_PLATFORM_MIRROR_PASSWORD}")
                 .doesNotContain("${PG_GITHOST_PASSWORD}")
                 .doesNotContain("${PG_GITHOST_EVENTSTREAM_PASSWORD}")
+                .doesNotContain("${PG_PROJECTS_PASSWORD}")
+                .doesNotContain("${PG_EPICS_PASSWORD}")
+                .doesNotContain("${PG_PROJECTS_EVENTSTREAM_PASSWORD}")
                 .doesNotContain("${PG_CONTAINERS_PASSWORD}")
                 .doesNotContain("${PG_CONTAINERS_EVENTSTREAM_PASSWORD}");
         assertThat(compose).doesNotContain("${MIRROR_PORT}").doesNotContain("${GIT_HOST_PORT}");
@@ -1656,6 +1662,72 @@ class ComposeTemplateTest {
         assertThat(extras("qits-workspaces"))
                 .contains(".mounts[0]=volume:qits-workspaces-data:/data")
                 .doesNotContain("QITS_RESOURCE_");
+    }
+
+    /**
+     * <b>THE ALIAS TABLE IS IN THE SEED, and this is everything it needs to answer there.</b>
+     * A repository's public address is {@code /git/<projectId>/<repoName>} and it resolves through
+     * qits-projects or nowhere, so a boot whose seed cannot start this service is a boot with no
+     * clone url at all — which is why the ids used to be spelled like the names.
+     */
+    @Test
+    void theSeedCarriesTheAliasTableAndTheThreeStoresItNeeds() {
+        String block = serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-projects");
+
+        // THREE STORES, THREE TRIPLES — its own rows, the epics beside them and the eventstream
+        // outbox, which its deployments.yml declares as three resources because they are three
+        // Flyway lineages. Spelled here and nowhere else, like the git host's six: the seed starts
+        // this container before any deployer exists, and the urls have no fallback behind them.
+        assertThat(block)
+                .contains("QITS_RESOURCE_DB_URL: jdbc:postgresql://" + ENV
+                        + "-qits-oci-postgresql:5432/qits_projects")
+                .contains("QITS_RESOURCE_DB_PASSWORD: \"7777888899990000\"")
+                .contains("QITS_RESOURCE_EPICS_URL: jdbc:postgresql://" + ENV
+                        + "-qits-oci-postgresql:5432/qits_epics")
+                .contains("QITS_RESOURCE_EPICS_PASSWORD: \"3333444455556666\"")
+                .contains("QITS_RESOURCE_EVENTSTREAM_URL: jdbc:postgresql://" + ENV
+                        + "-qits-oci-postgresql:5432/qits_projects_eventstream")
+                .contains("QITS_RESOURCE_EVENTSTREAM_PASSWORD: \"abcdabcdabcdabcd\"");
+        // The git host it creates bares on, and the credential every one of those calls needs:
+        // this service refuses to open a socket to the git host without a bearer, so a seed on the
+        // shipped client-enabled=false could create no wrapper and therefore no project.
+        assertThat(block)
+                .contains("QITS_GITHOST_URL: http://" + ENV + "-qits-githost:8080")
+                .contains("QUARKUS_OIDC_CLIENT_GITHOST_CLIENT_ENABLED: \"true\"")
+                .contains("QUARKUS_OIDC_CLIENT_GITHOST_CLIENT_ID: " + ENV + "-qits-projects")
+                .contains("QUARKUS_OIDC_CLIENT_GITHOST_GRANT_OPTIONS_CLIENT_AUDIENCE: " + ENV
+                        + "-qits-githost");
+        // Its mirrors go on the volume its successor mounts, not into a container layer — and not
+        // under ${user.home}, which is the literal "?" for this image's passwd-less uid.
+        assertThat(block)
+                .contains("QITS_PROJECTS_DATA_DIR: /data/mirrors")
+                .contains("- qits-projects-data:/data");
+    }
+
+    /**
+     * <b>THE SEED'S TWO SWITCHES, and each one is a boot that fails without it.</b>
+     * <p>
+     * The self-seed is HELD because creating the wrapper origin needs a bearer the idp mints, and
+     * the idp is a seed service starting in the same second: a self-seed that fired first would
+     * fail, roll its own transaction back and not try again until the container restarted. The
+     * {@code qits-project} phase turns it on once the idp has answered.
+     * <p>
+     * The wrapper RECONCILE stays off for the whole seed window. Under the 2026-08-21 ruling no
+     * storage id is a name, so a reconcile against a platform whose repositories do not exist yet
+     * matches no entry and takes its remaining arm — mirroring every repository in from the org,
+     * minutes before this bootstrap has created a single bare.
+     * <p>
+     * The DEPLOYED container spells neither, so both are on at their shipped defaults: that
+     * reconcile is the first of the platform's life and every entry matches a row by alias.
+     */
+    @Test
+    void theSeedHoldsTheSelfSeedAndTheDeployedContainerDoesNot() {
+        String block = serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-projects");
+
+        assertThat(block)
+                .contains("QITS_STARTUP_SEED_ENABLED: \"false\"")
+                .contains("QITS_STARTUP_SEED_RECONCILE_REPOSITORIES: \"false\"");
+        assertThat(extras("qits-projects")).doesNotContain("QITS_STARTUP_SEED");
     }
 
     @Test

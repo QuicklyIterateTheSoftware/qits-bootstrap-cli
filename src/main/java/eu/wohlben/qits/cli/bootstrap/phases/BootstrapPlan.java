@@ -120,6 +120,12 @@ public final class BootstrapPlan {
             // qits jars the publishes above put in the store. It has no client bundle to place: the
             // service serves machines and there is no SPA to stand in for.
             phases.add(seed.seedImage("containers"));
+            // THE ALIAS TABLE'S OWNER, and it is built here for the same reason the four above
+            // are: its reactor resolves qits-eventstream, qits-githost-events, qits-auth-core and
+            // the qits-containers client out of the store the publishes above filled. It has a
+            // client, so the seed places a placeholder bundle where its Dockerfile's `test -f`
+            // looks — see PlatformModel.seedUiPath.
+            phases.add(seed.seedImage("projects"));
             for (String image : List.of("ci-base", "maven-base", "userflows-base", "node-base",
                     "node-docker-base")) {
                 phases.add(seed.stepImage(image));
@@ -150,6 +156,12 @@ public final class BootstrapPlan {
         // DNS-01 issuance belongs to the running edge now. It starts asynchronously after the seed
         // stack is healthy and renews there; bootstrap neither runs certbot nor holds a challenge.
         phases.add(pipeline.daemonPublish());
+        // THE PROJECT EVERY REPOSITORY BELONGS TO, and it comes before the first bare rather than
+        // after the sixth deployment. qits-projects is a seed service now, so the one thing that
+        // has to happen before this run creates anything is that the `qits` project exists to
+        // register it under: a storage id is a UUID, and a UUID resolves to nothing until the
+        // pairing is a row in the alias table.
+        phases.add(pipeline.qitsProject());
         phases.add(pipeline.gitRepositories());
         // Every deployable's gitlinks must be advertised before CI clones it. In particular,
         // qits-ci points at qits-spa-ci; pushing that SPA after the deployment train makes the
@@ -174,17 +186,12 @@ public final class BootstrapPlan {
                 phases.add(pipeline.configurationImport());
                 phases.add(pipeline.configurationFlip());
             }
-            // THE PHASE THAT GIVES EVERY REPOSITORY ITS PUBLIC ADDRESS, and it sits here for the
-            // same shape of reason the two above do. AFTER qits-projects' own deployment: it owns
-            // the alias table, and a name resolves nowhere until this run has handed it every
-            // (storage id, name) pair. BEFORE qits-githost's, six deployables down, whose extras
-            // close the id-addressed scheme to qits-projects' client alone — from that cutover on,
-            // a push this run makes has to be name-addressed, and it is this phase that makes one
-            // possible. Everything deployed below this line is pushed to /git/<projectId>/<repo>,
-            // which is also what puts the two name fields on its build's event.
-            if (PipelinePhases.PROJECTS.equals(deployable)) {
-                phases.add(pipeline.registerRepositories());
-            }
+            // THERE IS NO REGISTRATION PHASE HERE ANY MORE, and its absence is what seeding
+            // qits-projects bought. Every repository's public address existed before the first
+            // push — `git-repos`, forty phases above — so this deployment inherits an alias table
+            // it does not have to be waited on to fill. It is still the deployment that matters
+            // most to the addresses: qits-githost, six below it, closes the id-addressed scheme,
+            // and by then this run has been name-addressing every push since its first.
         }
         phases.add(pipeline.summary());
         // LAST, AND AFTER THE SUMMARY ON PURPOSE. The summary phase only BUILDS the account —

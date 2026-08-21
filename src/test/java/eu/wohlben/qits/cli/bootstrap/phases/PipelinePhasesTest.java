@@ -700,14 +700,20 @@ class PipelinePhasesTest {
      * <b>WHERE THIS RUN PUSHES, before and after the aliases exist.</b> The switch is the one thing
      * that decides whether a push carries the repository's name onto its event and whether it is
      * still accepted once the git host's own deployment closes the storage scheme.
+     * <p>
+     * Both states are still reachable, but only one of them is ever pushed in: the id-addressed
+     * form is what {@code git-repos} PUTs the bare at, and that phase registers the pair before it
+     * returns — so every push of the run is on the far side of this flip.
      */
     @Test
     void aPushIsIdAddressedUntilTheAliasesAreRegisteredAndNameAddressedAfter(@TempDir Path temp) {
         Boot boot = boot(Map.of("QITS_ENV_NAME", "dev"), temp);
+        boot.state.repositoryIds.put("qits-ci", "8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
 
-        // Before register-repos there is no alias table, so the storage scheme is the only address
-        // the git host can answer.
-        assertThat(boot.gitUrl("ci")).isEqualTo("http://dev-qits-githost:8080/git/qits-ci");
+        // Before the pair is registered there is nothing to resolve a name through, so the storage
+        // scheme is the only address the git host can answer.
+        assertThat(boot.gitUrl("ci")).isEqualTo(
+                "http://dev-qits-githost:8080/git/8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
 
         boot.state.projectId = "1f0a-project";
         boot.state.repositoriesRegistered = true;
@@ -720,14 +726,16 @@ class PipelinePhasesTest {
     @Test
     void aProjectIdAloneDoesNotMoveThePushes(@TempDir Path temp) {
         Boot boot = boot(Map.of("QITS_ENV_NAME", "dev"), temp);
+        boot.state.repositoryIds.put("qits-ci", "8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
         boot.state.projectId = "1f0a-project";
 
-        assertThat(boot.gitUrl("ci")).isEqualTo("http://dev-qits-githost:8080/git/qits-ci");
+        assertThat(boot.gitUrl("ci")).isEqualTo(
+                "http://dev-qits-githost:8080/git/8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
     }
 
     /**
      * The storage id is READ, never re-derived: a rerun addresses the bare it created, whatever an
-     * earlier run decided to key it by.
+     * earlier run minted for it.
      */
     @Test
     void aRecordedStorageIdWinsOverTheDefault(@TempDir Path temp) {
@@ -735,9 +743,47 @@ class PipelinePhasesTest {
         boot.state.repositoryIds.put("qits-ci", "8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
 
         assertThat(boot.storageId("ci")).isEqualTo("8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
-        assertThat(boot.storageId("events")).isEqualTo("qits-events");
         assertThat(boot.gitUrl("ci")).isEqualTo(
                 "http://dev-qits-githost:8080/git/8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
+    }
+
+    /**
+     * <b>A REPOSITORY NOTHING HAS RECORDED IS MINTED ONCE, and the answer is kept.</b> A storage id
+     * is a uuid with nothing to derive it from, so a second call that minted again would address a
+     * bare this run never created — and {@code git-repos} writes what this answers into
+     * {@code .qits-bootstrap.env} before it makes the bare, which is what carries the pairing
+     * across a resumed run.
+     */
+    @Test
+    void anUnrecordedRepositoryIsMintedOnceAndRemembered(@TempDir Path temp) {
+        Boot boot = boot(Map.of("QITS_ENV_NAME", "dev"), temp);
+
+        String minted = boot.storageId("events");
+
+        assertThat(minted).matches("[0-9a-f-]{36}").isNotEqualTo("qits-events");
+        assertThat(boot.storageId("events")).isEqualTo(minted);
+        assertThat(boot.state.repositoryIds).containsEntry("qits-events", minted);
+        // And two repositories never share one, which a name-shaped id could not have got wrong.
+        assertThat(boot.storageId("ci")).isNotEqualTo(minted);
+    }
+
+    /**
+     * <b>What a name resolves to, in the shape qits-projects answers</b> — the read {@code
+     * git-repos} makes before it decides not to create a repository. Misread, it is either a bare
+     * made a second time or a rerun that re-PUTs the whole platform.
+     */
+    @Test
+    void theByNameAnswerNamesTheStorageIdAndAMissOnlyMeansNo() {
+        assertThat(PipelinePhases.storageIdIn(new eu.wohlben.qits.cli.bootstrap.api.Http.Response(
+                200, "{\"repositoryId\":\"8b1f0f0e-9a0c-4c3a-9a5b-000000000001\"}")))
+                .isEqualTo("8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
+        // A name nothing holds. The 404 is the ordinary answer of a cold boot, once per repository.
+        assertThat(PipelinePhases.storageIdIn(new eu.wohlben.qits.cli.bootstrap.api.Http.Response(
+                404, ""))).isNull();
+        // And an answer that is not one is not read as an id: a service that is up and says nothing
+        // useful must not stop this run from creating the bare.
+        assertThat(PipelinePhases.storageIdIn(new eu.wohlben.qits.cli.bootstrap.api.Http.Response(
+                200, "{}"))).isNull();
     }
 
     /** The project the registration phase looks for, in the listing shape qits-projects answers. */
@@ -760,9 +806,12 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>The closing report prints the PUBLIC clone url and no other.</b> {@code /git/<repoId>} is
-     * the storage scheme — the deployed git host serves it to qits-projects' client alone — so
-     * printing it would be handing a person an address they are refused at.
+     * <b>The closing report prints the PUBLIC clone url and no other, and it prints it by SLUG.</b>
+     * qits-projects matches the project segment by id or slug and the git host passes it through
+     * verbatim, so {@code /git/qits/<repo>.git} is the address a person can read and type. The id
+     * form is printed beside it as what a service on qits-net dials. {@code /git/<repoId>} is the
+     * storage scheme — the deployed git host serves it to qits-projects' client alone — so printing
+     * it would be handing a person an address they are refused at.
      */
     @Test
     void theReportPrintsTheProjectScopedCloneUrl(@TempDir Path temp) throws Exception {
@@ -776,9 +825,10 @@ class PipelinePhasesTest {
         new PipelinePhases(boot).summary().action().run(ctx);
 
         assertThat(ctx.lines).anyMatch(line -> line.startsWith(
-                "git host:  http://githost.dev.localhost:8080/git/1f0a-project/<repo>.git"));
+                "git host:  http://githost.dev.localhost:8080/git/qits/<repo>.git"));
         assertThat(ctx.lines).anyMatch(line -> line.contains(
-                "http://githost.dev.localhost:8080/git/1f0a-project/qits-qits.git"));
+                "http://githost.dev.localhost:8080/git/qits/qits-qits.git"));
+        // The machine form keeps the id, which is always valid whatever a slug is renamed to.
         assertThat(ctx.lines).anyMatch(line -> line.contains(
                 "http://dev-qits-githost:8080/git/1f0a-project/<repo>"));
         // And nowhere does it hand a person a storage-scheme address to dial. The line that names
@@ -787,7 +837,10 @@ class PipelinePhasesTest {
         assertThat(ctx.lines).noneMatch(line -> line.contains("qits-githost:8080/git/<repoId>"));
     }
 
-    /** A run that never got that far still prints a shape rather than a broken url. */
+    /**
+     * A run that never got that far still prints a shape rather than a broken url — for the machine
+     * form. The public one is the slug, which this program knows before the platform exists.
+     */
     @Test
     void theReportNamesThePlaceholderWhenNothingWasRegistered(@TempDir Path temp) throws Exception {
         ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
@@ -798,6 +851,7 @@ class PipelinePhasesTest {
 
         new PipelinePhases(boot).summary().action().run(ctx);
 
-        assertThat(ctx.lines).anyMatch(line -> line.contains("/git/<projectId>/<repo>.git"));
+        assertThat(ctx.lines).anyMatch(line -> line.contains("/git/<projectId>/<repo>,"));
+        assertThat(ctx.lines).anyMatch(line -> line.contains("/git/qits/<repo>.git"));
     }
 }

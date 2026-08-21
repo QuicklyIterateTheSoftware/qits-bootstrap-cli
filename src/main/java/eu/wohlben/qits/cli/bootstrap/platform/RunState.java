@@ -93,13 +93,25 @@ public class RunState {
     public String pgContainersEventstreamPassword;
     public String pgPlatformEdgePassword;
     public String pgPlatformEdgeEventstreamPassword;
+    /**
+     * <b>qits-projects' THREE, and three is what its own deployments.yml declares</b>: its domain
+     * store, the epics store beside it, and the eventstream outbox. Three Flyway lineages, so three
+     * databases — the same rule that gives ci, the git host and the orchestrator two each.
+     * <p>
+     * They are here since the service joined the seed on 2026-08-21: its container boots from the
+     * seed stack, before any deployer exists to provision anything, and it dies at Flyway's first
+     * connect without all three.
+     */
+    public String pgProjectsPassword;
+    public String pgEpicsPassword;
+    public String pgProjectsEventstreamPassword;
     /** The environment row the deployer reconciled. */
     public String environmentId;
     /**
-     * <b>The storage id the git host keys each platform repository by</b>, by repository name —
-     * {@code qits-ci -> qits-ci} today, see {@link PlatformModel#seedStorageId}. Filled by
-     * {@code git-repos} from what {@code .qits-bootstrap.env} already recorded, so a rerun addresses
-     * the bares it created rather than minting a second set.
+     * <b>The storage id the git host keys each platform repository by</b>, by repository name — a
+     * minted UUID, see {@link PlatformModel#seedStorageId}. Filled at {@code recorded-state} from
+     * what {@code .qits-bootstrap.env} already holds and then by the mint itself, so a rerun
+     * addresses the bares it created rather than minting a second set.
      */
     public final Map<String, String> repositoryIds = new LinkedHashMap<>();
     /**
@@ -110,9 +122,10 @@ public class RunState {
     public String projectId;
     /**
      * <b>Whether a name-addressed url resolves yet</b>, which is the one fact that decides how this
-     * run addresses the git host. It turns true when {@code register-repos} has put every
-     * (storage id, name) pair under the qits project; before that there is no alias table to
-     * resolve through and every push is id-addressed of necessity.
+     * run addresses the git host. It turns true when {@code git-repos} has put every
+     * (storage id, name) pair under the qits project — which that phase does before it pushes
+     * anything, because the seed stack holds qits-projects. Only the lifecycle PUTs above it are
+     * id-addressed.
      */
     public boolean repositoriesRegistered;
     /** The temporary maven-over-HTTP container that breaks the first-boot dependency cycle. */

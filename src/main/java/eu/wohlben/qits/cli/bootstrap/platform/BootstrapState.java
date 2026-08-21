@@ -90,14 +90,14 @@ public class BootstrapState {
 
     /**
      * <b>Which storage id the git host keys each platform repository by</b>, one line per
-     * repository: {@code REPO_ID_QITS_CI=qits-ci}.
+     * repository: {@code REPO_ID_QITS_CI=8b1f0f0e-9a0c-4c3a-9a5b-000000000001}.
      * <p>
      * <b>It is recorded because a rerun that minted a different one would orphan every bare this
-     * platform stands on.</b> The id is what {@code PUT /git/<id>} created, what every seeded
-     * history was pushed into and what qits-projects' row is keyed by; the NAME is what everything
-     * above the seam says. The two coincide for what {@link PlatformModel#seedStorageId} seeds
-     * today and are free not to, so the map is the run's memory of the pairing rather than a
-     * derivation anyone may repeat.
+     * platform stands on.</b> The id is what {@code PUT /git/<id>} created and what qits-projects'
+     * row is keyed by; the NAME is what everything above the seam says, the seeded histories
+     * included — those are pushed to {@code /git/<projectId>/<repoName>}. The two have nothing in
+     * common ({@link PlatformModel#seedStorageId} mints a uuid), so this map is the run's only
+     * memory of the pairing and never a derivation anyone may repeat.
      * <p>
      * It also survives a resumed run for the same reason the client secrets do: this file is the
      * one thing a boot carries across its own restarts.

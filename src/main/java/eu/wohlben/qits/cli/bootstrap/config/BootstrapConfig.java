@@ -498,8 +498,9 @@ public interface BootstrapConfig {
      * {@code X-Qits-User}/{@code X-Qits-Roles} on the hop and the edge strips exactly those headers
      * from what it proxies.
      * <p>
-     * It is dialled once, by {@code register-repos}, and only after this service's own deployment —
-     * nothing before that point could be answered.
+     * It is dialled from {@code seed-health} on, because qits-projects is a seed service: the
+     * alias table has to answer before this run creates the first repository, not after that
+     * service's own deployment fourteen phases later.
      */
     default String projectsUrl() {
         return "http://" + envName() + "-qits-projects:8080";

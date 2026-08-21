@@ -29,7 +29,7 @@ public final class ComposeTemplate {
 
     /** The deployer's per-application extras — {@code qits.platform.deployments.extras.<app>.*}. */
     public static String extras(Map<String, String> values) {
-        return Tokens.apply(EXTRAS, values);
+        return Tokens.apply(EXTRAS.concat(EXTRAS_REST), values);
     }
 
     /**
@@ -174,9 +174,13 @@ public final class ComposeTemplate {
               # every byte is written into the container's own layer and lost on the next recreate.
               qits-oci-postgresql-data:
                 name: qits-oci-postgresql-data
-              # Mounted by DEPLOYED containers via qits.platform.deployments.extras, not by any service
-              # below. Each one holds FILES that no database replaced: qits-projects' git mirrors and the
+              # Each one holds FILES that no database replaced: qits-projects' git mirrors and the
               # credentials beside them, qits-workspaces' per-repository trees, qits-stt's models.
+              #
+              # qits-projects' is the one that is ALSO mounted by a seed service below, and it is
+              # the same volume the deployed container gets: the seed clones the wrapper's mirror
+              # into it, and a cutover that handed its successor an empty one would clone the whole
+              # thing again. The other two are mounted by deployed containers alone.
               qits-projects-data:
                 name: qits-projects-data
               qits-workspaces-data:
@@ -839,15 +843,19 @@ public final class ComposeTemplate {
                   # What turns /git/:projectId/:repoName into a repo id, and therefore what makes a
                   # committed relative submodule url (../<name>.git) resolve natively. Unset, the
                   # name-addressed scheme 404s and every project agent starts with an empty /workspace.
+                  # It answers from the seed on, because qits-projects is a seed service since
+                  # 2026-08-21 — which is what lets every push of this boot be name-addressed.
                   QITS_PROJECTS_NAME_RESOLVER_URL: http://${ENV_NAME}-qits-projects:8080/projects/api/projects
                   # NO qits.githost.storage-client HERE, AND THE ABSENCE IS THE STAGING.
                   # Set, that key closes /git/<repoId> to qits-projects' client and to nothing else —
                   # which is right for the platform this run leaves behind and impossible for the run
                   # itself. The bootstrap CREATES every repository on this seed service, over that
-                  # exact scheme, with its own credential, before qits-projects has been deployed to
-                  # hold a client at all. So the seed serves the compat arm and the guard arrives with
-                  # the git host's OWN deployment, out of the extras, by which time `register-repos`
-                  # has given every repository a name and this run addresses nothing else.
+                  # exact scheme, with its own credential, and that credential is the BOOTSTRAP's —
+                  # never qits-projects'. Seeding qits-projects did not change it: what the guard
+                  # demands is one client's self-role, and the party creating the bares holds a
+                  # different one. So the seed serves the compat arm and the guard arrives with the
+                  # git host's OWN deployment, out of the extras, by which time `git-repos` has
+                  # given every repository a name and this run addresses nothing else.
                   # See qits.platform.deployments.extras.qits-githost.env below.
                   QITS_AUTH_MACHINE_AUDIENCE: ${ENV_NAME}-qits-githost
                   # The bootstrap ingress owns the plaintext capability. The seed githost sees
@@ -868,6 +876,111 @@ public final class ComposeTemplate {
                   # FALSE, because it is the git host that serves its own redeploy.
                   QITS_REPOSITORIES_GIT_PROTECT_DEFAULT_BRANCH: "true"
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
+                networks: [qits-net]
+                deploy:
+                  replicas: 1
+                  restart_policy:
+                    condition: any
+                    delay: 5s
+
+              # THE ALIAS TABLE'S OWNER, and the reason a repository on this platform has a name at
+              # all. /git/<projectId>/<repoName> is the one clone url there is, and qits-githost
+              # resolves it by asking this service — QITS_PROJECTS_NAME_RESOLVER_URL, one block up.
+              #
+              # In the seed since 2026-08-21, and the ruling of that day is why. A storage id is an
+              # opaque UUID now, so a name resolves through this service or nowhere: seeded, every
+              # repository this run creates is registered before it is pushed to, and every push of
+              # the boot carries the two name fields onto its event. Deployed sixth of seventeen
+              # instead, it answered nothing for the first half of the boot — which is why the ids
+              # used to be spelled like the names.
+              #
+              # WHAT IT NEEDS AT SEED TIME, and each one is a boot that fails without it:
+              # three databases (below), a git host to create bares on, an idp to cut the bearer
+              # that git host demands, and somewhere to keep its mirrors. What it does NOT need is
+              # the container orchestrator: nothing on the seeding path starts a workload, and an
+              # unreachable one is a warning on a five-minute sweep.
+              ${ENV_NAME}-qits-projects:
+                image: qits/projects:latest
+                environment:
+                  # THREE STORES, THREE TRIPLES — the only service here with three, and its own
+                  # deployments.yml is where the count comes from: `resources: postgresql:db,
+                  # postgresql:epics:qits_epics, postgresql:eventstream:qits_projects_eventstream`.
+                  # Its domain rows, the epics beside them and the eventstream outbox are three
+                  # Flyway lineages and no two of them may share a database.
+                  #
+                  # SPELLED HERE, AND ONLY HERE, like the git host's six above: the seed stack starts
+                  # this container before any deployer exists. The urls are expressions with no
+                  # fallback behind them, so one missing variable is not a misconfiguration anybody
+                  # sees — it is a process that dies at Flyway naming it.
+                  QITS_RESOURCE_DB_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_projects
+                  QITS_RESOURCE_DB_USERNAME: qits_projects
+                  QITS_RESOURCE_DB_PASSWORD: "${PG_PROJECTS_PASSWORD}"
+                  QITS_RESOURCE_EPICS_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_epics
+                  QITS_RESOURCE_EPICS_USERNAME: qits_epics
+                  QITS_RESOURCE_EPICS_PASSWORD: "${PG_EPICS_PASSWORD}"
+                  QITS_RESOURCE_EVENTSTREAM_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_projects_eventstream
+                  QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_projects_eventstream
+                  QITS_RESOURCE_EVENTSTREAM_PASSWORD: "${PG_PROJECTS_EVENTSTREAM_PASSWORD}"
+                  # THE SELF-SEED IS HELD, AND THE BOOTSTRAP RELEASES IT. This service creates the
+                  # `qits` project itself on a first boot — nothing else may, or one platform ends
+                  # up with two projects of one name — and that act clones the wrapper from the org
+                  # and creates its bare on the git host, which needs a bearer the idp mints. The
+                  # seed stack starts every service at once, so a self-seed that fired while the idp
+                  # was still coming up would fail, roll its own transaction back and NOT try again
+                  # until the container restarts. The `qits-project` phase turns this on once the
+                  # idp has answered, and then waits for the project.
+                  QITS_STARTUP_SEED_ENABLED: "false"
+                  # AND ITS SECOND HALF STAYS OFF FOR THE WHOLE SEED. The self-seed creates the
+                  # project and then RECONCILES the wrapper's .gitmodules: an entry it holds no row
+                  # for is looked up on the git host by NAME, and under the ruling of 2026-08-21 no
+                  # storage id is a name — so on a fresh platform every entry misses and the
+                  # reconcile takes its remaining arm, which is to mirror all 43 repositories in
+                  # from the org. That would run minutes before this bootstrap has created a single
+                  # bare, and the platform's history would come from the forge rather than from the
+                  # checkouts this boot was told to build. So the seed creates the project only, the
+                  # bootstrap registers every (uuid, name) pair itself, and the reconcile runs for
+                  # the first time on the DEPLOYED container — where every entry now matches a row
+                  # by alias and nothing is cloned.
+                  QITS_STARTUP_SEED_RECONCILE_REPOSITORIES: "false"
+                  # Where its own git mirrors go. The image defaults it under ${user.home}, which is
+                  # the literal "?" for this passwd-less uid — the same trap the deployment extras
+                  # spell it out for.
+                  QITS_PROJECTS_DATA_DIR: /data/mirrors
+                  # The git host, scheme host and port with no path: this service appends
+                  # /git/<repoId> itself, and it is the ONE caller allowed to speak that scheme.
+                  QITS_GITHOST_URL: http://${ENV_NAME}-qits-githost:8080
+                  # The same token the git host's hook checks: this service advances refs by
+                  # pushing, and the default branch is protected here.
+                  QITS_REPOSITORIES_GIT_PUSH_TOKEN: "${PUSH_TOKEN}"
+                  QITS_PROJECTS_OWN_HOST: ${ENV_NAME}-qits-projects
+                  QITS_PROJECTS_AGENT_GIT_BASE: http://${ENV_NAME}-qits-githost:8080/git
+                  QITS_CONTAINERS_URL: http://${ENV_NAME}-qits-containers:8080
+                  QITS_EVENTS_URL: http://${ALIAS_EVENTS}:8080
+                  # Inbound: the bootstrap's own calls carry a bearer addressed to this service.
+                  # Outbound: TWO clients, and the second one is not optional here. Every git-host
+                  # call this service makes refuses to open a socket without a bearer — so a seed
+                  # started with the shipped `client-enabled=false` could create no bare, no
+                  # wrapper and no project at all.
+                  QITS_AUTH_MACHINE_REQUIRED: "${MACHINE_REQUIRED}"
+                  QITS_AUTH_MACHINE_AUDIENCE: ${ENV_NAME}-qits-projects
+                  QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP}
+                  QUARKUS_OIDC_CLIENT_CLIENT_ENABLED: "${MACHINE_CLIENT}"
+                  QUARKUS_OIDC_CLIENT_AUTH_SERVER_URL: ${IDP}
+                  QUARKUS_OIDC_CLIENT_CLIENT_ID: ${ENV_NAME}-qits-projects
+                  QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE: ${ENV_NAME}-qits-containers
+                  QUARKUS_OIDC_CLIENT_CREDENTIALS_SECRET: "${IDP_SECRET_PROJECTS}"
+                  QUARKUS_OIDC_CLIENT_GITHOST_CLIENT_ENABLED: "${MACHINE_CLIENT}"
+                  QUARKUS_OIDC_CLIENT_GITHOST_AUTH_SERVER_URL: ${IDP}
+                  QUARKUS_OIDC_CLIENT_GITHOST_CLIENT_ID: ${ENV_NAME}-qits-projects
+                  QUARKUS_OIDC_CLIENT_GITHOST_GRANT_OPTIONS_CLIENT_AUDIENCE: ${ENV_NAME}-qits-githost
+                  QUARKUS_OIDC_CLIENT_GITHOST_CREDENTIALS_SECRET: "${IDP_SECRET_PROJECTS}"
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
+                # THE SAME VOLUME THE DEPLOYED CONTAINER GETS, and it is the only seed service that
+                # mounts one it shares with its successor. /data is not a database — it is the git
+                # mirrors this service clones and the credential file beside them — so a cutover
+                # onto an empty volume would re-clone the wrapper it already has.
+                volumes:
+                  - qits-projects-data:/data
                 networks: [qits-net]
                 deploy:
                   replicas: 1
@@ -1394,12 +1507,14 @@ public final class ComposeTemplate {
             # privileged, it is that the caller IS qits-projects.
             #
             # It is spelled HERE and not on the seed stack, and that ordering is the whole of the
-            # staging. The bootstrap creates every repository over the storage scheme with its own
-            # credential, before qits-projects exists; the seed git host therefore runs the compat
-            # arm. By the time THIS deployment replaces it — qits-githost is twelfth of seventeen,
-            # six after qits-projects — `register-repos` has handed every (storage id, name) pair
-            # over and the run addresses /git/<projectId>/<repo> for the rest of the train. A rerun
-            # meets this guard at its git-repos phase and asks qits-projects instead of the store.
+            # staging. Seeding qits-projects did not change it and could not: the bootstrap creates
+            # every repository over the storage scheme with the BOOTSTRAP's own credential, and what
+            # this guard demands is one other client's self-role. So the seed git host runs the
+            # compat arm for as long as bares are being made. By the time THIS deployment replaces
+            # it — qits-githost is twelfth of seventeen — `git-repos` has handed every
+            # (storage id, name) pair over and the run has been addressing
+            # /git/<projectId>/<repo> since its first push. A rerun meets this guard at git-repos
+            # and asks qits-projects instead of the store.
             qits.platform.deployments.extras.qits-githost.env.QITS_PROJECTS_NAME_RESOLVER_URL=http://${ENV_NAME}-qits-projects:8080/projects/api/projects
             qits.platform.deployments.extras.qits-githost.env.QITS_GITHOST_STORAGE_CLIENT=${ENV_NAME}-qits-projects
             qits.platform.deployments.extras.qits-githost.env.QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-githost
@@ -1628,6 +1743,15 @@ public final class ComposeTemplate {
             # platform until there is per-tier configuration to hold more than one.
             qits.platform.deployments.extras.qits-oci-postgresql.mounts[0]=volume:qits-oci-postgresql-data:/var/lib/postgresql
             qits.platform.deployments.extras.qits-oci-postgresql.env.POSTGRES_PASSWORD=${PG_SUPERUSER_PASSWORD}
+            """;
+
+    /**
+     * The rest of the same file, split for the same reason {@link #COMPOSE_REST} is: a string
+     * constant may not exceed 64 KB in a class file, and this one passed that when qits-projects
+     * joined the seed. The break is between two applications' blocks and means nothing else —
+     * {@link #extras} joins them before a single token is filled.
+     */
+    private static final String EXTRAS_REST = """
             # The deployer's own deployment — the self-update handoff. Two mounts and a group, all
             # load-bearing: the config volume holds this very file so the successor inherits every key of
             # it, and the docker socket is what makes it a deployer at all. There is no data volume: the
@@ -1834,6 +1958,13 @@ public final class ComposeTemplate {
             # qits-containers (orchestration round 2), so this service holds a machine-token
             # client instead of the host daemon. What the mount used to grant was root-equivalent
             # control of that daemon, and only the orchestrator is granted it now.
+            #
+            # NO QITS_STARTUP_SEED_* HERE, AND THE ABSENCE IS THE OTHER HALF OF THE SEED'S TWO
+            # SWITCHES. The seed block holds the self-seed until the idp answers and keeps the
+            # wrapper RECONCILE off for the whole seed window; this deployment spells neither, so
+            # both are on at their shipped defaults. That is the first reconcile of the platform's
+            # life and it is the right one: by now every repository is a row with an alias, so each
+            # .gitmodules entry matches one and nothing is mirrored in from the org.
             qits.platform.deployments.extras.qits-projects.mounts[0]=volume:qits-projects-data:/data
             qits.platform.deployments.extras.qits-projects.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
             qits.platform.deployments.extras.qits-projects.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_CLIENT}

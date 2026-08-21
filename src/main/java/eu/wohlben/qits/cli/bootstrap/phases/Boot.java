@@ -103,26 +103,34 @@ public class Boot {
 
     /**
      * <b>The storage id this run seeded a repository's bare under</b> — what an earlier phase of
-     * this run or of an earlier one recorded, and {@link PlatformModel#seedStorageId} for one
-     * nothing has recorded yet. Never re-derived at a call site: a rerun that addressed a different
-     * id would create a second bare and leave the platform's history in the first.
+     * this run or of an earlier one recorded, and a fresh mint
+     * ({@link PlatformModel#seedStorageId}) for one nothing has recorded yet.
+     * <p>
+     * <b>The mint happens HERE, once per repository per run, and the answer is kept.</b> A storage
+     * id is a UUID with nothing to derive it from, so a second call that minted again would address
+     * a bare this run never created — and {@code git-repos} writes what this answers into
+     * {@code .qits-bootstrap.env} as each bare is made, which is what carries the pairing across a
+     * resumed or repeated run. Never re-derived at a call site.
      */
     public String storageId(String name) {
-        return state.repositoryIds.getOrDefault(PlatformModel.repo(name),
-                PlatformModel.seedStorageId(name));
+        return state.repositoryIds.computeIfAbsent(PlatformModel.repo(name),
+                repo -> PlatformModel.seedStorageId());
     }
 
     /**
      * <b>WHERE THIS RUN PUSHES A REPOSITORY, and it changes exactly once per boot.</b>
      * <p>
-     * Before {@code register-repos} there is no alias table to resolve a name through — qits-projects
-     * is deployed sixth of seventeen — so the address is the internal {@code /git/<storage id>},
-     * which is the only thing the git host can answer. From that phase onward it is the public
-     * {@code /git/<projectId>/<repoName>}, and the switch is not a tidiness: the git host's own
-     * deployment, six deployables later, closes the id-addressed scheme to everything but
-     * qits-projects' client, so a run still pushing the old address would be 403 for the rest of the
-     * train. It is also what puts the two name fields on the push's event, which is what gives every
-     * later build a {@code QITS_CI_PROJECT_ID} and a sibling url that resolves.
+     * Before {@code git-repos} there is no alias table entry to resolve a name through, so the
+     * address is the internal {@code /git/<storage id>} — which is what that phase's own lifecycle
+     * PUTs use and the only thing they can use. From that phase onward it is the public
+     * {@code /git/<projectId>/<repoName>}, and every PUSH of the run is on that side of the line:
+     * qits-projects is a seed service, so the pairing is registered before the first push rather
+     * than forty phases into the deploy train.
+     * <p>
+     * The switch is not a tidiness. The git host's own deployment closes the id-addressed scheme to
+     * everything but qits-projects' client, so a run still pushing the old address would be 403 for
+     * the rest of the train. It is also what puts the two name fields on the push's event, which is
+     * what gives every later build a {@code QITS_CI_PROJECT_ID} and a sibling url that resolves.
      * <p>
      * One method, so no phase decides this for itself.
      */
