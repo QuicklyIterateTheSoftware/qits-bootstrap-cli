@@ -98,7 +98,7 @@ public final class DomainTokens {
             + "      QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT: /work/.letsencrypt/current/lets-encrypt.crt\n"
             + "      QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY: /work/.letsencrypt/current/lets-encrypt.key\n"
             + "      QUARKUS_TLS_RELOAD_PERIOD: 1m\n"
-            + "      QITS_EDGE_ACME_ENABLED: true\n"
+            + "      QITS_EDGE_ACME_ENABLED: \"true\"\n"
             + "      QITS_EDGE_ACME_MODE: " + mode + "\n"
             + "      QITS_EDGE_ACME_DOMAIN: " + domain + "\n"
             + "      QITS_EDGE_ACME_EMAIL: " + email + "\n"

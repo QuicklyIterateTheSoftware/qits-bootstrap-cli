@@ -1852,7 +1852,7 @@ class ComposeTemplateTest {
                         "QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT: /work/.letsencrypt/current/lets-encrypt.crt")
                 .contains("QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY: /work/.letsencrypt/current/lets-encrypt.key")
                 .contains("QUARKUS_TLS_RELOAD_PERIOD: 1m")
-                .contains("QITS_EDGE_ACME_ENABLED: true")
+                .contains("QITS_EDGE_ACME_ENABLED: \"true\"")
                 .contains("- qits-edge-letsencrypt:/work/.letsencrypt");
         // A mounted volume has to be declared, or compose refuses the file.
         assertThat(compose).contains("qits-edge-letsencrypt:\n    name: qits-edge-letsencrypt");
