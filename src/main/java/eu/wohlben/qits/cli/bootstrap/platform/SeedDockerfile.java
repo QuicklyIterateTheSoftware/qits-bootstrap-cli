@@ -66,12 +66,7 @@ public final class SeedDockerfile {
                 .replace(mirrorHost + "/hub/", "docker.io/")
                 // Maven waits for native-image but otherwise kept a large ergonomic heap alive.
                 // Bound the parent so the compiler can use 4 GB within the 6 GB recovery cgroup.
-                .replace("./mvnw", "MAVEN_OPTS=\"-Xmx384m\" ./mvnw")
-                // A seed build makes a PRODUCTION image; test code is not in it. `-DskipTests`
-                // still COMPILES the tests, so a test that lags a dependency's changed API fails
-                // the image build over code the artifact never carries. Skip the compile too — the
-                // main sources still compile, so a real break in the shipped code still stops here.
-                .replace("-DskipTests", "-Dmaven.test.skip=true");
+                .replace("./mvnw", "MAVEN_OPTS=\"-Xmx384m\" ./mvnw");
     }
 
     public static String read(Path dockerfile, String mirrorHost) throws IOException {
