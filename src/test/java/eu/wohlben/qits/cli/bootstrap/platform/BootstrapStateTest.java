@@ -19,6 +19,51 @@ class BootstrapStateTest {
     @TempDir
     Path temp;
 
+    /**
+     * <b>The storage id a repository's bare is under has to survive a rerun</b> — a run that decided
+     * it afresh would create a second bare and leave every history the platform stands on in the
+     * first. The map is keyed the way every other line here is: the env-var spelling of the name.
+     */
+    @Test
+    void repositoryStorageIdsSurviveARerun() throws Exception {
+        Path file = temp.resolve(BootstrapState.FILE_NAME);
+        Files.writeString(file, """
+                REPO_ID_QITS_CI=qits-ci
+                REPO_ID_QITS_SPA_GITHOST=8b1f0f0e-9a0c-4c3a-9a5b-000000000001
+                """);
+
+        BootstrapState state = new BootstrapState(file);
+        state.read();
+
+        assertThat(state.repositoryId("qits-ci")).contains("qits-ci");
+        assertThat(state.repositoryId("qits-spa-githost"))
+                .contains("8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
+        assertThat(state.repositoryId("qits-events")).isEmpty();
+    }
+
+    /** A write merges, so recording one repository never forgets the rest of the run's memory. */
+    @Test
+    void recordingAStorageIdKeepsEverythingElseTheFileHolds() throws Exception {
+        Path file = temp.resolve(BootstrapState.FILE_NAME);
+        Files.writeString(file, """
+                DAEMON_SHA=8d0f1a2b3c4d5e6f
+                IDP_SECRET_QITS_CI=aaa
+                REPO_ID_QITS_CI=qits-ci
+                """);
+
+        BootstrapState first = new BootstrapState(file);
+        first.read();
+        first.putRepositoryId("qits-events", "qits-events");
+        first.write();
+
+        BootstrapState reread = new BootstrapState(file);
+        reread.read();
+        assertThat(reread.daemonSha()).contains("8d0f1a2b3c4d5e6f");
+        assertThat(reread.secret("qits-ci")).contains("aaa");
+        assertThat(reread.repositoryId("qits-ci")).contains("qits-ci");
+        assertThat(reread.repositoryId("qits-events")).contains("qits-events");
+    }
+
     @Test
     void readsWhatAPreviousRunRecorded() throws Exception {
         Path file = temp.resolve(BootstrapState.FILE_NAME);

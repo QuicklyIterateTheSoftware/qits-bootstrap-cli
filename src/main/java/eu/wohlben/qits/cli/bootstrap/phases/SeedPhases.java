@@ -556,6 +556,14 @@ public class SeedPhases {
             // A token this file holds is a token an earlier run minted, and the mint phase mints
             // once per installation: every call makes another key to the first admin account.
             boot.state.registerTokenRecorded = state.registerToken().isPresent();
+            // WHICH STORAGE ID EACH REPOSITORY'S BARE IS UNDER, read here for the reason every other
+            // recorded value is: a rerun that decided this afresh would address a bare it had not
+            // created and leave the platform's whole history in the one it had.
+            for (String name : PlatformModel.platformRepos()) {
+                String repo = PlatformModel.repo(name);
+                state.repositoryId(repo)
+                        .ifPresent(id -> boot.state.repositoryIds.put(repo, id));
+            }
             if (!state.exists()) {
                 ctx.log("  no " + BootstrapState.FILE_NAME + " — this is a first boot");
                 ctx.note("first boot");
@@ -566,6 +574,8 @@ public class SeedPhases {
                     + (boot.state.daemonSha == null ? "none" : shortSha(boot.state.daemonSha)));
             ctx.log("  recorded client secrets: " + boot.state.secrets.size() + " of "
                     + PlatformModel.idpClients(boot.config.envName()).size());
+            ctx.log("  recorded repository storage ids: " + boot.state.repositoryIds.size() + " of "
+                    + PlatformModel.platformRepos().size());
             ctx.log("  register token: " + (boot.state.registerTokenRecorded
                     ? "minted by an earlier run" : "none yet"));
             ctx.note("kept " + boot.state.secrets.size() + " secrets");

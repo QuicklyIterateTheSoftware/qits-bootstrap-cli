@@ -174,6 +174,17 @@ public final class BootstrapPlan {
                 phases.add(pipeline.configurationImport());
                 phases.add(pipeline.configurationFlip());
             }
+            // THE PHASE THAT GIVES EVERY REPOSITORY ITS PUBLIC ADDRESS, and it sits here for the
+            // same shape of reason the two above do. AFTER qits-projects' own deployment: it owns
+            // the alias table, and a name resolves nowhere until this run has handed it every
+            // (storage id, name) pair. BEFORE qits-githost's, six deployables down, whose extras
+            // close the id-addressed scheme to qits-projects' client alone — from that cutover on,
+            // a push this run makes has to be name-addressed, and it is this phase that makes one
+            // possible. Everything deployed below this line is pushed to /git/<projectId>/<repo>,
+            // which is also what puts the two name fields on its build's event.
+            if (PipelinePhases.PROJECTS.equals(deployable)) {
+                phases.add(pipeline.registerRepositories());
+            }
         }
         phases.add(pipeline.summary());
         // LAST, AND AFTER THE SUMMARY ON PURPOSE. The summary phase only BUILDS the account —

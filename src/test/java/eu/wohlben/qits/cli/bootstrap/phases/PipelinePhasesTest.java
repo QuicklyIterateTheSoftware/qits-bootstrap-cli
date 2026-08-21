@@ -689,4 +689,115 @@ class PipelinePhasesTest {
         assertThat(Docker.staleBuilders(List.of(Docker.BUILDER + "*  docker-container"),
                 Docker.BUILDER)).isEmpty();
     }
+
+    // --- the two coordinates ----------------------------------------------------------------------
+
+    private Boot boot(Map<String, String> env, Path temp) {
+        return new Boot(TestConfig.from(env), new RunLog(temp.resolve("run.log")));
+    }
+
+    /**
+     * <b>WHERE THIS RUN PUSHES, before and after the aliases exist.</b> The switch is the one thing
+     * that decides whether a push carries the repository's name onto its event and whether it is
+     * still accepted once the git host's own deployment closes the storage scheme.
+     */
+    @Test
+    void aPushIsIdAddressedUntilTheAliasesAreRegisteredAndNameAddressedAfter(@TempDir Path temp) {
+        Boot boot = boot(Map.of("QITS_ENV_NAME", "dev"), temp);
+
+        // Before register-repos there is no alias table, so the storage scheme is the only address
+        // the git host can answer.
+        assertThat(boot.gitUrl("ci")).isEqualTo("http://dev-qits-githost:8080/git/qits-ci");
+
+        boot.state.projectId = "1f0a-project";
+        boot.state.repositoriesRegistered = true;
+
+        assertThat(boot.gitUrl("ci"))
+                .isEqualTo("http://dev-qits-githost:8080/git/1f0a-project/qits-ci");
+    }
+
+    /** A project id with no registration behind it changes nothing: both halves have to be true. */
+    @Test
+    void aProjectIdAloneDoesNotMoveThePushes(@TempDir Path temp) {
+        Boot boot = boot(Map.of("QITS_ENV_NAME", "dev"), temp);
+        boot.state.projectId = "1f0a-project";
+
+        assertThat(boot.gitUrl("ci")).isEqualTo("http://dev-qits-githost:8080/git/qits-ci");
+    }
+
+    /**
+     * The storage id is READ, never re-derived: a rerun addresses the bare it created, whatever an
+     * earlier run decided to key it by.
+     */
+    @Test
+    void aRecordedStorageIdWinsOverTheDefault(@TempDir Path temp) {
+        Boot boot = boot(Map.of("QITS_ENV_NAME", "dev"), temp);
+        boot.state.repositoryIds.put("qits-ci", "8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
+
+        assertThat(boot.storageId("ci")).isEqualTo("8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
+        assertThat(boot.storageId("events")).isEqualTo("qits-events");
+        assertThat(boot.gitUrl("ci")).isEqualTo(
+                "http://dev-qits-githost:8080/git/8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
+    }
+
+    /** The project the registration phase looks for, in the listing shape qits-projects answers. */
+    @Test
+    void theQitsProjectIsFoundByNameOrSlugAndNothingElseIs() {
+        String listing = """
+                {"entries":[
+                  {"project":{"id":"p-other","name":"Checkout","slug":"checkout"}},
+                  {"project":{"id":"p-qits","name":"qits","slug":"qits"}}
+                ]}""";
+
+        assertThat(PipelinePhases.qitsProjectId(new eu.wohlben.qits.cli.bootstrap.api.Http.Response(
+                200, listing))).contains("p-qits");
+        // A boot whose self-seed has not run yet gets no answer, and waits rather than inventing one.
+        assertThat(PipelinePhases.qitsProjectId(new eu.wohlben.qits.cli.bootstrap.api.Http.Response(
+                200, "{\"entries\":[]}"))).isEmpty();
+        // And an answer that is not one is not read as an empty platform.
+        assertThat(PipelinePhases.qitsProjectId(new eu.wohlben.qits.cli.bootstrap.api.Http.Response(
+                503, ""))).isEmpty();
+    }
+
+    /**
+     * <b>The closing report prints the PUBLIC clone url and no other.</b> {@code /git/<repoId>} is
+     * the storage scheme — the deployed git host serves it to qits-projects' client alone — so
+     * printing it would be handing a person an address they are refused at.
+     */
+    @Test
+    void theReportPrintsTheProjectScopedCloneUrl(@TempDir Path temp) throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
+        Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev", "QITS_PORT", "8080")),
+                new RunLog(temp.resolve("run.log")), runner);
+        boot.state.wrapperDir = temp;
+        boot.state.projectId = "1f0a-project";
+        Ctx ctx = new Ctx();
+
+        new PipelinePhases(boot).summary().action().run(ctx);
+
+        assertThat(ctx.lines).anyMatch(line -> line.startsWith(
+                "git host:  http://githost.dev.localhost:8080/git/1f0a-project/<repo>.git"));
+        assertThat(ctx.lines).anyMatch(line -> line.contains(
+                "http://githost.dev.localhost:8080/git/1f0a-project/qits-qits.git"));
+        assertThat(ctx.lines).anyMatch(line -> line.contains(
+                "http://dev-qits-githost:8080/git/1f0a-project/<repo>"));
+        // And nowhere does it hand a person a storage-scheme address to dial. The line that names
+        // /git/<repoId> says what it is; no url printed here is one.
+        assertThat(ctx.lines).noneMatch(line -> line.contains("localhost:8080/git/<repoId>"));
+        assertThat(ctx.lines).noneMatch(line -> line.contains("qits-githost:8080/git/<repoId>"));
+    }
+
+    /** A run that never got that far still prints a shape rather than a broken url. */
+    @Test
+    void theReportNamesThePlaceholderWhenNothingWasRegistered(@TempDir Path temp) throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
+        Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev", "QITS_PORT", "8080")),
+                new RunLog(temp.resolve("run.log")), runner);
+        boot.state.wrapperDir = temp;
+        Ctx ctx = new Ctx();
+
+        new PipelinePhases(boot).summary().action().run(ctx);
+
+        assertThat(ctx.lines).anyMatch(line -> line.contains("/git/<projectId>/<repo>.git"));
+    }
 }

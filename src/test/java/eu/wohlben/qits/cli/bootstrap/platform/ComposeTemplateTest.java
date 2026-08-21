@@ -1833,4 +1833,53 @@ class ComposeTemplateTest {
                 .doesNotContain("QITS_GATEWAY_PROXY_HOSTS")
                 .contains("env.QITS_OBSERVABILITY_URL=http://preprod-qits-observability:8080");
     }
+
+    // --- the identity seam: which side of the cutover each key is delivered on ---------------------
+
+    /**
+     * <b>THE GUARD IS STAGED, and the staging IS the placement of one key.</b>
+     * {@code qits.githost.storage-client} closes {@code /git/<repoId>} to qits-projects' client and
+     * to nothing else — right for the platform the boot leaves behind, impossible for the boot
+     * itself, which creates every repository over that exact scheme with its own credential before
+     * qits-projects has been deployed to hold a client at all. So the SEED serves the compat arm and
+     * the guard arrives with the git host's own deployment.
+     */
+    @Test
+    void theStorageClientGuardIsInTheExtrasAndNotOnTheSeed() {
+        assertThat(extras("qits-githost"))
+                .contains("env.QITS_GITHOST_STORAGE_CLIENT=" + ENV + "-qits-projects");
+        assertThat(serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-githost"))
+                .doesNotContain("QITS_GITHOST_STORAGE_CLIENT");
+        // And it names the projects service's own client id, which is the only one qits-idp ever
+        // stamps clients/<that> into. Naming anything else would close the scheme to everybody.
+        assertThat(PlatformModel.idpClients(ENV)).contains(ENV + "-qits-projects");
+    }
+
+    /**
+     * <b>The resolver is on BOTH sides</b>, unlike the guard: without it the name-addressed scheme
+     * 404s, and that is the address every clone url on this platform is. The value stops before
+     * {@code /{projectId}} — the path under it is qits-projects' own.
+     */
+    @Test
+    void theNameResolverIsWiredOnTheSeedAndOnTheDeployment() {
+        String url = "http://" + ENV + "-qits-projects:8080/projects/api/projects";
+        assertThat(serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-githost"))
+                .contains("QITS_PROJECTS_NAME_RESOLVER_URL: " + url);
+        assertThat(extras("qits-githost")).contains("env.QITS_PROJECTS_NAME_RESOLVER_URL=" + url);
+    }
+
+    /**
+     * <b>ci's catalogue is delivered with ci's own deployment and never on the seed.</b> Configured,
+     * it REPLACES the git host's listing — and qits-projects is deployed fourteen phases after the
+     * seed ci starts, so a seed holding the key would answer every event of the boot's first half
+     * with an empty candidate list. The release replays are exactly those events.
+     */
+    @Test
+    void theProjectsCatalogueIsInCisExtrasAndNotOnTheSeed() {
+        assertThat(extras("qits-ci"))
+                .contains("env.QITS_CI_PROJECTS_URL=http://" + ENV + "-qits-projects:8080");
+        // The KEY, not the word: the block's comment names it to say why it is absent.
+        assertThat(serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-ci"))
+                .doesNotContain("QITS_CI_PROJECTS_URL:");
+    }
 }

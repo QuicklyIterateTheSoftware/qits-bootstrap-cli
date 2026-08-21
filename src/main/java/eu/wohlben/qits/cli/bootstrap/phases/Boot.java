@@ -7,6 +7,7 @@ import eu.wohlben.qits.cli.bootstrap.api.ConfigurationApi;
 import eu.wohlben.qits.cli.bootstrap.api.GitHostApi;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.IdpApi;
+import eu.wohlben.qits.cli.bootstrap.api.ProjectsApi;
 import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
 import eu.wohlben.qits.cli.bootstrap.ingress.BootstrapIngressLifecycle;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
@@ -50,6 +51,8 @@ public class Boot {
     public final IdpApi idp;
     /** Deployment configuration as platform state, seeded by this run and read by the deployer. */
     public final ConfigurationApi configuration;
+    /** The alias table's owner: what this run hands its (storage id, name) pairs to. */
+    public final ProjectsApi projects;
 
     public Boot(BootstrapConfig config, RunLog log) {
         this(config, log, new ProcessRunner(log));
@@ -73,6 +76,7 @@ public class Boot {
         this.pd = new PdApi(http, config.platformDeploymentsUrl());
         this.idp = new IdpApi(http, config.idpIssuer());
         this.configuration = new ConfigurationApi(http, config.configurationUrl());
+        this.projects = new ProjectsApi(http, config.projectsUrl());
     }
 
     /**
@@ -95,6 +99,39 @@ public class Boot {
     /** The edge replaces the seed port before the first seed image is built. */
     public void useBootstrapMavenRepository(String url, String capability) {
         docker.withBootstrapMavenRepository(url, "bootstrap", capability);
+    }
+
+    /**
+     * <b>The storage id this run seeded a repository's bare under</b> — what an earlier phase of
+     * this run or of an earlier one recorded, and {@link PlatformModel#seedStorageId} for one
+     * nothing has recorded yet. Never re-derived at a call site: a rerun that addressed a different
+     * id would create a second bare and leave the platform's history in the first.
+     */
+    public String storageId(String name) {
+        return state.repositoryIds.getOrDefault(PlatformModel.repo(name),
+                PlatformModel.seedStorageId(name));
+    }
+
+    /**
+     * <b>WHERE THIS RUN PUSHES A REPOSITORY, and it changes exactly once per boot.</b>
+     * <p>
+     * Before {@code register-repos} there is no alias table to resolve a name through — qits-projects
+     * is deployed sixth of seventeen — so the address is the internal {@code /git/<storage id>},
+     * which is the only thing the git host can answer. From that phase onward it is the public
+     * {@code /git/<projectId>/<repoName>}, and the switch is not a tidiness: the git host's own
+     * deployment, six deployables later, closes the id-addressed scheme to everything but
+     * qits-projects' client, so a run still pushing the old address would be 403 for the rest of the
+     * train. It is also what puts the two name fields on the push's event, which is what gives every
+     * later build a {@code QITS_CI_PROJECT_ID} and a sibling url that resolves.
+     * <p>
+     * One method, so no phase decides this for itself.
+     */
+    public String gitUrl(String name) {
+        if (state.repositoriesRegistered && state.projectId != null
+                && !state.projectId.isBlank()) {
+            return githost.gitUrl(state.projectId, PlatformModel.repo(name));
+        }
+        return githost.gitUrl(storageId(name));
     }
 
     /** Fails the phase, with the command's own last words attached. */

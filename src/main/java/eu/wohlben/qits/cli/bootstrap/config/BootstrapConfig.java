@@ -489,6 +489,23 @@ public interface BootstrapConfig {
     }
 
     /**
+     * qits-projects at its fixed alias, with <b>no path</b> — the shape
+     * {@link #configurationUrl()} has and for the same family of reason: this string is also what
+     * qits-ci is handed as {@code QITS_CI_PROJECTS_URL}, and that reader appends
+     * {@code /projects/api/repositories} itself.
+     * <p>
+     * <b>Its own alias rather than the edge</b>, because this program asserts
+     * {@code X-Qits-User}/{@code X-Qits-Roles} on the hop and the edge strips exactly those headers
+     * from what it proxies.
+     * <p>
+     * It is dialled once, by {@code register-repos}, and only after this service's own deployment —
+     * nothing before that point could be answered.
+     */
+    default String projectsUrl() {
+        return "http://" + envName() + "-qits-projects:8080";
+    }
+
+    /**
      * <b>The three names the HOST reaches this platform's byte plane by, and the one address shape
      * in this file that is not a wire alias.</b> Each is {@code <app>.<env>.localhost:<edge port>}:
      * every {@code *.localhost} name resolves to the loopback address (systemd-resolved synthesises

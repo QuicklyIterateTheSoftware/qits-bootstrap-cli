@@ -189,6 +189,25 @@ forced. Add to that list rather than deviating quietly.
   `qits/…` so the image sweep leaves it. Both are the same bug — `docker rm -f` on yourself — and
   both are fixed by exclusion rather than by narrowing a pattern, because the patterns are what a
   machine's qits objects look like and must keep matching.
+- **A repository has TWO identifiers and this program is the only party that holds both.** The
+  STORAGE id is qits-githost's key — `/git/<id>` is the address of the store, and the deployed git
+  host serves that scheme to qits-projects' service client alone (`qits.githost.storage-client`,
+  whose guard demands the client's self-role). The PUBLIC identity is `(projectId, repoName)`, and
+  `/git/<projectId>/<repo>.git` is the one clone url there is. This program creates every bare
+  before qits-projects exists to be asked, so it carries the pairing itself: `git-repos` records it
+  in `.qits-bootstrap.env`, `Boot.storageId` reads it back, and `register-repos` — hung off
+  `deploy-projects`, exactly as `configuration-import` is hung off `deploy-configuration` — hands it
+  over. **`Boot.gitUrl` is the one place that decides which address a push uses**, and it flips once
+  per boot at that phase; no phase may decide it for itself. Three ordering facts hold that shape
+  together, and every one of them is a boot that fails if it moves: nothing before `register-repos`
+  can resolve a name, so those pushes are id-addressed and their events carry no name fields;
+  everything after `deploy-githost` MUST be name-addressed, because that deployment closes the
+  storage scheme behind it; and the guard is therefore spelled in the deployment EXTRAS and never on
+  the seed stack, which is what keeps this program out of its own lock. The same rule sends
+  `qits.ci.projects-url` to ci's extras and not to the seed: configured, it replaces the git host's
+  own listing, and a seed ci holding it would answer the release replays with an empty candidate
+  list. `README.md`'s "Two coordinates, one seam" is the long form, including why a seeded bare's
+  storage id is still its own name.
 - **Phases are rerun-safe**, the same way the script's were: 409s tolerated, existing networks
   adopted, an already-attached container accepted, up-to-date pushes no-ops, publishes probed
   before they are made.

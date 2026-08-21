@@ -793,10 +793,12 @@ public final class ComposeTemplate {
               # from now.
               #
               # NO PUBLISHED PORT, and the host-side git door stayed open: it is
-              # http://githost.${ENV_NAME}.localhost:${PORT}/git/<repo> through the edge. A person
-              # clones and pushes from the workstation, which is not on qits-net, and the url has
-              # moved twice — localhost:${REGISTRY_PORT}/artifacts/git/<repo> while the routes lived in
-              # the store, then a port of its own after the split, and now a name.
+              # http://githost.${ENV_NAME}.localhost:${PORT}/git/<projectId>/<repo>.git through the
+              # edge. A person clones and pushes from the workstation, which is not on qits-net, and
+              # the url has moved three times — localhost:${REGISTRY_PORT}/artifacts/git/<repo> while
+              # the routes lived in the store, then a port of its own after the split, then a name,
+              # and now the project-scoped pair. /git/<repoId> is the STORAGE scheme underneath it,
+              # qits-projects' internal address for the same bare, and no person ever holds one.
               #
               # EVERY METHOD NEEDS A BEARER HERE, reads included: this is not a registry and there is
               # no anonymous half. `curl -u <client>:<secret> .../token`, then git with the header —
@@ -838,6 +840,15 @@ public final class ComposeTemplate {
                   # committed relative submodule url (../<name>.git) resolve natively. Unset, the
                   # name-addressed scheme 404s and every project agent starts with an empty /workspace.
                   QITS_PROJECTS_NAME_RESOLVER_URL: http://${ENV_NAME}-qits-projects:8080/projects/api/projects
+                  # NO qits.githost.storage-client HERE, AND THE ABSENCE IS THE STAGING.
+                  # Set, that key closes /git/<repoId> to qits-projects' client and to nothing else —
+                  # which is right for the platform this run leaves behind and impossible for the run
+                  # itself. The bootstrap CREATES every repository on this seed service, over that
+                  # exact scheme, with its own credential, before qits-projects has been deployed to
+                  # hold a client at all. So the seed serves the compat arm and the guard arrives with
+                  # the git host's OWN deployment, out of the extras, by which time `register-repos`
+                  # has given every repository a name and this run addresses nothing else.
+                  # See qits.platform.deployments.extras.qits-githost.env below.
                   QITS_AUTH_MACHINE_AUDIENCE: ${ENV_NAME}-qits-githost
                   # The bootstrap ingress owns the plaintext capability. The seed githost sees
                   # only a fingerprint, one repository/ref namespace and an expiry; deployed
@@ -893,12 +904,23 @@ public final class ComposeTemplate {
                   # ci's own fetch of the pushed ref, and the same base as seen from inside a step
                   # container — steps join qits-net, so both resolve the git host directly.
                   #
-                  # THE GIT HOST'S ROOT, WITH NO PATH: ci appends /git/<repoId> itself. It used to be
-                  # /artifacts, because the routes lived inside the artifacts store; qits-githost serves
-                  # /git at its own root and there is nothing in front of it.
+                  # THE GIT HOST'S ROOT, WITH NO PATH: ci appends the repository's own address
+                  # itself — /git/<projectId>/<repoName> for a run that carries names, and the
+                  # storage scheme for one whose announcing push was id-addressed. It used to be
+                  # /artifacts, because the routes lived inside the artifacts store; qits-githost
+                  # serves /git at its own root and there is nothing in front of it.
                   QITS_CI_GIT_HOST_URL: http://${ENV_NAME}-qits-githost:8080
                   QITS_CI_CONTAINER_GIT_URL: http://githost.${ENV_NAME}.internal:8080
                   QITS_CI_CONTAINER_GIT_AUDIENCE: ${ENV_NAME}-qits-githost
+                  # NO QITS_CI_PROJECTS_URL HERE, AND THE ABSENCE IS LOAD-BEARING.
+                  # It names the catalogue ci enumerates event triggers over. Configured, that
+                  # catalogue REPLACES the git host's own listing — and qits-projects is deployed
+                  # fourteen phases after this container starts, so a seed ci holding the key would
+                  # answer every event of the boot's first half with an empty candidate list. The
+                  # release replays are exactly those events, and an empty list fails them. The seed
+                  # therefore walks the git host's listing, which is what it is for, and the key
+                  # arrives with ci's own deployment out of the extras — after qits-projects, whose
+                  # catalogue is by then the true one.
                   # The network step containers join. Still qits-net: it is the deployer's legacy network,
                   # the one every container on this host is on whatever plane it belongs to. It is
                   # ci's choice and travels in the workload spec; the orchestrator puts the container
@@ -1339,10 +1361,12 @@ public final class ComposeTemplate {
             # anonymous-read list is what keeps a pull through it credential-free.
             qits.platform.deployments.extras.qits-platform-mirror.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE GIT HOST, and no publish here either. The door a PERSON pushes through — the
-            # workstation is not on qits-net — is http://githost.${ENV_NAME}.localhost:${PORT}/git/<repo>
-            # through the edge. The url has moved twice: it was
+            # workstation is not on qits-net — is
+            # http://githost.${ENV_NAME}.localhost:${PORT}/git/<projectId>/<repo>.git through the
+            # edge. The url has moved three times: it was
             # localhost:${REGISTRY_PORT}/artifacts/git/<repo> while the routes lived in the artifacts
-            # store, then a port of this service's own after the split, and now a name.
+            # store, then a port of this service's own after the split, then a name, and now the
+            # project-scoped pair that is the only public one.
             #
             # EVERY METHOD NEEDS A BEARER, reads included: this is not a registry, so the edge's
             # anonymous-read list does not name it. A clone is a token from the idp and one git header;
@@ -1357,7 +1381,27 @@ public final class ComposeTemplate {
             # SCMPublishTag and the two deletes ride the outbox to the bus, where ci's listener queues the
             # run. At the bus's wire alias, which the plane move made the bare qits-events.
             qits.platform.deployments.extras.qits-githost.env.QITS_EVENTS_URL=http://${ALIAS_EVENTS}:8080
+            #
+            # QITS_PROJECTS_NAME_RESOLVER_URL is what makes the public url serve at all: the git host
+            # resolves (projectId, repoName) to a storage id here, per request, and remembers none.
+            # The value stops before /{projectId} — the path under it is qits-projects' own.
+            #
+            # QITS_GITHOST_STORAGE_CLIENT IS THE GUARD, AND THIS IS WHERE IT ARRIVES.
+            # It names the client whose SELF-ROLE (clients/<id>, minted by qits-idp into that
+            # client's bearers and nobody else's) opens the id-addressed scheme — smart-HTTP, the
+            # lifecycle PUT/GET/HEAD, GET /git and the id-addressed content reads. qits:admin and
+            # qits:system are deliberately not enough: the point is not that the caller is
+            # privileged, it is that the caller IS qits-projects.
+            #
+            # It is spelled HERE and not on the seed stack, and that ordering is the whole of the
+            # staging. The bootstrap creates every repository over the storage scheme with its own
+            # credential, before qits-projects exists; the seed git host therefore runs the compat
+            # arm. By the time THIS deployment replaces it — qits-githost is twelfth of seventeen,
+            # six after qits-projects — `register-repos` has handed every (storage id, name) pair
+            # over and the run addresses /git/<projectId>/<repo> for the rest of the train. A rerun
+            # meets this guard at its git-repos phase and asks qits-projects instead of the store.
             qits.platform.deployments.extras.qits-githost.env.QITS_PROJECTS_NAME_RESOLVER_URL=http://${ENV_NAME}-qits-projects:8080/projects/api/projects
+            qits.platform.deployments.extras.qits-githost.env.QITS_GITHOST_STORAGE_CLIENT=${ENV_NAME}-qits-projects
             qits.platform.deployments.extras.qits-githost.env.QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-githost
             qits.platform.deployments.extras.qits-githost.env.QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN}
             qits.platform.deployments.extras.qits-githost.env.QITS_REPOSITORIES_GIT_PROTECT_DEFAULT_BRANCH=true
@@ -1410,6 +1454,19 @@ public final class ComposeTemplate {
             # rotating that password and break the deployment it looks like it is configuring. The seed
             # block spells the same variables because at that moment no deployer exists to inject
             # anything. The /data volume went with the H2: the image has no mount point for it any more.
+            # QITS_CI_PROJECTS_URL is the CATALOGUE ci enumerates event triggers over, and it
+            # REPLACES the git host's own listing rather than adding to it. It has to: that listing
+            # answers storage ids, and the git host serves it to qits-projects alone now — so a ci
+            # still walking it would read a 403 as "there is nothing to build". Scheme, host and port
+            # only; ci appends /projects/api/repositories itself.
+            #
+            # THE HOP IS FORWARD-AUTH, not a bearer, and that is qits-ci's own decision rather than
+            # an omission here: its two oidc clients are audience-bound to qits-containers and
+            # qits-githost, and a bearer cut for the wrong audience is refused harder than none at
+            # all. It presents X-Qits-User/X-Qits-Roles at the service alias on qits-net, which the
+            # edge is deliberately not on. Giving ci a third, projects-bound client is a deployment
+            # change on both sides and is left until one is wanted for its own sake.
+            qits.platform.deployments.extras.qits-ci.env.QITS_CI_PROJECTS_URL=http://${ENV_NAME}-qits-projects:8080
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_GIT_HOST_URL=http://${ENV_NAME}-qits-githost:8080
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_URL=http://githost.${ENV_NAME}.internal:8080
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_AUDIENCE=${ENV_NAME}-qits-githost
@@ -1769,7 +1826,9 @@ public final class ComposeTemplate {
             # tidy-up: this service mirrors and pushes git, and git is qits-githost now. The old key is
             # gone from the image, so a deployment still passing it configures NOTHING and the service
             # falls back to a default — which is exactly the silence the rename was made to break.
-            # Scheme, host and port only; the /git/<repoId> path is the caller's.
+            # Scheme, host and port only; the path is the caller's — and for THIS caller the path is
+            # /git/<repoId>, the storage scheme, which qits-projects is the one service allowed to
+            # speak. Its client id is what the git host's qits.githost.storage-client names.
             #
             # NO SOCKET AND NO SOCKET GROUP any more: agent containers start through
             # qits-containers (orchestration round 2), so this service holds a machine-token

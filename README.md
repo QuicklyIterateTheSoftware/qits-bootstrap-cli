@@ -140,7 +140,7 @@ the same names `qits-local-up.sh` read:
 | `QITS_PORT` | `8080` | **the host's ONE HTTP port**, bound by qits-platform-edge in swarm INGRESS mode, and the door of the whole platform: a person's browser, and the registry, the mirror and the git host, which are reached at `registry.<env>.localhost:<this>`, `mirror.<env>.localhost:<this>` and `githost.<env>.localhost:<this>`. Every `*.localhost` name resolves to the loopback address by itself, so there is no hosts file to edit. The CLI dials the edge's alias instead |
 | `QITS_REGISTRY_PORT` | `8081` | reserved for the registry break-glass helper. Normal bootstrap traffic reaches the temporary Maven repository through the capability-gated bootstrap edge; neither the seed nor deployed artifact service publishes this port |
 | `QITS_MIRROR_PORT` | `8082` | reserved for mirror compatibility and break-glass configuration. The seed and deployed mirror remain private on `qits-net`; normal traffic reaches them through the active edge |
-| `QITS_GIT_HOST_PORT` | `8083` | qits-githost's old host port. **Nothing publishes it any more** — neither the seed, which comes up inside the stack, nor the deployment. A person clones and pushes at `http://githost.<env>.localhost:<QITS_PORT>/git/<repo>` through the edge, where every method needs a bearer, reads included. The knob stays because this is the number to reopen by hand while an edge is being repaired. Nothing in the CLI dials it; every phase that pushes runs inside a container on qits-net |
+| `QITS_GIT_HOST_PORT` | `8083` | qits-githost's old host port. **Nothing publishes it any more** — neither the seed, which comes up inside the stack, nor the deployment. A person clones and pushes at `http://githost.<env>.localhost:<QITS_PORT>/git/<projectId>/<repo>.git` through the edge, where every method needs a bearer, reads included. The knob stays because this is the number to reopen by hand while an edge is being repaired. Nothing in the CLI dials it; every phase that pushes runs inside a container on qits-net |
 | `QITS_DOMAIN` | unset | **the domain this platform serves.** Unset is a full platform with no public names: the edge stays on plain HTTP. Set, the edge gets ports 80 and 443 with a certificate slot on a volume, and a real Let's Encrypt certificate is ordered for the name. The management port 9000 is NOT published: the challenge-management endpoint is unauthenticated and a swarm publish cannot be loopback-only, so it is reached on qits-net. `QITS_PUBLIC_IP` is **mandatory** beside it. **This platform serves no dns** — the records live at whatever provider holds the domain, and they go in **before** the run. Lowercase, at least two labels, no trailing dot; a bad value stops the run before anything is built. `--domain` is the same knob for one run |
 | `QITS_PUBLIC_IP` | unset | **this host's public IPv4 address, and mandatory whenever `QITS_DOMAIN` is set.** It is the data of every A record the domain needs at its dns provider, and the run cannot learn it, because it is a container behind a NAT. The closing report prints the records with it filled in, and the certificate order is answered over a name that carries it. Four dotted octets, no leading zeros; **a hostname is refused rather than resolved**, since the value becomes an A record a resolver later reads back. Set without a domain it is refused too, rather than ignored: there would be nothing to serve. `--public-ip` for one run |
 | `QITS_ACME_MODE` | `staging` | **which Let's Encrypt directory the edge's certificate is ordered from**: `staging`, `production` or `off`. Staging by default and deliberately — production counts *failed* orders per registered domain per week, and the order most likely to fail is the first one, against records the world has not seen yet. Staging issues from an untrusted root, so a browser still refuses the certificate; it proves the records, the challenge and the reload for free. Flipping to production is one rerun with this set and **no redeploy**: the PEMs land on the `qits-edge-letsencrypt` volume under the same two names and the edge's TLS registry reloads them within the hour. `off` keeps the self-signed placeholder and prints the manual command. Ignored with no domain. `--acme-mode` for one run |
@@ -478,9 +478,10 @@ for 48. `QITS_DOMAIN` adds two more, marked below.
 | 41 | mint the ONE-TIME token the first account registers with (`POST /idp/api/register-tokens`, as the edge's own static client) and record it in `.qits-bootstrap.env`. Once per installation: a rerun that finds `IDP_REGISTER_TOKEN` there mints nothing, because every call makes another key to an admin account. A refusal WARNS and the boot goes on — nothing this platform runs waits on a person registering |
 | — | **with `QITS_DOMAIN` only**: order the edge's Let's Encrypt certificate for the apex, in a transient certbot container on qits-net whose hooks fill and empty the edge's one challenge slot over `http://qits-platform-edge:9000/q/lets-encrypt/challenge`. The PEMs are copied onto `qits-edge-letsencrypt` as uid 1001 and `POST .../certs` makes them live at once. Here because the edge has to be holding port 80, and the name has to resolve to this host already — which is the dns provider's job, before the run. Skipped when the volume already holds a matching certificate that is not near expiry, and **a production certificate is never replaced by a staging one**. A failure WARNS and the boot goes on — the records may simply not have propagated |
 | 42 | publish the ci-daemon binary, version-addressed by its digest |
-| 43–45 | create the 43 repositories on qits-githost; push the seeded repositories to it; pre-seed the seeded histories with `-o qits.no-ci`. The seeded push is here rather than at the end because every deployable's gitlinks have to be advertised before ci clones it |
+| 43–45 | create the 43 repositories on qits-githost **under a storage id**, recording the (name → id) pairing in `.qits-bootstrap.env`; push the seeded repositories to it; pre-seed the seeded histories with `-o qits.no-ci`. The seeded push is here rather than at the end because every deployable's gitlinks have to be advertised before ci clones it. Every push up to phase 60 addresses `/git/<storage id>` because nothing can resolve a name yet — see [Two coordinates, one seam](#two-coordinates-one-seam) |
 | 46–52 | replay each publisher the platform pins by **pushing its release tag**, and wait for the run the tag starts. The release recipes select on `SCMPublishTag`, so the push is the whole trigger — nothing is announced by hand, and in particular no `SCMRelease`: that word means "a version is NEW", and saying it here woke the release train against a platform whose qits-workspaces is still fifteen phases away. Four of the seven are the Maven and npm packages the wrapper's builds install; three are docker images — `qits/workspace-base`, then `qits/workspace` and `qits/projects-daemon` + `qits/project-agent`. **The base goes first and that order is load-bearing**: both daemon builds pull it at a pinned version, and the base's own replay is what puts it in the registry. A publisher with no release tag reachable from main STOPS the boot, which is right: a pin nobody has minted has nothing to dangle. A tag the git host already has moves no ref, so it announces nothing and the phase is SKIPPED — the registry holds that version from the boot that first pushed it |
 | 53 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
+| — | **immediately after qits-projects' own deployment**: register every repository under the `qits` project — the storage id it was created with, and the name the platform addresses it by. From that phase on `/git/<projectId>/<repo>` resolves, and every push this run makes uses it. See [Two coordinates, one seam](#two-coordinates-one-seam) |
 | 54–72 | one phase per deployable: push `main` quietly, push the newest release tag, and move `environment/<name>` **to that tag's commit** — the boot RESTORES, so a main that is ahead of the release deploys nothing. `--ship-mains` points the deploy ref at main's head instead, which is what the boot always did and what shipped an unreleased stack by accident on 2026-08-08. A deployable with no release tag falls back to main's head and warns. Then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-containers is immediately before qits-ci, because ci runs every pipeline step as a container it asks that service for. qits-platform-edge is second to last: it is the host's one door, and every other service is behind it — its publish is `mode: ingress`, so the swarm holds the port and the successor pulls its own image through the predecessor rather than needing the door it is replacing. qits-configuration is FOURTH, after postgres and the idp, because the two phases below are what the rest of the train deploys through. qits-platform-orchestrator is LATE, after every peer its technical processes call — the store, the container orchestrator, ci and the deployer — because it holds a scheduler and a run that starts inside a peer's cutover fails against a service being replaced |
 | 58–59 | **deployment configuration becomes platform state.** Import the extras this boot rendered into qits-configuration — the whole properties file, unchanged, idempotent — then point the RUNNING deployer at it with `QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL` and the `configuration` oidc client. From here the deployer reads each application's configuration from the service and REFUSES a deployment it cannot read, so both sides of the order are load-bearing: flipped before the import, it would refuse every deployment left in the train; not flipped before qits-deployments deploys itself, the successor would come up holding the url over a service nobody filled. The file on the config volume is untouched, and from the flip on it is UNREAD: the service is the sole source, or a key deleted from the store would come back out of a file nobody emptied. It stays what the cold boot deploys from and what the import is rendered from; unsetting the url is the rollback, and by then the file may be stale |
 | 73 | the closing report |
@@ -530,6 +531,55 @@ builder. It sits on the Docker facade rather than at each call site, because the
 for every image and a build added later would inherit nothing. The default happened to be this same
 url until the vhost sweep, which is how a boot rode it for months and then died at
 qits-platform-mirror with a connection refused.
+
+## Two coordinates, one seam
+
+A repository on this platform has **two** identifiers and only one of them is public.
+
+- The **storage id** is qits-githost's key. `/git/<storage id>` is the address of the store, and the
+  deployed git host serves that scheme to qits-projects' own service client and to nobody else —
+  `qits.githost.storage-client` names the client and the guard demands its self-role
+  (`clients/<id>`, which qits-idp stamps into that client's bearers and no other's). A caller
+  holding a storage url is a defect, not a shortcut.
+- The **public identity** is `(projectId, repoName)`. `/git/<projectId>/<repo>.git` is the one clone
+  and push url there is — for CI, the daemons, a deploy push and a person alike — and qits-projects'
+  alias table is its only authority. The git host resolves it per request through
+  `qits.projects.name-resolver-url` and remembers nothing.
+
+**This program creates the bares, so it is the one party that holds both.** It creates them long
+before qits-projects exists — nothing can be built out of a repository nothing hosts — and hands the
+pairing over as soon as that service is deployed. Three consequences, and each is a phase boundary:
+
+1. **Phases 43–60 are id-addressed of necessity.** There is no alias table until qits-projects is
+   deployed, which is sixth of seventeen deployables. The (name → id) pairing is written to
+   `.qits-bootstrap.env` as each bare is created, so a resumed or repeated run addresses the bares
+   it made rather than minting a second set beside them.
+2. **`register-repos` runs immediately after `deploy-projects`.** It waits for the `qits` project
+   qits-projects' own startup self-seed creates, then registers every repository through
+   `POST /projects/api/projects/{projectId}/repositories/adopt` — idempotent, so a rerun costs one
+   request per repository and changes nothing.
+3. **Everything after it is name-addressed, and it has to be.** qits-githost is deployed six
+   deployables later, and its extras carry `qits.githost.storage-client` — from that cutover the
+   storage scheme answers qits-projects alone, this program included. Name-addressed pushes are also
+   what put `projectId` and `repoName` on the push's event, which is what gives every later build a
+   `QITS_CI_PROJECT_ID` and a sibling submodule url that resolves.
+
+**The guard is staged, and the staging is the placement of one key.** The seed git host does not
+carry `qits.githost.storage-client` at all — it cannot, because this program creates every
+repository on it over the storage scheme with its own credential. The key is spelled only in the
+deployment extras, so the platform this run leaves behind is guarded and the run itself is not
+locked out of its own first phase. A rerun meets the guard at phase 43 and asks qits-projects
+whether each name already resolves before it asks the store for anything.
+
+**A repository seeded by this program takes its own name as its storage id.** The ruling of
+2026-08-21 prefers a minted UUID, and repositories created later — by qits-projects, through its own
+API — get one. Two ordering facts put it out of reach for the ones seeded here, and both are about
+qits-projects being deployed sixth rather than first: an id-addressed push carries no `repoName`, so
+qits-ci's trigger selection falls back to `repoId` and the seven release-replay pipelines would
+match nothing under a UUID; and qits-projects' startup self-seed adopts a wrapper component only
+when the git host answers `GET /git/<entry name>`, so under UUID bares it would mirror the whole
+platform in from the org a second time. `PlatformModel.seedStorageId` is the one seam that changes
+when either is fixed.
 
 ## Two planes, one branch
 

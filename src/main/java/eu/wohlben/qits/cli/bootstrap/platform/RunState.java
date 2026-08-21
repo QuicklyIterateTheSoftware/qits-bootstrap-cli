@@ -95,6 +95,26 @@ public class RunState {
     public String pgPlatformEdgeEventstreamPassword;
     /** The environment row the deployer reconciled. */
     public String environmentId;
+    /**
+     * <b>The storage id the git host keys each platform repository by</b>, by repository name —
+     * {@code qits-ci -> qits-ci} today, see {@link PlatformModel#seedStorageId}. Filled by
+     * {@code git-repos} from what {@code .qits-bootstrap.env} already recorded, so a rerun addresses
+     * the bares it created rather than minting a second set.
+     */
+    public final Map<String, String> repositoryIds = new LinkedHashMap<>();
+    /**
+     * The {@code qits} project's id in qits-projects, read once that service answers. It is the
+     * first segment of every public clone url — {@code /git/<projectId>/<repoName>} — and it is a
+     * minted uuid, not the slug: qits-projects resolves a name by {@code project.id}.
+     */
+    public String projectId;
+    /**
+     * <b>Whether a name-addressed url resolves yet</b>, which is the one fact that decides how this
+     * run addresses the git host. It turns true when {@code register-repos} has put every
+     * (storage id, name) pair under the qits project; before that there is no alias table to
+     * resolve through and every push is id-addressed of necessity.
+     */
+    public boolean repositoriesRegistered;
     /** The temporary maven-over-HTTP container that breaks the first-boot dependency cycle. */
     public String authSeedContainer;
     /** Ephemeral paths and capabilities for the bootstrap-only ingress; never persisted in state. */

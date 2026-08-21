@@ -49,9 +49,31 @@ public class GitHostApi {
         return http.putJson(base + "/" + repoId, Json.object("defaultBranch", "main"), authorization(bearer));
     }
 
-    /** The clone and push URL of a repository, as reached from qits-net. */
+    /**
+     * <b>The INTERNAL, id-addressed url</b> — {@code /git/<storage id>}, the address of the store
+     * and not of a repository anyone may hold.
+     * <p>
+     * It stays because two callers legitimately have nothing else: the lifecycle {@code PUT} above,
+     * which creates the bare a name will later be an alias for, and every push this run makes
+     * before qits-projects exists to resolve a name. Both are the bootstrap's own window. From
+     * {@code register-repos} onward the run addresses {@link #gitUrl(String, String)} instead, and
+     * the deployed git host closes this scheme to everything but qits-projects' own client
+     * ({@code qits.githost.storage-client}).
+     */
     public String gitUrl(String repoId) {
         return base + "/" + repoId;
+    }
+
+    /**
+     * <b>The PUBLIC clone and push url</b> — {@code /git/<projectId>/<repoName>}, as reached from
+     * qits-net. The one address CI, the daemons, a deploy push and a person ever hold.
+     * <p>
+     * The git host resolves the name per request through qits-projects' alias table, so this url
+     * answers only once the pair is registered there. {@code projectId} is qits-projects' project
+     * id — a minted uuid — because that is what its by-name lookup is keyed by.
+     */
+    public String gitUrl(String projectId, String repoName) {
+        return base + "/" + projectId + "/" + repoName;
     }
 
     private static Map<String, String> authorization(String bearer) {

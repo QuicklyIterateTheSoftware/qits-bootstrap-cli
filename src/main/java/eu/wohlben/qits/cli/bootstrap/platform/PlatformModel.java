@@ -309,6 +309,31 @@ public final class PlatformModel {
     }
 
     /**
+     * <b>What KIND of component a repository is, in qits-projects' vocabulary</b> — the value the
+     * registration hands it as {@code archetype}.
+     * <p>
+     * Derived from {@link #repoPath} rather than listed, because that is the derivation qits-projects
+     * itself makes: <em>the directory is the archetype</em>, in both directions, and the wrapper's
+     * {@code .gitmodules} is where both sides read it from. A second list here would be a copy of
+     * the layout that could disagree with the paths this program clones into.
+     * <p>
+     * A directory nothing claims answers {@code SERVICE}, which is qits-projects' own default for an
+     * adopted row with no archetype. Every path this model spells is one of the six today.
+     */
+    public static String archetype(String name) {
+        String path = repoPath(name);
+        String directory = path.substring(0, Math.max(0, path.indexOf('/')));
+        return switch (directory) {
+            case "libs" -> "LIBRARY";
+            case "frontends" -> "FRONTEND";
+            case "daemons" -> "DAEMON";
+            case "images" -> "IMAGE";
+            case "cli" -> "CLI";
+            default -> "SERVICE";
+        };
+    }
+
+    /**
      * Where a repository keeps the Dockerfile its seed image is built from, relative to its own
      * root.
      * <p>
@@ -358,6 +383,55 @@ public final class PlatformModel {
 
     public static String repo(String name) {
         return "qits-" + name;
+    }
+
+    /** The one project every platform repository belongs to, and the one qits-projects self-seeds. */
+    public static final String PROJECT = "qits";
+
+    /**
+     * <b>The STORAGE ID a fresh boot creates a platform repository's bare under</b> — the key
+     * {@code PUT /git/<id>} uses, which is qits-githost's alone and never a clone url.
+     * <p>
+     * It is the repository NAME, and that is a decision rather than a leftover. The ruling of
+     * 2026-08-21 is that a storage id is an opaque UUID minted by qits-projects; a name is a valid
+     * opaque id, so the settled platform still satisfies every part of the ruling that is
+     * observable — the public clone url is {@code /git/<projectId>/<repoName>}, the alias table is
+     * the only resolution, and the id-addressed scheme is closed to everything but qits-projects'
+     * own client. What it does not satisfy is the ruling's preference that the two coordinates be
+     * unrelated for repositories THIS run seeds. Repositories created later, by qits-projects, mint
+     * UUIDs as the ruling says.
+     * <p>
+     * <b>Two ordering facts make a minted UUID unreachable from here, and both are about
+     * qits-projects being deployed sixth of seventeen.</b> Everything this run pushes before that
+     * point is necessarily id-addressed, because a name-addressed route needs a resolver and the
+     * resolver is qits-projects:
+     * <ul>
+     *   <li><b>The release replays would select nothing.</b> qits-ci evaluates a trigger file's
+     *       {@code repoId: {exact: qits-eventstream}} against the event's {@code repoName} when the
+     *       payload carries one and against {@code repoId} when it does not — and an id-addressed
+     *       push carries no name. With the id equal to the name the legacy arm answers and the
+     *       seven release pipelines fire; with a UUID nothing matches and the first replay phase
+     *       fails the boot.
+     *   <li><b>qits-projects would clone the whole platform a second time.</b> Its startup
+     *       self-seed reconciles the wrapper at its FIRST boot — before anything can tell it what
+     *       this run minted — and adopts a component only when the git host answers
+     *       {@code GET /git/<entryName>}. Under UUID bares that is a 404 for every entry, so the
+     *       reconcile takes its clone arm instead: a fresh mirror of each repository from the org,
+     *       into a second bare under a second id, while the deployer and qits-ci keep building from
+     *       the ones this run pushed.
+     * </ul>
+     * Both are properties of the ORDER, not of this program. Making the preferred design reachable
+     * means qits-projects answering before the first push — a seed image, three databases and a
+     * stack service of its own, the way qits-githost joined the seed at the byte-plane split — or a
+     * qits-projects that can be told to hold its self-seed until it has been handed a catalogue.
+     * Either is its own work package.
+     * <p>
+     * <b>This method is the seam that changes when one of them lands.</b> The id a repository is
+     * seeded under is recorded per run ({@code REPO_ID_<NAME>} in {@code .qits-bootstrap.env}) and
+     * read back from there on a rerun, so nothing downstream spells the name where it means the id.
+     */
+    public static String seedStorageId(String name) {
+        return repo(name);
     }
 
     public static boolean isPlatformService(String name) {
