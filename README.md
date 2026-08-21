@@ -455,9 +455,9 @@ is healthy.
 
 ## What it does, in order
 
-Built from configuration at startup, so the count in the header is real. A cold boot is 73 phases;
+Built from configuration at startup, so the count in the header is real. A cold boot is 74 phases;
 `QITS_SKIP_BUILD=1` drops the seed builds and puts two in their place — the skip gate and postgres —
-for 46. `QITS_DOMAIN` adds two more, marked below.
+for 48. `QITS_DOMAIN` adds two more, marked below.
 
 | | phase |
 | --- | --- |
@@ -483,7 +483,8 @@ for 46. `QITS_DOMAIN` adds two more, marked below.
 | 53 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
 | 54–72 | one phase per deployable: push `main` quietly, push the newest release tag, and move `environment/<name>` **to that tag's commit** — the boot RESTORES, so a main that is ahead of the release deploys nothing. `--ship-mains` points the deploy ref at main's head instead, which is what the boot always did and what shipped an unreleased stack by accident on 2026-08-08. A deployable with no release tag falls back to main's head and warns. Then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-containers is immediately before qits-ci, because ci runs every pipeline step as a container it asks that service for. qits-platform-edge is second to last: it is the host's one door, and every other service is behind it — its publish is `mode: ingress`, so the swarm holds the port and the successor pulls its own image through the predecessor rather than needing the door it is replacing. qits-configuration is FOURTH, after postgres and the idp, because the two phases below are what the rest of the train deploys through. qits-platform-orchestrator is LATE, after every peer its technical processes call — the store, the container orchestrator, ci and the deployer — because it holds a scheduler and a run that starts inside a peer's cutover fails against a service being replaced |
 | 58–59 | **deployment configuration becomes platform state.** Import the extras this boot rendered into qits-configuration — the whole properties file, unchanged, idempotent — then point the RUNNING deployer at it with `QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL` and the `configuration` oidc client. From here the deployer reads each application's configuration from the service and REFUSES a deployment it cannot read, so both sides of the order are load-bearing: flipped before the import, it would refuse every deployment left in the train; not flipped before qits-deployments deploys itself, the successor would come up holding the url over a service nobody filled. The file on the config volume is untouched, and from the flip on it is UNREAD: the service is the sole source, or a key deleted from the store would come back out of a file nobody emptied. It stays what the cold boot deploys from and what the import is rendered from; unsetting the url is the rollback, and by then the file may be stale |
-| 72 | the closing report |
+| 73 | the closing report |
+| 74 | **reclaim the builder.** `docker buildx rm qits-bootstrap-builder-v4` — the container and its state volume, 13.7 GB measured on wohlben.eu — then `qits-maven-seed` and the `qits-maven-cache` download cache when nothing holds them. The builder is BOOTSTRAP-TIME ONLY: every build after this run goes through qits-containers to the host's default builder, and the next bootstrap creates a new one. Last because nothing above it may build after it, and because the phase above only BUILDS the closing account — it is printed once every phase has run. `QITS_KEEP_BUILDER=1` skips it: a re-bootstrap without the warm cache rebuilds the seed images cold and re-fetches Maven Central, ten to twenty minutes more, which is the dev loop's price and not a server's. It removes no IMAGES — a dangling image carries no record of the tag it held, so nothing here can tell one of ours from one of somebody else's; attributed image deletion is qits-containers' gc endpoint, driven by qits-platform-orchestrator with the pin set in hand |
 
 Five things every deploy phase does that are easy to miss: it pushes `main` quietly
 (`-o qits.no-ci`) so a second cold native build is not queued for the same sha; it pushes the

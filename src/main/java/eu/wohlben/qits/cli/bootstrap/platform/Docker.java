@@ -26,7 +26,25 @@ import java.util.function.Consumer;
  * services that need it.
  */
 public class Docker {
-    static final String BUILDER = "qits-bootstrap-builder-v4";
+    /**
+     * <b>The bootstrap's own BuildKit container, and it is bootstrap-time only.</b> Once the
+     * platform is up every build runs on the host's default builder through qits-containers, so
+     * nothing asks for this one again — which is why the run's last phase removes it and
+     * {@link #ensureBuilder} makes the next run a new one.
+     * <p>
+     * The name carries a version because a driver-opt change needs a NEW builder rather than an
+     * edited one: buildx keeps the options at create time and an existing builder is reused as it
+     * stands. Each bump stranded its predecessor's state volume, which is what
+     * {@link #staleBuilders} now sweeps.
+     */
+    public static final String BUILDER = "qits-bootstrap-builder-v4";
+
+    /**
+     * What every builder this program has ever created is named after. It is the whole test for
+     * "ours": a builder outside this prefix belongs to somebody else on a shared host and is never
+     * touched.
+     */
+    public static final String BUILDER_PREFIX = "qits-bootstrap-builder";
 
     /** Long enough for a cold GraalVM native build, which is what most of these are. */
     public static final Duration BUILD_TIMEOUT = Duration.ofHours(4);
@@ -470,6 +488,17 @@ public class Docker {
         if (builderReady) {
             return new ProcessResult(0, List.of(), List.of(), false, false);
         }
+        // EVERY EARLIER NAME OF THIS BUILDER, on the first build of the run. A driver-opt change
+        // needs a new NAME — buildx keeps the options a builder was created with and reuses an
+        // existing one as it stands — so the name has been bumped three times, and each bump left
+        // its predecessor's container and its multi-gigabyte state volume behind, referenced by
+        // nothing and swept by nobody. Removing them here rather than in the teardown phase is
+        // deliberate: this is the method that knows a bump happened.
+        for (String stale : staleBuilders(builderRows(), BUILDER)) {
+            out.accept("  removing the stale bootstrap builder " + stale
+                    + " left by an earlier name");
+            removeBuilder(stale, out);
+        }
         ProcessResult existing = runner.run(Cmd.of(
                 "docker", "buildx", "inspect", BUILDER), null);
         ProcessResult ready = existing.ok() ? existing : runner.run(Cmd.of(
@@ -482,6 +511,87 @@ public class Docker {
         }
         builderReady = ready.ok();
         return ready;
+    }
+
+    /**
+     * {@code docker buildx ls}, RAW: builder rows and the node rows under them, with the leading
+     * whitespace kept. It deliberately does not go through {@link #lines}, which trims — and the
+     * indent is half of what tells a node from a builder. See {@link #staleBuilders}.
+     */
+    public List<String> builderRows() {
+        ProcessResult result = runner.run(Cmd.of("docker", "buildx", "ls"), null);
+        if (!result.ok()) {
+            return List.of();
+        }
+        List<String> rows = new ArrayList<>();
+        for (String line : result.captured()) {
+            if (!line.isBlank() && !line.startsWith("$ ")) {
+                rows.add(line);
+            }
+        }
+        return rows;
+    }
+
+    /**
+     * <b>The builders this program left behind, out of {@code docker buildx ls}' own table.</b>
+     * <p>
+     * That table interleaves two kinds of row: a BUILDER at column zero, then its nodes indented
+     * under {@code \_}. A docker-container builder names its node after itself with an index
+     * appended — {@code qits-bootstrap-builder-v4} has the node {@code qits-bootstrap-builder-v40}
+     * — so a sweep that read every row would ask buildx to remove a node as if it were a builder.
+     * A node row is marked twice over, and BOTH are checked because either one alone has been
+     * wrong here: it is indented, and its first token is {@code \_}. The indent is the natural
+     * test and it does not survive a caller that trimmed — which is exactly what this class's own
+     * {@code lines} helper does to every other command's output.
+     * <p>
+     * Only names under {@link #BUILDER_PREFIX} are ours, and the one in use is never stale.
+     */
+    public static List<String> staleBuilders(List<String> rows, String current) {
+        List<String> stale = new ArrayList<>();
+        for (String row : rows) {
+            if (row.isBlank() || Character.isWhitespace(row.charAt(0))
+                    || row.trim().startsWith("\\_")) {
+                continue;
+            }
+            String name = row.trim().split("\\s+")[0];
+            if (name.endsWith("*")) {
+                name = name.substring(0, name.length() - 1);
+            }
+            if (name.startsWith(BUILDER_PREFIX) && !name.equals(current) && !stale.contains(name)) {
+                stale.add(name);
+            }
+        }
+        return List.copyOf(stale);
+    }
+
+    /**
+     * Removes a builder, ITS CONTAINER AND ITS STATE VOLUME — which is the whole point: the volume
+     * is where the multi-gigabyte cache lives, and {@code buildx rm} is the only command that knows
+     * the name it was given ({@code buildx_buildkit_<builder>0_state}).
+     */
+    public ProcessResult removeBuilder(String name, Consumer<String> out) {
+        return runner.run(Cmd.of("docker", "buildx", "rm", name), out);
+    }
+
+    /**
+     * <b>A removal that found nothing is a removal that succeeded.</b> A run that never built, or a
+     * second run of this phase, has no builder to remove, and buildx says so on the error stream
+     * rather than with a status of its own.
+     */
+    public static boolean alreadyGone(ProcessResult result) {
+        String said = result.tailText(5).toLowerCase();
+        return said.contains("no builder") || said.contains("not found")
+                || said.contains("no such");
+    }
+
+    /** The volumes no container holds — the only ones this program will consider removing. */
+    public List<String> danglingVolumes() {
+        return lines(runner.run(
+                Cmd.of("docker", "volume", "ls", "-q", "-f", "dangling=true"), null));
+    }
+
+    public ProcessResult removeVolume(String name, Consumer<String> out) {
+        return runner.run(Cmd.of("docker", "volume", "rm", name), out);
     }
 
     public ProcessResult exec(Consumer<String> out, String... args) {

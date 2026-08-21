@@ -41,7 +41,8 @@ class BootstrapPlanTest {
                 "bootstrap-ingress", "wrapper", "sources", "recorded-state", "maven-seed");
         assertThat(ids(phases)).containsSubsequence(
                 "git-repos", "release-train-push", "preseed");
-        assertThat(ids(phases)).endsWith("deploy-deployments", "summary");
+        assertThat(ids(phases)).endsWith("deploy-deployments", "summary",
+                "teardown-bootstrap-builder");
         assertThat(phases).allSatisfy(phase -> assertThat(phase.title()).isNotBlank());
     }
 
@@ -262,5 +263,31 @@ class BootstrapPlanTest {
         // The wrapper phase is in every plan. An existing checkout is skipped when it RUNS, which
         // is what keeps the skip visible on the header line instead of silent in the plan.
         assertThat(warm).contains("wrapper");
+    }
+
+    /**
+     * <b>The reclaim is the run's last act, and it is in every plan.</b> The builder is
+     * bootstrap-time only — after this run every build goes through qits-containers to the host's
+     * default builder — so what it leaves is a container and a multi-gigabyte state volume that
+     * nothing will ask for again.
+     * <p>
+     * It is last for two reasons: nothing above it may build after it, and the summary phase only
+     * BUILDS the closing account (BootstrapCommand prints it once the engine has finished), so a
+     * phase below it still reads before the text a person is left with.
+     */
+    @Test
+    void theBuilderIsTornDownLastAndInEveryPlan() {
+        assertThat(ids(plan(Map.of())).getLast()).isEqualTo("teardown-bootstrap-builder");
+        // A warm rerun built nothing, and it still carries the phase: a machine that reran the
+        // boot is exactly the one holding last run's builder.
+        assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1"))))
+                .contains("teardown-bootstrap-builder");
+        // KEPT IN THE PLAN when the flag says keep, and skipped where every other conditional
+        // absence in this program is: at RUN time, so the reason lands on the header line rather
+        // than the phase vanishing without a word. Same rule as the wrapper phase above.
+        assertThat(ids(plan(Map.of("QITS_KEEP_BUILDER", "1"))))
+                .contains("teardown-bootstrap-builder");
+        assertThat(plan(Map.of("QITS_KEEP_BUILDER", "1")))
+                .hasSameSizeAs(plan(Map.of()));
     }
 }
