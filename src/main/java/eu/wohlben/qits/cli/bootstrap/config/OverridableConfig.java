@@ -91,6 +91,15 @@ public class OverridableConfig implements BootstrapConfig {
         return shipMains != null ? shipMains : base.shipMains();
     }
 
+    /**
+     * Delegated and not overridable: this is standing configuration of the MACHINE — a dev loop
+     * keeps the warm cache, a server does not — rather than an answer one run gives.
+     */
+    @Override
+    public boolean keepBuilder() {
+        return base.keepBuilder();
+    }
+
     @Override
     public boolean tui() {
         return tui != null ? tui : base.tui();

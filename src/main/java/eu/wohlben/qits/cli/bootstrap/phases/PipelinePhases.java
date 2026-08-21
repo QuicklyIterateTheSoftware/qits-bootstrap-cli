@@ -1815,4 +1815,85 @@ public class PipelinePhases {
             report.forEach(ctx::log);
         });
     }
+
+    /**
+     * <b>The seed-only volumes this run created, removed with the builder and for the same
+     * reason.</b> {@code qits-maven-seed} is the temporary Maven repository the first-boot
+     * dependency cycle is broken with, and the next bootstrap builds another one.
+     * {@code qits-maven-cache} is the third-party download cache every seed build shares.
+     * <p>
+     * <b>The cache is the contested one, and both sides are real.</b>
+     * {@code UnwrapPhases.KEEP} holds it through a data reset on purpose: re-fetching the
+     * dependency world is what got this host throttled by Maven Central and killed a boot on a 502.
+     * That argument is about a machine that reruns the boot, which is the dev loop — and the dev
+     * loop is exactly what {@code QITS_KEEP_BUILDER=1} is for. A server boots once and then wants
+     * the disk back, so the default takes it.
+     */
+    static final List<String> SEED_ONLY_VOLUMES = List.of("qits-maven-seed", "qits-maven-cache");
+
+    /**
+     * <b>The builder is bootstrap-time only, and this is where the machine gets its disk back.</b>
+     * After this run every build on this host goes through qits-containers to the default builder;
+     * nothing asks for {@link Docker#BUILDER} again until the next bootstrap, whose
+     * {@code ensureBuilder} creates it anew. What it leaves behind is a container and the state
+     * volume {@code buildx_buildkit_<builder>0_state} — 13.7 GB measured on wohlben.eu, held by a
+     * builder no component of the platform will ever use.
+     * <p>
+     * {@code buildx rm} is what removes the volume: it is the only command that knows the name
+     * buildx gave it. A {@code volume rm} by hand needs that spelling to be guessed, and guessing
+     * at volume names is how someone's data goes.
+     * <p>
+     * <b>THE COST IS A COLD RE-BOOTSTRAP</b>, ten to twenty minutes more: the seed images are then
+     * rebuilt with no layer cache and the seed's Maven containers re-fetch from Maven Central.
+     * {@code QITS_KEEP_BUILDER=1} is the dev loop's answer, and this phase is skipped whole.
+     * <p>
+     * <b>It removes no images, and that absence is deliberate.</b> The bootstrap does rebuild
+     * images under fixed tags — {@code qits/graalvmce-musl-builder:jdk-25} and the
+     * {@code qits/build-images/*:latest} step images — so each rebuild leaves its predecessor
+     * dangling. But a dangling image carries no record of the tag it used to hold, so nothing here
+     * can tell one of ours from one of somebody else's on a shared host, and a blanket prune is a
+     * sweep that guesses. Attributed image deletion is qits-containers' gc endpoint, driven by
+     * qits-platform-orchestrator with the platform's pin set in hand; it is that component's job
+     * and not this one's.
+     */
+    public Phase teardownBootstrapBuilder() {
+        return new Phase("teardown-bootstrap-builder",
+                "reclaim the bootstrap's builder and its seed caches", ctx -> {
+            if (boot.config.keepBuilder()) {
+                ctx.skip("QITS_KEEP_BUILDER=1 — the builder and its warm cache stay");
+            }
+            List<String> reclaimed = new ArrayList<>();
+            ctx.log("  removing " + Docker.BUILDER + " — bootstrap-time only, and the next boot "
+                    + "creates it again");
+            ProcessResult removed = boot.docker.removeBuilder(Docker.BUILDER, ctx::log);
+            if (removed.ok()) {
+                reclaimed.add(Docker.BUILDER);
+            } else if (Docker.alreadyGone(removed)) {
+                ctx.log("  " + Docker.BUILDER + " was not there — a run that built nothing, or a "
+                        + "second run of this phase");
+            } else {
+                ctx.warn("could not remove the builder " + Docker.BUILDER + ": "
+                        + removed.tailText(3) + ". Its state volume stays on this host — "
+                        + "`docker buildx rm " + Docker.BUILDER + "` by hand is the whole fix");
+            }
+            // DANGLING IS THE WHOLE PERMISSION. A volume some container still holds is one this
+            // run does not understand, whoever named it — the seed's own containers are gone by
+            // now, so anything of ours that is still attached is attached to something else.
+            List<String> dangling = boot.docker.danglingVolumes();
+            for (String volume : SEED_ONLY_VOLUMES) {
+                if (!dangling.contains(volume)) {
+                    ctx.log("  " + volume + " is in use or already gone — left alone");
+                    continue;
+                }
+                ProcessResult gone = boot.docker.removeVolume(volume, ctx::log);
+                if (gone.ok()) {
+                    reclaimed.add(volume);
+                } else {
+                    ctx.warn("could not remove " + volume + ": " + gone.tailText(3));
+                }
+            }
+            ctx.note(reclaimed.isEmpty() ? "nothing to reclaim"
+                    : "removed " + String.join(", ", reclaimed));
+        });
+    }
 }

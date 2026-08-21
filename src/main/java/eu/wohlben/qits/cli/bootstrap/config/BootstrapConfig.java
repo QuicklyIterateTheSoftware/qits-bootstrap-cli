@@ -196,6 +196,22 @@ public interface BootstrapConfig {
     @WithDefault("false")
     boolean shipMains();
 
+    /**
+     * <b>1 = keep the bootstrap's buildx builder and its seed-only caches when the run ends.</b>
+     * {@code QITS_KEEP_BUILDER} in {@code .env}, off by default.
+     * <p>
+     * The builder is BOOTSTRAP-TIME ONLY. Once the platform is up, every build runs on the host's
+     * default builder through qits-containers, and nothing asks for this one again — but its state
+     * volume keeps whatever the boot compiled into it, measured at 13.7 GB on wohlben.eu. So the
+     * last phase removes it, and {@code ensureBuilder} makes the next run a new one.
+     * <p>
+     * <b>What saying yes buys, and what it costs.</b> The dev loop reruns the boot, so it wants the
+     * warm cache: a re-bootstrap without it rebuilds every seed image cold, which is ten to twenty
+     * minutes more. A server bootstraps once and then needs the disk, so it does not.
+     */
+    @WithDefault("false")
+    boolean keepBuilder();
+
     /** How long to wait per application deployment. */
     @WithDefault("3600")
     Duration deployTimeout();
