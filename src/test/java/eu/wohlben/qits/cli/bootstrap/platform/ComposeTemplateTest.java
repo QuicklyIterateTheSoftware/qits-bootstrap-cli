@@ -46,6 +46,8 @@ class ComposeTemplateTest {
         values.put("PG_CONTAINERS_EVENTSTREAM_PASSWORD", "0f0f0f0f0f0f0f0f");
         values.put("IDP", "http://qits-platform-idp:8080/idp");
         values.put("PUSH_TOKEN", "local-dev");
+        // A one-build host: the 16 GB VPS the formula exists for.
+        values.put("CI_CONCURRENT_BUILDS", "1");
         values.put("MACHINE_REQUIRED", "true");
         values.put("MACHINE_CLIENT", "true");
         values.put("DOCKER_GID", "988");
@@ -842,6 +844,32 @@ class ComposeTemplateTest {
                         + "http://prod-qits-projects:8080/projects/api/projects")
                 .contains("QITS_REPOSITORIES_GIT_PUSH_TOKEN: \"local-dev\"")
                 .contains("QITS_REPOSITORIES_GIT_PROTECT_DEFAULT_BRANCH: \"true\"");
+    }
+
+    /**
+     * <b>qits-ci's build concurrency is FILLED, in both files, and is never the literal 2.</b>
+     * <p>
+     * A step's {@code docker build} is served by the host daemon, so it runs outside the 4g step
+     * cgroup; two concurrent GraalVM-native ones livelocked a 16 GB host on 2026-08-22. The number
+     * is {@link CiConcurrency}'s, and it has to reach the extras as well as the seed — the extras
+     * are what the deployed ci gets, and a literal there is what wrote an operator's hand-set 1
+     * back to 2 on the next re-bootstrap.
+     */
+    @Test
+    void ciBuildConcurrencyComesFromTheHostAndReachesBothFiles() {
+        Map<String, String> twoBuildHost = tokens();
+        twoBuildHost.put("CI_CONCURRENT_BUILDS", "2");
+
+        assertThat(serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-ci"))
+                .contains("QITS_CI_CONCURRENT_BUILDS: \"1\"");
+        assertThat(serviceBlock(ComposeTemplate.compose(twoBuildHost), ENV + "-qits-ci"))
+                .contains("QITS_CI_CONCURRENT_BUILDS: \"2\"");
+        assertThat(extras("qits-ci")).contains("env.QITS_CI_CONCURRENT_BUILDS=1");
+        assertThat(extras("qits-ci", twoBuildHost)).contains("env.QITS_CI_CONCURRENT_BUILDS=2");
+
+        // The step container's own limits are NOT sized by this and must not move with it.
+        assertThat(extras("qits-ci")).contains("env.QITS_CI_MEMORY_LIMIT=4g")
+                .contains("env.QITS_CI_CPUS=4");
     }
 
     /**
