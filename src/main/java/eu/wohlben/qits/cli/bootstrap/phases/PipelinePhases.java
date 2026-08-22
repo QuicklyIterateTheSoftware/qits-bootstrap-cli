@@ -1708,16 +1708,17 @@ public class PipelinePhases {
     public Phase configurationImport() {
         return new Phase("configuration-import",
                 "import the deployment extras into qits-configuration", ctx -> {
-            // The rendered extras, PLUS the one deployment value the release train does not restore
-            // on its own: the project-agent image version qits-projects starts refinement agents
-            // from. It is the calver qits-projects-daemon was released at this boot — read the same
-            // way releaseReplay reads it, so the seed and the pin cannot disagree. Seeded here,
-            // before qits-projects deploys a few phases below, it gives the service the right
-            // version on its FIRST boot instead of leaving the first refinement agent to wait on the
-            // durable SoftwareRelease event to be consumed.
-            String properties = withProjectsAgentVersion(
+            // The rendered extras, PLUS the two deployment values the release train does not restore
+            // on its own: the image versions each daemon starts sandboxes from. They are the calvers
+            // qits-projects-daemon and qits-workspace-daemon were released at this boot — read the
+            // same way releaseReplay reads them, so the seeds and the pins cannot disagree. Seeded
+            // here, before qits-projects and qits-workspaces deploy a few phases below, they give
+            // each service the right version on its FIRST boot instead of leaving the first sandbox
+            // to wait on the durable SoftwareRelease event to be consumed.
+            String properties = withImageVersions(
                     ComposeTemplate.extras(new SeedPhases(boot).tokens()),
-                    boot.git.describeTag(boot.state.repoDir("projects-daemon"), "main"));
+                    boot.git.describeTag(boot.state.repoDir("projects-daemon"), "main"),
+                    boot.git.describeTag(boot.state.repoDir("workspace-daemon"), "main"));
             boot.awaitHealth(ctx, "qits-configuration at " + boot.config.configurationUrl(),
                     () -> boot.configuration.health());
             Http.Response answer = boot.configuration.importProperties(properties);
@@ -1731,6 +1732,19 @@ public class PipelinePhases {
             ctx.log("  " + answer.body());
             ctx.note("imported");
         });
+    }
+
+    /**
+     * The imported extras with every daemon's image version seeded onto the service that deploys
+     * from it: the project-agent version on qits-projects, the workspace version on qits-workspaces.
+     * Each is guarded independently — a blank version appends nothing — so a boot that released one
+     * daemon but not the other still seeds the one it can.
+     */
+    static String withImageVersions(String extras, String projectsAgentVersion,
+            String workspaceVersion) {
+        return withWorkspaceImageVersion(
+                withProjectsAgentVersion(extras, projectsAgentVersion),
+                workspaceVersion);
     }
 
     /**
@@ -1757,6 +1771,30 @@ public class PipelinePhases {
     static String projectsAgentImageVersionSeed(String version) {
         return "qits.platform.deployments.extras." + PlatformModel.repo("projects")
                 + ".env.QITS_PROJECTS_AGENT_IMAGE_VERSION=" + version;
+    }
+
+    /**
+     * The imported extras with the workspace image version appended as an env entry on
+     * qits-workspaces. The {@code qits/workspace} image is published by the workspace-daemon release
+     * pipeline, so the version is the calver qits-workspace-daemon was released at this boot — read
+     * the same way {@code releaseReplay} reads it, so the seed and the pin cannot disagree. A blank
+     * version — a workspace-daemon that has never released — leaves the extras untouched, since an
+     * empty value would be a worse seed than the fallback default qits-workspaces carries.
+     */
+    static String withWorkspaceImageVersion(String extras, String version) {
+        if (version.isBlank()) {
+            return extras;
+        }
+        return extras.stripTrailing() + "\n"
+                + "# The workspace image version, seeded so qits-workspaces' first deploy pins\n"
+                + "# the release this boot cut rather than waiting on the SoftwareRelease event.\n"
+                + workspaceImageVersionSeed(version) + "\n";
+    }
+
+    /** The seed line: qits-workspaces' {@code QITS_WORKSPACE_IMAGE_VERSION} deployment env. */
+    static String workspaceImageVersionSeed(String version) {
+        return "qits.platform.deployments.extras." + PlatformModel.repo("workspaces")
+                + ".env.QITS_WORKSPACE_IMAGE_VERSION=" + version;
     }
 
     /**

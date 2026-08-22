@@ -544,6 +544,70 @@ class PipelinePhasesTest {
                 .doesNotContain("QITS_PROJECTS_AGENT_IMAGE_VERSION");
     }
 
+    // --- the workspace image version seed ----------------------------------------------------------
+
+    private static final String WORKSPACE_VERSION = "2026.821.101530";
+
+    /**
+     * The version qits-workspace-daemon released this boot is seeded into the imported extras as an
+     * env entry on qits-workspaces, so its first deploy pins the right qits/workspace image before
+     * the SoftwareRelease event is consumed.
+     */
+    @Test
+    void theWorkspaceVersionIsSeededOntoQitsWorkspaces() {
+        String seeded = PipelinePhases.withWorkspaceImageVersion(renderedExtras(), WORKSPACE_VERSION);
+
+        assertThat(seeded).contains(
+                "qits.platform.deployments.extras.qits-workspaces.env."
+                        + "QITS_WORKSPACE_IMAGE_VERSION=" + WORKSPACE_VERSION);
+        // The whole import is still there — the seed is appended, not a replacement.
+        assertThat(seeded).startsWith(renderedExtras().stripTrailing());
+    }
+
+    /** The exact key the deployer injects, on qits-workspaces and nothing else. */
+    @Test
+    void theSeedLineNamesTheWorkspacesApplicationKey() {
+        assertThat(PipelinePhases.workspaceImageVersionSeed(WORKSPACE_VERSION)).isEqualTo(
+                "qits.platform.deployments.extras.qits-workspaces.env."
+                        + "QITS_WORKSPACE_IMAGE_VERSION=" + WORKSPACE_VERSION);
+    }
+
+    /**
+     * A workspace-daemon that has never released seeds nothing — the same guard as the agent seed,
+     * since an empty value would be a worse seed than the fallback default qits-workspaces carries.
+     */
+    @Test
+    void aBlankWorkspaceVersionSeedsNothing() {
+        String extras = renderedExtras();
+
+        assertThat(PipelinePhases.withWorkspaceImageVersion(extras, "")).isEqualTo(extras);
+        assertThat(PipelinePhases.withWorkspaceImageVersion(extras, ""))
+                .doesNotContain("QITS_WORKSPACE_IMAGE_VERSION");
+    }
+
+    /**
+     * Both daemon versions are seeded together onto their own services: the project-agent version on
+     * qits-projects, the workspace version on qits-workspaces, and each is guarded independently.
+     */
+    @Test
+    void bothImageVersionsAreSeededOntoTheirServices() {
+        String seeded =
+                PipelinePhases.withImageVersions(renderedExtras(), AGENT_VERSION, WORKSPACE_VERSION);
+
+        assertThat(seeded).contains(
+                "qits.platform.deployments.extras.qits-projects.env."
+                        + "QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION);
+        assertThat(seeded).contains(
+                "qits.platform.deployments.extras.qits-workspaces.env."
+                        + "QITS_WORKSPACE_IMAGE_VERSION=" + WORKSPACE_VERSION);
+        assertThat(seeded).startsWith(renderedExtras().stripTrailing());
+
+        // Each version is guarded on its own — a blank workspace version still seeds the agent.
+        String agentOnly = PipelinePhases.withImageVersions(renderedExtras(), AGENT_VERSION, "");
+        assertThat(agentOnly).contains("QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION);
+        assertThat(agentOnly).doesNotContain("QITS_WORKSPACE_IMAGE_VERSION");
+    }
+
     // --- the reclaim, and what it is allowed to touch ----------------------------------------------
 
     /** What a phase said, and nothing more. */
