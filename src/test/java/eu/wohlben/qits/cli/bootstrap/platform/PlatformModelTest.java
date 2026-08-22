@@ -131,14 +131,15 @@ class PlatformModelTest {
 
     @Test
     void thePlatformPlaneIsWhatCannotBePerTier() {
-        // Six: the nameserver left with qits-platform-dns, the deployer and the bus joined on
-        // 2026-08-17, and the technical processes service on 2026-08-21. A cross-environment
-        // hierarchy cannot live inside one tier's deployer, which broker a service dials WAS the
-        // bus's only scoping, and what a deletion run reclaims is one machine's however many tiers
-        // share it.
+        // Seven: the nameserver left with qits-platform-dns, the deployer and the bus joined on
+        // 2026-08-17, the technical processes service on 2026-08-21 and the dependency inventory
+        // on 2026-08-22. A cross-environment hierarchy cannot live inside one tier's deployer,
+        // which broker a service dials WAS the bus's only scoping, what a deletion run reclaims is
+        // one machine's however many tiers share it, and what an inventory inventories is one
+        // catalog's.
         assertThat(PlatformModel.PLATFORM_SERVICES).containsExactlyInAnyOrder(
                 "platform-edge", "platform-idp", "platform-mirror", "deployments", "events",
-                "platform-orchestrator");
+                "platform-orchestrator", "platform-maintenance");
         // The byte-plane split settled the pair that used to be here: the caches were the only
         // reason either could not be per-tier, and they are qits-platform-mirror now.
         assertThat(PlatformModel.isPlatformService("artifacts")).isFalse();
@@ -474,6 +475,76 @@ class PlatformModelTest {
                 .isEqualTo("IDP_SECRET_PLATFORM_ORCHESTRATOR");
     }
 
+    /**
+     * <b>The dependency inventory is a READER, so it is deployed after everything it reads.</b> It
+     * takes the catalog from qits-projects, the manifests from qits-githost, the internal versions
+     * from qits-artifacts and the external ones from qits-platform-mirror, and it asks qits-ci to
+     * apply a bump. It holds a scheduler, so a cutover landing inside a peer's window is a scan
+     * whose reads fail against a service being replaced. It stays above the edge and the deployer
+     * for the reason everything does.
+     */
+    @Test
+    void theDependencyInventoryIsDeployedAfterEveryPeerItReads() {
+        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
+                "projects", "platform-mirror", "artifacts", "githost", "ci",
+                "platform-maintenance");
+        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
+                "platform-maintenance", "platform-edge", "deployments");
+        // NOT A SEED SERVICE, and that is the whole difference from the orchestrator's rollout:
+        // nothing calls it, so nothing waits on it. No seed block, no seed image, no placeholder
+        // bundle — the train restores it from its last release like any other application.
+        assertThat(PlatformModel.CORE).doesNotContain("platform-maintenance");
+        assertThat(PlatformModel.seedUiPath("platform-maintenance")).isEmpty();
+        // It carries version identity, so a restoring boot stands it at its newest release rather
+        // than shipping main.
+        assertThat(PlatformModel.carriesVersionIdentity("platform-maintenance")).isTrue();
+        // A platform service: one inventory of one catalog, so its alias carries no tier.
+        assertThat(PlatformModel.isPlatformService("platform-maintenance")).isTrue();
+        assertThat(PlatformModel.wireAlias("platform-maintenance", "prod"))
+                .isEqualTo("qits-platform-maintenance");
+        assertThat(PlatformModel.wireAlias("platform-maintenance", "preprod"))
+                .isEqualTo("qits-platform-maintenance");
+        assertThat(PlatformModel.pdNamePrefix("platform-maintenance", "prod"))
+                .isEqualTo("qits-pd-qits-platform-maintenance-");
+        // A service and its client, each in the directory its ROLE puts it in.
+        assertThat(PlatformModel.repoPath("platform-maintenance"))
+                .isEqualTo("services/qits-platform-maintenance");
+        assertThat(PlatformModel.repoPath("platform-spa-maintenance"))
+                .isEqualTo("frontends/qits-platform-spa-maintenance");
+        assertThat(PlatformModel.archetype("platform-maintenance")).isEqualTo("SERVICE");
+        assertThat(PlatformModel.archetype("platform-spa-maintenance")).isEqualTo("FRONTEND");
+        assertThat(PlatformModel.dockerfilePath("platform-maintenance"))
+                .isEqualTo("docker/Dockerfile");
+        // Published whole: it has no module a consumer resolves.
+        assertThat(PlatformModel.mavenModule("platform-maintenance")).isEmpty();
+        // The client is seeded like every other frontend and deployed by nobody: its bundle ships
+        // inside the service's own image, and it publishes no release for a replay to restore.
+        assertThat(PlatformModel.SEEDED_REPOS).contains("platform-spa-maintenance");
+        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("platform-spa-maintenance");
+        assertThat(PlatformModel.RELEASE_PUBLISHERS).doesNotContain("platform-maintenance",
+                "platform-spa-maintenance");
+    }
+
+    /**
+     * <b>It mints for three guarded peers and needs one CLAIM the others do not.</b> qits-ci's
+     * trigger route calls {@code requireProject("*")}, which passes only for a token granted every
+     * project — so a bump naming ONE repository is refused without the wildcard. The registries it
+     * reads versions from are unguarded on qits-net, so it holds no client for them.
+     */
+    @Test
+    void theDependencyInventoryMintsForItsThreeGuardedPeers() {
+        assertThat(PlatformModel.IDP_CLIENT_APPS).contains("platform-maintenance");
+        assertThat(PlatformModel.idpClients("prod")).contains("qits-platform-maintenance");
+        assertThat(PlatformModel.idpAudiences("prod")).contains(
+                "prod-qits-projects", "prod-qits-githost", "prod-qits-ci");
+        // Its own audience too: every route of it is behind the machine gate, so the deployer's
+        // health probe arrives at a service that validates.
+        assertThat(PlatformModel.idpAudiences("prod")).contains("qits-platform-maintenance");
+        // The secret is recorded under the APPLICATION's key, which is what the templates spell.
+        assertThat("IDP_SECRET_" + PlatformModel.clientKey("platform-maintenance"))
+                .isEqualTo("IDP_SECRET_PLATFORM_MAINTENANCE");
+    }
+
     @Test
     void aClientIdIsAWireAliasSoItFollowsTheEnvironment() {
         // The id is part of the config KEY, so a client the deployment spells differently from
@@ -482,13 +553,14 @@ class PlatformModelTest {
         assertThat(PlatformModel.idpClients("prod")).containsExactly(
                 "prod-qits-bootstrap", "prod-qits-ci", "prod-qits-artifacts", "prod-qits-workspaces",
                 "prod-qits-projects", "qits-deployments",
-                "prod-qits-containers", "prod-qits-edge", "qits-platform-orchestrator");
+                "prod-qits-containers", "prod-qits-edge", "qits-platform-orchestrator",
+                "qits-platform-maintenance");
         // The clients, then the receive-only applications: the git host, which validates and mints
         // nothing, and qits-configuration, which the deployer asks for on every deployment.
         assertThat(PlatformModel.idpAudiences("prod")).isEqualTo(
                 "prod-qits-bootstrap,prod-qits-ci,prod-qits-artifacts,prod-qits-workspaces,"
                         + "prod-qits-projects,qits-deployments,prod-qits-containers,"
-                        + "prod-qits-edge,qits-platform-orchestrator,"
+                        + "prod-qits-edge,qits-platform-orchestrator,qits-platform-maintenance,"
                         + "prod-qits-githost,prod-qits-configuration");
         // Every one of them follows the environment now: the artifacts client was the one platform
         // id in this list, and the byte-plane split made that service a tier's again.
@@ -497,7 +569,8 @@ class PlatformModelTest {
         assertThat(PlatformModel.idpClients("preprod")).containsExactly(
                 "preprod-qits-bootstrap", "preprod-qits-ci", "preprod-qits-artifacts", "preprod-qits-workspaces",
                 "preprod-qits-projects", "qits-deployments",
-                "preprod-qits-containers", "preprod-qits-edge", "qits-platform-orchestrator");
+                "preprod-qits-containers", "preprod-qits-edge", "qits-platform-orchestrator",
+                "qits-platform-maintenance");
         // The two new byte services hold no client at all: the mirror has no auth surface, and the
         // git host validates a push option rather than a token.
         assertThat(PlatformModel.idpClients("prod"))

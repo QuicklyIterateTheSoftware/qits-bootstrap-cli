@@ -145,11 +145,20 @@ public final class PlatformModel {
      * replaced. Deploying it after them puts its first scheduled window behind their last one.
      * It stays ABOVE the edge and the deployer for the reason everything does: the edge's cutover
      * takes this program's door away and the deployer's is the self-update handoff.
+     * <p>
+     * <b>qits-platform-maintenance is LATE for the orchestrator's reason and is NOT in the
+     * seed.</b> It reads the catalog from qits-projects, the manifests from qits-githost, the
+     * versions from qits-artifacts and qits-platform-mirror, and it asks qits-ci to apply a bump —
+     * five callees, every one of them above it here. It holds a scheduler too, so a cutover landing
+     * inside a peer's window is a scan whose reads fail against a service being replaced. Nothing
+     * calls it, so no seed service waits on it: the train restores it from its last release like
+     * any other platform-tier application.
      */
     public static final List<String> DEPLOYABLES = List.of(
             "observability", "platform-idp", "configuration", "stt", "projects",
             "workspaces", "events", "docs", "platform-mirror", "artifacts", "githost",
-            "containers", "ci", "platform-orchestrator", "platform-edge", "deployments");
+            "containers", "ci", "platform-orchestrator", "platform-maintenance",
+            "platform-edge", "deployments");
 
     /**
      * The deployables on the PLATFORM plane: one instance for the whole platform, deployed once
@@ -196,10 +205,17 @@ public final class PlatformModel {
      * the host's image store, its volumes, its build cache, the registry's blobs — is ONE machine's
      * however many tiers run on it. A per-tier copy would be two schedulers pruning the same docker
      * daemon on their own clocks, each blind to what the other pinned.
+     * <p>
+     * <b>qits-platform-maintenance joined on 2026-08-22, because a dependency inventory is one
+     * catalog's.</b> What it inventories is every repository of the platform and the versions their
+     * manifests pin — facts of the git host and the registries, and neither is per-tier. A second
+     * copy would scan the same repositories twice and push the same maintenance branch on two
+     * clocks. Which CI applies a bump IS a tier's, and that is one configured address
+     * ({@code QITS_MAINTENANCE_TARGETS_CI_URL}) rather than a second instance.
      */
     public static final List<String> PLATFORM_SERVICES = List.of(
             "platform-edge", "platform-idp", "platform-mirror", "deployments", "events",
-            "platform-orchestrator");
+            "platform-orchestrator", "platform-maintenance");
 
     /**
      * Repositories that need a repository on the platform git host and a main push, but are not
@@ -235,6 +251,10 @@ public final class PlatformModel {
      * and a main push. The two lists are disjoint on purpose — {@link #platformRepos} adds them —
      * so an application named in both would be created twice and pushed twice.
      * <p>
+     * <b>qits-platform-spa-maintenance joined on 2026-08-22</b>, on exactly those terms: its bundle
+     * ships inside qits-platform-maintenance's own image as a webui submodule, so it is a
+     * repository and a main history and nothing more.
+     * <p>
      * <b>qits-oci-postgresql moved here from {@link #DEPLOYABLES}</b>, because it is a seed image
      * this run builds but the train never deploys — see the note there for the circular dependency
      * that forbids re-deploying the database. Seeded like every image publisher: a checkout, a
@@ -247,7 +267,7 @@ public final class PlatformModel {
             "integrations-angular", "integrations-quarkus", "spa-home", "spa-projects",
             "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events",
             "spa-ci", "spa-githost", "spa-configuration", "platform-spa-idp",
-            "platform-spa-mirror", "platform-spa-orchestrator",
+            "platform-spa-mirror", "platform-spa-orchestrator", "platform-spa-maintenance",
             "oci-workspace", "workspace-daemon", "projects-daemon");
 
     /**
@@ -588,10 +608,18 @@ public final class PlatformModel {
      * asks the idp for a token per audience. One client with one audience would not do: a bearer
      * minted for {@code <env>-qits-artifacts} is refused by every other peer, so a run's every step
      * but one would be a 401. All four present THIS application's id, never a borrowed one.
+     * <p>
+     * <b>qits-platform-maintenance joined on 2026-08-22, and its CLAIM is what is unusual about
+     * it.</b> Three named clients — qits-projects for the catalog, qits-githost for the manifests,
+     * qits-ci for the trigger — under the same one-client-per-audience rule. The registries it
+     * reads versions from are unguarded on qits-net, so it holds no client for them. What it needs
+     * beyond a token is {@code project=*}: qits-ci's trigger route demands every project, so a bump
+     * that names ONE repository is refused without the wildcard. qits-artifacts held the only such
+     * grant until now.
      */
     public static final List<String> IDP_CLIENT_APPS =
             List.of("bootstrap", "ci", "artifacts", "workspaces", "projects", "deployments",
-                    "containers", "edge", "platform-orchestrator");
+                    "containers", "edge", "platform-orchestrator", "platform-maintenance");
 
     /**
      * The {@code aud} values the platform's clients may ask for: every client above plus the

@@ -282,6 +282,12 @@ public final class ComposeTemplate {
                   # the list is derived from the model — and a named client with no secret is
                   # invalid_client with nothing to say it was never filled in.
                   QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_ORCHESTRATOR}_SECRET: "${IDP_SECRET_PLATFORM_ORCHESTRATOR}"
+                  # THE DEPENDENCY INVENTORY, seeded here on the same terms and for the same
+                  # reason: nothing runs it until its own deployment near the end of the train, but
+                  # QITS_IDP_CLIENTS names it from the first second the idp is up, and a named
+                  # client with no secret is invalid_client with nothing to say it was never filled
+                  # in.
+                  QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_MAINTENANCE}_SECRET: "${IDP_SECRET_PLATFORM_MAINTENANCE}"
                   # THE EDGE'S, for the user sessions, and the one id that is not its service's
                   # alias: the credential belongs to the SESSION GATE, which is an environment's,
                   # while qits-platform-edge is the one process that serves them all. The edge is
@@ -326,6 +332,10 @@ public final class ComposeTemplate {
                   # full list every minting client gets: the key replaces the shipped one, and an
                   # audience left off it is invalid_target rather than a call that reaches a gate.
                   QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_ORCHESTRATOR}_AUDIENCES: "${IDP_AUDIENCES}"
+                  # The dependency inventory asks for THREE by name — qits-projects for the
+                  # catalog, qits-githost for the manifests, qits-ci for the bump trigger — and gets
+                  # the same full list every minting client gets, for the same reason.
+                  QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_MAINTENANCE}_AUDIENCES: "${IDP_AUDIENCES}"
                   QITS_IDP_CLIENT_${CLIENT_KEY_BOOTSTRAP}_ROLES: "qits:system,qits-platform:system"
                   # THE TWO CONTEXT-COMMISSIONING CLIENTS CARRY qits:admin, and it is the contexts that
                   # need it. The idp issues a commissioned client its OWNER's roles (ClientRegistry:
@@ -355,6 +365,11 @@ public final class ComposeTemplate {
                   # claim, so one missing role is a step that authenticates and is refused 403 —
                   # and a deletion run that cannot read the pins refuses to delete anything.
                   QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_ORCHESTRATOR}_ROLES: "qits:system,qits-platform:system"
+                  # THE DEPENDENCY INVENTORY'S ROLES, the same pair and no more. qits:system covers
+                  # qits-projects' catalog, qits-githost's content reads and qits-ci's trigger and
+                  # run reads; qits-platform:system is the platform plane's half. qits:admin is
+                  # deliberately absent — it is the role of a PERSON, and this service is never one.
+                  QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_MAINTENANCE}_ROLES: "qits:system,qits-platform:system"
                   # The one wildcard grant, and it is kept for a PERSON. qits-ci's manual trigger names
                   # no repository, so it demands them all — a token granted project=*. This bootstrap
                   # used to present one, for the release replays; they push the release tag now and
@@ -363,6 +378,11 @@ public final class ComposeTemplate {
                   # qits-ci for a run by hand. The idp only states the claim; qits-ci's own enforcement
                   # is what reads '*' as covering every value.
                   QITS_IDP_CLIENT_${CLIENT_KEY_ARTIFACTS}_CLAIMS_PROJECT: "*"
+                  # THE SECOND WILDCARD GRANT, and it is a machine's. qits-ci's trigger route calls
+                  # requireProject("*"), which passes only for a token granted every project — so a
+                  # bump naming ONE repository is refused without this line. It is not a widening of
+                  # what maintenance may do: what it may ask ci FOR is one MaintenanceBump event.
+                  QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_MAINTENANCE}_CLAIMS_PROJECT: "*"
                   # WHERE TELEMETRY GOES, and it has to be spelled in every service below. The
                   # images ship the bare qits-observability, and that name died with the
                   # 2026-08-08 rename: observability is an environment service, so its alias
@@ -1874,6 +1894,8 @@ public final class ComposeTemplate {
             # The technical processes service, which mints against four peers by name. The seed
             # block above says why its secret is written before anything runs it.
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_ORCHESTRATOR}_SECRET=${IDP_SECRET_PLATFORM_ORCHESTRATOR}
+            # The dependency inventory, which mints against three peers by name.
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_MAINTENANCE}_SECRET=${IDP_SECRET_PLATFORM_MAINTENANCE}
             # The edge's own, for the user sessions. Its id is the session gate's rather than the
             # service's alias — a session belongs to an environment — and the same pair is on the
             # edge's own extras above. It gets no audience list: it introspects with Basic and asks
@@ -1888,6 +1910,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_DEPLOYMENTS}_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_CONTAINERS}_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_ORCHESTRATOR}_AUDIENCES=${IDP_AUDIENCES}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_MAINTENANCE}_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_BOOTSTRAP}_ROLES=qits:system,qits-platform:system
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_CI}_ROLES=qits:system,qits-platform:system,qits:admin
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_ARTIFACTS}_ROLES=qits:system,qits-platform:system
@@ -1904,7 +1927,13 @@ public final class ComposeTemplate {
             # of the store, the container orchestrator and ci are qits:system, and the deployer's
             # pin union is qits-platform:system.
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_ORCHESTRATOR}_ROLES=qits:system,qits-platform:system
+            # THE DEPENDENCY INVENTORY'S ROLES, the same pair and no more — the seed block above
+            # says why qits:admin is not among them.
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_MAINTENANCE}_ROLES=qits:system,qits-platform:system
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_ARTIFACTS}_CLAIMS_PROJECT=*
+            # The second wildcard grant, and it is a machine's: qits-ci's trigger route demands
+            # every project, so a bump naming one repository is refused without it.
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_MAINTENANCE}_CLAIMS_PROJECT=*
             # The passkey binding, as on the seed block: the rp id is a HOST a credential is bound
             # to, the origins are what a ceremony is checked against, and both are the address a
             # browser arrives at — localhost and the edge's port, or the domain over TLS.
@@ -2074,5 +2103,65 @@ public final class ComposeTemplate {
             # application needed nothing beyond its image until the address had to be spelled, which is why
             # it had nothing at all here.
             qits.platform.deployments.extras.qits-observability.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # THE DEPENDENCY INVENTORY, and it is a reader of five peers and a writer of none. It
+            # scans every repository's manifests, learns the latest version of each pin, groups the
+            # pending upgrades and asks qits-ci to apply one. It starts no container, holds no
+            # socket, and its only store is its own inventory — `resources: postgresql:db` in its
+            # deployments.yml, injected by the deployer before the successor starts, so no triple
+            # here.
+            #
+            # NOT A SEED SERVICE, and it deploys LATE. Nothing calls it, so nothing waits on it,
+            # and everything it calls is deployed above it in the train.
+            #
+            # IT IS A PLATFORM SERVICE and its gate says so: the audience is the bare alias with no
+            # tier in it, because a dependency inventory is one catalog's however many tiers read
+            # it. The image cannot default that either way, and the plane is decided in
+            # PlatformModel.
+            #
+            # THREE NAMED OIDC CLIENTS, ONE PER GUARDED PEER, and the audience is what makes them
+            # three: a bearer minted for the catalog is refused by the git host and by ci. All three
+            # present THIS service's own client id — a refused read has to name the service that was
+            # refused — and the image ships them client-enabled=false, because an enabled client
+            # with no auth-server-url fails the boot of a platform running with the gate down.
+            #
+            # THE REGISTRIES GET NO CLIENT, and the absence is deliberate rather than missing.
+            # qits-artifacts' registry routes and qits-platform-mirror's proxies are unguarded on
+            # qits-net, so a version read needs no bearer; the service ships `artifacts` and
+            # `mirror` clients DISABLED for the day the edge's rule reaches the inside, and this
+            # file does not enable what nothing needs.
+            #
+            # QITS_MAINTENANCE_ENVIRONMENT IS NOT QITS_ENVIRONMENT, and the two must not be
+            # confused. This service belongs to no tier — a platform service is told none, and the
+            # deployer keys its rows by that absence. What this states is which environment's CI a
+            # bump RAN IN, recorded on every bump row so a second environment is a config entry
+            # rather than a schema change.
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_AUTH_MACHINE_AUDIENCE=${ALIAS_PLATFORM_MAINTENANCE}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_PROJECTS_URL=http://${ALIAS_PROJECTS}:8080
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_GITHOST_URL=http://${ALIAS_GITHOST}:8080
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_CI_URL=http://${ALIAS_CI}:8080
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_REGISTRIES_MAVEN_URL=http://${ALIAS_ARTIFACTS}:8080/artifacts/maven/maven
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_REGISTRIES_NPM_URL=http://${ALIAS_ARTIFACTS}:8080/artifacts/npm/npm
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_REGISTRIES_OCI_URL=http://${ALIAS_ARTIFACTS}:8080/v2
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_MIRROR_MAVEN_URL=http://${ALIAS_PLATFORM_MIRROR}:8080/artifacts/maven/central
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_MIRROR_NPM_URL=http://${ALIAS_PLATFORM_MIRROR}:8080/artifacts/npm/npmjs
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_ENVIRONMENT=${ENV_NAME}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_PROJECTS_CLIENT_ENABLED=${MACHINE_CLIENT}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_PROJECTS_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_PROJECTS_CLIENT_ID=${ALIAS_PLATFORM_MAINTENANCE}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_PROJECTS_CREDENTIALS_SECRET=${IDP_SECRET_PLATFORM_MAINTENANCE}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_PROJECTS_GRANT_OPTIONS_CLIENT_AUDIENCE=${ALIAS_PROJECTS}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_GITHOST_CLIENT_ENABLED=${MACHINE_CLIENT}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_GITHOST_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_GITHOST_CLIENT_ID=${ALIAS_PLATFORM_MAINTENANCE}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_GITHOST_CREDENTIALS_SECRET=${IDP_SECRET_PLATFORM_MAINTENANCE}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_GITHOST_GRANT_OPTIONS_CLIENT_AUDIENCE=${ALIAS_GITHOST}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_CI_CLIENT_ENABLED=${MACHINE_CLIENT}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_CI_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_CI_CLIENT_ID=${ALIAS_PLATFORM_MAINTENANCE}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_CI_CREDENTIALS_SECRET=${IDP_SECRET_PLATFORM_MAINTENANCE}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_CI_GRANT_OPTIONS_CLIENT_AUDIENCE=${ALIAS_CI}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             """;
 }
