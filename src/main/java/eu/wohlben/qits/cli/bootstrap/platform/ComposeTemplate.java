@@ -1059,7 +1059,17 @@ public final class ComposeTemplate {
                   # ci's choice and travels in the workload spec; the orchestrator puts the container
                   # on it.
                   QITS_CI_NETWORK: qits-net
-                  QITS_CI_CONCURRENT_BUILDS: "2"
+                  # COMPUTED FROM THIS HOST'S MEMORY, never a literal — see CiConcurrency, which
+                  # holds the formula and the accident behind it. Short version: a step's
+                  # `docker build` is served by the HOST daemon, so a GraalVM-native build runs
+                  # OUTSIDE the 4g cgroup below and costs several gigabytes of its own. Two of them
+                  # on a 16 GB host with no swap livelocked the machine on 2026-08-22 and it needed a
+                  # hard reset — and a literal here is also what silently reverted the 1 an operator
+                  # had set by hand. QITS_CI_CONCURRENT_BUILDS in the environment overrides it.
+                  QITS_CI_CONCURRENT_BUILDS: "${CI_CONCURRENT_BUILDS}"
+                  # NOT the bound on a build. It is the step CONTAINER's limit, and the docker build
+                  # it starts is the host daemon's child — which is why the line above is sized by
+                  # the host instead.
                   QITS_CI_MEMORY_LIMIT: 4g
                   QITS_CI_CPUS: "4"
                   # WHERE STEP CONTAINERS COME FROM NOW. ci starts nothing itself: it asks this tier's
@@ -1606,7 +1616,11 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_URL=http://githost.${ENV_NAME}.internal:8080
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_AUDIENCE=${ENV_NAME}-qits-githost
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_NETWORK=qits-net
-            qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONCURRENT_BUILDS=2
+            # THE SAME COMPUTED NUMBER as the seed block's, and it has to be here too: this is what
+            # survives the seed container, and a re-bootstrap that wrote a literal back over an
+            # operator's hand-set value is exactly how a 16 GB host was livelocked on 2026-08-22.
+            # CiConcurrency holds the formula; QITS_CI_CONCURRENT_BUILDS overrides it.
+            qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONCURRENT_BUILDS=${CI_CONCURRENT_BUILDS}
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_MEMORY_LIMIT=4g
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_CPUS=4
             qits.platform.deployments.extras.qits-ci.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080

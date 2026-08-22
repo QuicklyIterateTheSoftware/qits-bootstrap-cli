@@ -1,5 +1,6 @@
 package eu.wohlben.qits.cli.bootstrap.config;
 
+import eu.wohlben.qits.cli.bootstrap.platform.CiConcurrency;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithDefault;
@@ -244,6 +245,26 @@ public interface BootstrapConfig {
     /** 1 = machine-token enforcement ON for ci, deployments, artifacts and the idp. */
     @WithDefault("true")
     boolean machineAuth();
+
+    /**
+     * <b>The operator's override for how many builds qits-ci runs at once.</b> Unset — the ordinary
+     * case — the number is COMPUTED from this host's memory by
+     * {@link CiConcurrency#concurrentBuildsFor(long)}, which is where the reason lives.
+     * <p>
+     * Set, it is used as it stands, including a value the formula would never choose. That is the
+     * point of it: the formula is a floor under a host that would otherwise be sized by a literal,
+     * not a ceiling on someone who knows the machine.
+     */
+    Optional<Integer> ciConcurrentBuilds();
+
+    /**
+     * What the generated files are actually filled with: the override if there is one, this host's
+     * computed number otherwise.
+     */
+    default int ciConcurrentBuildsEffective() {
+        return ciConcurrentBuilds()
+                .orElseGet(() -> CiConcurrency.concurrentBuildsFor(CiConcurrency.hostMemoryBytes()));
+    }
 
     /**
      * The standing environment's name, and <b>the platform environment</b>: the tier whose branch
