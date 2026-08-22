@@ -1708,7 +1708,16 @@ public class PipelinePhases {
     public Phase configurationImport() {
         return new Phase("configuration-import",
                 "import the deployment extras into qits-configuration", ctx -> {
-            String properties = ComposeTemplate.extras(new SeedPhases(boot).tokens());
+            // The rendered extras, PLUS the one deployment value the release train does not restore
+            // on its own: the project-agent image version qits-projects starts refinement agents
+            // from. It is the calver qits-projects-daemon was released at this boot — read the same
+            // way releaseReplay reads it, so the seed and the pin cannot disagree. Seeded here,
+            // before qits-projects deploys a few phases below, it gives the service the right
+            // version on its FIRST boot instead of leaving the first refinement agent to wait on the
+            // durable SoftwareRelease event to be consumed.
+            String properties = withProjectsAgentVersion(
+                    ComposeTemplate.extras(new SeedPhases(boot).tokens()),
+                    boot.git.describeTag(boot.state.repoDir("projects-daemon"), "main"));
             boot.awaitHealth(ctx, "qits-configuration at " + boot.config.configurationUrl(),
                     () -> boot.configuration.health());
             Http.Response answer = boot.configuration.importProperties(properties);
@@ -1722,6 +1731,32 @@ public class PipelinePhases {
             ctx.log("  " + answer.body());
             ctx.note("imported");
         });
+    }
+
+    /**
+     * The imported extras with the project-agent image version appended as an env entry on
+     * qits-projects. A blank version — a projects-daemon that has never released — leaves the
+     * extras untouched: releaseReplay stops the boot before this phase in that case, and an empty
+     * value would be a worse seed than none, since qits-projects carries its own fallback default.
+     * <p>
+     * One source for the version: {@code releaseReplay} restores the tag, this line seeds it, and a
+     * new SoftwareRelease listener in qits-configuration keeps it in sync afterwards — so the value
+     * the deployer injects tracks the pin the release train moves.
+     */
+    static String withProjectsAgentVersion(String extras, String version) {
+        if (version.isBlank()) {
+            return extras;
+        }
+        return extras.stripTrailing() + "\n"
+                + "# The project-agent image version, seeded so qits-projects' first deploy pins\n"
+                + "# the release this boot cut rather than waiting on the SoftwareRelease event.\n"
+                + projectsAgentImageVersionSeed(version) + "\n";
+    }
+
+    /** The seed line: qits-projects' {@code QITS_PROJECTS_AGENT_IMAGE_VERSION} deployment env. */
+    static String projectsAgentImageVersionSeed(String version) {
+        return "qits.platform.deployments.extras." + PlatformModel.repo("projects")
+                + ".env.QITS_PROJECTS_AGENT_IMAGE_VERSION=" + version;
     }
 
     /**

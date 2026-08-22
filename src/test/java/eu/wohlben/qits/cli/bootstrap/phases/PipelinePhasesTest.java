@@ -503,6 +503,47 @@ class PipelinePhasesTest {
         assertThat(PipelinePhases.flipEnv(renderedExtras(), "qits-configuration")).isEmpty();
     }
 
+    // --- the project-agent image version seed ------------------------------------------------------
+
+    private static final String AGENT_VERSION = "2026.820.154053";
+
+    /**
+     * The version qits-projects-daemon released this boot is seeded into the imported extras as an
+     * env entry on qits-projects, so its first deploy pins the right project-agent image before the
+     * SoftwareRelease event is consumed.
+     */
+    @Test
+    void theProjectsAgentVersionIsSeededOntoQitsProjects() {
+        String seeded = PipelinePhases.withProjectsAgentVersion(renderedExtras(), AGENT_VERSION);
+
+        assertThat(seeded).contains(
+                "qits.platform.deployments.extras.qits-projects.env."
+                        + "QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION);
+        // The whole import is still there — the seed is appended, not a replacement.
+        assertThat(seeded).startsWith(renderedExtras().stripTrailing());
+    }
+
+    /** The exact key the deployer injects, on qits-projects and nothing else. */
+    @Test
+    void theSeedLineNamesTheProjectsApplicationKey() {
+        assertThat(PipelinePhases.projectsAgentImageVersionSeed(AGENT_VERSION)).isEqualTo(
+                "qits.platform.deployments.extras.qits-projects.env."
+                        + "QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION);
+    }
+
+    /**
+     * A projects-daemon that has never released seeds nothing — releaseReplay stops the boot first,
+     * and an empty value would be a worse seed than the fallback default qits-projects carries.
+     */
+    @Test
+    void aBlankVersionSeedsNothing() {
+        String extras = renderedExtras();
+
+        assertThat(PipelinePhases.withProjectsAgentVersion(extras, "")).isEqualTo(extras);
+        assertThat(PipelinePhases.withProjectsAgentVersion(extras, ""))
+                .doesNotContain("QITS_PROJECTS_AGENT_IMAGE_VERSION");
+    }
+
     // --- the reclaim, and what it is allowed to touch ----------------------------------------------
 
     /** What a phase said, and nothing more. */
