@@ -39,8 +39,10 @@ public final class PlatformModel {
      * <p>
      * qits-oci-postgresql is in here because qits-deployments refuses to boot without the database
      * it holds. It is the one member that is not a service of this platform's own making — the
-     * image adds nothing to upstream postgres — and it is still hand-built and hand-started for
-     * the same reason as the rest: nothing can deploy it until the deployer answers.
+     * image adds nothing to upstream postgres — and it is hand-built and hand-started like the
+     * rest. Unlike the rest it STAYS the seed service: the train never re-deploys the database,
+     * because reading its spec back from qits-githost (whose storage is this database) is a circular
+     * dependency that crash-loops it. It is absent from {@link #DEPLOYABLES} for that reason.
      * <p>
      * <b>qits-events joined on 2026-08-10, because it is the BUS and the bus is now the only road a
      * green build takes.</b> The direct ci -&gt; deployer announcement is retired; what is left is
@@ -100,14 +102,15 @@ public final class PlatformModel {
      * The edge's own deploy wait needs no host port: it is a platform service, so its liveness is
      * read from {@code docker ps} rather than from a deployment row.
      * <p>
-     * <b>qits-oci-postgresql is second, right after observability, and its position is the same
-     * argument the idp's is.</b> It is the deployer's own database, so its cutover must never be
-     * queued beside a consumer's: it goes before everything that might one day hold a connection
-     * to it. The cutover replaces the compose-seeded postgres under the deployer's own feet —
-     * stop-before-start frees the volume and the host port, the successor mounts the same volume,
-     * {@code pg_isready} gates it, and the deployer's pool reconnects after the blip because a
-     * Plan is plain values and no deployment reads the database inside the docker window. The same
-     * self-referential class as the registry pulling its own successor before stopping itself.
+     * <b>qits-oci-postgresql is deliberately NOT in this list — it is a seed service the train
+     * never re-deploys.</b> It is the platform's one database, every service's store and
+     * qits_githost's included, and it stays the seed-stack postgres that {@link ComposeTemplate}
+     * already renders {@code pg_isready}-gated. Re-deploying it would make qits-deployments read
+     * its spec from qits-githost, whose storage IS this database: during postgres's own cutover
+     * that read misses, the deployer falls back to its HTTP-probe default, and swarm kills a bare
+     * postgres that cannot answer it — a crash-loop out of a circular dependency. The bootstrapper
+     * stands the database up directly, so the train leaves it alone. It is in {@link #SEEDED_REPOS}
+     * for its checkout, its git-host repository and its seed-image build; it carries no deployment.
      * <p>
      * <b>The byte plane's three sit together, and their order inside it is forced.</b>
      * qits-platform-mirror is first of the three: every image build and every dependency
@@ -115,7 +118,7 @@ public final class PlatformModel {
      * builds it feeds rather than in the middle of them. qits-githost comes after qits-artifacts
      * and before qits-ci, because ci reads pipeline config out of the git host and clones from it —
      * and because the githost's own deployment is the one that re-hosts the repository this train
-     * pushes to, the same self-referential class as postgres and the deployer.
+     * pushes to, the same self-referential class as the deployer.
      * <p>
      * <b>qits-containers is immediately BEFORE qits-ci, and that pair's order is forced.</b> ci runs
      * every pipeline step as a container it asks this service for, so a ci cutover landing while the
@@ -144,7 +147,7 @@ public final class PlatformModel {
      * takes this program's door away and the deployer's is the self-update handoff.
      */
     public static final List<String> DEPLOYABLES = List.of(
-            "observability", "oci-postgresql", "platform-idp", "configuration", "stt", "projects",
+            "observability", "platform-idp", "configuration", "stt", "projects",
             "workspaces", "events", "docs", "platform-mirror", "artifacts", "githost",
             "containers", "ci", "platform-orchestrator", "platform-edge", "deployments");
 
@@ -231,9 +234,15 @@ public final class PlatformModel {
      * service is a {@link #DEPLOYABLES} entry, and that list already gets a repository, a checkout
      * and a main push. The two lists are disjoint on purpose — {@link #platformRepos} adds them —
      * so an application named in both would be created twice and pushed twice.
+     * <p>
+     * <b>qits-oci-postgresql moved here from {@link #DEPLOYABLES}</b>, because it is a seed image
+     * this run builds but the train never deploys — see the note there for the circular dependency
+     * that forbids re-deploying the database. Seeded like every image publisher: a checkout, a
+     * git-host repository and a main history feed its seed-image build; it carries no release, so it
+     * is not restored to a tag.
      */
     public static final List<String> SEEDED_REPOS = List.of(
-            "oci", "ci-daemon", "eventstream", "blobstore", "registries", "spa-ui-components",
+            "oci", "oci-postgresql", "ci-daemon", "eventstream", "blobstore", "registries", "spa-ui-components",
             "userflows", "spa-docs", "spa-deployments",
             "integrations-angular", "integrations-quarkus", "spa-home", "spa-projects",
             "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events",

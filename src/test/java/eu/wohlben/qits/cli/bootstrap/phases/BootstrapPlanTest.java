@@ -117,7 +117,6 @@ class BootstrapPlanTest {
         List<String> ids = ids(plan(Map.of()));
 
         assertThat(ids).containsSubsequence("environment", "deploy-observability",
-                "deploy-oci-postgresql",
                 "deploy-platform-idp", "deploy-configuration",
                 "deploy-stt", "deploy-projects", "deploy-workspaces",
                 "deploy-events", "deploy-docs",
@@ -128,6 +127,9 @@ class BootstrapPlanTest {
                 "deploy-containers", "deploy-ci",
                 "deploy-platform-edge", "deploy-deployments");
         assertThat(ids).doesNotContain("deploy-cd", "deploy-serviceregistry");
+        // postgres is the seed database, never a train phase: re-reading its spec from qits-githost
+        // (whose storage is postgres) is a circular dependency that crash-loops it.
+        assertThat(ids).doesNotContain("deploy-oci-postgresql");
         // Pre-rename spellings deploy nothing and would push to repositories nobody reads.
         assertThat(ids).doesNotContain("deploy-idp", "deploy-platform-deployments",
                 "deploy-platform-artifacts", "deploy-platform-docs");
@@ -158,9 +160,9 @@ class BootstrapPlanTest {
         // phases later, and nothing between them deploys anything.
         assertThat(ids.indexOf("configuration-flip"))
                 .isGreaterThan(ids.indexOf("deploy-configuration"));
-        // And the store it needs, and the issuer it validates against, are already cut over.
-        assertThat(ids).containsSubsequence("deploy-oci-postgresql", "deploy-platform-idp",
-                "deploy-configuration");
+        // The issuer it validates against is already cut over, and its store is the seed postgres,
+        // up before the train starts.
+        assertThat(ids).containsSubsequence("deploy-platform-idp", "deploy-configuration");
         // Everything after the flip is deployed from what the service serves. The train is long
         // enough that this is a real proof rather than one deployment's.
         assertThat(ids).containsSubsequence("configuration-flip", "deploy-ci",

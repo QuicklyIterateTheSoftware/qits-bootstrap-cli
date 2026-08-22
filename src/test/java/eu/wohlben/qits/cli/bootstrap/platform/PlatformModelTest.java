@@ -144,18 +144,18 @@ class PlatformModelTest {
         assertThat(PlatformModel.isPlatformService("artifacts")).isFalse();
         assertThat(PlatformModel.isPlatformService("docs")).isFalse();
         assertThat(PlatformModel.isPlatformService("githost")).isFalse();
-        // Everything else is a service of the one environment.
+        // Everything else is a service of the one environment. postgres is not here: it is a
+        // seed-only service the train never deploys, so it left DEPLOYABLES for SEEDED_REPOS.
         assertThat(PlatformModel.DEPLOYABLES)
                 .filteredOn(name -> !PlatformModel.isPlatformService(name))
-                .containsExactlyInAnyOrder("observability", "oci-postgresql", "stt", "projects",
+                .containsExactlyInAnyOrder("observability", "stt", "projects",
                         "workspaces", "ci", "containers",
                         "artifacts", "githost", "docs", "configuration");
         // And qits-configuration is one of them rather than a platform service, which is the whole
         // point of it: two tiers sharing one configuration store would make an edit in dev an edit
         // in prod.
         assertThat(PlatformModel.isPlatformService("configuration")).isFalse();
-        // Every environment runs its own database, so postgres is an environment service like the
-        // rest of them — the platform plane is what genuinely cannot be per-tier.
+        // postgres is neither a platform service nor a deployable — it is the seed database.
         assertThat(PlatformModel.isPlatformService("oci-postgresql")).isFalse();
     }
 
@@ -179,9 +179,12 @@ class PlatformModelTest {
                 "platform-edge", "platform-mirror", "artifacts", "githost", "projects", "ci",
                 "containers", "deployments", "platform-idp", "events",
                 "oci-postgresql");
-        // Every seed service is also deployed through the pipeline afterwards; nothing stays
-        // hand-built.
-        assertThat(PlatformModel.DEPLOYABLES).containsAll(PlatformModel.CORE);
+        // Every seed service is also deployed through the pipeline afterwards, with ONE exception:
+        // postgres stays the seed service for good, because re-reading its spec from qits-githost
+        // (whose storage IS postgres) is a circular dependency that crash-loops it.
+        assertThat(PlatformModel.DEPLOYABLES).containsAll(
+                PlatformModel.CORE.stream().filter(name -> !name.equals("oci-postgresql")).toList());
+        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("oci-postgresql");
     }
 
     @Test
@@ -341,9 +344,10 @@ class PlatformModelTest {
         // deployment is the self-update handoff.
         assertThat(PlatformModel.DEPLOYABLES.getFirst()).isEqualTo("observability");
         assertThat(PlatformModel.DEPLOYABLES.getLast()).isEqualTo("deployments");
-        // The database goes before every application that might hold a connection to it, so its
-        // cutover is never queued beside a consumer's.
-        assertThat(PlatformModel.DEPLOYABLES.get(1)).isEqualTo("oci-postgresql");
+        // The database is NOT in the train: re-reading its spec from qits-githost (whose storage
+        // is postgres) is a circular dependency, so it stays the seed service. The idp is second.
+        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("oci-postgresql");
+        assertThat(PlatformModel.DEPLOYABLES.get(1)).isEqualTo("platform-idp");
         // The edge is the host port, so its cutover takes the CLI's own door away for a beat. It
         // goes as late as it can, before the self-update.
         assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
@@ -397,15 +401,15 @@ class PlatformModelTest {
     }
 
     /**
-     * <b>Where qits-configuration sits in the train, and every neighbour is load-bearing.</b> After
-     * postgres, because its store is provisioned there; after the idp, whose cutover must not fall
-     * inside the deploy window of a service that validates its tokens; and before the deployer's own
-     * self-update, which inherits the extras url the boot flips.
+     * <b>Where qits-configuration sits in the train, and every neighbour is load-bearing.</b> Its
+     * store is the seed postgres, already up before the train starts; after the idp, whose cutover
+     * must not fall inside the deploy window of a service that validates its tokens; and before the
+     * deployer's own self-update, which inherits the extras url the boot flips.
      */
     @Test
-    void configurationIsDeployedAfterPostgresAndTheIdpAndLongBeforeTheDeployer() {
+    void configurationIsDeployedAfterTheIdpAndLongBeforeTheDeployer() {
         assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
-                "oci-postgresql", "platform-idp", "configuration", "deployments");
+                "platform-idp", "configuration", "deployments");
         // Everything below it is deployed from what it serves, which is what proves the read.
         assertThat(PlatformModel.DEPLOYABLES.indexOf("configuration"))
                 .isLessThan(PlatformModel.DEPLOYABLES.indexOf("ci"));
@@ -572,6 +576,9 @@ class PlatformModelTest {
         assertThat(PlatformModel.carriesVersionIdentity("oci")).isFalse();
         assertThat(PlatformModel.carriesVersionIdentity("spa-home")).isFalse();
         assertThat(PlatformModel.carriesVersionIdentity("ci-daemon")).isFalse();
+        // The seed database too: it is not deployed and nobody pins a postgres release, so its
+        // seed image builds from main.
+        assertThat(PlatformModel.carriesVersionIdentity("oci-postgresql")).isFalse();
         // Every entry of both sets, so a new deployable cannot be added without one.
         assertThat(PlatformModel.DEPLOYABLES).allSatisfy(name ->
                 assertThat(PlatformModel.carriesVersionIdentity(name)).isTrue());
