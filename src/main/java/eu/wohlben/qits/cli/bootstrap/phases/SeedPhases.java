@@ -10,6 +10,7 @@ import eu.wohlben.qits.cli.bootstrap.config.WrapperDir;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.platform.BootstrapState;
+import eu.wohlben.qits.cli.bootstrap.platform.CiConcurrency;
 import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.DomainTokens;
@@ -155,6 +156,13 @@ public class SeedPhases {
             }
             ctx.log("  docker compose: present");
             ctx.log("  bootstrap builders: enforced 9g memory and 4 cpu limits");
+            // PRINTED, because it is derived and because getting it wrong stops the machine rather
+            // than the boot: the builds it sizes run on the host daemon, outside every cgroup this
+            // run sets.
+            ctx.log("  qits-ci concurrent builds: " + boot.config.ciConcurrentBuildsEffective()
+                    + " (" + (boot.config.ciConcurrentBuilds().isPresent()
+                            ? "QITS_CI_CONCURRENT_BUILDS override, "
+                            : "") + CiConcurrency.describe(CiConcurrency.hostMemoryBytes()) + ")");
             boot.state.swarm = ensureSwarm(boot.docker, ctx::log);
             ctx.log("  swarm: " + boot.state.swarm);
             warnAboutInsecureRegistries(ctx);
@@ -2224,6 +2232,10 @@ public class SeedPhases {
         values.put("BOOTSTRAP_INGRESS_GIT_EXPIRES_AT",
                 boot.state.bootstrapIngressExpiresAt == 0 ? "1970-01-01T00:00:00Z"
                         : java.time.Instant.ofEpochSecond(boot.state.bootstrapIngressExpiresAt).toString());
+        // Sized by the host this platform runs on, not by a number in the template — the seed block
+        // and the extras carry the reason. Read here rather than remembered, so a machine that grew
+        // memory gets the benefit on its next boot.
+        values.put("CI_CONCURRENT_BUILDS", String.valueOf(boot.config.ciConcurrentBuildsEffective()));
         values.put("MACHINE_REQUIRED", String.valueOf(boot.config.machineAuth()));
         // The OUTBOUND half, and a separate switch from the gate: quarkus-oidc-client ships
         // DISABLED, so a service given an issuer and a secret still posts BARE until this is set.

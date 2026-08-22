@@ -197,6 +197,16 @@ public class OverridableConfig implements BootstrapConfig {
         return base.machineAuth();
     }
 
+    /**
+     * Delegated and not overridable: the number is computed from the machine, and the machine does
+     * not change between invocations. {@code QITS_CI_CONCURRENT_BUILDS} in {@code .env} is the
+     * operator's answer, and it is recorded there rather than retyped.
+     */
+    @Override
+    public Optional<Integer> ciConcurrentBuilds() {
+        return base.ciConcurrentBuilds();
+    }
+
     @Override
     public String envName() {
         return platformEnv != null ? platformEnv : base.envName();
