@@ -347,6 +347,10 @@ class ComposeTemplateTest {
             assertThat(extras(PlatformModel.repo(app))).as("the extras of %s", app)
                     .doesNotContain("QITS_ENVIRONMENT");
         }
+        // QITS_MAINTENANCE_ENVIRONMENT is not this variable and the loop above proves it: it
+        // records which environment's CI ran a bump, on a service that belongs to no tier.
+        assertThat(extras("qits-platform-maintenance"))
+                .contains("env.QITS_MAINTENANCE_ENVIRONMENT=prod");
         // AN ENVIRONMENT APPLICATION STILL GETS IT, and the line is what says which tier it is —
         // so this asserts the fragment renders rather than that the variable is simply gone.
         assertThat(PlatformModel.modelTokens(ENV))
@@ -636,6 +640,126 @@ class ComposeTemplateTest {
         assertThat(PlatformModel.idpAudiences(ENV)).contains("prod-qits-artifacts")
                 .contains("prod-qits-containers").contains("prod-qits-ci")
                 .contains("qits-deployments");
+    }
+
+    /**
+     * <b>The dependency inventory, and the three credentials one scan-and-bump needs.</b> It reads
+     * the catalog from qits-projects, the manifests from qits-githost and asks qits-ci to apply a
+     * bump — three peers behind three different audiences, so three named oidc clients rather than
+     * one reused token. The registries it reads versions from are unguarded on qits-net, so it
+     * holds no client for them and this file emits none.
+     */
+    @Test
+    void theMaintenanceServiceHoldsAClientPerGuardedPeerAndReadsBothRegistriesBare() {
+        String maintenance = extras("qits-platform-maintenance");
+
+        // Its own gate. The audience is the bare alias: it is a platform service, so there is no
+        // tier in the name a peer would validate against.
+        assertThat(maintenance)
+                .contains("env.QITS_AUTH_MACHINE_REQUIRED=true")
+                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=qits-platform-maintenance")
+                .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp")
+                .contains("env.QITS_OBSERVABILITY_URL=http://prod-qits-observability:8080");
+        // What it reads and what it asks. All three are this tier's wire aliases.
+        assertThat(maintenance)
+                .contains("env.QITS_MAINTENANCE_TARGETS_PROJECTS_URL="
+                        + "http://prod-qits-projects:8080")
+                .contains("env.QITS_MAINTENANCE_TARGETS_GITHOST_URL="
+                        + "http://prod-qits-githost:8080")
+                .contains("env.QITS_MAINTENANCE_TARGETS_CI_URL=http://prod-qits-ci:8080");
+        // Where a version comes from: the hosted registries for an internal dependency, the
+        // mirror's pull-through caches for an external one. The store carries the tier, the mirror
+        // does not — one cache per machine.
+        assertThat(maintenance)
+                .contains("env.QITS_MAINTENANCE_REGISTRIES_MAVEN_URL="
+                        + "http://prod-qits-artifacts:8080/artifacts/maven/maven")
+                .contains("env.QITS_MAINTENANCE_REGISTRIES_NPM_URL="
+                        + "http://prod-qits-artifacts:8080/artifacts/npm/npm")
+                .contains("env.QITS_MAINTENANCE_REGISTRIES_OCI_URL="
+                        + "http://prod-qits-artifacts:8080/v2")
+                .contains("env.QITS_MAINTENANCE_MIRROR_MAVEN_URL="
+                        + "http://qits-platform-mirror:8080/artifacts/maven/central")
+                .contains("env.QITS_MAINTENANCE_MIRROR_NPM_URL="
+                        + "http://qits-platform-mirror:8080/artifacts/npm/npmjs");
+        // WHICH ENVIRONMENT A BUMP RAN IN, recorded on every bump row. It is not QITS_ENVIRONMENT:
+        // this service belongs to no tier, and the test below asserts it is told none.
+        assertThat(maintenance).contains("env.QITS_MAINTENANCE_ENVIRONMENT=prod");
+        // Three clients, and the AUDIENCE is what makes them three: each peer validates its own.
+        assertThat(maintenance)
+                .contains("env.QUARKUS_OIDC_CLIENT_PROJECTS_GRANT_OPTIONS_CLIENT_AUDIENCE="
+                        + "prod-qits-projects")
+                .contains("env.QUARKUS_OIDC_CLIENT_GITHOST_GRANT_OPTIONS_CLIENT_AUDIENCE="
+                        + "prod-qits-githost")
+                .contains("env.QUARKUS_OIDC_CLIENT_CI_GRANT_OPTIONS_CLIENT_AUDIENCE="
+                        + "prod-qits-ci");
+        for (String client : List.of("PROJECTS", "GITHOST", "CI")) {
+            assertThat(maintenance).as("the %s client", client)
+                    .contains("env.QUARKUS_OIDC_CLIENT_" + client + "_CLIENT_ENABLED=true")
+                    .contains("env.QUARKUS_OIDC_CLIENT_" + client + "_AUTH_SERVER_URL="
+                            + "http://qits-platform-idp:8080/idp")
+                    // This service's OWN id, never a borrowed one: a refused read has to name the
+                    // service that was refused.
+                    .contains("env.QUARKUS_OIDC_CLIENT_" + client + "_CLIENT_ID="
+                            + "qits-platform-maintenance")
+                    .contains("env.QUARKUS_OIDC_CLIENT_" + client + "_CREDENTIALS_SECRET="
+                            + "secret-qits-platform-maintenance");
+        }
+        // The two registry clients stay OFF, and the service ships them disabled: the registry
+        // routes and the mirror's proxies are unguarded on qits-net, so enabling them here would
+        // be a token nothing asks for against an audience nothing validates.
+        assertThat(maintenance).doesNotContain("env.QUARKUS_OIDC_CLIENT_ARTIFACTS_")
+                .doesNotContain("env.QUARKUS_OIDC_CLIENT_MIRROR_");
+        // The DEFAULT unnamed client stays off for the orchestrator's reason: the extension creates
+        // it either way, and an enabled client with no auth-server-url fails the boot.
+        assertThat(maintenance).doesNotContain("env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED");
+        // It starts no container and holds no store of anyone else's: no socket, no group, no
+        // publish, and its own inventory is declared in its deployments.yml rather than pinned.
+        assertThat(maintenance).doesNotContain(".mounts[")
+                .doesNotContain(".publishes[")
+                .doesNotContain(".groups[")
+                .doesNotContain("QITS_RESOURCE_DB_");
+        // And no seed service: nothing calls it, so nothing waits on it. It is deployed through
+        // the pipeline like every other ordinary application, late in the train.
+        assertThat(ComposeTemplate.compose(tokens()))
+                .doesNotContain("\n  qits-platform-maintenance:\n");
+    }
+
+    /**
+     * <b>Its client carries both planes' system roles and the WILDCARD PROJECT CLAIM.</b> The roles
+     * are the orchestrator's pair — qits:system for the catalog, the content reads and ci's
+     * trigger, qits-platform:system for the platform plane's half — and qits:admin is deliberately
+     * absent, because that is the role of a person. The claim is the part that is not optional:
+     * qits-ci's trigger calls {@code requireProject("*")}, so a bump naming ONE repository is
+     * refused without a token granted every project.
+     */
+    @Test
+    void theMaintenanceIdpClientCarriesBothSystemRolesAndTheWildcardProjectClaim() {
+        assertThat(serviceBlock(ComposeTemplate.compose(tokens()), "qits-platform-idp"))
+                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_SECRET: "
+                        + "\"secret-qits-platform-maintenance\"")
+                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_ROLES: "
+                        + "\"qits:system,qits-platform:system\"")
+                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_AUDIENCES: \""
+                        + PlatformModel.idpAudiences(ENV) + "\"")
+                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_CLAIMS_PROJECT: \"*\"");
+        assertThat(extras("qits-platform-idp"))
+                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_SECRET="
+                        + "secret-qits-platform-maintenance")
+                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_ROLES="
+                        + "qits:system,qits-platform:system")
+                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_AUDIENCES="
+                        + PlatformModel.idpAudiences(ENV))
+                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_CLAIMS_PROJECT=*");
+        // qits:admin is the human role and this service is never a person.
+        assertThat(extras("qits-platform-idp"))
+                .doesNotContain("QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_ROLES="
+                        + "qits:system,qits-platform:system,qits:admin");
+        // Every peer it mints for is on the audience list. An audience a client may not ask for is
+        // invalid_target, which never reaches the peer's own gate.
+        assertThat(PlatformModel.idpAudiences(ENV)).contains("prod-qits-projects")
+                .contains("prod-qits-githost").contains("prod-qits-ci");
+        // And the client itself is named, or the idp answers invalid_client to a secret it holds.
+        assertThat(PlatformModel.idpClients(ENV)).contains("qits-platform-maintenance");
     }
 
     /**
