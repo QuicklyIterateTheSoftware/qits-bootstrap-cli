@@ -125,9 +125,12 @@ class BootstrapPlanTest {
                 // that service for, so a ci cutover inside the orchestrator's window is a pipeline
                 // with nowhere to run.
                 "deploy-containers", "deploy-ci",
-                // The two callers, after every service they call and before the door: the
-                // technical processes, then the dependency inventory.
+                // The three late ones, after every service they call and before the door: the
+                // technical processes, the dependency inventory, then the base system panels —
+                // which call no peer at all and go last because their cutover drops every open
+                // terminal.
                 "deploy-platform-orchestrator", "deploy-platform-maintenance",
+                "deploy-platform-system",
                 "deploy-platform-edge", "deploy-deployments");
         assertThat(ids).doesNotContain("deploy-cd", "deploy-serviceregistry");
         // postgres is the seed database, never a train phase: re-reading its spec from qits-githost

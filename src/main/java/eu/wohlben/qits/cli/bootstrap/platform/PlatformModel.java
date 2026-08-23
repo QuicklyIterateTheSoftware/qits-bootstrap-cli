@@ -153,11 +153,19 @@ public final class PlatformModel {
      * inside a peer's window is a scan whose reads fail against a service being replaced. Nothing
      * calls it, so no seed service waits on it: the train restores it from its last release like
      * any other platform-tier application.
+     * <p>
+     * <b>qits-platform-system calls NO peer at all, and that is why its place is the free one.</b>
+     * The base system panels read the host's docker daemon and nothing else — {@code docker info},
+     * the swarm lists, this node's containers — so no service in this list is a dependency of it
+     * and nothing above it constrains where it goes. It is last of the platform-tier applications
+     * because its own cutover DROPS every open terminal: put earlier, the successor would take the
+     * sessions of an operator watching the rest of the train go by. It stays above the edge and the
+     * deployer for the reason everything does. Not in the seed either: nothing calls it.
      */
     public static final List<String> DEPLOYABLES = List.of(
             "observability", "platform-idp", "configuration", "stt", "projects",
             "workspaces", "events", "docs", "platform-mirror", "artifacts", "githost",
-            "containers", "ci", "platform-orchestrator", "platform-maintenance",
+            "containers", "ci", "platform-orchestrator", "platform-maintenance", "platform-system",
             "platform-edge", "deployments");
 
     /**
@@ -212,10 +220,16 @@ public final class PlatformModel {
      * copy would scan the same repositories twice and push the same maintenance branch on two
      * clocks. Which CI applies a bump IS a tier's, and that is one configured address
      * ({@code QITS_MAINTENANCE_TARGETS_CI_URL}) rather than a second instance.
+     * <p>
+     * <b>qits-platform-system joined on 2026-08-23, because what it shows is a MACHINE.</b> The
+     * host, the swarm, this node's containers and the terminals into them are facts of one docker
+     * daemon, however many tiers run on it — there is no per-tier half of a node. Two copies would
+     * be two services holding the same socket and two boot sweeps deleting each other's terminal
+     * containers, which is why the sweep is scoped by an owner label even with one.
      */
     public static final List<String> PLATFORM_SERVICES = List.of(
             "platform-edge", "platform-idp", "platform-mirror", "deployments", "events",
-            "platform-orchestrator", "platform-maintenance");
+            "platform-orchestrator", "platform-maintenance", "platform-system");
 
     /**
      * Repositories that need a repository on the platform git host and a main push, but are not
@@ -255,6 +269,9 @@ public final class PlatformModel {
      * ships inside qits-platform-maintenance's own image as a webui submodule, so it is a
      * repository and a main history and nothing more.
      * <p>
+     * <b>qits-platform-spa-system joined on 2026-08-23</b>, on the same terms: the admin console's
+     * bundle ships inside qits-platform-system's image.
+     * <p>
      * <b>qits-oci-postgresql moved here from {@link #DEPLOYABLES}</b>, because it is a seed image
      * this run builds but the train never deploys — see the note there for the circular dependency
      * that forbids re-deploying the database. Seeded like every image publisher: a checkout, a
@@ -268,6 +285,7 @@ public final class PlatformModel {
             "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events",
             "spa-ci", "spa-githost", "spa-configuration", "platform-spa-idp",
             "platform-spa-mirror", "platform-spa-orchestrator", "platform-spa-maintenance",
+            "platform-spa-system",
             "oci-workspace", "workspace-daemon", "projects-daemon");
 
     /**
@@ -616,10 +634,20 @@ public final class PlatformModel {
      * beyond a token is {@code project=*}: qits-ci's trigger route demands every project, so a bump
      * that names ONE repository is refused without the wildcard. qits-artifacts held the only such
      * grant until now.
+     * <p>
+     * <b>qits-platform-system joined on 2026-08-23 as a THIRD PULLER.</b> It mints nothing — it
+     * calls no peer at all — but the glances terminal it opens is a {@code docker run} of an image
+     * behind the platform mirror, and the edge has granted no anonymous read since 2026-08-14. So
+     * it needs the same thing the deployer and the container orchestrator need: a client id and a
+     * secret in a docker {@code config.json}, its own and never a borrowed one, because a refused
+     * pull has to name the service that was refused. Its file carries TWO hosts rather than one —
+     * see {@code SeedPhases.dockerConfig} — since the image it pulls is the mirror's, not the
+     * registry's.
      */
     public static final List<String> IDP_CLIENT_APPS =
             List.of("bootstrap", "ci", "artifacts", "workspaces", "projects", "deployments",
-                    "containers", "edge", "platform-orchestrator", "platform-maintenance");
+                    "containers", "edge", "platform-orchestrator", "platform-maintenance",
+                    "platform-system");
 
     /**
      * The {@code aud} values the platform's clients may ask for: every client above plus the

@@ -765,6 +765,92 @@ class ComposeTemplateTest {
     }
 
     /**
+     * <b>The base system panels are the THIRD holder of the host's docker socket</b>, after the
+     * container orchestrator and the deployer, and this block is the deliberate act of granting it.
+     * The alternative was an exec endpoint on qits-containers' machine API, which would put a shell
+     * into any container behind a credential every service on qits-net can mint; the power stays in
+     * one admin console behind qits:admin instead, and a console that owns the PTYs has to hold the
+     * socket itself.
+     */
+    @Test
+    void theSystemConsoleGetsTheSocketTheSocketGroupAndItsMirrorCredential() {
+        String system = extras("qits-platform-system");
+
+        // The socket, and the group that makes it usable by a container running as uid 1001. The
+        // mount says `bind` rather than leaving the kind to a leading slash: a mistyped path that
+        // fell back to a named volume would be a console with no daemon and no error.
+        assertThat(system)
+                .contains(".mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock")
+                .contains(".groups[0]=988");
+        // The credential mount and the variable that makes the docker CLI look at it — the
+        // container has no home, so DOCKER_CONFIG is the whole reason the file is read.
+        assertThat(system)
+                .contains(".mounts[1]=volume:qits-platform-system-config:/work/config")
+                .contains("env.DOCKER_CONFIG=/work/config");
+        // Its own gate. The audience is the bare alias: it is a platform service, so there is no
+        // tier in the name a peer would validate against.
+        assertThat(system)
+                .contains("env.QITS_AUTH_MACHINE_REQUIRED=true")
+                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=qits-platform-system")
+                .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp")
+                .contains("env.QITS_OBSERVABILITY_URL=http://prod-qits-observability:8080");
+        // THE GLANCES IMAGE: a repo and a version, so a bump is one value. `hub/` is the mirror's
+        // docker.io upstream, the prefix every committed Dockerfile uses, and the tag is pinned to
+        // the `-full` variant — the one carrying the docker plugin glances lists containers with.
+        assertThat(system)
+                .contains("env.QITS_SYSTEM_GLANCES_IMAGE_REPO="
+                        + "mirror.prod.localhost:8080/hub/nicolargo/glances")
+                .contains("env.QITS_SYSTEM_GLANCES_IMAGE_VERSION=4.5.6-full");
+        assertThat(system).doesNotContain("glances:latest");
+        // It calls no peer, so it mints nothing: no named oidc client, and not the default one
+        // either — the extension creates that regardless, and an enabled client with no
+        // auth-server-url fails the boot.
+        assertThat(system).doesNotContain("env.QUARKUS_OIDC_CLIENT_");
+        // Stateless: every answer is read live from the daemon, and the terminal registry is in
+        // memory. No store to inject and no port of its own — it is behind the edge like the rest.
+        assertThat(system).doesNotContain("QITS_RESOURCE_").doesNotContain(".publishes[");
+        // Not a seed service: nothing calls it, so nothing waits on it.
+        assertThat(ComposeTemplate.compose(tokens()))
+                .doesNotContain("\n  qits-platform-system:\n");
+    }
+
+    /**
+     * <b>Its idp client is a docker credential first.</b> The service mints against no peer, but
+     * the glances pull it starts goes through the platform mirror and the edge has granted no
+     * anonymous read since 2026-08-14 — so the client exists to be half of a {@code config.json}.
+     * Its roles are the machine pair; qits:admin is absent, and on this service that absence is
+     * what keeps a shell a person's.
+     */
+    @Test
+    void theSystemIdpClientCarriesTheMachineRolesAndNoWildcardClaim() {
+        assertThat(serviceBlock(ComposeTemplate.compose(tokens()), "qits-platform-idp"))
+                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_SYSTEM_SECRET: "
+                        + "\"secret-qits-platform-system\"")
+                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_SYSTEM_ROLES: "
+                        + "\"qits:system,qits-platform:system\"")
+                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_SYSTEM_AUDIENCES: \""
+                        + PlatformModel.idpAudiences(ENV) + "\"");
+        assertThat(extras("qits-platform-idp"))
+                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_SYSTEM_SECRET="
+                        + "secret-qits-platform-system")
+                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_SYSTEM_ROLES="
+                        + "qits:system,qits-platform:system")
+                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_SYSTEM_AUDIENCES="
+                        + PlatformModel.idpAudiences(ENV));
+        // qits:admin is the human role, and it is what opens a terminal. A machine may read the
+        // panels; only a person may get a shell.
+        assertThat(extras("qits-platform-idp"))
+                .doesNotContain("QITS_IDP_CLIENT_QITS_PLATFORM_SYSTEM_ROLES="
+                        + "qits:system,qits-platform:system,qits:admin");
+        // No wildcard project claim: it triggers no pipeline. The two grants stay artifacts' and
+        // maintenance's.
+        assertThat(extras("qits-platform-idp"))
+                .doesNotContain("QITS_IDP_CLIENT_QITS_PLATFORM_SYSTEM_CLAIMS_PROJECT");
+        // And the client itself is named, or the idp answers invalid_client to a secret it holds.
+        assertThat(PlatformModel.idpClients(ENV)).contains("qits-platform-system");
+    }
+
+    /**
      * <b>Every application the deploy train reaches has a block here.</b> Once the flip is on, the
      * deployer reads each one out of qits-configuration — which the boot fills from this very file —
      * so an application with no lines is an application the import never mentions.
