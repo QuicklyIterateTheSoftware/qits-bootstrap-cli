@@ -131,15 +131,15 @@ class PlatformModelTest {
 
     @Test
     void thePlatformPlaneIsWhatCannotBePerTier() {
-        // Seven: the nameserver left with qits-platform-dns, the deployer and the bus joined on
-        // 2026-08-17, the technical processes service on 2026-08-21 and the dependency inventory
-        // on 2026-08-22. A cross-environment hierarchy cannot live inside one tier's deployer,
-        // which broker a service dials WAS the bus's only scoping, what a deletion run reclaims is
-        // one machine's however many tiers share it, and what an inventory inventories is one
-        // catalog's.
+        // Eight: the nameserver left with qits-platform-dns, the deployer and the bus joined on
+        // 2026-08-17, the technical processes service on 2026-08-21, the dependency inventory on
+        // 2026-08-22 and the base system panels on 2026-08-23. A cross-environment hierarchy
+        // cannot live inside one tier's deployer, which broker a service dials WAS the bus's only
+        // scoping, what a deletion run reclaims is one machine's however many tiers share it, what
+        // an inventory inventories is one catalog's, and a NODE has no per-tier half at all.
         assertThat(PlatformModel.PLATFORM_SERVICES).containsExactlyInAnyOrder(
                 "platform-edge", "platform-idp", "platform-mirror", "deployments", "events",
-                "platform-orchestrator", "platform-maintenance");
+                "platform-orchestrator", "platform-maintenance", "platform-system");
         // The byte-plane split settled the pair that used to be here: the caches were the only
         // reason either could not be per-tier, and they are qits-platform-mirror now.
         assertThat(PlatformModel.isPlatformService("artifacts")).isFalse();
@@ -545,6 +545,73 @@ class PlatformModelTest {
                 .isEqualTo("IDP_SECRET_PLATFORM_MAINTENANCE");
     }
 
+    /**
+     * <b>The base system panels call NO peer, so nothing in the train is a dependency of them.</b>
+     * Every answer is the local docker daemon's. They are last of the platform-tier applications
+     * for a different reason: their own cutover drops every terminal an operator has open, so it
+     * lands after the rest of the train rather than in the middle of it.
+     */
+    @Test
+    void theBaseSystemPanelsAreDeployedLastOfThePlatformTierAndCallNoPeer() {
+        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
+                "containers", "ci", "platform-orchestrator", "platform-maintenance",
+                "platform-system");
+        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
+                "platform-system", "platform-edge", "deployments");
+        // NOT A SEED SERVICE: nothing calls it, so nothing waits on it.
+        assertThat(PlatformModel.CORE).doesNotContain("platform-system");
+        assertThat(PlatformModel.seedUiPath("platform-system")).isEmpty();
+        // It carries version identity, so a restoring boot stands it at its newest release.
+        assertThat(PlatformModel.carriesVersionIdentity("platform-system")).isTrue();
+        // A platform service: what it shows is a MACHINE, which has no per-tier half.
+        assertThat(PlatformModel.isPlatformService("platform-system")).isTrue();
+        assertThat(PlatformModel.wireAlias("platform-system", "prod"))
+                .isEqualTo("qits-platform-system");
+        assertThat(PlatformModel.wireAlias("platform-system", "preprod"))
+                .isEqualTo("qits-platform-system");
+        assertThat(PlatformModel.pdNamePrefix("platform-system", "prod"))
+                .isEqualTo("qits-pd-qits-platform-system-");
+        // A service and its console, each in the directory its ROLE puts it in.
+        assertThat(PlatformModel.repoPath("platform-system"))
+                .isEqualTo("services/qits-platform-system");
+        assertThat(PlatformModel.repoPath("platform-spa-system"))
+                .isEqualTo("frontends/qits-platform-spa-system");
+        assertThat(PlatformModel.archetype("platform-system")).isEqualTo("SERVICE");
+        assertThat(PlatformModel.archetype("platform-spa-system")).isEqualTo("FRONTEND");
+        assertThat(PlatformModel.dockerfilePath("platform-system")).isEqualTo("docker/Dockerfile");
+        // Published whole: it has no module a consumer resolves.
+        assertThat(PlatformModel.mavenModule("platform-system")).isEmpty();
+        // The console is seeded like every other frontend and deployed by nobody: its bundle ships
+        // inside the service's own image, and it publishes no release for a replay to restore.
+        assertThat(PlatformModel.SEEDED_REPOS).contains("platform-spa-system");
+        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("platform-spa-system");
+        assertThat(PlatformModel.RELEASE_PUBLISHERS).doesNotContain("platform-system",
+                "platform-spa-system");
+    }
+
+    /**
+     * <b>Its client exists to be a DOCKER CREDENTIAL, which is the third of its kind.</b> It mints
+     * against no peer — it has none — but the glances image its Overview terminal runs is pulled
+     * through the platform mirror, and the edge has granted no anonymous read since 2026-08-14. So
+     * it gets a client and a secret for the same reason the deployer and the container
+     * orchestrator did: the pull has to name the service that was refused.
+     */
+    @Test
+    void theBaseSystemPanelsHoldAClientBecauseTheyPullGlancesThroughTheMirror() {
+        assertThat(PlatformModel.IDP_CLIENT_APPS).contains("platform-system");
+        assertThat(PlatformModel.idpClients("prod")).contains("qits-platform-system");
+        // Its own audience: every route of it is behind the machine gate, so the deployer's health
+        // probe arrives at a service that validates.
+        assertThat(PlatformModel.idpAudiences("prod")).contains("qits-platform-system");
+        // The secret is recorded under the APPLICATION's key, which is what the templates spell.
+        assertThat("IDP_SECRET_" + PlatformModel.clientKey("platform-system"))
+                .isEqualTo("IDP_SECRET_PLATFORM_SYSTEM");
+        // And the alias the templates spell for its gate.
+        assertThat(PlatformModel.modelTokens("prod"))
+                .containsEntry("ALIAS_PLATFORM_SYSTEM", "qits-platform-system")
+                .containsEntry("CLIENT_KEY_PLATFORM_SYSTEM", "QITS_PLATFORM_SYSTEM");
+    }
+
     @Test
     void aClientIdIsAWireAliasSoItFollowsTheEnvironment() {
         // The id is part of the config KEY, so a client the deployment spells differently from
@@ -554,13 +621,14 @@ class PlatformModelTest {
                 "prod-qits-bootstrap", "prod-qits-ci", "prod-qits-artifacts", "prod-qits-workspaces",
                 "prod-qits-projects", "qits-deployments",
                 "prod-qits-containers", "prod-qits-edge", "qits-platform-orchestrator",
-                "qits-platform-maintenance");
+                "qits-platform-maintenance", "qits-platform-system");
         // The clients, then the receive-only applications: the git host, which validates and mints
         // nothing, and qits-configuration, which the deployer asks for on every deployment.
         assertThat(PlatformModel.idpAudiences("prod")).isEqualTo(
                 "prod-qits-bootstrap,prod-qits-ci,prod-qits-artifacts,prod-qits-workspaces,"
                         + "prod-qits-projects,qits-deployments,prod-qits-containers,"
                         + "prod-qits-edge,qits-platform-orchestrator,qits-platform-maintenance,"
+                        + "qits-platform-system,"
                         + "prod-qits-githost,prod-qits-configuration");
         // Every one of them follows the environment now: the artifacts client was the one platform
         // id in this list, and the byte-plane split made that service a tier's again.
@@ -570,7 +638,7 @@ class PlatformModelTest {
                 "preprod-qits-bootstrap", "preprod-qits-ci", "preprod-qits-artifacts", "preprod-qits-workspaces",
                 "preprod-qits-projects", "qits-deployments",
                 "preprod-qits-containers", "preprod-qits-edge", "qits-platform-orchestrator",
-                "qits-platform-maintenance");
+                "qits-platform-maintenance", "qits-platform-system");
         // The two new byte services hold no client at all: the mirror has no auth surface, and the
         // git host validates a push option rather than a token.
         assertThat(PlatformModel.idpClients("prod"))

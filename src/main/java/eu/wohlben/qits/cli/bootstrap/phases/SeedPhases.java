@@ -36,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -1718,8 +1719,18 @@ public class SeedPhases {
                     .map(l -> l.substring("qits.platform.deployments.extras.".length()).split("\\.")[0])
                     .distinct().count()
                     + " applications configured on the qits-deployments-config volume");
-            dockerConfig(ctx, "qits-deployments-config", "deployments");
-            dockerConfig(ctx, "qits-containers-config", "containers");
+            dockerConfig(ctx, "qits-deployments-config", "deployments",
+                    boot.config.registryVhost());
+            dockerConfig(ctx, "qits-containers-config", "containers",
+                    boot.config.registryVhost());
+            // THE THIRD PULLER, AND THE ONLY ONE WITH TWO HOSTS IN ITS FILE. The base system
+            // panels pull nothing of the platform's own — what they pull is glances, an upstream
+            // image behind qits-platform-mirror — so the mirror vhost is the host that matters
+            // here. The registry is written beside it anyway: it costs one line and the day this
+            // console pulls a qits/* image of its own is not the day to discover the file names
+            // one host.
+            dockerConfig(ctx, "qits-platform-system-config", "platform-system",
+                    boot.config.registryVhost(), boot.config.mirrorVhost());
             if (!sha256(properties).equals(before)) {
                 restartSeedDeployer(ctx);
             }
@@ -1728,7 +1739,7 @@ public class SeedPhases {
 
     /**
      * One puller's docker credential, as {@code config.json} on its config volume. The docker CLI
-     * these two shell out to reads a FILE named by {@code DOCKER_CONFIG}, which is what both
+     * these three shell out to reads a FILE named by {@code DOCKER_CONFIG}, which is what both
      * generated files set on them — the containers run as uid 1001 with no home, so there is no
      * other place the CLI would look.
      * <p>
@@ -1737,17 +1748,24 @@ public class SeedPhases {
      * idp's own block is handed for that client — one value, recorded once in
      * {@code .qits-bootstrap.env}, read by both sides of one credential.
      * <p>
+     * <b>The HOSTS are the caller's, because a puller's are.</b> The deployer and the container
+     * orchestrator pull {@code qits/*} and nothing else, so their file names the registry vhost
+     * alone; qits-platform-system pulls glances through the MIRROR vhost, and a file that named
+     * only the registry would be an unauthenticated pull the edge refuses. One credential covers
+     * both: it is the same client at the same door, and the door routes by name.
+     * <p>
      * Rerun-safe by being a whole-file write, and not digested like the extras beside it: nothing
      * restarts on a change, because the CLI opens this file per invocation rather than at boot.
      */
-    private void dockerConfig(PhaseContext ctx, String volume, String app) {
+    private void dockerConfig(PhaseContext ctx, String volume, String app, String... hosts) {
         String client = PlatformModel.wireAlias(app, boot.config.envName());
         String secret = boot.state.secrets.getOrDefault(client, "");
-        Cmd write = dockerConfigWrite(volume,
-                dockerConfigJson(boot.config.registryVhost(), client, secret), client, secret);
+        List<String> auths = List.of(hosts);
+        Cmd write = dockerConfigWrite(volume, dockerConfigJson(auths, client, secret),
+                client, secret);
         Boot.must(boot.docker.run(write, ctx::log), "writing " + client + "'s config.json failed");
         ctx.log("  " + client + " docker credential on the " + volume + " volume, for "
-                + boot.config.registryVhost() + " (every read there needs it)");
+                + String.join(" and ", auths) + " (every read there needs it)");
     }
 
     /**
@@ -1770,15 +1788,21 @@ public class SeedPhases {
     }
 
     /**
-     * The docker CLI's own {@code config.json}: four fixed keys around one base64 of
-     * {@code <id>:<secret>}, the same bytes {@code docker login} would store. Hand-written, because
-     * base64 has no character JSON escapes and the only value that could need quoting is the
-     * registry host — a deployment fact, escaped here anyway.
+     * The docker CLI's own {@code config.json}: an {@code auths} entry per host, each one base64 of
+     * {@code <id>:<secret>} — the same bytes {@code docker login} would store. Hand-written,
+     * because base64 has no character JSON escapes and the only values that could need quoting are
+     * the hosts, which are deployment facts and escaped here anyway.
+     * <p>
+     * <b>The CLI matches an entry by host and nothing else</b>, which is why more than one is not a
+     * widening: a pull of {@code registry.…/qits/x} never presents the mirror's line. One secret
+     * behind both, because both are the same client at the same edge.
      */
-    static String dockerConfigJson(String registryHost, String clientId, String secret) {
-        String host = registryHost.replace("\\", "\\\\").replace("\"", "\\\"");
-        return "{\"auths\":{\"" + host + "\":{\"auth\":\"" + dockerAuth(clientId, secret)
-                + "\"}}}\n";
+    static String dockerConfigJson(List<String> hosts, String clientId, String secret) {
+        String auth = dockerAuth(clientId, secret);
+        return hosts.stream()
+                .map(host -> "\"" + host.replace("\\", "\\\\").replace("\"", "\\\"")
+                        + "\":{\"auth\":\"" + auth + "\"}")
+                .collect(Collectors.joining(",", "{\"auths\":{", "}}\n"));
     }
 
     private static String dockerAuth(String clientId, String secret) {

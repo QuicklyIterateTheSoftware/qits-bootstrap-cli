@@ -343,7 +343,7 @@ class SeedPhasesTest {
     @Test
     void aPullersConfigJsonIsWhatDockerLoginWouldHaveWritten() {
         String json = SeedPhases.dockerConfigJson(
-                "registry.prod.localhost:8080", "qits-deployments", "s3cr3t");
+                List.of("registry.prod.localhost:8080"), "qits-deployments", "s3cr3t");
 
         String auth = Base64.getEncoder().encodeToString(
                 "qits-deployments:s3cr3t".getBytes(StandardCharsets.UTF_8));
@@ -355,6 +355,27 @@ class SeedPhasesTest {
     }
 
     /**
+     * <b>The base system panels pull an image the MIRROR holds, so their file names two hosts.</b>
+     * docker matches a credential by the host it is dialling and by nothing else, so a file keyed
+     * only by the registry would be an anonymous glances pull — which the edge has refused since
+     * 2026-08-14. One client and one secret behind both entries: it is the same identity at the
+     * same door.
+     */
+    @Test
+    void theSystemConsolesConfigJsonNamesTheRegistryAndTheMirror() {
+        String json = SeedPhases.dockerConfigJson(
+                List.of("registry.prod.localhost:8080", "mirror.prod.localhost:8080"),
+                "qits-platform-system", "s3cr3t");
+
+        String auth = Base64.getEncoder().encodeToString(
+                "qits-platform-system:s3cr3t".getBytes(StandardCharsets.UTF_8));
+        assertThat(json).isEqualTo("{\"auths\":{"
+                + "\"registry.prod.localhost:8080\":{\"auth\":\"" + auth + "\"},"
+                + "\"mirror.prod.localhost:8080\":{\"auth\":\"" + auth + "\"}}}\n");
+        assertThat(json).doesNotContain("s3cr3t");
+    }
+
+    /**
      * <b>Both halves of the credential are masked, and the second is not covered by the first.</b>
      * The base64 does not contain the secret as a substring, so a mask on the secret alone would
      * leave the whole credential on the screen and in the run log in one token.
@@ -362,7 +383,7 @@ class SeedPhasesTest {
     @Test
     void theWriteHidesTheSecretAndTheBase64OfIt() {
         String json = SeedPhases.dockerConfigJson(
-                "registry.prod.localhost:8080", "prod-qits-containers", "s3cr3t");
+                List.of("registry.prod.localhost:8080"), "prod-qits-containers", "s3cr3t");
         Cmd write = SeedPhases.dockerConfigWrite(
                 "qits-containers-config", json, "prod-qits-containers", "s3cr3t");
 

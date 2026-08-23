@@ -288,6 +288,11 @@ public final class ComposeTemplate {
                   # client with no secret is invalid_client with nothing to say it was never filled
                   # in.
                   QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_MAINTENANCE}_SECRET: "${IDP_SECRET_PLATFORM_MAINTENANCE}"
+                  # THE BASE SYSTEM PANELS, seeded here on the same terms again. This one's secret
+                  # is also a DOCKER CREDENTIAL: the bootstrap writes the same value into the
+                  # config.json its glances pull presents at the mirror, so the two sides of one
+                  # credential are one generated value.
+                  QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_SYSTEM}_SECRET: "${IDP_SECRET_PLATFORM_SYSTEM}"
                   # THE EDGE'S, for the user sessions, and the one id that is not its service's
                   # alias: the credential belongs to the SESSION GATE, which is an environment's,
                   # while qits-platform-edge is the one process that serves them all. The edge is
@@ -336,6 +341,11 @@ public final class ComposeTemplate {
                   # catalog, qits-githost for the manifests, qits-ci for the bump trigger — and gets
                   # the same full list every minting client gets, for the same reason.
                   QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_MAINTENANCE}_AUDIENCES: "${IDP_AUDIENCES}"
+                  # The base system panels ask for NONE by name — every answer is the local docker
+                  # daemon's — and get the full list anyway, because the key REPLACES the shipped
+                  # one and a client whose list is empty could not be given an audience later
+                  # without a redeploy.
+                  QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_SYSTEM}_AUDIENCES: "${IDP_AUDIENCES}"
                   QITS_IDP_CLIENT_${CLIENT_KEY_BOOTSTRAP}_ROLES: "qits:system,qits-platform:system"
                   # THE TWO CONTEXT-COMMISSIONING CLIENTS CARRY qits:admin, and it is the contexts that
                   # need it. The idp issues a commissioned client its OWNER's roles (ClientRegistry:
@@ -370,6 +380,13 @@ public final class ComposeTemplate {
                   # run reads; qits-platform:system is the platform plane's half. qits:admin is
                   # deliberately absent — it is the role of a PERSON, and this service is never one.
                   QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_MAINTENANCE}_ROLES: "qits:system,qits-platform:system"
+                  # THE BASE SYSTEM PANELS' ROLES, the same pair and no more. They are what a
+                  # MACHINE presents on /system/api — the service's own gate names qits:system for
+                  # them. qits:admin is absent here for the reason it is absent above, and the
+                  # difference matters more on this service than on any other: qits:admin is what
+                  # opens a terminal into a container, and it is a PERSON's role. A machine may read
+                  # the panels; only a person may get a shell.
+                  QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_SYSTEM}_ROLES: "qits:system,qits-platform:system"
                   # The one wildcard grant, and it is kept for a PERSON. qits-ci's manual trigger names
                   # no repository, so it demands them all — a token granted project=*. This bootstrap
                   # used to present one, for the release replays; they push the release tag now and
@@ -1073,7 +1090,9 @@ public final class ComposeTemplate {
                   QITS_CI_MEMORY_LIMIT: 4g
                   QITS_CI_CPUS: "4"
                   # WHERE STEP CONTAINERS COME FROM NOW. ci starts nothing itself: it asks this tier's
-                  # orchestrator, which is the only service on the host holding a docker socket. The
+                  # orchestrator, which is the only service a WORKLOAD may be started through. The
+                  # deployer and the base system panels hold a socket too, and neither runs anybody
+                  # else's container: one deploys, one shows an operator the machine. The
                   # image ships the unqualified qits-containers:8080, which resolves to nothing here —
                   # and an unreachable orchestrator is not a slow build but a failed one, recorded as
                   # LAUNCH_FAILED on the first step. Same class of wire-alias spelling as the git host
@@ -1910,6 +1929,9 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_ORCHESTRATOR}_SECRET=${IDP_SECRET_PLATFORM_ORCHESTRATOR}
             # The dependency inventory, which mints against three peers by name.
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_MAINTENANCE}_SECRET=${IDP_SECRET_PLATFORM_MAINTENANCE}
+            # The base system panels, whose secret is also the docker credential their glances pull
+            # presents at the mirror.
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_SYSTEM}_SECRET=${IDP_SECRET_PLATFORM_SYSTEM}
             # The edge's own, for the user sessions. Its id is the session gate's rather than the
             # service's alias — a session belongs to an environment — and the same pair is on the
             # edge's own extras above. It gets no audience list: it introspects with Basic and asks
@@ -1925,6 +1947,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_CONTAINERS}_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_ORCHESTRATOR}_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_MAINTENANCE}_AUDIENCES=${IDP_AUDIENCES}
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_SYSTEM}_AUDIENCES=${IDP_AUDIENCES}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_BOOTSTRAP}_ROLES=qits:system,qits-platform:system
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_CI}_ROLES=qits:system,qits-platform:system,qits:admin
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_ARTIFACTS}_ROLES=qits:system,qits-platform:system
@@ -1944,6 +1967,10 @@ public final class ComposeTemplate {
             # THE DEPENDENCY INVENTORY'S ROLES, the same pair and no more — the seed block above
             # says why qits:admin is not among them.
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_MAINTENANCE}_ROLES=qits:system,qits-platform:system
+            # THE BASE SYSTEM PANELS' ROLES, the same pair and no more. qits:admin is what opens a
+            # terminal, and that is a PERSON's role: a machine may read the panels and never get a
+            # shell.
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_SYSTEM}_ROLES=qits:system,qits-platform:system
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_ARTIFACTS}_CLAIMS_PROJECT=*
             # The second wildcard grant, and it is a machine's: qits-ci's trigger route demands
             # every project, so a bump naming one repository is refused without it.
@@ -2177,5 +2204,49 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_CI_CREDENTIALS_SECRET=${IDP_SECRET_PLATFORM_MAINTENANCE}
             qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_CI_GRANT_OPTIONS_CLIENT_AUDIENCE=${ALIAS_CI}
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # THE BASE SYSTEM PANELS, AND THIS BLOCK IS THE THIRD GRANT OF THE HOST'S DOCKER SOCKET
+            # — after qits-containers above and the deployer. Like both of those, the grant is
+            # root-equivalent control of the daemon and this block IS the deliberate act of making
+            # it. It is recorded here because there is one honest alternative and it was refused:
+            # qits-containers already holds a socket, so `docker exec` could have been an endpoint
+            # on its machine API. That would put a shell into any container behind a MACHINE
+            # credential every service on qits-net can mint. The power stays in one admin console
+            # instead, behind qits:admin, which is a person's role — and a console that owns the
+            # PTYs has to hold the socket itself.
+            #
+            # WHAT IT DOES WITH IT: reads only. `docker info`, `system df`, the swarm lists, this
+            # node's containers, images, volumes and networks — one bounded CLI call each, no
+            # writes, no scale, no rm. The two things it STARTS are terminals: a glances container
+            # and `docker exec -it` into a running one, each on a PTY it owns and reaps.
+            #
+            # THE MOUNT SAYS `bind` for the orchestrator's reason: a mistyped path that fell back
+            # to a named volume would be a console with no daemon and no error.
+            #
+            # THE SECOND MOUNT IS ONE FILE, and on this service it is what makes glances possible
+            # at all. The image is pulled through the platform MIRROR, and the edge has granted no
+            # anonymous read since 2026-08-14 — so the pull carries this service's own idp client
+            # out of config.json, and DOCKER_CONFIG is what makes the CLI look at the file: the
+            # container has no home. The bootstrap writes it with BOTH the registry and the mirror
+            # host (SeedPhases.dockerConfig); the deployer's and the orchestrator's carry the
+            # registry alone, because neither pulls anything of the mirror's.
+            #
+            # THE GLANCES IMAGE IS A REPO AND A VERSION, not one string, so a bump is one value.
+            # `hub/` is the mirror's docker.io upstream, the same prefix every committed Dockerfile
+            # uses. The tag is PINNED and it is the `-full` variant: that is the one carrying the
+            # docker plugin, so glances lists the host's containers over the read-only socket it is
+            # given. `latest` would be a console that changes under an operator without a deploy.
+            #
+            # NO STORE AND NO PUBLISH: every answer is read live from the daemon, and the only
+            # state is an in-memory terminal registry a restart is allowed to drop.
+            qits.platform.deployments.extras.qits-platform-system.mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock
+            qits.platform.deployments.extras.qits-platform-system.mounts[1]=volume:qits-platform-system-config:/work/config
+            qits.platform.deployments.extras.qits-platform-system.groups[0]=${DOCKER_GID}
+            qits.platform.deployments.extras.qits-platform-system.env.DOCKER_CONFIG=/work/config
+            qits.platform.deployments.extras.qits-platform-system.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
+            qits.platform.deployments.extras.qits-platform-system.env.QITS_AUTH_MACHINE_AUDIENCE=${ALIAS_PLATFORM_SYSTEM}
+            qits.platform.deployments.extras.qits-platform-system.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-platform-system.env.QITS_SYSTEM_GLANCES_IMAGE_REPO=mirror.${ENV_NAME}.localhost:${PORT}/hub/nicolargo/glances
+            qits.platform.deployments.extras.qits-platform-system.env.QITS_SYSTEM_GLANCES_IMAGE_VERSION=4.5.6-full
+            qits.platform.deployments.extras.qits-platform-system.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             """;
 }
