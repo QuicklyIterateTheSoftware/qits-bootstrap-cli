@@ -94,8 +94,8 @@ class PlatformModelTest {
                 .isEqualTo("qits-pd-qits-platform-idp-");
         assertThat(PlatformModel.pdNamePrefix("platform-edge", "prod"))
                 .isEqualTo("qits-pd-qits-platform-edge-");
-        assertThat(PlatformModel.pdNamePrefix("gateway", "prod"))
-                .isEqualTo("qits-pd-prod-qits-gateway-");
+        assertThat(PlatformModel.pdNamePrefix("workspaces", "prod"))
+                .isEqualTo("qits-pd-prod-qits-workspaces-");
         // The deployer took the platform shape on 2026-08-17, and its own container name is what
         // this run's deploy wait matches on — DeployLogStream follows the same prefix.
         assertThat(PlatformModel.pdNamePrefix("deployments", "prod"))
@@ -109,7 +109,7 @@ class PlatformModelTest {
         // The address peers dial, and the name a cutover finds its predecessor by. The seed
         // containers are named after it, so a wrong answer here is a seed nothing can reach.
         assertThat(PlatformModel.wireAlias("ci", "prod")).isEqualTo("prod-qits-ci");
-        assertThat(PlatformModel.wireAlias("gateway", "prod")).isEqualTo("prod-qits-gateway");
+        assertThat(PlatformModel.wireAlias("workspaces", "prod")).isEqualTo("prod-qits-workspaces");
         // The deployer and the bus dropped the tier on 2026-08-17, and neither carries the plane
         // in its name yet: the repository rename comes after the local proof.
         assertThat(PlatformModel.wireAlias("deployments", "prod")).isEqualTo("qits-deployments");

@@ -77,7 +77,7 @@ public final class CiLogStream {
         }
         Optional<JsonNode> run = ci.run(runId);
         if (run.isEmpty()) {
-            // The edge and the gateway this read travels through are applications the boot deploys,
+            // The edge this read travels through is an application the boot deploys,
             // so a single miss is a cutover rather than an answer.
             if (++failures >= TOLERATED_FAILURES) {
                 off = true;

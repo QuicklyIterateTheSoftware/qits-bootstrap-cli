@@ -147,6 +147,27 @@ class PipelinePhasesTest {
         assertThat(PipelinePhases.deploymentVerdict("", "", "")).isNull();
     }
 
+    // --- what a ci run says ------------------------------------------------------------------------
+
+    /**
+     * The three red words. A word missing here reads as "still running", so the wait sits on a
+     * finished run until its timeout — which is what {@code TIMED_OUT} did before it was added.
+     */
+    @Test
+    void everyRedRunWordEndsTheWait() {
+        assertThat(PipelinePhases.isRedRunStatus("FAILED")).isTrue();
+        assertThat(PipelinePhases.isRedRunStatus("CONFIG_ERROR")).isTrue();
+        assertThat(PipelinePhases.isRedRunStatus("TIMED_OUT")).isTrue();
+    }
+
+    /** Green and unfinished runs keep the wait going. */
+    @Test
+    void aGreenOrUnfinishedRunIsNotRed() {
+        assertThat(PipelinePhases.isRedRunStatus("SUCCESS")).isFalse();
+        assertThat(PipelinePhases.isRedRunStatus("RUNNING")).isFalse();
+        assertThat(PipelinePhases.isRedRunStatus("")).isFalse();
+    }
+
     // --- where the deploy ref points ---------------------------------------------------------------
 
     private static final String MAIN = "1111111111111111111111111111111111111111";
