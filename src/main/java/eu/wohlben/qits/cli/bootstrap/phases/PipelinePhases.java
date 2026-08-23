@@ -1486,12 +1486,11 @@ public class PipelinePhases {
                         // A red row this phase did not cause is not this phase's outcome. A green
                         // one is still worth reading even when stale: it says no new run is coming,
                         // which is exactly what the replay below acts on.
-                        if (!staleRun
-                                && ("FAILED".equals(runStatus) || "CONFIG_ERROR".equals(runStatus))) {
+                        if (!staleRun && isRedRunStatus(runStatus)) {
                             newestRun.map(r -> Json.text(r, "id"))
                                     .flatMap(boot.ci::failedStepOutput)
                                     .ifPresent(output -> {
-                                        ctx.log("  the step that failed said:");
+                                        ctx.log("  the step that stopped the run said:");
                                         output.lines().forEach(line -> ctx.log("    " + line));
                                     });
                             return Waiter.Poll.done("CI " + runStatus, runStatus);
@@ -1619,8 +1618,20 @@ public class PipelinePhases {
                 .filter(run -> Json.text(run, "id").equals(baselineRunId))
                 .filter(run -> sha.equals(Json.text(run, "commitSha")))
                 .map(run -> Json.text(run, "status"))
-                .filter(status -> "FAILED".equals(status) || "CONFIG_ERROR".equals(status))
+                .filter(PipelinePhases::isRedRunStatus)
                 .isPresent();
+    }
+
+    /**
+     * A ci run that ended red. Three words and qits-ci writes all three: {@code FAILED} is a step
+     * that returned non-zero, {@code CONFIG_ERROR} a recipe that could not be read, and
+     * {@code TIMED_OUT} a step aborted at its deadline. A word missing from here reads as "still
+     * running", so the wait sits on a finished run for its whole timeout.
+     */
+    static boolean isRedRunStatus(String status) {
+        return "FAILED".equals(status)
+                || "CONFIG_ERROR".equals(status)
+                || "TIMED_OUT".equals(status);
     }
 
     // THE PUSH RE-ANNOUNCEMENT IS GONE, and the rule it served is not.

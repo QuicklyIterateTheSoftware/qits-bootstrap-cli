@@ -146,7 +146,8 @@ public class CiApi {
     }
 
     /**
-     * Why a run failed, in the words of the step that failed it. A red run otherwise reports only
+     * Why a run ended red, in the words of the step that ended it — the step that failed, or the
+     * one aborted at its deadline. A red run otherwise reports only
      * its status, and the reason is three API calls away — which is three calls made by hand, at
      * the point where a bootstrap has just stopped and the operator has the least context. The tail
      * is bounded because a build log is not a thing to print in full.
@@ -157,7 +158,8 @@ public class CiApi {
             return Optional.empty();
         }
         for (JsonNode step : run.get().path("steps")) {
-            if (!"FAILED".equals(Json.text(step, "status"))) {
+            String status = Json.text(step, "status");
+            if (!"FAILED".equals(status) && !"TIMED_OUT".equals(status)) {
                 continue;
             }
             String output = Json.text(step, "output");
