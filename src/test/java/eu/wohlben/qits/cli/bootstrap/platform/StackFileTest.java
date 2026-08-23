@@ -190,7 +190,7 @@ class StackFileTest {
                 .contains("  " + alias("ci") + ":\n")
                 .contains("  " + alias("oci-postgresql") + ":\n");
         assertThat(subset).doesNotContain("  " + alias("deployments") + ":\n")
-                .doesNotContain("  " + alias("gateway") + ":\n")
+                .doesNotContain("  " + alias("workspaces") + ":\n")
                 .doesNotContain("qits/deployments:latest");
         // The file the kept services need is still whole: the header, the network and the volumes.
         assertThat(subset).contains("networks:").contains("    external: true")

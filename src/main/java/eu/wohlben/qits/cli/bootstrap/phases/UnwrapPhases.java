@@ -38,7 +38,7 @@ import java.util.function.Supplier;
  * <p>
  * <b>Two container-name shapes too, for the same reason.</b> Every container the platform ever
  * started used to begin {@code qits-}. Since 2026-08-08 an environment service is named after its
- * wire alias — {@code prod-qits-ci}, {@code prod-qits-gateway} — which begins with the environment
+ * wire alias — {@code prod-qits-ci}, {@code prod-qits-workspaces} — which begins with the environment
  * name instead. So the sweep asks for {@code qits-} at the START or {@code -qits-} ANYWHERE, which
  * covers both shapes and every environment name, not only the one this run is configured with. A
  * name is added here; none is ever taken away.

@@ -19,7 +19,7 @@ import java.util.concurrent.TimeoutException;
  * The platform's HTTP, spoken directly with java.net.http. <b>Everything the bootstrap calls is a
  * wire alias on qits-net</b>, which the run joins before it dials anything: qits-platform-artifacts
  * (the registry, the git host and the artifacts API), qits-ci and qits-deployments through
- * qits-platform-edge and the gateway behind it, and qits-platform-idp, which publishes no host port
+ * qits-platform-edge, and qits-platform-idp, which publishes no host port
  * at all.
  * <p>
  * That last one is why this class is now the only HTTP there is. The idp used to be reached by
@@ -27,7 +27,7 @@ import java.util.concurrent.TimeoutException;
  * the CLI was on the host. The CLI holds that position itself now, so the borrowing is gone and
  * with it {@code InNetworkHttp}.
  * <p>
- * Failures are answers, not exceptions: a call made while the edge, the gateway or the artifacts
+ * Failures are answers, not exceptions: a call made while the edge or the artifacts
  * service is mid cutover is expected, and a poll that treats it as fatal would fail a boot that is
  * working.
  */
