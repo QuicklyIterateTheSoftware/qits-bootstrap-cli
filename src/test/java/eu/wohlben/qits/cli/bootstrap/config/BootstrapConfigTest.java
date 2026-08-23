@@ -19,6 +19,23 @@ class BootstrapConfigTest {
         return TestConfig.from(env);
     }
 
+    /**
+     * <b>The build concurrency is unset by default and COMPUTED, and an operator's value wins.</b>
+     * The formula is {@link eu.wohlben.qits.cli.bootstrap.platform.CiConcurrency}'s and is tested
+     * there; what is proved here is that {@code QITS_CI_CONCURRENT_BUILDS} reaches this knob at all
+     * — the override exists because the number that has to be right is the one on the host.
+     */
+    @Test
+    void ciConcurrentBuildsIsComputedUnlessAnOperatorSaysOtherwise() {
+        assertThat(from(Map.of()).ciConcurrentBuilds()).isEmpty();
+        assertThat(from(Map.of()).ciConcurrentBuildsEffective()).isGreaterThanOrEqualTo(1);
+
+        BootstrapConfig pinned = from(Map.of("QITS_CI_CONCURRENT_BUILDS", "4"));
+
+        assertThat(pinned.ciConcurrentBuilds()).contains(4);
+        assertThat(pinned.ciConcurrentBuildsEffective()).isEqualTo(4);
+    }
+
     @Test
     void defaultsMatchTheScriptsDefaults() {
         BootstrapConfig config = from(Map.of());
