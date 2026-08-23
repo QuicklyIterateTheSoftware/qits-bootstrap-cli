@@ -135,7 +135,8 @@ forced. Add to that list rather than deviating quietly.
   `qits_<service>.<slot>.<taskid>`) and no `restart:` (it is `deploy.restart_policy`). The two
   socket-holding seed services take the socket's group as their PRIMARY group, `user:
   "1001:<gid>"`, because a stack file has no way to say a supplementary one; their deployed
-  successors get `--group-add` from the extras, which does. **Every name-based check went with
+  successors get `--group-add` from the extras, which does. Two is the SEED's count: a third
+  service holds the socket among the DEPLOYED ones — see the bullet below. **Every name-based check went with
   it**: a seed service is found through `docker service ls`, under `qits_<alias>` or the bare
   `<alias>`, never through `docker ps`. A container name is still the right question for a
   DEPLOYMENT — the deployer runs `docker run` containers named `qits-pd-…` until phase 3 of the
@@ -269,6 +270,16 @@ forced. Add to that list rather than deviating quietly.
   not the spelling**: qits-deployments and qits-events joined the platform plane on 2026-08-17 and
   their repositories are renamed only after the local proof, so both answer to a bare name that
   says no plane at all.
+- **The host's docker socket is granted to THREE services, and every grant is an extras block
+  somebody wrote on purpose.** qits-containers starts every workload on the host, qits-deployments
+  is a deployer, and qits-platform-system owns the admin console's terminals. A fourth is a
+  decision, not a mount: it needs `mounts[<i>]=bind:/var/run/docker.sock:…` AND
+  `groups[0]=${DOCKER_GID}` — the group is what makes the socket usable by a container running as
+  uid 1001 — plus a comment above the block saying why the power belongs there rather than behind
+  an endpoint on one of the three. A socket holder that also PULLS needs a `config.json` of its
+  own: `SeedPhases.dockerConfig` writes one per holder, with the hosts that holder pulls from (the
+  registry vhost for the first two, the registry AND the mirror for qits-platform-system, whose
+  glances image is the mirror's).
 - **Nothing outside `PlatformModel` decides a wire alias, a client-id key or whether a service is
   told its tier.** All three change when an application moves plane, so `wireAlias`,
   `pdNamePrefix` and `PlatformModel.modelTokens` are the only places any of them is built — the
