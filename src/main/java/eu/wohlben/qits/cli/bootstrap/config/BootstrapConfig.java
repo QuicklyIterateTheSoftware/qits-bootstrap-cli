@@ -542,12 +542,16 @@ public interface BootstrapConfig {
     }
 
     /**
-     * <b>The three names the HOST reaches this platform's byte plane by, and the one address shape
-     * in this file that is not a wire alias.</b> Each is {@code <app>.<env>.localhost:<edge port>}:
-     * every {@code *.localhost} name resolves to the loopback address (systemd-resolved synthesises
-     * it), so a client on the workstation arrives at the edge, which routes by the NAME rather than
-     * by a path — a docker client and a git client own their own roots ({@code /v2}, {@code /git})
-     * and cannot be given a prefix.
+     * <b>The three names the HOST reaches this platform's byte plane by.</b> Each is
+     * {@code <app>.<env>.localhost:<edge port>}: every {@code *.localhost} name resolves to the
+     * loopback address (systemd-resolved synthesises it), so a client on the workstation arrives at
+     * the edge, which routes by the NAME rather than by a path — a docker client and a git client
+     * own their own roots ({@code /v2}, {@code /git}) and cannot be given a prefix.
+     * <p>
+     * It is the shape EVERY application has now, browser side included: {@link #envAuthority()}
+     * carries the same {@code <env>.localhost:<port>} authority and each service's SPA answers at
+     * {@code <app>.} of it. These three are named here because they are the ones a person has to
+     * configure by hand — dockerd's insecure registries and mirror list, and a clone url.
      * <p>
      * <b>Nothing in this CLI dials them.</b> The run is a container on qits-net and reaches all
      * three at their aliases. They are here for the two things that speak to a person: the
@@ -569,17 +573,43 @@ public interface BootstrapConfig {
     }
 
     /**
+     * <b>The authority every one of this environment's browser names sits under</b>:
+     * {@code <env>.<domain>} with a domain, {@code <env>.localhost:<port>} without one.
+     * <p>
+     * <b>Each application has its own host now</b> — {@code <app>.<env>.<authority>} serves that
+     * service's SPA at {@code /} and its wire routes beside it, the shape
+     * {@link #registryVhost()}, {@link #mirrorVhost()} and {@link #gitHostVhost()} already have. One
+     * browser session has to cover them all, and a cookie is shared with a host's CHILDREN only. So
+     * the local door moved off bare {@code localhost}, which can parent nothing: {@code localhost}
+     * is a public suffix, browsers DROP a {@code Domain=localhost} cookie, while
+     * {@code Domain=dev.localhost} is accepted and reaches {@code ci.dev.localhost} with it.
+     * <p>
+     * Nothing has to resolve it: every {@code *.localhost} name answers loopback in Chromium and
+     * Firefox, and on the host through nss-myhostname or systemd-resolved — no hosts-file entry. It
+     * stays a secure context too, so passkeys work over plain HTTP exactly as they did.
+     */
+    default String envAuthority() {
+        return DomainName.of(this).map(domain -> envName() + "." + domain)
+                .orElse(envName() + ".localhost:" + port());
+    }
+
+    /**
      * <b>The address a person's browser arrives at</b>, which is the edge's and no other: the
-     * loopback name and the published port, or the domain over TLS when there is one — the name the
-     * edge's certificate is issued for.
+     * environment's own name and the published port, or the domain's apex over TLS when there is
+     * one — the name the edge's certificate is issued for.
      * <p>
      * Derived rather than configured, because it is decided twice already: the port is the edge's
      * publish and the domain is the certificate's name. A third address told to a browser would be
      * a login page nobody can reach.
+     * <p>
+     * The two halves are not the same shape on purpose. A domain platform logs in at the APEX and
+     * the environments are its children; a local platform has no apex to log in at, so the
+     * environment authority is the door itself — {@link #envAuthority()} says why it carries the
+     * environment's name at all.
      */
     default String publicOrigin() {
         return DomainName.of(this).map(domain -> "https://" + domain)
-                .orElse("http://localhost:" + port());
+                .orElse("http://" + envAuthority());
     }
 
     /**
@@ -587,15 +617,22 @@ public interface BootstrapConfig {
      * asserts under no other name, so it follows {@link #publicOrigin} rather than standing beside
      * it.
      * <p>
-     * {@code localhost} is a secure context by itself — no certificate needed — which is what lets a
-     * passkey work on this platform's plain HTTP port. The one route without a secure context is a
-     * raw IP, where the browser offers no ceremony at all and only a password logs in.
+     * Every {@code *.localhost} name is a secure context by itself — no certificate needed — which
+     * is what lets a passkey work on this platform's plain HTTP port. The one route without a
+     * secure context is a raw IP, where the browser offers no ceremony at all and only a password
+     * logs in.
+     * <p>
+     * <b>It is {@code <env>.localhost} rather than {@code localhost} since the per-service hosts
+     * landed</b>, because a credential asserts on the rp id and its children: bound to
+     * {@code dev.localhost} it also asserts at {@code ci.dev.localhost}. A passkey registered
+     * against the old {@code localhost} rp id asserts nowhere on the new door and has to be
+     * registered again — the closing report says so.
      * <p>
      * The binding costs nothing here: accounts are per-installation, so a platform that gains a
      * domain registers its own from its own register token.
      */
     default String webauthnRpId() {
-        return DomainName.of(this).orElse("localhost");
+        return DomainName.of(this).orElse(envName() + ".localhost");
     }
 
     /**
@@ -607,19 +644,34 @@ public interface BootstrapConfig {
     }
 
     /**
-     * The exact browser authorities a completed IdP ceremony may return to. The domain's apex is
-     * the canonical WebAuthn origin and the one environment host is its browser-facing sibling;
-     * direct app hosts remain absent because they are machine planes.
+     * The browser authorities a completed IdP ceremony may return to: the environment's door, and
+     * {@code *.} of it for every application host under it. The apex leads the list where there is
+     * one, because that is where the ceremony itself happens.
+     * <p>
+     * <b>The wildcard is exactly one extra label and the port must match</b> — the edge and the idp
+     * both read it that way, so {@code *.dev.localhost:8080} admits {@code ci.dev.localhost:8080}
+     * and nothing deeper, on no other port. It is what makes ONE session cover every service:
+     * registry, mirror and git host are on this list now too, since a service's own host serves its
+     * SPA as well as its wire routes.
      */
     default String browserSsoHosts() {
-        return DomainName.of(this)
-                .map(domain -> domain + "," + envName() + "." + domain)
-                .orElse("localhost:" + port());
+        String environment = envAuthority();
+        String hosts = environment + ",*." + environment;
+        return DomainName.of(this).map(domain -> domain + "," + hosts).orElse(hosts);
     }
 
-    /** A public platform shares its session with named browser hosts; localhost stays host-only. */
+    /**
+     * The parent a session cookie is shared with, which is the environment's own name on both kinds
+     * of platform — {@code Domain=<domain>} covers {@code <app>.<env>.<domain>}, and
+     * {@code Domain=<env>.localhost} covers {@code <app>.<env>.localhost}. A cookie domain carries
+     * no port, so the local value drops it.
+     * <p>
+     * It was empty — host-only — while the local door was bare {@code localhost}: that name is a
+     * public suffix and browsers drop a cookie scoped to it. Moving the door under the environment
+     * label is what gave the local platform a parent to share.
+     */
     default String browserSsoCookieDomain() {
-        return DomainName.of(this).orElse("");
+        return DomainName.of(this).orElse(envName() + ".localhost");
     }
 
     /**

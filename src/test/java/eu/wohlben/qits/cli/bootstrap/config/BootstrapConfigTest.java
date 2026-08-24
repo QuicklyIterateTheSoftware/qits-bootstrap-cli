@@ -163,29 +163,71 @@ class BootstrapConfigTest {
     }
 
     /**
-     * <b>Where a BROWSER arrives, which is the one derived address that is not a wire alias.</b> The
-     * passkey binding follows it and cannot be told anything else: a credential registered under an
-     * rp id asserts under no other host, and an origin the ceremony was not told is refused.
-     * <p>
-     * localhost is a secure context over plain HTTP, so this platform needs no certificate for
-     * passkeys to work. A raw IP is not one — the browser offers no ceremony there at all — which is
-     * why the fallback is a password and not another origin in this list.
+     * <b>The authority every browser name of one environment sits under</b>, and the parent of each
+     * service's own host: {@code <app>.<env>.<authority>}. Local and hosted are the same shape, one
+     * with a port and one without, because a domain's browser names carry no port.
      */
     @Test
-    void theBrowsersAddressIsLocalhostAndThePortUntilThereIsADomain() {
-        BootstrapConfig plain = from(Map.of("QITS_PORT", "9090"));
+    void theEnvironmentAuthorityIsTheParentOfEveryServiceHost() {
+        assertThat(from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev")).envAuthority())
+                .isEqualTo("dev.localhost:9090");
 
-        assertThat(plain.publicOrigin()).isEqualTo("http://localhost:9090");
-        assertThat(plain.webauthnRpId()).isEqualTo("localhost");
-        assertThat(plain.webauthnOrigins()).isEqualTo("http://localhost:9090");
+        assertThat(from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev",
+                "QITS_DOMAIN", "qits-dev.eu")).envAuthority()).isEqualTo("dev.qits-dev.eu");
+    }
 
-        // With a domain the door is TLS on the name the edge's certificate is issued for, and the
-        // rp id is that name — a HOST, never a URL.
-        BootstrapConfig hosted = from(Map.of("QITS_PORT", "9090", "QITS_DOMAIN", "qits-dev.eu"));
+    /**
+     * <b>Where a BROWSER arrives.</b> The passkey binding follows it and cannot be told anything
+     * else: a credential registered under an rp id asserts on that host and its children only, and
+     * an origin the ceremony was not told is refused.
+     * <p>
+     * <b>The local door carries the environment's name</b> since each service gained a host of its
+     * own. Bare {@code localhost} could parent none of them — it is a public suffix, so a cookie
+     * scoped to it is dropped — while {@code dev.localhost} is accepted and reaches
+     * {@code ci.dev.localhost}. It is still a secure context, so this platform needs no certificate
+     * for passkeys. A raw IP is not one — the browser offers no ceremony there at all — which is why
+     * the fallback is a password and not another origin in this list.
+     */
+    @Test
+    void theBrowsersAddressIsTheEnvironmentsOwnNameUntilThereIsADomain() {
+        BootstrapConfig plain = from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev"));
+
+        assertThat(plain.publicOrigin()).isEqualTo("http://dev.localhost:9090");
+        // The rp id is a HOST and carries no port.
+        assertThat(plain.webauthnRpId()).isEqualTo("dev.localhost");
+        assertThat(plain.webauthnOrigins()).isEqualTo("http://dev.localhost:9090");
+
+        // With a domain the door is TLS on the APEX — the name the edge's certificate is issued for
+        // and where the login happens — while the environments are its children.
+        BootstrapConfig hosted = from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev",
+                "QITS_DOMAIN", "qits-dev.eu"));
 
         assertThat(hosted.publicOrigin()).isEqualTo("https://qits-dev.eu");
         assertThat(hosted.webauthnRpId()).isEqualTo("qits-dev.eu");
         assertThat(hosted.webauthnOrigins()).isEqualTo("https://qits-dev.eu");
+    }
+
+    /**
+     * <b>One session covers every service, and the allow-list plus the cookie domain are what do
+     * it.</b> The wildcard entry is exactly one extra label on the same port, which the edge and the
+     * idp both read that way; the cookie is scoped to the parent both the door and the service hosts
+     * share.
+     */
+    @Test
+    void oneSessionReachesEveryServiceHostOfTheEnvironment() {
+        BootstrapConfig plain = from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev"));
+
+        assertThat(plain.browserSsoHosts()).isEqualTo("dev.localhost:9090,*.dev.localhost:9090");
+        // A cookie domain is a host: no port, and no leading dot.
+        assertThat(plain.browserSsoCookieDomain()).isEqualTo("dev.localhost");
+
+        // With a domain the apex leads the list, because that is where the ceremony happens.
+        BootstrapConfig hosted = from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev",
+                "QITS_DOMAIN", "qits-dev.eu"));
+
+        assertThat(hosted.browserSsoHosts())
+                .isEqualTo("qits-dev.eu,dev.qits-dev.eu,*.dev.qits-dev.eu");
+        assertThat(hosted.browserSsoCookieDomain()).isEqualTo("qits-dev.eu");
     }
 
     @Test

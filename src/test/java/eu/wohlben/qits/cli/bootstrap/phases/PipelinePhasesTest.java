@@ -983,4 +983,38 @@ class PipelinePhasesTest {
         assertThat(ctx.lines).anyMatch(line -> line.contains("/git/<projectId>/<repo>,"));
         assertThat(ctx.lines).anyMatch(line -> line.contains("/git/qits/<repo>.git"));
     }
+
+    /**
+     * <b>The report hands over the browser door and the hosts under it.</b> The local door carries
+     * the environment's label since every service gained a host of its own — a session cookie is
+     * shared with a name's children, and bare localhost is a public suffix that can parent none of
+     * them. What a person needs from this block is the door, the shape of an app host, the one
+     * check for a resolver that does not synthesise *.localhost, and the fact that an old passkey
+     * is dead.
+     */
+    @Test
+    void theReportHandsOverTheBrowserDoorAndTheHostsUnderIt(@TempDir Path temp) throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
+        Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev", "QITS_PORT", "8080")),
+                new RunLog(temp.resolve("run.log")), runner);
+        boot.state.wrapperDir = temp;
+        Ctx ctx = new Ctx();
+
+        new PipelinePhases(boot).summary().action().run(ctx);
+
+        assertThat(ctx.lines).anyMatch(line -> line.startsWith("edge:      http://dev.localhost:8080/"));
+        assertThat(ctx.lines).anyMatch(line -> line.contains("http://<app>.dev.localhost:8080/"));
+        // The session is the point of the move, so the report says what carries it.
+        assertThat(ctx.lines).anyMatch(line -> line.contains("scoped to dev.localhost"));
+        assertThat(ctx.lines).anyMatch(line -> line.contains("*.dev.localhost:8080"));
+        // The resolver check, and the hosts-file line for the resolver that fails it.
+        assertThat(ctx.lines).anyMatch(line -> line.contains("getent hosts ci.dev.localhost"));
+        assertThat(ctx.lines).anyMatch(line -> line.contains("127.0.0.1  <app>.dev.localhost"));
+        // A passkey made under the old rp id asserts nowhere now.
+        assertThat(ctx.lines).anyMatch(line -> line.startsWith("passkeys:"));
+        assertThat(ctx.lines).anyMatch(line ->
+                line.contains("http://dev.localhost:8080/idp/register"));
+        // And the door is nowhere spelled without the environment label.
+        assertThat(ctx.lines).noneMatch(line -> line.contains("http://localhost:8080/"));
+    }
 }

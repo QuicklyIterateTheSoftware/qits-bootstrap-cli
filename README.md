@@ -316,12 +316,17 @@ that, each measured on this host rather than assumed:
   prints the one-liner that asks for one. **The platform's postgres publishes nothing either**: its one consumer was this
   CLI's cold-boot DDL, which dials the wire alias on 5432 like everything else. An operator with a
   `psql` goes in through `docker exec`. No publish binds loopback — neither mode has an ip field.
-- **User sessions use canonical apex SSO.** Both generated formats seed the edge's own IdP client
-  (`<env>-qits-edge`) and enable the session gate. They configure one WebAuthn/login origin —
-  `http://localhost:<port>` locally or `https://<domain>` in domain mode — plus an exact return-host
-  allow-list (the apex and `<env>.<domain>`). Domain mode sets the parent cookie domain; the edge
-  strips that named cookie before proxying to registry, mirror, or git host. The boot mints the
-  one-time token the first account registers with.
+- **User sessions use canonical SSO, and one session covers every service host.** Both generated
+  formats seed the edge's own IdP client (`<env>-qits-edge`) and enable the session gate. They
+  configure one WebAuthn/login origin — `http://<env>.localhost:<port>` locally or
+  `https://<domain>` in domain mode — plus the return-host allow-list: the environment authority
+  and `*.` of it, exactly one extra label on the same port, with the apex leading it in domain
+  mode. That wildcard is what carries a login onto `<app>.<env>.<authority>`, where each service
+  serves its own UI. The cookie is scoped to the parent both sides share — the domain, or
+  `<env>.localhost` locally, because bare `localhost` is a public suffix and a cookie scoped to it
+  is dropped. The edge strips that named cookie before proxying to a machine's own routes. The boot
+  mints the one-time token the first account registers with, and a passkey made on an older local
+  platform — rp id `localhost` — asserts on neither door and has to be registered again.
 - **A rerun deploys a SUBSET by leaving services out of the file**, because `docker stack deploy`
   takes no service list. Nothing is pruned — what the file omits is the deployer's — and a seed
   service whose application the deployer has taken over is removed outright: swarm restarts a task

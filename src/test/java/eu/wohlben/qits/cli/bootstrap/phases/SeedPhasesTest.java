@@ -263,9 +263,14 @@ class SeedPhasesTest {
 
         assertThat(tokens).containsEntry("IDP_SECRET_EDGE", "s3cr3t");
         assertThat(tokens.get("IDP_CLIENTS")).contains("prod-qits-edge");
-        // The passkey binding travels in the same map, and with no domain it is the loopback door.
-        assertThat(tokens).containsEntry("WEBAUTHN_RP_ID", "localhost")
-                .containsEntry("WEBAUTHN_ORIGINS", "http://localhost:8080");
+        // The passkey binding travels in the same map, and with no domain it is the loopback door —
+        // under the ENVIRONMENT's label, which is what a service host can be a child of.
+        assertThat(tokens).containsEntry("WEBAUTHN_RP_ID", "prod.localhost")
+                .containsEntry("WEBAUTHN_ORIGINS", "http://prod.localhost:8080");
+        // And the session travels with it: the door, one label under it, and the shared parent.
+        assertThat(tokens).containsEntry("PUBLIC_ORIGIN", "http://prod.localhost:8080")
+                .containsEntry("BROWSER_HOSTS", "prod.localhost:8080,*.prod.localhost:8080")
+                .containsEntry("SESSION_COOKIE_DOMAIN", "prod.localhost");
     }
 
     @Test

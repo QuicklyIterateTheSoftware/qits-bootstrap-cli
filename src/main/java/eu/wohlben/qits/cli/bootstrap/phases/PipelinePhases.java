@@ -2017,14 +2017,41 @@ public class PipelinePhases {
             }
             String env = boot.config.envName();
             report.add("");
-            report.add("edge:      http://localhost:" + boot.config.port()
-                    + "/            the host's one HTTP port, in front of every environment");
-            report.add("           It is the door of the byte plane too: the registry, the mirror "
-                    + "and the git host");
-            report.add("           publish no port of their own and are reached by NAME through "
-                    + "this one. EVERY");
-            report.add("           method on all three names needs a bearer, reads included, "
-                    + "since 2026-08-14.");
+            // THE BROWSER DOOR CARRIES THE ENVIRONMENT'S NAME NOW, on both kinds of platform,
+            // because every service has a host of its own under it and one session has to cover
+            // them all. A cookie is shared with a name's CHILDREN only, and bare localhost can
+            // parent nothing — it is a public suffix, so browsers drop a cookie scoped to it.
+            String door = boot.config.publicOrigin();
+            String scheme = door.startsWith("https") ? "https://" : "http://";
+            String authority = boot.config.envAuthority();
+            report.add("edge:      " + door + "/  — the browser door, and the host's one HTTP "
+                    + "port in front of");
+            report.add("           every environment. It is the byte plane's door too: the "
+                    + "registry, the mirror and");
+            report.add("           the git host publish no port of their own and are reached by "
+                    + "NAME through this");
+            report.add("           one. EVERY method on all three names needs a bearer, reads "
+                    + "included, since 2026-08-14.");
+            report.add("apps:      EVERY SERVICE HAS A HOST OF ITS OWN: " + scheme + "<app>."
+                    + authority + "/ serves");
+            report.add("           that service's UI at / and its wire routes beside it — ci, "
+                    + "projects, workspaces,");
+            report.add("           docs, configuration, artifacts, events, deployments, system, "
+                    + "and the three above.");
+            report.add("           ONE LOGIN COVERS THEM ALL: the session cookie is scoped to "
+                    + boot.config.browserSsoCookieDomain() + " and the");
+            report.add("           idp accepts a return to *." + authority + " — exactly one extra "
+                    + "label, on this port.");
+            if (DomainName.of(boot.config).isEmpty()) {
+                report.add("           Every *.localhost name resolves to loopback on its own "
+                        + "(Chromium, Firefox and");
+                report.add("           nss-myhostname), so there is nothing to add. Ask this "
+                        + "host's resolver:");
+                report.add("             getent hosts ci." + env + ".localhost");
+                report.add("           An empty answer is the one case that needs /etc/hosts, one "
+                        + "line per name:");
+                report.add("             127.0.0.1  <app>." + env + ".localhost");
+            }
             report.add("registry:  " + boot.config.registryVhost()
                     + " — the platform's OWN images and packages (" + env + "-qits-artifacts)");
             report.add("mirror:    " + boot.config.mirrorVhost()
@@ -2036,9 +2063,9 @@ public class PipelinePhases {
             report.add("           push and pull fails on TLS. Add, then restart the daemon:");
             report.add("             \"insecure-registries\": [\"" + boot.config.registryVhost()
                     + "\", \"" + boot.config.mirrorVhost() + "\"]");
-            report.add("           A *.localhost name resolves to the loopback address by itself "
-                    + "(systemd-resolved");
-            report.add("           synthesises it) — no hosts-file entry to make.");
+            report.add("           Both names resolve by themselves, as every *.localhost name "
+                    + "does — the apps: note");
+            report.add("           above has the check for the resolver that does not.");
             report.add("login:     a PULL needs a credential now as much as a PUSH, and a person's "
                     + "is COMMISSIONED —");
             report.add("           the idp issues one per context, so no static pair is handed "
@@ -2061,9 +2088,22 @@ public class PipelinePhases {
                     + " -u <clientId> -p <secret>");
             report.add("           Hand it back when the workstation is done with it: DELETE "
                     + "/idp/api/clients/<clientId>.");
-            report.addAll(registerLines(boot.config.publicOrigin() + "/idp/register",
+            report.addAll(registerLines(door + "/idp/register",
                     boot.state.registerToken, boot.state.registerTokenRecorded,
                     boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME).toString()));
+            if (DomainName.of(boot.config).isEmpty()) {
+                // A passkey is bound to the rp id it was made under and asserts on that host and
+                // its children. The local rp id was bare localhost until the per-service hosts
+                // landed, and dev.localhost is not a child of it — those credentials assert
+                // nowhere now, and nothing about them can be migrated.
+                report.add("passkeys:  the local door moved from localhost to " + authority
+                        + ", and the passkey binding");
+                report.add("           moved with it. A passkey made on an older local platform, "
+                        + "under the rp id");
+                report.add("           'localhost', asserts at this door for nobody. Register it "
+                        + "again at");
+                report.add("             " + door + "/idp/register");
+            }
             report.add("ipv6:      ONE STANDING HOST RULE, and without it every vhost client "
                     + "HANGS rather than fails:");
             report.add("             sudo ip6tables -I INPUT -i lo -p tcp --dport "
