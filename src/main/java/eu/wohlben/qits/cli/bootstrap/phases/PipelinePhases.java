@@ -2022,8 +2022,14 @@ public class PipelinePhases {
             // them all. A cookie is shared with a name's CHILDREN only, and bare localhost can
             // parent nothing — it is a public suffix, so browsers drop a cookie scoped to it.
             String door = boot.config.publicOrigin();
-            String scheme = door.startsWith("https") ? "https://" : "http://";
             String authority = boot.config.envAuthority();
+            // THE ENVIRONMENT LABEL IS OPTIONAL FOR THE DEFAULT TIER on a domain platform:
+            // <app>.<domain> and <app>.<env>.<domain> are the same host, and the short one is what
+            // a person types. Locally there is no apex to shorten to — the door carries the
+            // environment's name, so an app host is <app>.<env>.localhost:<port> and nothing else.
+            String apex = DomainName.of(boot.config).orElse(null);
+            String appHost = apex == null ? "http://<app>." + authority : "https://<app>." + apex;
+            String returns = apex == null ? "*." + authority : "*." + apex + " and *." + authority;
             report.add("edge:      " + door + "/  — the browser door, and the host's one HTTP "
                     + "port in front of");
             report.add("           every environment. It is the byte plane's door too: the "
@@ -2032,17 +2038,22 @@ public class PipelinePhases {
                     + "NAME through this");
             report.add("           one. EVERY method on all three names needs a bearer, reads "
                     + "included, since 2026-08-14.");
-            report.add("apps:      EVERY SERVICE HAS A HOST OF ITS OWN: " + scheme + "<app>."
-                    + authority + "/ serves");
+            report.add("apps:      EVERY SERVICE HAS A HOST OF ITS OWN: " + appHost + "/ serves");
             report.add("           that service's UI at / and its wire routes beside it — ci, "
                     + "projects, workspaces,");
             report.add("           docs, configuration, artifacts, events, deployments, system, "
                     + "and the three above.");
+            if (apex != null) {
+                report.add("           The environment label is optional for " + env
+                        + ", the default tier: <app>." + apex);
+                report.add("           and <app>." + authority + " are the same host. Another "
+                        + "tier spells its own label.");
+            }
             report.add("           ONE LOGIN COVERS THEM ALL: the session cookie is scoped to "
                     + boot.config.browserSsoCookieDomain() + " and the");
-            report.add("           idp accepts a return to *." + authority + " — exactly one extra "
-                    + "label, on this port.");
-            if (DomainName.of(boot.config).isEmpty()) {
+            report.add("           idp accepts a return to " + returns + " — exactly one extra "
+                    + "label, same port.");
+            if (apex == null) {
                 report.add("           Every *.localhost name resolves to loopback on its own "
                         + "(Chromium, Firefox and");
                 report.add("           nss-myhostname), so there is nothing to add. Ask this "
@@ -2091,7 +2102,7 @@ public class PipelinePhases {
             report.addAll(registerLines(door + "/idp/register",
                     boot.state.registerToken, boot.state.registerTokenRecorded,
                     boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME).toString()));
-            if (DomainName.of(boot.config).isEmpty()) {
+            if (apex == null) {
                 // A passkey is bound to the rp id it was made under and asserts on that host and
                 // its children. The local rp id was bare localhost until the per-service hosts
                 // landed, and dev.localhost is not a child of it — those credentials assert

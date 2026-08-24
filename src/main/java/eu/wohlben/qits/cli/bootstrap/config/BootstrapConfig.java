@@ -653,11 +653,18 @@ public interface BootstrapConfig {
      * and nothing deeper, on no other port. It is what makes ONE session cover every service:
      * registry, mirror and git host are on this list now too, since a service's own host serves its
      * SPA as well as its wire routes.
+     * <p>
+     * <b>A domain platform names FOUR shapes, because the environment label is optional for the
+     * default tier</b>: {@code <app>.<domain>} and {@code <app>.<env>.<domain>} are the same host,
+     * so both wildcards have to be on the list — the short one is what a person types and the long
+     * one is what another tier spells. Locally there is no apex to shorten to: the door itself
+     * carries the environment's name, so there are two shapes and not four.
      */
     default String browserSsoHosts() {
         String environment = envAuthority();
-        String hosts = environment + ",*." + environment;
-        return DomainName.of(this).map(domain -> domain + "," + hosts).orElse(hosts);
+        return DomainName.of(this)
+                .map(domain -> domain + "," + environment + ",*." + domain + ",*." + environment)
+                .orElse(environment + ",*." + environment);
     }
 
     /**

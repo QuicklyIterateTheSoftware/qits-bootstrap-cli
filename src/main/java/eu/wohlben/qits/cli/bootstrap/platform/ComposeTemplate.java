@@ -244,12 +244,14 @@ public final class ComposeTemplate {
                   # this file is spelled: an address a deployment inherits silently is one nobody knows to
                   # change. Consumers below carry the same string; a mismatch is rejected at validation.
                   QITS_IDP_ISSUER: ${IDP}
-                  # The sole WebAuthn origin and the same return-host list the edge reads. Both
-                  # ends of that list are the ENVIRONMENT's authority and a *. of it, so one session
-                  # covers every <app>.<env> host. The cookie is scoped to the parent both sides
-                  # share: the domain, or <env>.localhost locally — bare localhost is a public
-                  # suffix and a cookie scoped to it is dropped, which is why the local door carries
-                  # the environment name at all.
+                  # The sole WebAuthn origin and the same return-host list the edge reads. The
+                  # list is the ENVIRONMENT's authority and a *. of it, so one session covers every
+                  # <app>.<env> host — plus the apex and *.<domain> where there is a domain, because
+                  # the environment label is optional for the default tier and <app>.<domain> is the
+                  # same host as <app>.<env>.<domain>. The cookie is scoped to the parent every one
+                  # of those shapes shares: the domain, or <env>.localhost locally — bare localhost
+                  # is a public suffix and a cookie scoped to it is dropped, which is why the local
+                  # door carries the environment name at all.
                   QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN: ${PUBLIC_ORIGIN}
                   QITS_IDP_BROWSER_SSO_BROWSER_HOSTS: "${BROWSER_HOSTS}"
                   QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN: "${SESSION_COOKIE_DOMAIN}"
@@ -504,10 +506,12 @@ public final class ComposeTemplate {
                   QITS_EDGE_SESSIONS_CLIENT_SECRET: "${IDP_SECRET_EDGE}"
                   # One WebAuthn origin, then the return-host allow-list. Login happens at the
                   # canonical origin — the apex with a domain, the environment door without one —
-                  # and a person may return to the environment authority or to any ONE label under
+                  # and a person may return to an authority on the list or to any ONE label under
                   # it, on the same port. That wildcard is what carries a session onto every
                   # <app>.<env> host, registry, mirror and git host included: a service host serves
-                  # that service's SPA as well as its wire routes now.
+                  # that service's SPA as well as its wire routes now. With a domain the list holds
+                  # both depths — <domain> and <env>.<domain>, each with its wildcard — because the
+                  # default tier may be addressed without its label.
                   QITS_EDGE_SESSIONS_CANONICAL_ORIGIN: ${PUBLIC_ORIGIN}
                   QITS_EDGE_SESSIONS_BROWSER_HOSTS: "${BROWSER_HOSTS}"
                   QITS_RESOURCE_EDGE_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_platform_edge

@@ -78,8 +78,8 @@ class ComposeTemplateTest {
         values.put("WEBAUTHN_RP_ID", domain);
         values.put("WEBAUTHN_ORIGINS", "https://" + domain);
         values.put("PUBLIC_ORIGIN", "https://" + domain);
-        values.put("BROWSER_HOSTS",
-                domain + "," + ENV + "." + domain + ",*." + ENV + "." + domain);
+        values.put("BROWSER_HOSTS", domain + "," + ENV + "." + domain
+                + ",*." + domain + ",*." + ENV + "." + domain);
         values.put("SESSION_COOKIE_DOMAIN", domain);
         values.putAll(DomainTokens.of(Optional.of(domain)));
         return values;
@@ -1169,7 +1169,9 @@ class ComposeTemplateTest {
                 .contains("QITS_EDGE_SESSIONS_BROWSER_HOSTS: "
                         + "\"prod.localhost:8080,*.prod.localhost:8080\"");
 
-        String hosts = DOMAIN + ",prod." + DOMAIN + ",*.prod." + DOMAIN;
+        // Four shapes with a domain: the environment label is optional for the default tier, so
+        // <app>.<domain> and <app>.<env>.<domain> are one host and both wildcards are named.
+        String hosts = DOMAIN + ",prod." + DOMAIN + ",*." + DOMAIN + ",*.prod." + DOMAIN;
         String domain = ComposeTemplate.compose(tokens(DOMAIN));
         assertThat(serviceBlock(domain, "qits-platform-idp"))
                 .contains("QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN: https://" + DOMAIN)
@@ -2050,12 +2052,12 @@ class ComposeTemplateTest {
         // Put back, so that what is left to compare is everything else.
         compose = compose.replace("https://" + DOMAIN, "http://prod.localhost:8080")
                 .replace("RP_ID: " + DOMAIN, "RP_ID: prod.localhost")
-                .replace(DOMAIN + ",prod." + DOMAIN + ",*.prod." + DOMAIN,
+                .replace(DOMAIN + ",prod." + DOMAIN + ",*." + DOMAIN + ",*.prod." + DOMAIN,
                         "prod.localhost:8080,*.prod.localhost:8080")
                 .replace("COOKIE_DOMAIN: \"" + DOMAIN + "\"", "COOKIE_DOMAIN: \"prod.localhost\"");
         extras = extras.replace("https://" + DOMAIN, "http://prod.localhost:8080")
                 .replace("RP_ID=" + DOMAIN, "RP_ID=prod.localhost")
-                .replace(DOMAIN + ",prod." + DOMAIN + ",*.prod." + DOMAIN,
+                .replace(DOMAIN + ",prod." + DOMAIN + ",*." + DOMAIN + ",*.prod." + DOMAIN,
                         "prod.localhost:8080,*.prod.localhost:8080")
                 .replace("COOKIE_DOMAIN=" + DOMAIN, "COOKIE_DOMAIN=prod.localhost");
 

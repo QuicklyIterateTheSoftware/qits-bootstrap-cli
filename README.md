@@ -320,9 +320,10 @@ that, each measured on this host rather than assumed:
   formats seed the edge's own IdP client (`<env>-qits-edge`) and enable the session gate. They
   configure one WebAuthn/login origin — `http://<env>.localhost:<port>` locally or
   `https://<domain>` in domain mode — plus the return-host allow-list: the environment authority
-  and `*.` of it, exactly one extra label on the same port, with the apex leading it in domain
-  mode. That wildcard is what carries a login onto `<app>.<env>.<authority>`, where each service
-  serves its own UI. The cookie is scoped to the parent both sides share — the domain, or
+  and `*.` of it, exactly one extra label on the same port. Domain mode names four shapes
+  (`<domain>,<env>.<domain>,*.<domain>,*.<env>.<domain>`), because the environment label is
+  optional for the default tier: `ci.<domain>` and `ci.<env>.<domain>` are the same host. Those
+  wildcards are what carry a login onto every app host, where each service serves its own UI. The cookie is scoped to the parent both sides share — the domain, or
   `<env>.localhost` locally, because bare `localhost` is a public suffix and a cookie scoped to it
   is dropped. The edge strips that named cookie before proxying to a machine's own routes. The boot
   mints the one-time token the first account registers with, and a passkey made on an older local

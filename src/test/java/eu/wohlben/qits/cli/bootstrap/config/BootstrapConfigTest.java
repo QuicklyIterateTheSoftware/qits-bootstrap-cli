@@ -221,12 +221,14 @@ class BootstrapConfigTest {
         // A cookie domain is a host: no port, and no leading dot.
         assertThat(plain.browserSsoCookieDomain()).isEqualTo("dev.localhost");
 
-        // With a domain the apex leads the list, because that is where the ceremony happens.
+        // With a domain the apex leads the list, because that is where the ceremony happens — and
+        // there are FOUR shapes, because the environment label is optional for the default tier:
+        // ci.qits-dev.eu and ci.dev.qits-dev.eu are the same host, so both wildcards are named.
         BootstrapConfig hosted = from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev",
                 "QITS_DOMAIN", "qits-dev.eu"));
 
-        assertThat(hosted.browserSsoHosts())
-                .isEqualTo("qits-dev.eu,dev.qits-dev.eu,*.dev.qits-dev.eu");
+        assertThat(hosted.browserSsoHosts()).isEqualTo(
+                "qits-dev.eu,dev.qits-dev.eu,*.qits-dev.eu,*.dev.qits-dev.eu");
         assertThat(hosted.browserSsoCookieDomain()).isEqualTo("qits-dev.eu");
     }
 

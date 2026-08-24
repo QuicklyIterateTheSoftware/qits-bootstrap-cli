@@ -1017,4 +1017,32 @@ class PipelinePhasesTest {
         // And the door is nowhere spelled without the environment label.
         assertThat(ctx.lines).noneMatch(line -> line.contains("http://localhost:8080/"));
     }
+
+    /**
+     * <b>A domain platform prints the SHORT app host</b>, because the environment label is optional
+     * for the default tier: {@code ci.<domain>} and {@code ci.<env>.<domain>} are one host, and the
+     * short one is what a person types. The local blocks — the resolver check and the dead passkey —
+     * belong to a platform with no domain and are not printed here.
+     */
+    @Test
+    void theReportPrintsTheShortAppHostOnADomainPlatform(@TempDir Path temp) throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
+        Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev", "QITS_PORT", "8080",
+                "QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7")),
+                new RunLog(temp.resolve("run.log")), runner);
+        boot.state.wrapperDir = temp;
+        Ctx ctx = new Ctx();
+
+        new PipelinePhases(boot).summary().action().run(ctx);
+
+        assertThat(ctx.lines).anyMatch(line -> line.startsWith("edge:      https://qits-dev.eu/"));
+        assertThat(ctx.lines).anyMatch(line -> line.contains("https://<app>.qits-dev.eu/"));
+        assertThat(ctx.lines).anyMatch(line -> line.contains("<app>.dev.qits-dev.eu are the same host"));
+        // Both wildcards, because both depths are addresses of the same service.
+        assertThat(ctx.lines).anyMatch(line ->
+                line.contains("*.qits-dev.eu and *.dev.qits-dev.eu"));
+        // Nothing local: no hosts-file fallback and no passkey warning.
+        assertThat(ctx.lines).noneMatch(line -> line.contains("getent hosts"));
+        assertThat(ctx.lines).noneMatch(line -> line.startsWith("passkeys:"));
+    }
 }
