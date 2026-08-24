@@ -58,13 +58,14 @@ class ComposeTemplateTest {
             values.put("IDP_SECRET_" + PlatformModel.clientKey(app),
                     "secret-" + PlatformModel.wireAlias(app, ENV));
         }
-        // The passkey binding of a platform with no domain: localhost is a secure context by
-        // itself, so the ceremony works on the edge's plain HTTP port.
-        values.put("WEBAUTHN_RP_ID", "localhost");
-        values.put("WEBAUTHN_ORIGINS", "http://localhost:8080");
-        values.put("PUBLIC_ORIGIN", "http://localhost:8080");
-        values.put("BROWSER_HOSTS", "localhost:8080");
-        values.put("SESSION_COOKIE_DOMAIN", "");
+        // The passkey binding of a platform with no domain: every *.localhost name is a secure
+        // context by itself, so the ceremony works on the edge's plain HTTP port. The door carries
+        // the ENVIRONMENT's label, which is what each service's own host is a child of.
+        values.put("WEBAUTHN_RP_ID", ENV + ".localhost");
+        values.put("WEBAUTHN_ORIGINS", "http://" + ENV + ".localhost:8080");
+        values.put("PUBLIC_ORIGIN", "http://" + ENV + ".localhost:8080");
+        values.put("BROWSER_HOSTS", ENV + ".localhost:8080,*." + ENV + ".localhost:8080");
+        values.put("SESSION_COOKIE_DOMAIN", ENV + ".localhost");
         // No domain: every fragment is empty, which is the ordinary platform.
         values.putAll(DomainTokens.of(Optional.empty()));
         return values;
@@ -77,7 +78,8 @@ class ComposeTemplateTest {
         values.put("WEBAUTHN_RP_ID", domain);
         values.put("WEBAUTHN_ORIGINS", "https://" + domain);
         values.put("PUBLIC_ORIGIN", "https://" + domain);
-        values.put("BROWSER_HOSTS", domain + "," + ENV + "." + domain);
+        values.put("BROWSER_HOSTS", domain + "," + ENV + "." + domain
+                + ",*." + domain + ",*." + ENV + "." + domain);
         values.put("SESSION_COOKIE_DOMAIN", domain);
         values.putAll(DomainTokens.of(Optional.of(domain)));
         return values;
@@ -1125,18 +1127,19 @@ class ComposeTemplateTest {
 
     /**
      * <b>THE PASSKEY BINDING, in both files and derived from one address.</b> A credential is bound
-     * to the rp id and asserts under no other host, so the two values follow the door a browser
-     * arrives at: localhost and the edge's port, or the domain over TLS once there is one.
+     * to the rp id and asserts on that host and its children, so the two values follow the door a
+     * browser arrives at: {@code <env>.localhost} and the edge's port, or the domain over TLS once
+     * there is one.
      */
     @Test
     void theIdpIsToldWhichHostAPasskeyIsBoundTo() {
         String idp = serviceBlock(ComposeTemplate.compose(tokens()), "qits-platform-idp");
 
-        assertThat(idp).contains("QITS_IDP_WEBAUTHN_RP_ID: localhost")
-                .contains("QITS_IDP_WEBAUTHN_ORIGINS: \"http://localhost:8080\"");
+        assertThat(idp).contains("QITS_IDP_WEBAUTHN_RP_ID: prod.localhost")
+                .contains("QITS_IDP_WEBAUTHN_ORIGINS: \"http://prod.localhost:8080\"");
         assertThat(extras("qits-platform-idp"))
-                .contains("env.QITS_IDP_WEBAUTHN_RP_ID=localhost")
-                .contains("env.QITS_IDP_WEBAUTHN_ORIGINS=http://localhost:8080");
+                .contains("env.QITS_IDP_WEBAUTHN_RP_ID=prod.localhost")
+                .contains("env.QITS_IDP_WEBAUTHN_ORIGINS=http://prod.localhost:8080");
 
         String withDomain = serviceBlock(ComposeTemplate.compose(tokens(DOMAIN)),
                 "qits-platform-idp");
@@ -1147,28 +1150,39 @@ class ComposeTemplateTest {
                 .contains("env.QITS_IDP_WEBAUTHN_ORIGINS=https://" + DOMAIN);
     }
 
+    /**
+     * <b>ONE SESSION, EVERY SERVICE HOST.</b> The allow-list is the environment's door and one label
+     * under it — {@code *.<authority>}, same port — because each service serves its own UI at
+     * {@code <app>.<env>.<authority>}. The cookie is scoped to the parent both share, which is the
+     * environment's name locally and the domain when there is one.
+     */
     @Test
-    void browserSsoUsesTheApexForWebauthnAndOnlyNamedBrowserHostsForReturns() {
+    void browserSsoCarriesOneSessionOntoEveryServiceHost() {
         String local = ComposeTemplate.compose(tokens());
         assertThat(serviceBlock(local, "qits-platform-idp"))
-                .contains("QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN: http://localhost:8080")
-                .contains("QITS_IDP_BROWSER_SSO_BROWSER_HOSTS: \"localhost:8080\"")
-                .contains("QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN: \"\"");
+                .contains("QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN: http://prod.localhost:8080")
+                .contains("QITS_IDP_BROWSER_SSO_BROWSER_HOSTS: "
+                        + "\"prod.localhost:8080,*.prod.localhost:8080\"")
+                .contains("QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN: \"prod.localhost\"");
         assertThat(serviceBlock(local, "qits-platform-edge"))
-                .contains("QITS_EDGE_SESSIONS_CANONICAL_ORIGIN: http://localhost:8080")
-                .contains("QITS_EDGE_SESSIONS_BROWSER_HOSTS: \"localhost:8080\"");
+                .contains("QITS_EDGE_SESSIONS_CANONICAL_ORIGIN: http://prod.localhost:8080")
+                .contains("QITS_EDGE_SESSIONS_BROWSER_HOSTS: "
+                        + "\"prod.localhost:8080,*.prod.localhost:8080\"");
 
+        // Four shapes with a domain: the environment label is optional for the default tier, so
+        // <app>.<domain> and <app>.<env>.<domain> are one host and both wildcards are named.
+        String hosts = DOMAIN + ",prod." + DOMAIN + ",*." + DOMAIN + ",*.prod." + DOMAIN;
         String domain = ComposeTemplate.compose(tokens(DOMAIN));
         assertThat(serviceBlock(domain, "qits-platform-idp"))
                 .contains("QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN: https://" + DOMAIN)
-                .contains("QITS_IDP_BROWSER_SSO_BROWSER_HOSTS: \"" + DOMAIN + ",prod." + DOMAIN + "\"")
+                .contains("QITS_IDP_BROWSER_SSO_BROWSER_HOSTS: \"" + hosts + "\"")
                 .contains("QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN: \"" + DOMAIN + "\"");
         assertThat(serviceBlock(domain, "qits-platform-edge"))
                 .contains("QITS_EDGE_SESSIONS_CANONICAL_ORIGIN: https://" + DOMAIN)
-                .contains("QITS_EDGE_SESSIONS_BROWSER_HOSTS: \"" + DOMAIN + ",prod." + DOMAIN + "\"");
+                .contains("QITS_EDGE_SESSIONS_BROWSER_HOSTS: \"" + hosts + "\"");
         assertThat(ComposeTemplate.extras(tokens(DOMAIN)))
                 .contains("qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN=" + DOMAIN)
-                .contains("qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_BROWSER_HOSTS=" + DOMAIN + ",prod." + DOMAIN);
+                .contains("qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_BROWSER_HOSTS=" + hosts);
     }
 
     /**
@@ -2036,14 +2050,16 @@ class ComposeTemplateTest {
         // fragment: an rp id is the HOST a credential is bound to and the origins are the door a
         // browser arrives at, so a domain replaces both values instead of appending to a line.
         // Put back, so that what is left to compare is everything else.
-        compose = compose.replace("https://" + DOMAIN, "http://localhost:8080")
-                .replace("RP_ID: " + DOMAIN, "RP_ID: localhost")
-                .replace(DOMAIN + ",prod." + DOMAIN, "localhost:8080")
-                .replace("COOKIE_DOMAIN: \"" + DOMAIN + "\"", "COOKIE_DOMAIN: \"\"");
-        extras = extras.replace("https://" + DOMAIN, "http://localhost:8080")
-                .replace("RP_ID=" + DOMAIN, "RP_ID=localhost")
-                .replace(DOMAIN + ",prod." + DOMAIN, "localhost:8080")
-                .replace("COOKIE_DOMAIN=" + DOMAIN, "COOKIE_DOMAIN=");
+        compose = compose.replace("https://" + DOMAIN, "http://prod.localhost:8080")
+                .replace("RP_ID: " + DOMAIN, "RP_ID: prod.localhost")
+                .replace(DOMAIN + ",prod." + DOMAIN + ",*." + DOMAIN + ",*.prod." + DOMAIN,
+                        "prod.localhost:8080,*.prod.localhost:8080")
+                .replace("COOKIE_DOMAIN: \"" + DOMAIN + "\"", "COOKIE_DOMAIN: \"prod.localhost\"");
+        extras = extras.replace("https://" + DOMAIN, "http://prod.localhost:8080")
+                .replace("RP_ID=" + DOMAIN, "RP_ID=prod.localhost")
+                .replace(DOMAIN + ",prod." + DOMAIN + ",*." + DOMAIN + ",*.prod." + DOMAIN,
+                        "prod.localhost:8080,*.prod.localhost:8080")
+                .replace("COOKIE_DOMAIN=" + DOMAIN, "COOKIE_DOMAIN=prod.localhost");
 
         assertThat(compose).isEqualTo(ComposeTemplate.compose(tokens()));
         assertThat(extras).isEqualTo(ComposeTemplate.extras(tokens()));

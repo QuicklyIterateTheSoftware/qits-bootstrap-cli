@@ -34,11 +34,17 @@ public class LoginCommand implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
-        String resolvedIdp = TokenClient.trim(idpUrl == null ? env("QITS_IDP_URL", "http://localhost:8080/idp") : idpUrl);
+        // THE ENVIRONMENT'S OWN NAME IS THE LOCAL DOOR, not bare localhost: every service has a
+        // host of its own under <env>.localhost now, and a browser session covers them because a
+        // cookie is shared with a name's children. The login below opens a browser at this address,
+        // so it has to be the address the idp accepts a return to.
+        String environment = env("QITS_ENV_NAME", "prod");
+        String door = "http://" + environment + ".localhost:8080";
+        String resolvedIdp = TokenClient.trim(idpUrl == null ? env("QITS_IDP_URL", door + "/idp") : idpUrl);
         // Git must use the edge origin. It is the boundary which turns Git's Basic oauth2 token
         // into the forwarded identity headers the raw githost routes enforce.
-        String origin = GitOrigin.normalize(gitHost == null ? env("QITS_GIT_HOST_URL", "http://localhost:8080") : gitHost);
-        String resolvedAudience = audience == null ? env("QITS_ENV_NAME", "prod") + "-qits-githost" : audience;
+        String origin = GitOrigin.normalize(gitHost == null ? env("QITS_GIT_HOST_URL", door) : gitHost);
+        String resolvedAudience = audience == null ? environment + "-qits-githost" : audience;
         Pkce pkce = Pkce.create();
         String state = Pkce.state();
         try (LoopbackCallback callback = LoopbackCallback.open()) {

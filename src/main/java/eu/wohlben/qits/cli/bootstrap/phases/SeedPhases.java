@@ -1974,17 +1974,19 @@ public class SeedPhases {
      * the closing report prints it — nothing here writes a record.
      * <p>
      * The edge reads at most the first two labels of a Host header: {@code <env>.<domain>} is an
-     * environment's gateway, {@code <app>.<env>.<domain>} is one of its byte-plane vhosts (registry,
-     * mirror, githost today), and everything else — the apex included — falls through to the default
-     * environment's gateway. So the durable answer is a wildcard per DEPTH, not a record per name:
+     * environment's gateway, {@code <app>.<env>.<domain>} is one of its applications — its UI and
+     * its wire routes both, registry, mirror and githost among them — and everything else, the apex
+     * included, falls through to the default environment's gateway. So the durable answer is a
+     * wildcard per DEPTH, not a record per name:
      * <ul>
      * <li>{@code @} — the apex, and it is not decoration. A wildcard never matches the apex, and the
      *     apex is the address a person types, so without this record the front door has no answer.
      * <li>{@code *} — every one-label name: {@code <env>.<domain>} for every environment there will
      *     ever be, and anything else at that depth.
      * <li>{@code *.*} — every two-label name: {@code <app>.<env>.<domain>} for every application the
-     *     edge gains a vhost for. Adding an environment or an app is then a deploy and no dns step,
-     *     which is the whole reason this is a wildcard.
+     *     edge gains a vhost for, which is now every application there is. Adding an environment or
+     *     an app is then a deploy and no dns step, which is the whole reason this is a wildcard —
+     *     the per-service hosts needed no record of their own.
      * </ul>
      * Every value is the same address, because every one of these names is this one host: the edge
      * is a single front door and the routing is by Host header behind it.
@@ -1996,7 +1998,8 @@ public class SeedPhases {
         return List.of(
                 new ZoneRecord("@", publicIp, "the apex — the browser door, and no wildcard covers it"),
                 new ZoneRecord("*", publicIp, "every <env>." + domain + " gateway"),
-                new ZoneRecord("*.*", publicIp, "every <app>.<env>." + domain + " vhost"));
+                new ZoneRecord("*.*", publicIp,
+                        "every <app>.<env>." + domain + " host — each service's UI and its wire routes"));
     }
 
     /**
