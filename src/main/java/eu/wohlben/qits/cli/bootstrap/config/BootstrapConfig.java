@@ -602,10 +602,16 @@ public interface BootstrapConfig {
      * publish and the domain is the certificate's name. A third address told to a browser would be
      * a login page nobody can reach.
      * <p>
-     * The two halves are not the same shape on purpose. A domain platform logs in at the APEX and
-     * the environments are its children; a local platform has no apex to log in at, so the
-     * environment authority is the door itself — {@link #envAuthority()} says why it carries the
-     * environment's name at all.
+     * The two halves are not the same shape on purpose. A domain platform's door is the APEX and
+     * the environments are its children; a local platform has no apex, so the environment
+     * authority is the door itself — {@link #envAuthority()} says why it carries the environment's
+     * name at all.
+     * <p>
+     * <b>NOTHING IS SERVED HERE BUT A REDIRECT.</b> The door answers {@code GET /} with a 302 to
+     * the projects host and 404s every other path — the login moved to {@link #idpOrigin()} with
+     * the per-service hosts. It is still the edge's canonical session origin, because the edge
+     * derives the default environment's apex from it and reads the login host out of the
+     * deployment projection itself.
      */
     default String publicOrigin() {
         return DomainName.of(this).map(domain -> "https://" + domain)
@@ -613,9 +619,27 @@ public interface BootstrapConfig {
     }
 
     /**
+     * <b>Where a person logs in</b>, and a service host like every other: {@code idp.<domain>} on a
+     * domain platform, {@code idp.<env>.localhost:<port>} locally. The login page is
+     * {@code <idpOrigin>/idp/login}.
+     * <p>
+     * It is the idp's canonical browser origin and the one origin a WebAuthn ceremony is accepted
+     * from. The door serves no {@code /idp/...} path any more, so an address built on
+     * {@link #publicOrigin()} would be a 404.
+     */
+    default String idpOrigin() {
+        return DomainName.of(this).map(domain -> "https://idp." + domain)
+                .orElse("http://idp." + envAuthority());
+    }
+
+    /**
      * <b>The WebAuthn relying party, which is a HOST and not a URL.</b> A passkey is bound to it and
-     * asserts under no other name, so it follows {@link #publicOrigin} rather than standing beside
+     * asserts under no other name, so it follows the door's authority rather than standing beside
      * it.
+     * <p>
+     * <b>Moving the login to {@link #idpOrigin()} does not move this.</b> A credential asserts on
+     * the rp id AND its children, so {@code idp.<domain>} is covered by {@code <domain>} and
+     * {@code idp.<env>.localhost} by {@code <env>.localhost}. Registered passkeys keep working.
      * <p>
      * Every {@code *.localhost} name is a secure context by itself — no certificate needed — which
      * is what lets a passkey work on this platform's plain HTTP port. The one route without a
@@ -636,17 +660,21 @@ public interface BootstrapConfig {
     }
 
     /**
-     * The origins a ceremony is accepted from — {@link #publicOrigin} and nothing else. It is a LIST
-     * on the idp's side and one entry here, because this platform has one front door.
+     * The origins a ceremony is accepted from — {@link #idpOrigin} and nothing else. It is a LIST on
+     * the idp's side and one entry here, because the login page has one address.
      */
     default String webauthnOrigins() {
-        return publicOrigin();
+        return idpOrigin();
     }
 
     /**
      * The browser authorities a completed IdP ceremony may return to: the environment's door, and
      * {@code *.} of it for every application host under it. The apex leads the list where there is
-     * one, because that is where the ceremony itself happens.
+     * one, because every short host is a child of it.
+     * <p>
+     * <b>The idp host needs no entry of its own.</b> {@link #idpOrigin()} is {@code idp.} of the
+     * apex or of the environment authority, so the wildcards below already admit it — one extra
+     * label, same port.
      * <p>
      * <b>The wildcard is exactly one extra label and the port must match</b> — the edge and the idp
      * both read it that way, so {@code *.dev.localhost:8080} admits {@code ci.dev.localhost:8080}

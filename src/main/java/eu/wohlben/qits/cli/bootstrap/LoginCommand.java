@@ -34,16 +34,22 @@ public class LoginCommand implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
-        // THE ENVIRONMENT'S OWN NAME IS THE LOCAL DOOR, not bare localhost: every service has a
-        // host of its own under <env>.localhost now, and a browser session covers them because a
-        // cookie is shared with a name's children. The login below opens a browser at this address,
-        // so it has to be the address the idp accepts a return to.
+        // EVERY SERVICE HAS A HOST OF ITS OWN, the idp and the git host included: idp.<domain> and
+        // githost.<domain> with a domain, idp.<env>.localhost and githost.<env>.localhost without
+        // one. The door serves neither — it redirects / to the projects host and 404s every path —
+        // so both defaults name the service host directly.
+        //
+        // QITS_DOMAIN is read the same way QITS_ENV_NAME is: set, this workstation talks to a
+        // domain platform over TLS; unset, to the local one on the edge's port.
         String environment = env("QITS_ENV_NAME", "prod");
-        String door = "http://" + environment + ".localhost:8080";
-        String resolvedIdp = TokenClient.trim(idpUrl == null ? env("QITS_IDP_URL", door + "/idp") : idpUrl);
-        // Git must use the edge origin. It is the boundary which turns Git's Basic oauth2 token
-        // into the forwarded identity headers the raw githost routes enforce.
-        String origin = GitOrigin.normalize(gitHost == null ? env("QITS_GIT_HOST_URL", door) : gitHost);
+        String domain = env("QITS_DOMAIN", "");
+        String idpHost = serviceHost("idp", domain, environment);
+        String gitHostDefault = serviceHost("githost", domain, environment);
+        String resolvedIdp = TokenClient.trim(idpUrl == null ? env("QITS_IDP_URL", idpHost + "/idp") : idpUrl);
+        // Git goes through the edge, at the git host's own name. The edge is the boundary which
+        // turns Git's Basic oauth2 token into the forwarded identity headers the raw githost routes
+        // enforce.
+        String origin = GitOrigin.normalize(gitHost == null ? env("QITS_GIT_HOST_URL", gitHostDefault) : gitHost);
         String resolvedAudience = audience == null ? environment + "-qits-githost" : audience;
         Pkce pkce = Pkce.create();
         String state = Pkce.state();
@@ -69,6 +75,16 @@ public class LoginCommand implements Callable<Integer> {
         System.out.println("This workstation is ready for Git pushes to " + origin + ".");
         System.out.println("Configure Git once: git config --global credential.helper '!qits git-credential'");
         return 0;
+    }
+
+    /**
+     * One service's public origin: {@code https://<app>.<domain>} when {@code QITS_DOMAIN} is set,
+     * {@code http://<app>.<env>.localhost:8080} otherwise.
+     */
+    static String serviceHost(String app, String domain, String environment) {
+        return domain == null || domain.isBlank()
+                ? "http://" + app + "." + environment + ".localhost:8080"
+                : "https://" + app + "." + domain;
     }
 
     private static void openBrowser(String url) throws Exception {

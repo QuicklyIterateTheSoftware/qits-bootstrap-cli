@@ -263,14 +263,37 @@ class SeedPhasesTest {
 
         assertThat(tokens).containsEntry("IDP_SECRET_EDGE", "s3cr3t");
         assertThat(tokens.get("IDP_CLIENTS")).contains("prod-qits-edge");
-        // The passkey binding travels in the same map, and with no domain it is the loopback door —
-        // under the ENVIRONMENT's label, which is what a service host can be a child of.
+        // The passkey binding travels in the same map. The rp id is the ENVIRONMENT's label, and
+        // the ceremony's origin is the idp's own host — a child of it, so the binding holds.
         assertThat(tokens).containsEntry("WEBAUTHN_RP_ID", "prod.localhost")
-                .containsEntry("WEBAUTHN_ORIGINS", "http://prod.localhost:8080");
-        // And the session travels with it: the door, one label under it, and the shared parent.
+                .containsEntry("WEBAUTHN_ORIGINS", "http://idp.prod.localhost:8080");
+        // And the session travels with it: the door, the login host, one label under the door, and
+        // the shared parent. The door and the login host are NOT the same name.
         assertThat(tokens).containsEntry("PUBLIC_ORIGIN", "http://prod.localhost:8080")
+                .containsEntry("IDP_ORIGIN", "http://idp.prod.localhost:8080")
                 .containsEntry("BROWSER_HOSTS", "prod.localhost:8080,*.prod.localhost:8080")
                 .containsEntry("SESSION_COOKIE_DOMAIN", "prod.localhost");
+    }
+
+    /**
+     * A domain platform's login host is {@code idp.<domain>} — {@code idp.} of the APEX, not of the
+     * environment authority, because the environment label is optional for the default tier.
+     */
+    @Test
+    void aDomainPlatformsLoginHostIsIdpOfTheApex() {
+        Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev",
+                "QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7")),
+                new RunLog(temp.resolve("run.log")));
+
+        Map<String, String> tokens = new SeedPhases(boot).tokens();
+
+        assertThat(tokens).containsEntry("PUBLIC_ORIGIN", "https://qits-dev.eu")
+                .containsEntry("IDP_ORIGIN", "https://idp.qits-dev.eu")
+                .containsEntry("WEBAUTHN_ORIGINS", "https://idp.qits-dev.eu")
+                // The rp id stays the apex: a credential asserts on it and every label under it.
+                .containsEntry("WEBAUTHN_RP_ID", "qits-dev.eu");
+        // No entry of its own is needed for the idp host — the wildcards already admit it.
+        assertThat(tokens.get("BROWSER_HOSTS")).contains("*.qits-dev.eu");
     }
 
     @Test

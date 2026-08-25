@@ -318,9 +318,11 @@ that, each measured on this host rather than assumed:
   `psql` goes in through `docker exec`. No publish binds loopback — neither mode has an ip field.
 - **User sessions use canonical SSO, and one session covers every service host.** Both generated
   formats seed the edge's own IdP client (`<env>-qits-edge`) and enable the session gate. They
-  configure one WebAuthn/login origin — `http://<env>.localhost:<port>` locally or
-  `https://<domain>` in domain mode — plus the return-host allow-list: the environment authority
-  and `*.` of it, exactly one extra label on the same port. Domain mode names four shapes
+  configure the idp's one WebAuthn/login origin — its OWN host, `http://idp.<env>.localhost:<port>`
+  locally or `https://idp.<domain>` in domain mode, because the door serves no `/idp/...` path any
+  more — plus the return-host allow-list: the environment authority and `*.` of it, exactly one
+  extra label on the same port. The edge's canonical origin stays the door: it derives the apex
+  from it and reads the login host out of the deployment projection. Domain mode names four shapes
   (`<domain>,<env>.<domain>,*.<domain>,*.<env>.<domain>`), because the environment label is
   optional for the default tier: `ci.<domain>` and `ci.<env>.<domain>` are the same host. Those
   wildcards are what carry a login onto every app host, where each service serves its own UI. The cookie is scoped to the parent both sides share — the domain, or

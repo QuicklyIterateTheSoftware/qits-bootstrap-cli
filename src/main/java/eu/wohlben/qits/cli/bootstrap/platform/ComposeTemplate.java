@@ -244,15 +244,19 @@ public final class ComposeTemplate {
                   # this file is spelled: an address a deployment inherits silently is one nobody knows to
                   # change. Consumers below carry the same string; a mismatch is rejected at validation.
                   QITS_IDP_ISSUER: ${IDP}
-                  # The sole WebAuthn origin and the same return-host list the edge reads. The
-                  # list is the ENVIRONMENT's authority and a *. of it, so one session covers every
-                  # <app>.<env> host — plus the apex and *.<domain> where there is a domain, because
+                  # THE IDP'S OWN HOST, not the door: the login page is served at idp.<domain> /
+                  # idp.<env>.localhost, the shape every service host has. The door serves nothing
+                  # but a redirect off /.
+                  #
+                  # The return-host list is the ENVIRONMENT's authority and a *. of it, so one
+                  # session covers every <app>.<env> host — the idp's own included, since that is
+                  # one extra label — plus the apex and *.<domain> where there is a domain, because
                   # the environment label is optional for the default tier and <app>.<domain> is the
                   # same host as <app>.<env>.<domain>. The cookie is scoped to the parent every one
                   # of those shapes shares: the domain, or <env>.localhost locally — bare localhost
                   # is a public suffix and a cookie scoped to it is dropped, which is why the local
                   # door carries the environment name at all.
-                  QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN: ${PUBLIC_ORIGIN}
+                  QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN: ${IDP_ORIGIN}
                   QITS_IDP_BROWSER_SSO_BROWSER_HOSTS: "${BROWSER_HOSTS}"
                   QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN: "${SESSION_COOKIE_DOMAIN}"
                   # WHICH CLIENTS EXIST. The key REPLACES the shipped list rather than extending it, and an
@@ -310,13 +314,13 @@ public final class ComposeTemplate {
                   QITS_IDP_CLIENT_${CLIENT_KEY_EDGE}_SECRET: "${IDP_SECRET_EDGE}"
                   QITS_IDP_CLIENT_${CLIENT_KEY_EDGE}_ROLES: "qits:system,qits-platform:system"
                   # THE PASSKEY BINDING. A credential is bound to the rp id and asserts on that
-                  # host AND its children, and the origins are what the browser's ceremony is
-                  # checked against. Both are the address a person's browser arrives at:
-                  # <env>.localhost and the edge's port, or the domain over TLS when there is one.
-                  # Every *.localhost name is a secure context by itself, so a passkey works there
-                  # with no certificate; a raw IP is not one, and from it only the password fallback
-                  # logs in. A passkey registered under the older bare-localhost rp id asserts on
-                  # neither door and has to be registered again.
+                  # host AND its children: the rp id is <env>.localhost, or the domain when there is
+                  # one. The origins are what the browser's ceremony is checked against, and that is
+                  # the idp's own host — a child of the rp id, so the login moving there broke no
+                  # credential. Every *.localhost name is a secure context by itself, so a passkey
+                  # works there with no certificate; a raw IP is not one, and from it only the
+                  # password fallback logs in. A passkey registered under the older bare-localhost
+                  # rp id asserts on neither door and has to be registered again.
                   QITS_IDP_WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID}
                   QITS_IDP_WEBAUTHN_ORIGINS: "${WEBAUTHN_ORIGINS}"
                   # The audiences each minting client may ask for. Restated in full, because the key replaces
@@ -504,10 +508,10 @@ public final class ComposeTemplate {
                   QITS_EDGE_SESSIONS_ENABLED: "true"
                   QITS_EDGE_SESSIONS_CLIENT_ID: ${ENV_NAME}-qits-edge
                   QITS_EDGE_SESSIONS_CLIENT_SECRET: "${IDP_SECRET_EDGE}"
-                  # One WebAuthn origin, then the return-host allow-list. Login happens at the
-                  # canonical origin — the apex with a domain, the environment door without one —
-                  # and a person may return to an authority on the list or to any ONE label under
-                  # it, on the same port. That wildcard is what carries a session onto every
+                  # THE EDGE'S CANONICAL ORIGIN IS THE DOOR, and stays the door: the edge reads
+                  # the default environment's apex out of it and finds the login host — idp.<apex>
+                  # — in the deployment projection by itself. A person may return to an authority
+                  # on the list below or to any ONE label under it, on the same port. That wildcard is what carries a session onto every
                   # <app>.<env> host, registry, mirror and git host included: a service host serves
                   # that service's SPA as well as its wire routes now. With a domain the list holds
                   # both depths — <domain> and <env>.<domain>, each with its wildcard — because the
@@ -1922,10 +1926,11 @@ public final class ComposeTemplate {
             # shipped list rather than extending it — and every id in them is a wire alias, so they move with
             # the environment name while the image's defaults cannot.
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_ISSUER=${IDP}
-            # Browser SSO is configured in both halves. The IdP is the authority that validates a
-            # return target after the SPA signs in; the edge uses the identical values to construct
-            # the initial canonical-login redirect.
-            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN=${PUBLIC_ORIGIN}
+            # Browser SSO is configured in both halves, and the canonical origins DIFFER. The idp
+            # is served on a host of its own, so its canonical origin is that host; the edge's stays
+            # the door, from which it derives the apex and looks the login host up. The return-host
+            # list is the same on both sides.
+            qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN=${IDP_ORIGIN}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_BROWSER_SSO_BROWSER_HOSTS=${BROWSER_HOSTS}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN=${SESSION_COOKIE_DOMAIN}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENTS=${IDP_CLIENTS}
@@ -1988,9 +1993,9 @@ public final class ComposeTemplate {
             # every project, so a bump naming one repository is refused without it.
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_CLIENT_${CLIENT_KEY_PLATFORM_MAINTENANCE}_CLAIMS_PROJECT=*
             # The passkey binding, as on the seed block: the rp id is a HOST a credential is bound
-            # to (and every label under it), the origins are what a ceremony is checked against, and
-            # both are the address a browser arrives at — <env>.localhost and the edge's port, or
-            # the domain over TLS.
+            # to (and every label under it) — <env>.localhost or the domain — and the origins are
+            # what a ceremony is checked against, which is the idp's own host. A credential bound to
+            # the parent asserts on the child, so moving the login there changed no binding.
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_WEBAUTHN_RP_ID=${WEBAUTHN_RP_ID}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_WEBAUTHN_ORIGINS=${WEBAUTHN_ORIGINS}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080

@@ -1013,7 +1013,13 @@ class PipelinePhasesTest {
         // A passkey made under the old rp id asserts nowhere now.
         assertThat(ctx.lines).anyMatch(line -> line.startsWith("passkeys:"));
         assertThat(ctx.lines).anyMatch(line ->
-                line.contains("http://dev.localhost:8080/idp/register"));
+                line.contains("http://idp.dev.localhost:8080/idp/register"));
+        // THE LOGIN IS ON THE IDP'S OWN HOST, and the door is nowhere given an /idp path: it
+        // redirects / and 404s everything else.
+        assertThat(ctx.lines).anyMatch(line ->
+                line.startsWith("sign in:   http://idp.dev.localhost:8080/idp/login"));
+        assertThat(ctx.lines).noneMatch(line ->
+                line.contains("http://dev.localhost:8080/idp"));
         // And the door is nowhere spelled without the environment label.
         assertThat(ctx.lines).noneMatch(line -> line.contains("http://localhost:8080/"));
     }
@@ -1036,6 +1042,8 @@ class PipelinePhasesTest {
         new PipelinePhases(boot).summary().action().run(ctx);
 
         assertThat(ctx.lines).anyMatch(line -> line.startsWith("edge:      https://qits-dev.eu/"));
+        assertThat(ctx.lines).anyMatch(line ->
+                line.startsWith("sign in:   https://idp.qits-dev.eu/idp/login"));
         assertThat(ctx.lines).anyMatch(line -> line.contains("https://<app>.qits-dev.eu/"));
         assertThat(ctx.lines).anyMatch(line -> line.contains("<app>.dev.qits-dev.eu are the same host"));
         // Both wildcards, because both depths are addresses of the same service.

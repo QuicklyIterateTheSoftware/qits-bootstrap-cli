@@ -2281,7 +2281,11 @@ public class SeedPhases {
         // beside it: a credential registered under one rp id asserts under no other host.
         values.put("WEBAUTHN_RP_ID", boot.config.webauthnRpId());
         values.put("WEBAUTHN_ORIGINS", boot.config.webauthnOrigins());
+        // TWO ORIGINS, AND THEY ARE NOT THE SAME NAME. The door is the edge's canonical session
+        // origin and serves nothing but a redirect; the login page is on the idp's own host, which
+        // is what the idp itself has to call canonical.
         values.put("PUBLIC_ORIGIN", boot.config.publicOrigin());
+        values.put("IDP_ORIGIN", boot.config.idpOrigin());
         values.put("BROWSER_HOSTS", boot.config.browserSsoHosts());
         values.put("SESSION_COOKIE_DOMAIN", boot.config.browserSsoCookieDomain());
         // What QITS_DOMAIN adds, and nothing when there is none: every one of these is empty then,
