@@ -195,16 +195,21 @@ class BootstrapConfigTest {
         assertThat(plain.publicOrigin()).isEqualTo("http://dev.localhost:9090");
         // The rp id is a HOST and carries no port.
         assertThat(plain.webauthnRpId()).isEqualTo("dev.localhost");
-        assertThat(plain.webauthnOrigins()).isEqualTo("http://dev.localhost:9090");
+        // THE CEREMONY HAPPENS ON THE IDP'S OWN HOST, not on the door, which serves no /idp path.
+        // It is a child of the rp id, so the binding is unchanged by the move.
+        assertThat(plain.idpOrigin()).isEqualTo("http://idp.dev.localhost:9090");
+        assertThat(plain.webauthnOrigins()).isEqualTo("http://idp.dev.localhost:9090");
 
-        // With a domain the door is TLS on the APEX — the name the edge's certificate is issued for
-        // and where the login happens — while the environments are its children.
+        // With a domain the door is TLS on the APEX — the name the edge's certificate is issued
+        // for — while the environments are its children. The login is idp. of that apex, because
+        // the environment label is optional for the default tier.
         BootstrapConfig hosted = from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev",
                 "QITS_DOMAIN", "qits-dev.eu"));
 
         assertThat(hosted.publicOrigin()).isEqualTo("https://qits-dev.eu");
         assertThat(hosted.webauthnRpId()).isEqualTo("qits-dev.eu");
-        assertThat(hosted.webauthnOrigins()).isEqualTo("https://qits-dev.eu");
+        assertThat(hosted.idpOrigin()).isEqualTo("https://idp.qits-dev.eu");
+        assertThat(hosted.webauthnOrigins()).isEqualTo("https://idp.qits-dev.eu");
     }
 
     /**
@@ -220,6 +225,10 @@ class BootstrapConfigTest {
         assertThat(plain.browserSsoHosts()).isEqualTo("dev.localhost:9090,*.dev.localhost:9090");
         // A cookie domain is a host: no port, and no leading dot.
         assertThat(plain.browserSsoCookieDomain()).isEqualTo("dev.localhost");
+        // The idp's host needs no entry of its own: the wildcard is one extra label, and that is
+        // exactly what idp. of the authority is.
+        assertThat(plain.browserSsoHosts().split(","))
+                .contains("*." + plain.envAuthority());
 
         // With a domain the apex leads the list, because that is where the ceremony happens — and
         // there are FOUR shapes, because the environment label is optional for the default tier:
@@ -230,6 +239,8 @@ class BootstrapConfigTest {
         assertThat(hosted.browserSsoHosts()).isEqualTo(
                 "qits-dev.eu,dev.qits-dev.eu,*.qits-dev.eu,*.dev.qits-dev.eu");
         assertThat(hosted.browserSsoCookieDomain()).isEqualTo("qits-dev.eu");
+        // idp.qits-dev.eu is admitted by *.qits-dev.eu, so the login host is on the list already.
+        assertThat(hosted.browserSsoHosts().split(",")).contains("*.qits-dev.eu");
     }
 
     @Test
