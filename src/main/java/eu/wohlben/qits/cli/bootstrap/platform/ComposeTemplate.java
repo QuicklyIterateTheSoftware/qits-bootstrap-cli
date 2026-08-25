@@ -1773,6 +1773,8 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_CONTAINERS_URL=http://${ALIAS_CONTAINERS}:8080
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_CI_URL=http://${ALIAS_CI}:8080
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_DEPLOYMENTS_URL=http://${ALIAS_DEPLOYMENTS}:8080
+            qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_PROJECTS_URL=http://${ALIAS_PROJECTS}:8080
+            qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_WORKSPACES_URL=http://${ALIAS_WORKSPACES}:8080
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_ARTIFACTS_CLIENT_ENABLED=${MACHINE_CLIENT}
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_ARTIFACTS_AUTH_SERVER_URL=${IDP}
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_ARTIFACTS_CLIENT_ID=${ALIAS_PLATFORM_ORCHESTRATOR}
@@ -1793,6 +1795,16 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_DEPLOYMENTS_CLIENT_ID=${ALIAS_PLATFORM_ORCHESTRATOR}
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_DEPLOYMENTS_CREDENTIALS_SECRET=${IDP_SECRET_PLATFORM_ORCHESTRATOR}
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_DEPLOYMENTS_GRANT_OPTIONS_CLIENT_AUDIENCE=${ALIAS_DEPLOYMENTS}
+            qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_PROJECTS_CLIENT_ENABLED=${MACHINE_CLIENT}
+            qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_PROJECTS_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_PROJECTS_CLIENT_ID=${ALIAS_PLATFORM_ORCHESTRATOR}
+            qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_PROJECTS_CREDENTIALS_SECRET=${IDP_SECRET_PLATFORM_ORCHESTRATOR}
+            qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_PROJECTS_GRANT_OPTIONS_CLIENT_AUDIENCE=${ALIAS_PROJECTS}
+            qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_WORKSPACES_CLIENT_ENABLED=${MACHINE_CLIENT}
+            qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_WORKSPACES_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_WORKSPACES_CLIENT_ID=${ALIAS_PLATFORM_ORCHESTRATOR}
+            qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_WORKSPACES_CREDENTIALS_SECRET=${IDP_SECRET_PLATFORM_ORCHESTRATOR}
+            qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_WORKSPACES_GRANT_OPTIONS_CLIENT_AUDIENCE=${ALIAS_WORKSPACES}
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The platform's PostgreSQL, deployed like everything else.
             #
