@@ -1220,6 +1220,14 @@ public class PipelinePhases {
         if (Files.exists(config)) {
             return false;
         }
+        // "No ci-post-receive.yml" stopped meaning "no push pipeline" when qits-ci grew checkout:
+        // — a repository may carry its push build as a ci-event-*.yml on SCMPublishCommit instead
+        // (qits-githost is the first). Overlaying the standard step there would give every push a
+        // SECOND image build: the dedupe is per (event, repo, config path) and the paths differ,
+        // so both would run. A domain-event-only repository is left exactly as it committed itself.
+        if (hasPushEventTrigger(src)) {
+            return false;
+        }
         String repo = PlatformModel.repo(name);
         ctx.warn(repo + " has no pipeline config — overlaying the standard publish step");
         Files.createDirectories(config.getParent());
@@ -1245,6 +1253,32 @@ public class PipelinePhases {
         boot.git.commitAsBootstrap(src,
                 "Opt into CI: publish this repo's image from a green push", ctx::log);
         return true;
+    }
+
+    /**
+     * Whether the checkout carries a push pipeline as a domain-event trigger — any {@code
+     * .config/qits/ci-event-*.yml} naming {@code SCMPublishCommit}. A cheap textual read on
+     * purpose: qits-ci's strict parser is that repository's; what this phase needs to know is only
+     * "would the overlay be a second push build", and a file that merely mentions the event in a
+     * comment errs on the side of not overlaying — the honest direction, since the overlay is a
+     * convenience and a duplicate build is a cost.
+     */
+    private static boolean hasPushEventTrigger(Path src) throws Exception {
+        Path dir = src.resolve(".config/qits");
+        if (!Files.isDirectory(dir)) {
+            return false;
+        }
+        try (var files = Files.list(dir)) {
+            for (Path file : files.toList()) {
+                String fileName = file.getFileName().toString();
+                if (fileName.startsWith("ci-event-") && fileName.endsWith(".yml")
+                        && Files.readString(file, StandardCharsets.UTF_8)
+                                .contains("SCMPublishCommit")) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
