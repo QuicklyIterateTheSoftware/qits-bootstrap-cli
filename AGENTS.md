@@ -262,9 +262,18 @@ forced. Add to that list rather than deviating quietly.
   2026-08-11. **Every one of those scripts deletes `eu/wohlben/qits` out of the cache first**: a
   third-party jar is immutable at its version and a seed-built qits jar is not, because seed
   builds reuse calvers across runs.
-- **A name in `PlatformModel` is the repository name without `qits-`, and it is load-bearing four
-  times over**: the wrapper directory, the git-host repository, the seed image tag and the
-  deployer's application key. The plane is DECIDED by `PlatformModel.PLATFORM_SERVICES` and
+- **A name in `PlatformModel` is the repository name without `qits-`, and it is load-bearing three
+  times over**: the git-host repository, the seed image tag and the deployer's application key.
+  **The wrapper DIRECTORY is no longer one of them, and that is deliberate.** The wrapper is moving
+  from six archetype directories to `components/<component>/<repo>`, and a component is not
+  derivable from a name — `qits-spa-ci` belongs to component `qits-ci`. So the wrapper's own
+  `.gitmodules` is the authority on where a repository sits: `GitModules` reads it, `RunState`
+  looks each repository up by name, by the path's last segment and by the url's, and
+  `PlatformModel.repoPath` is only the fallback for a wrapper this machine has not cloned yet.
+  Nothing here spells a layout that a checkout could contradict. `PlatformModel.archetype` reads
+  the path's first segment while it is one of the six, and derives from the NAME otherwise — the
+  role suffix phase 2 renames into, then a table of today's names. The plane is DECIDED by
+  `PlatformModel.PLATFORM_SERVICES` and
   usually also said by the name (`platform-idp`, `platform-mirror`); the tier lives in the WIRE
   ALIAS derived from it (`prod-qits-ci`) — never the other way round. **The list is the authority,
   not the spelling**: qits-deployments and qits-events joined the platform plane on 2026-08-17 and
@@ -299,6 +308,13 @@ forced. Add to that list rather than deviating quietly.
   is cloned by `sources`. An EMPTY directory counts as absent — git leaves one at every gitlink of
   a wrapper cloned without its submodules, and it hides no local work — while a directory with
   anything in it still stops the boot.
+  **The org fallback is now allowed only where it hides nothing**, and `SeedPhases.localSourceRefusal`
+  is where that line is drawn. A repository the wrapper DECLARES whose directory holds no checkout,
+  in a wrapper whose other submodules ARE checked out, stops the boot and names
+  `git submodule update --init <path>`: that is a half-initialised checkout, and cloning the org's
+  last push instead would build last week's platform and say so in one line among thousands. A
+  wrapper with NO submodule checked out is the cold start, and every repository of it comes from the
+  org in silence, as it must.
 - **A cold start is a supported start, and the wrapper is not special.** `curl … | bash` on a bare
   box has no checkout and no platform git host to clone one from, so the wrapper comes from the org
   like any other repository, into the working directory. Its submodules are deliberately NOT

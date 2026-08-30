@@ -1,15 +1,19 @@
 package eu.wohlben.qits.cli.bootstrap.config;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import eu.wohlben.qits.cli.bootstrap.platform.GitModules;
+
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
- * Where the wrapper repository is. This CLI lives at {@code cli/qits-cli-bootstrap} INSIDE the
- * wrapper, so in the ordinary case it can find the wrapper by looking up from wherever it was run.
+ * Where the wrapper repository is. This CLI is a submodule of the wrapper — at
+ * {@code cli/qits-cli-bootstrap} under the archetype layout, at
+ * {@code components/qits-bootstrap/qits-cli-bootstrap} under the component one — so in the ordinary
+ * case it can find the wrapper by looking up from wherever it was run. The walk asks what a
+ * directory IS rather than how deep it is, so neither layout is spelled here.
  * <p>
  * The old default was {@code .}, which is right only when the working directory happens to BE the
  * wrapper root — from anywhere else it resolved to a directory with no submodules in it and the
@@ -23,27 +27,33 @@ import java.util.Optional;
 public final class WrapperDir {
 
     /**
-     * The marker. A wrapper checkout has a {@code .gitmodules} that names the qits submodules, and
-     * a worktree of it has the same file — which is why the file is the marker rather than
+     * The marker. A wrapper checkout has a {@code .gitmodules} that declares the qits submodules,
+     * and a worktree of it has the same file — which is why the file is the marker rather than
      * {@code .git}, a directory a worktree does not have.
      * <p>
-     * The services directory is the second half of the same question, and it is what tells a
-     * wrapper apart from any other repository that happens to use submodules.
+     * <b>The question is which REPOSITORY the file declares, not which directory it sits in.</b>
+     * That is what makes this test survive the wrapper's reorganisation: the archetype layout put
+     * the store at {@code services/qits-artifacts} and the component layout puts it at
+     * {@code components/qits-artifacts/qits-artifacts}, and neither spelling is asked for.
+     * The old test grepped for {@code services/qits-}, so the flip would have turned every
+     * checkout on every machine into "no wrapper repository at or above …".
      * <p>
-     * The directory is named for the repository the hosted registries live in. <b>BOTH SPELLINGS
-     * ARE ACCEPTED, and that is the pattern rather than a transition</b>: the repository was
-     * qits-artifacts, became qits-platform-artifacts in the 2026-08-08 rename, and went back to
-     * qits-artifacts when the byte-plane split moved the caches out. A checkout made under either
-     * name is a wrapper, and asking for only one of them turns somebody's working copy into "no
-     * wrapper repository at or above …".
+     * The repository is the one the hosted registries live in. <b>BOTH SPELLINGS ARE ACCEPTED, and
+     * that is the pattern rather than a transition</b>: it was qits-artifacts, became
+     * qits-platform-artifacts in the 2026-08-08 rename, and went back to qits-artifacts when the
+     * byte-plane split moved the caches out. A checkout made under either name is a wrapper.
      * <p>
-     * The {@code .gitmodules} test below is the wider net and catches both anyway — it only asks
-     * for {@code services/qits-} — but a wrapper whose file is missing or unreadable is recognised
-     * by the directories alone, and that arm has to know both names.
+     * The DIRECTORIES below are the second arm, for a wrapper whose {@code .gitmodules} is missing
+     * or unreadable — a checkout is still a wrapper when its submodules are on disk. That arm has
+     * to know both layouts as well as both names, so it is the cross product of the two.
      */
-    private static final String MARKER_FILE = ".gitmodules";
-    private static final List<String> MARKER_DIRS =
-            List.of("services/qits-artifacts", "services/qits-platform-artifacts");
+    private static final List<String> MARKER_REPOS =
+            List.of("qits-artifacts", "qits-platform-artifacts");
+    private static final List<String> MARKER_DIRS = MARKER_REPOS.stream()
+            .flatMap(repo -> Stream.of("services/" + repo, "components/" + repo + "/" + repo,
+                    "components/qits-artifacts/" + repo))
+            .distinct()
+            .toList();
 
     /**
      * The wrapper's repository name, which is also the directory a cold start clones it into. It is
@@ -63,15 +73,7 @@ public final class WrapperDir {
         if (MARKER_DIRS.stream().anyMatch(dir -> Files.isDirectory(candidate.resolve(dir)))) {
             return true;
         }
-        Path modules = candidate.resolve(MARKER_FILE);
-        if (!Files.isRegularFile(modules)) {
-            return false;
-        }
-        try {
-            return Files.readString(modules, StandardCharsets.UTF_8).contains("services/qits-");
-        } catch (IOException unreadable) {
-            return false;
-        }
+        return GitModules.of(candidate).declaresAny(MARKER_REPOS);
     }
 
     /**

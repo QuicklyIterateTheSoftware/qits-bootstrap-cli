@@ -12,6 +12,8 @@ class PlatformModelTest {
 
     @Test
     void everyRepositoryKnowsWhereItLivesInTheWrapper() {
+        // The FALLBACK layout, for a wrapper that declares nothing — a machine that has not cloned
+        // one yet. What a wrapper on disk says beats every line below it; see RunStateTest.
         // The six repositories renamed on 2026-08-08, each resolving to the wrapper directory that
         // exists on disk. A wrong path here used to fall back to GitHub in silence; the sources
         // phase fails on it now, so these are the pins that keep the failure from ever being met.
@@ -70,6 +72,96 @@ class PlatformModelTest {
                 .isEqualTo("libs/qits-integrations-angular");
         assertThat(PlatformModel.repoPath("integrations-quarkus"))
                 .isEqualTo("libs/qits-integrations-quarkus");
+    }
+
+    /**
+     * <b>The archetype layout's first segment IS the archetype, and that arm stays.</b> It is the
+     * derivation qits-projects makes from the same file, so a wrapper of that shape has one answer
+     * rather than two that can drift.
+     */
+    @Test
+    void anArchetypeDirectoryStillAnswersForItself() {
+        assertThat(PlatformModel.archetype("ci", "services/qits-ci")).isEqualTo("SERVICE");
+        assertThat(PlatformModel.archetype("spa-ci", "frontends/qits-spa-ci")).isEqualTo("FRONTEND");
+        assertThat(PlatformModel.archetype("ci-daemon", "daemons/qits-ci-daemon"))
+                .isEqualTo("DAEMON");
+        assertThat(PlatformModel.archetype("eventstream", "libs/qits-eventstream"))
+                .isEqualTo("LIBRARY");
+        assertThat(PlatformModel.archetype("oci", "images/qits-oci")).isEqualTo("IMAGE");
+        assertThat(PlatformModel.archetype("cli-bootstrap", "cli/qits-cli-bootstrap"))
+                .isEqualTo("CLI");
+        // The directory beats the name, which is the point of asking it: a wrapper that puts a
+        // repository somewhere its name does not imply is followed rather than second-guessed.
+        assertThat(PlatformModel.archetype("spa-ui-components", "libs/qits-spa-ui-components"))
+                .isEqualTo("LIBRARY");
+    }
+
+    /**
+     * <b>Under {@code components/<component>/<repo>} the first segment says nothing about kind, so
+     * the NAME answers.</b> The component of a repository is not derivable from its name —
+     * qits-spa-ci belongs to qits-ci — which is why nothing here tries to read one.
+     */
+    @Test
+    void aComponentPathSendsTheQuestionToTheName() {
+        assertThat(PlatformModel.archetype("ci", "components/qits-ci/qits-ci")).isEqualTo("SERVICE");
+        assertThat(PlatformModel.archetype("spa-ci", "components/qits-ci/qits-spa-ci"))
+                .isEqualTo("FRONTEND");
+        assertThat(PlatformModel.archetype("ci-daemon", "components/qits-ci/qits-ci-daemon"))
+                .isEqualTo("DAEMON");
+        assertThat(PlatformModel.archetype("platform-spa-mirror",
+                "components/qits-mirror/qits-platform-spa-mirror")).isEqualTo("FRONTEND");
+        // The names the tables carry, because nothing in them is spelled with its role.
+        assertThat(PlatformModel.archetype("oci-postgresql",
+                "components/qits-database/qits-oci-postgresql")).isEqualTo("IMAGE");
+        assertThat(PlatformModel.archetype("registries",
+                "components/qits-registries/qits-registries")).isEqualTo("LIBRARY");
+        assertThat(PlatformModel.archetype("userflows",
+                "components/qits-userflows/qits-userflows")).isEqualTo("LIBRARY");
+        // The lib set is asked BEFORE the spa- prefix: a component library is not a frontend.
+        assertThat(PlatformModel.archetype("spa-ui-components",
+                "components/qits-ui-components/qits-spa-ui-components")).isEqualTo("LIBRARY");
+    }
+
+    /**
+     * <b>The grammar phase 2 renames into, which is what lets this outlive the renames.</b> A
+     * repository whose name carries its role needs no entry in any table here.
+     */
+    @Test
+    void theRenamedNamesCarryTheirOwnArchetype() {
+        String components = "components/qits-ci/";
+        assertThat(PlatformModel.archetype("ci-service", components + "qits-ci-service"))
+                .isEqualTo("SERVICE");
+        assertThat(PlatformModel.archetype("ci-frontend", components + "qits-ci-frontend"))
+                .isEqualTo("FRONTEND");
+        assertThat(PlatformModel.archetype("ci-daemon", components + "qits-ci-daemon"))
+                .isEqualTo("DAEMON");
+        assertThat(PlatformModel.archetype("workspace-oci",
+                "components/qits-workspaces/qits-workspace-oci")).isEqualTo("IMAGE");
+        assertThat(PlatformModel.archetype("bootstrap-cli",
+                "components/qits-bootstrap/qits-bootstrap-cli")).isEqualTo("CLI");
+        assertThat(PlatformModel.archetype("eventstream-javalib",
+                "components/qits-eventstream/qits-eventstream-javalib")).isEqualTo("LIBRARY");
+        assertThat(PlatformModel.archetype("ui-components-jslib",
+                "components/qits-ui-components/qits-ui-components-jslib")).isEqualTo("LIBRARY");
+        // The platform tier is a modifier before the role, so the suffix still decides.
+        assertThat(PlatformModel.archetype("idp-platform-service",
+                "components/qits-idp/qits-idp-platform-service")).isEqualTo("SERVICE");
+    }
+
+    /**
+     * Nobody has said where it sits — a repository the wrapper does not declare — so the fallback
+     * layout answers, and every name of today answers the same either way.
+     */
+    @Test
+    void anUnplacedRepositoryFallsBackToTheLayoutItsNameImplies() {
+        for (String name : PlatformModel.platformRepos()) {
+            assertThat(PlatformModel.archetype(name))
+                    .as(name)
+                    .isEqualTo(PlatformModel.archetype(name,
+                            "components/qits-x/" + PlatformModel.repo(name)));
+        }
+        assertThat(PlatformModel.archetype("ci", null)).isEqualTo("SERVICE");
+        assertThat(PlatformModel.archetype("spa-ci", null)).isEqualTo("FRONTEND");
     }
 
     @Test

@@ -31,9 +31,9 @@ public interface BootstrapConfig {
      * {@code docker cp} source, the compose file — is read by the client rather than by the daemon,
      * so nothing has to mean the same thing on both sides.
      * <p>
-     * Optional, and the absence is the ordinary case: this CLI lives at
-     * {@code cli/qits-cli-bootstrap} inside the wrapper, so {@link WrapperDir} finds it by walking
-     * up from the working directory. Set this to run from somewhere else entirely.
+     * Optional, and the absence is the ordinary case: this CLI is a submodule of the wrapper, so
+     * {@link WrapperDir} finds it by walking up from the working directory. Set this to run from
+     * somewhere else entirely.
      */
     Optional<String> wrapperDir();
 

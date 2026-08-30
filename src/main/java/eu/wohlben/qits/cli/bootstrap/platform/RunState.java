@@ -5,12 +5,16 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 /** What one run learns as it goes and later phases need. */
 public class RunState {
 
     /** The wrapper repository: the source checkouts, the compose file, the recorded state. */
     public Path wrapperDir;
+    /** Its {@code .gitmodules}, read on demand — see {@link #wrapperModules()}. */
+    private GitModules modules;
+    private Path modulesFrom;
     /** Where sources are cloned to. */
     public Path srcDir;
     /** The generated seed compose file. */
@@ -145,7 +149,50 @@ public class RunState {
         return srcDir.resolve(PlatformModel.repo(name));
     }
 
+    /**
+     * <b>What the wrapper says about itself, re-read while it is still changing.</b> The file is
+     * the authority on every repository's directory, and on a COLD start it does not exist until
+     * the {@code wrapper} phase has cloned one — so this is read again whenever the last read found
+     * nothing, and cached once it has an answer. Reading a small file twice costs nothing; caching
+     * "no wrapper yet" over a wrapper that has since arrived would cost the boot its sources.
+     */
+    public GitModules wrapperModules() {
+        if (modules == null || modules.isEmpty() || !wrapperDir.equals(modulesFrom)) {
+            modules = GitModules.of(wrapperDir);
+            modulesFrom = wrapperDir;
+        }
+        return modules;
+    }
+
+    /**
+     * Where the wrapper puts one repository, relative to its root: what {@code .gitmodules}
+     * declares, else the archetype layout the name implies.
+     */
+    public String wrapperPath(String name) {
+        return wrapperModules().path(PlatformModel.repo(name))
+                .orElseGet(() -> PlatformModel.repoPath(name));
+    }
+
+    /** The same, as a directory on this machine. */
     public Path wrapperCheckout(String name) {
-        return wrapperDir.resolve(PlatformModel.repoPath(name));
+        return wrapperDir.resolve(wrapperPath(name));
+    }
+
+    /** Whether the wrapper declares this repository as a submodule of its own. */
+    public boolean wrapperDeclares(String name) {
+        return wrapperModules().declares(PlatformModel.repo(name));
+    }
+
+    /**
+     * <b>Whether this wrapper's submodules are checked out at all</b>, which is the line between
+     * the two things a missing directory can mean. A wrapper cloned without them — the cold start,
+     * and every rerun on that machine — has an empty directory at every gitlink and hides no local
+     * work, so the org URL is the right answer for all of them. A wrapper whose siblings ARE
+     * checked out is a half-initialised one, and a repository missing from it would otherwise
+     * deploy the org's last push in silence.
+     */
+    public boolean wrapperInitialised(Predicate<Path> isCheckout) {
+        return PlatformModel.platformRepos().stream()
+                .anyMatch(name -> isCheckout.test(wrapperCheckout(name)));
     }
 }
