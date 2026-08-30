@@ -192,12 +192,10 @@ class PlatformModelTest {
         expected.put("oci", "qits-build-images-oci");
         expected.put("oci-postgresql", "qits-database-oci");
         expected.put("oci-workspace", "qits-workspace-oci");
-        // The four that keep the name they have: three daemons already in the grammar, and the home
-        // page, which is being archived rather than reorganised.
+        // The three that keep the name they have: the daemons, already in the grammar.
         expected.put("ci-daemon", "qits-ci-daemon");
         expected.put("projects-daemon", "qits-projects-daemon");
         expected.put("workspace-daemon", "qits-workspace-daemon");
-        expected.put("spa-home", "qits-spa-home");
 
         // Every repository of the platform, and nothing that is not one.
         assertThat(PlatformModel.platformRepos())
@@ -207,19 +205,17 @@ class PlatformModelTest {
     }
 
     /**
-     * <b>The renames are complete, so every repository but one says its role in its own name.</b>
-     * That is what lets {@code archetype} outlive the tables it still carries for the model's names,
-     * and it is the assertion a half-taught rename fails: a repository left at its old spelling
-     * ends in none of these.
+     * <b>The renames are complete, so every repository says its role in its own name.</b> There is
+     * no exception left: the home page was the last one, and it is out of the model entirely since
+     * 2026-08-30. That is what lets {@code archetype} outlive the tables it still carries for the
+     * model's names, and it is the assertion a half-taught rename fails: a repository left at its
+     * old spelling ends in none of these.
      */
     @Test
     void noRepositoryIsLeftAtAStaleName() {
         assertThat(PlatformModel.platformRepos())
-                .filteredOn(name -> !name.equals("spa-home"))
                 .allSatisfy(name -> assertThat(PlatformModel.repo(name)).as(name)
                         .matches(".*-(service|frontend|daemon|oci|cli|javalib|jslib)$"));
-        // The one exception, and it is an archival rather than an omission.
-        assertThat(PlatformModel.repo("spa-home")).isEqualTo("qits-spa-home");
         // And the spellings the renames replaced are gone: a name that resolves to no repository on
         // the git host creates one, pushes to it, and waits an hour for a build nobody asked for.
         assertThat(PlatformModel.platformRepos().stream().map(PlatformModel::repo))
@@ -480,7 +476,11 @@ class PlatformModelTest {
                 // The byte-plane split retired these four on the other side of the same rule: a
                 // name nothing hosts is a push into a repository nobody reads.
                 "platform-artifacts", "platform-docs", "platform-spa-artifacts",
-                "platform-spa-docs");
+                "platform-spa-docs",
+                // And the home page, removed from the platform on 2026-08-30: the wrapper declares
+                // it no more, its row and its bare are deleted, and the org copy is archived. Left
+                // here it would be created and pushed on every boot, with nobody maintaining it.
+                "spa-home");
     }
 
     @Test
@@ -997,7 +997,7 @@ class PlatformModelTest {
         assertThat(PlatformModel.carriesVersionIdentity("oci-workspace")).isTrue();
         // Seeded, and neither: the step images and the SPA seed sources.
         assertThat(PlatformModel.carriesVersionIdentity("oci")).isFalse();
-        assertThat(PlatformModel.carriesVersionIdentity("spa-home")).isFalse();
+        assertThat(PlatformModel.carriesVersionIdentity("spa-projects")).isFalse();
         assertThat(PlatformModel.carriesVersionIdentity("ci-daemon")).isFalse();
         // The seed database too: it is not deployed and nobody pins a postgres release, so its
         // seed image builds from main.

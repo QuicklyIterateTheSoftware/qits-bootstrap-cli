@@ -292,7 +292,7 @@ public final class PlatformModel {
     public static final List<String> SEEDED_REPOS = List.of(
             "oci", "oci-postgresql", "ci-daemon", "eventstream", "blobstore", "registries", "spa-ui-components",
             "userflows", "spa-docs", "spa-deployments",
-            "integrations-angular", "integrations-quarkus", "spa-home", "spa-projects",
+            "integrations-angular", "integrations-quarkus", "spa-projects",
             "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events",
             "spa-ci", "spa-githost", "spa-configuration", "platform-spa-idp",
             "platform-spa-mirror", "platform-spa-orchestrator", "platform-spa-maintenance",
@@ -555,10 +555,9 @@ public final class PlatformModel {
      * its client id. {@link #PLATFORM_SERVICES} remains the only place a plane is decided; the
      * repository name merely agrees with it.
      * <p>
-     * <b>Four applications keep one name, and each for its own reason.</b> The three daemons are
-     * already in the grammar ({@code qits-ci-daemon}, {@code qits-workspace-daemon},
-     * {@code qits-projects-daemon}), and {@code spa-home} is being archived rather than
-     * reorganised, so nothing renames it.
+     * <b>Three applications keep one name</b>, and it is the same reason for all three: the daemons
+     * are already in the grammar ({@code qits-ci-daemon}, {@code qits-workspace-daemon},
+     * {@code qits-projects-daemon}).
      */
     private static final Map<String, String> REPOSITORIES = Map.ofEntries(
             Map.entry("oci", "qits-build-images-oci"),

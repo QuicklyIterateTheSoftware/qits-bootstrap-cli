@@ -395,7 +395,7 @@ class SeedPhasesTest {
         assertThat(SeedPhases.bootIdentity(false, "oci", TAGS)).isEmpty();
         // The SPA seed sources are the same shape: a placeholder bundle, then the real client from
         // the pipeline.
-        assertThat(SeedPhases.bootIdentity(false, "spa-home", TAGS)).isEmpty();
+        assertThat(SeedPhases.bootIdentity(false, "spa-projects", TAGS)).isEmpty();
     }
 
     /** In scope but never released: main, which is what an empty answer means to the caller. */
