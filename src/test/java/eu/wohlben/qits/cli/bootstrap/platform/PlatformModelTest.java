@@ -2,6 +2,7 @@ package eu.wohlben.qits.cli.bootstrap.platform;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -14,41 +15,46 @@ class PlatformModelTest {
     void everyRepositoryKnowsWhereItLivesInTheWrapper() {
         // The FALLBACK layout, for a wrapper that declares nothing — a machine that has not cloned
         // one yet. What a wrapper on disk says beats every line below it; see RunStateTest.
-        // The six repositories renamed on 2026-08-08, each resolving to the wrapper directory that
-        // exists on disk. A wrong path here used to fall back to GitHub in silence; the sources
-        // phase fails on it now, so these are the pins that keep the failure from ever being met.
-        assertThat(PlatformModel.repoPath("deployments")).isEqualTo("services/qits-deployments");
-        assertThat(PlatformModel.repoPath("artifacts")).isEqualTo("services/qits-artifacts");
-        assertThat(PlatformModel.repoPath("platform-idp")).isEqualTo("services/qits-platform-idp");
-        assertThat(PlatformModel.repoPath("platform-edge")).isEqualTo("services/qits-platform-edge");
+        // The directory is the ROLE's and the last segment is the repository's CURRENT name, so
+        // every line below moved with the phase-2 renames. A wrong path here used to fall back to
+        // GitHub in silence; the sources phase fails on it now.
+        assertThat(PlatformModel.repoPath("deployments"))
+                .isEqualTo("services/qits-deployments-platform-service");
+        assertThat(PlatformModel.repoPath("artifacts"))
+                .isEqualTo("services/qits-artifacts-service");
+        assertThat(PlatformModel.repoPath("platform-idp"))
+                .isEqualTo("services/qits-idp-platform-service");
+        assertThat(PlatformModel.repoPath("platform-edge"))
+                .isEqualTo("services/qits-edge-platform-service");
         assertThat(PlatformModel.repoPath("spa-deployments"))
-                .isEqualTo("frontends/qits-spa-deployments");
+                .isEqualTo("frontends/qits-deployments-platform-frontend");
         assertThat(PlatformModel.repoPath("spa-artifacts"))
-                .isEqualTo("frontends/qits-spa-artifacts");
+                .isEqualTo("frontends/qits-artifacts-frontend");
         // The byte plane's own, each in the directory its ROLE puts it in: two libraries and two
         // services, whatever plane the services are on.
         assertThat(PlatformModel.repoPath("blobstore")).isEqualTo("libs/qits-blobstore-javalib");
         assertThat(PlatformModel.repoPath("registries"))
                 .isEqualTo("libs/qits-registries-javalib");
         assertThat(PlatformModel.repoPath("platform-mirror"))
-                .isEqualTo("services/qits-platform-mirror");
-        assertThat(PlatformModel.repoPath("githost")).isEqualTo("services/qits-githost");
-        assertThat(PlatformModel.repoPath("docs")).isEqualTo("services/qits-docs");
+                .isEqualTo("services/qits-mirror-platform-service");
+        assertThat(PlatformModel.repoPath("githost")).isEqualTo("services/qits-githost-service");
+        assertThat(PlatformModel.repoPath("docs")).isEqualTo("services/qits-docs-service");
         // The container orchestrator: a service, so services/ and docker/Dockerfile, and its wire
         // alias carries the tier — one orchestrator per tier, holding that host's socket.
-        assertThat(PlatformModel.repoPath("containers")).isEqualTo("services/qits-containers");
+        assertThat(PlatformModel.repoPath("containers"))
+                .isEqualTo("services/qits-containers-service");
         assertThat(PlatformModel.dockerfilePath("containers")).isEqualTo("docker/Dockerfile");
         assertThat(PlatformModel.isPlatformService("containers")).isFalse();
         assertThat(PlatformModel.wireAlias("containers", "prod")).isEqualTo("prod-qits-containers");
         assertThat(PlatformModel.pdNamePrefix("containers", "prod"))
                 .isEqualTo("qits-pd-prod-qits-containers-");
-        // And their two clients, added on 2026-08-11. BOTH FRONTEND SPELLINGS ARE LIVE: the git
-        // host's client is qits-spa-<x>, the mirror's is qits-platform-spa-<x> because its service
-        // is on the platform plane. A wrong directory here clones the org's copy in silence.
+        // And their two clients, added on 2026-08-11. Both MODEL spellings are live — the git
+        // host's client is spa-<x>, the mirror's is platform-spa-<x> because its service is on the
+        // platform plane — and both repositories now say the plane the same way.
         assertThat(PlatformModel.repoPath("spa-githost"))
-                .isEqualTo("frontends/qits-spa-githost");
+                .isEqualTo("frontends/qits-githost-frontend");
         assertThat(PlatformModel.repoPath("platform-spa-mirror"))
-                .isEqualTo("frontends/qits-platform-spa-mirror");
+                .isEqualTo("frontends/qits-mirror-platform-frontend");
 
         assertThat(PlatformModel.repoPath("ci-daemon")).isEqualTo("daemons/qits-ci-daemon");
         // The two daemons that joined the replay set on 2026-08-10. The default arm would clone
@@ -65,9 +71,9 @@ class PlatformModelTest {
         assertThat(PlatformModel.repoPath("oci-postgresql")).isEqualTo("images/qits-database-oci");
         assertThat(PlatformModel.repoPath("eventstream"))
                 .isEqualTo("libs/qits-eventstream-javalib");
-        assertThat(PlatformModel.repoPath("spa-docs")).isEqualTo("frontends/qits-spa-docs");
-        // The pre-split spelling still resolves, because a wrapper checked out before the rename
-        // has that directory and a path that resolves to nothing clones the org's copy in silence.
+        assertThat(PlatformModel.repoPath("spa-docs")).isEqualTo("frontends/qits-docs-frontend");
+        // A model name the renames never reached is still answered, rather than left to the
+        // default arm: a path that resolves to nothing clones the org's copy in silence.
         assertThat(PlatformModel.repoPath("platform-spa-artifacts"))
                 .isEqualTo("frontends/qits-platform-spa-artifacts");
         // Framework glue is a lib; the wrapper has no integrations/ directory.
@@ -105,25 +111,157 @@ class PlatformModelTest {
         assertThat(PlatformModel.repo("integrations-quarkus"))
                 .isEqualTo("qits-integrations-quarkus-javalib");
 
-        // Everything the renames have not reached is its own repository, and the two answers are
-        // one string.
-        assertThat(PlatformModel.repo("ci")).isEqualTo("qits-ci");
+        // A SERVICE, and the pair that matters most: the repository says the role, the application
+        // says what every peer dials, and nothing the platform answers to moved.
+        assertThat(PlatformModel.repo("ci")).isEqualTo("qits-ci-service");
         assertThat(PlatformModel.application("ci")).isEqualTo("qits-ci");
-        assertThat(PlatformModel.repo("platform-idp")).isEqualTo("qits-platform-idp");
+        assertThat(PlatformModel.wireAlias("ci", "dev")).isEqualTo("dev-qits-ci");
+        assertThat(PlatformModel.pdNamePrefix("ci", "dev")).isEqualTo("qits-pd-dev-qits-ci-");
+
+        // A PLATFORM service, where the plane changes sides: the repository carries it as a
+        // modifier before the role, the application keeps the prefix it has always answered to.
+        assertThat(PlatformModel.repo("platform-idp")).isEqualTo("qits-idp-platform-service");
+        assertThat(PlatformModel.application("platform-idp")).isEqualTo("qits-platform-idp");
+        assertThat(PlatformModel.wireAlias("platform-idp", "dev")).isEqualTo("qits-platform-idp");
+
+        // The deployer and the bus say no plane at all on the application side and never will —
+        // PLATFORM_SERVICES is the authority, not the spelling — while their repositories do.
+        assertThat(PlatformModel.repo("events")).isEqualTo("qits-events-platform-service");
+        assertThat(PlatformModel.application("events")).isEqualTo("qits-events");
+        assertThat(PlatformModel.wireAlias("events", "dev")).isEqualTo("qits-events");
+        assertThat(PlatformModel.repo("deployments"))
+                .isEqualTo("qits-deployments-platform-service");
+        assertThat(PlatformModel.application("deployments")).isEqualTo("qits-deployments");
+        assertThat(PlatformModel.wireAlias("deployments", "dev")).isEqualTo("qits-deployments");
     }
 
     /**
-     * Every wrapper entry the model names must be one the wrapper declares. This is the assertion
-     * that fails on the day a rename lands in {@code .gitmodules} and not here — or here and not
-     * there.
+     * <b>THE WHOLE TABLE, spelled the way the wrapper's {@code .gitmodules} declares it.</b> This is
+     * the assertion that fails on the day a rename lands in the wrapper and not here — or here and
+     * not there — and a name this model gets wrong is a repository the boot creates, pushes to and
+     * waits an hour for a build of.
      */
     @Test
-    void everyRenamedRepositoryIsSpelledTheWayTheWrapperDeclaresIt() {
+    void everyRepositoryIsSpelledTheWayTheWrapperDeclaresIt() {
+        Map<String, String> expected = new LinkedHashMap<>();
+        // The environment tier's services.
+        expected.put("artifacts", "qits-artifacts-service");
+        expected.put("ci", "qits-ci-service");
+        expected.put("configuration", "qits-configuration-service");
+        expected.put("containers", "qits-containers-service");
+        expected.put("docs", "qits-docs-service");
+        expected.put("githost", "qits-githost-service");
+        expected.put("observability", "qits-observability-service");
+        expected.put("projects", "qits-projects-service");
+        expected.put("stt", "qits-stt-service");
+        expected.put("workspaces", "qits-workspaces-service");
+        // The platform tier's, plane as a modifier before the role.
+        expected.put("deployments", "qits-deployments-platform-service");
+        expected.put("events", "qits-events-platform-service");
+        expected.put("platform-edge", "qits-edge-platform-service");
+        expected.put("platform-idp", "qits-idp-platform-service");
+        expected.put("platform-maintenance", "qits-maintenance-platform-service");
+        expected.put("platform-mirror", "qits-mirror-platform-service");
+        expected.put("platform-orchestrator", "qits-orchestrator-platform-service");
+        expected.put("platform-system", "qits-system-platform-service");
+        // The frontends. Both model spellings collapse into one grammar: a client takes its
+        // service's component and plane.
+        expected.put("spa-artifacts", "qits-artifacts-frontend");
+        expected.put("spa-ci", "qits-ci-frontend");
+        expected.put("spa-configuration", "qits-configuration-frontend");
+        expected.put("spa-deployments", "qits-deployments-platform-frontend");
+        expected.put("spa-docs", "qits-docs-frontend");
+        expected.put("spa-events", "qits-events-platform-frontend");
+        expected.put("spa-githost", "qits-githost-frontend");
+        expected.put("spa-observability", "qits-observability-frontend");
+        expected.put("spa-projects", "qits-projects-frontend");
+        expected.put("spa-workspaces", "qits-workspaces-frontend");
+        expected.put("platform-spa-idp", "qits-idp-platform-frontend");
+        expected.put("platform-spa-maintenance", "qits-maintenance-platform-frontend");
+        expected.put("platform-spa-mirror", "qits-mirror-platform-frontend");
+        expected.put("platform-spa-orchestrator", "qits-orchestrator-platform-frontend");
+        expected.put("platform-spa-system", "qits-system-platform-frontend");
+        // The libraries and the image builds, renamed on 2026-08-30.
+        expected.put("blobstore", "qits-blobstore-javalib");
+        expected.put("eventstream", "qits-eventstream-javalib");
+        expected.put("integrations-angular", "qits-integrations-angular-jslib");
+        expected.put("integrations-quarkus", "qits-integrations-quarkus-javalib");
+        expected.put("registries", "qits-registries-javalib");
+        expected.put("spa-ui-components", "qits-ui-components-jslib");
+        expected.put("userflows", "qits-userflows-javalib");
+        expected.put("oci", "qits-build-images-oci");
+        expected.put("oci-postgresql", "qits-database-oci");
+        expected.put("oci-workspace", "qits-workspace-oci");
+        // The four that keep the name they have: three daemons already in the grammar, and the home
+        // page, which is being archived rather than reorganised.
+        expected.put("ci-daemon", "qits-ci-daemon");
+        expected.put("projects-daemon", "qits-projects-daemon");
+        expected.put("workspace-daemon", "qits-workspace-daemon");
+        expected.put("spa-home", "qits-spa-home");
+
+        // Every repository of the platform, and nothing that is not one.
+        assertThat(PlatformModel.platformRepos())
+                .containsExactlyInAnyOrderElementsOf(expected.keySet());
+        expected.forEach((name, repo) ->
+                assertThat(PlatformModel.repo(name)).as(name).isEqualTo(repo));
+    }
+
+    /**
+     * <b>The renames are complete, so every repository but one says its role in its own name.</b>
+     * That is what lets {@code archetype} outlive the tables it still carries for the model's names,
+     * and it is the assertion a half-taught rename fails: a repository left at its old spelling
+     * ends in none of these.
+     */
+    @Test
+    void noRepositoryIsLeftAtAStaleName() {
+        assertThat(PlatformModel.platformRepos())
+                .filteredOn(name -> !name.equals("spa-home"))
+                .allSatisfy(name -> assertThat(PlatformModel.repo(name)).as(name)
+                        .matches(".*-(service|frontend|daemon|oci|cli|javalib|jslib)$"));
+        // The one exception, and it is an archival rather than an omission.
+        assertThat(PlatformModel.repo("spa-home")).isEqualTo("qits-spa-home");
+        // And the spellings the renames replaced are gone: a name that resolves to no repository on
+        // the git host creates one, pushes to it, and waits an hour for a build nobody asked for.
         assertThat(PlatformModel.platformRepos().stream().map(PlatformModel::repo))
                 .doesNotContain("qits-oci", "qits-oci-postgresql", "qits-oci-workspace",
                         "qits-eventstream", "qits-blobstore", "qits-registries", "qits-userflows",
                         "qits-spa-ui-components", "qits-integrations-angular",
-                        "qits-integrations-quarkus");
+                        "qits-integrations-quarkus", "qits-ci", "qits-artifacts", "qits-githost",
+                        "qits-docs", "qits-projects", "qits-workspaces", "qits-configuration",
+                        "qits-containers", "qits-observability", "qits-stt", "qits-events",
+                        "qits-deployments", "qits-platform-idp", "qits-platform-edge",
+                        "qits-platform-mirror", "qits-platform-orchestrator",
+                        "qits-platform-maintenance", "qits-platform-system",
+                        "qits-platform-events", "qits-platform-deployments",
+                        "qits-spa-ci", "qits-spa-artifacts", "qits-spa-githost", "qits-spa-docs",
+                        "qits-spa-projects", "qits-spa-workspaces", "qits-spa-configuration",
+                        "qits-spa-observability", "qits-spa-events", "qits-spa-deployments",
+                        "qits-platform-spa-idp", "qits-platform-spa-mirror",
+                        "qits-platform-spa-orchestrator", "qits-platform-spa-maintenance",
+                        "qits-platform-spa-system", "qits-platform-spa-events",
+                        "qits-platform-spa-deployments");
+    }
+
+    /**
+     * <b>The repository's role suffix and the model's own table must give one answer.</b> The
+     * archetype is derived from the MODEL name — it is what every caller has — while the phase-2
+     * ruling says a repository's name decides its archetype. The two are separate derivations, so
+     * this is what keeps them from drifting apart.
+     */
+    @Test
+    void theRoleSuffixAndTheModelsTableAgreeOnEveryRepository() {
+        Map<String, String> role = Map.of(
+                "-service", "SERVICE", "-frontend", "FRONTEND", "-daemon", "DAEMON",
+                "-oci", "IMAGE", "-cli", "CLI", "-javalib", "LIBRARY", "-jslib", "LIBRARY");
+        for (String name : PlatformModel.platformRepos()) {
+            String repo = PlatformModel.repo(name);
+            role.entrySet().stream()
+                    .filter(entry -> repo.endsWith(entry.getKey()))
+                    .findFirst()
+                    .ifPresent(entry -> assertThat(PlatformModel.archetype(name))
+                            .as(name + " is " + repo)
+                            .isEqualTo(entry.getValue()));
+        }
     }
 
     /**
@@ -542,7 +680,7 @@ class PlatformModelTest {
         assertThat(PlatformModel.wireAlias("configuration", "prod"))
                 .isEqualTo("prod-qits-configuration");
         assertThat(PlatformModel.repoPath("configuration"))
-                .isEqualTo("services/qits-configuration");
+                .isEqualTo("services/qits-configuration-service");
     }
 
     /**
@@ -586,9 +724,9 @@ class PlatformModelTest {
         // A service and its client, each in the directory its ROLE puts it in, and the Dockerfile
         // where every service keeps one.
         assertThat(PlatformModel.repoPath("platform-orchestrator"))
-                .isEqualTo("services/qits-platform-orchestrator");
+                .isEqualTo("services/qits-orchestrator-platform-service");
         assertThat(PlatformModel.repoPath("platform-spa-orchestrator"))
-                .isEqualTo("frontends/qits-platform-spa-orchestrator");
+                .isEqualTo("frontends/qits-orchestrator-platform-frontend");
         assertThat(PlatformModel.dockerfilePath("platform-orchestrator"))
                 .isEqualTo("docker/Dockerfile");
         // Published whole: it has no module a consumer resolves.
@@ -652,9 +790,9 @@ class PlatformModelTest {
                 .isEqualTo("qits-pd-qits-platform-maintenance-");
         // A service and its client, each in the directory its ROLE puts it in.
         assertThat(PlatformModel.repoPath("platform-maintenance"))
-                .isEqualTo("services/qits-platform-maintenance");
+                .isEqualTo("services/qits-maintenance-platform-service");
         assertThat(PlatformModel.repoPath("platform-spa-maintenance"))
-                .isEqualTo("frontends/qits-platform-spa-maintenance");
+                .isEqualTo("frontends/qits-maintenance-platform-frontend");
         assertThat(PlatformModel.archetype("platform-maintenance")).isEqualTo("SERVICE");
         assertThat(PlatformModel.archetype("platform-spa-maintenance")).isEqualTo("FRONTEND");
         assertThat(PlatformModel.dockerfilePath("platform-maintenance"))
@@ -717,9 +855,9 @@ class PlatformModelTest {
                 .isEqualTo("qits-pd-qits-platform-system-");
         // A service and its console, each in the directory its ROLE puts it in.
         assertThat(PlatformModel.repoPath("platform-system"))
-                .isEqualTo("services/qits-platform-system");
+                .isEqualTo("services/qits-system-platform-service");
         assertThat(PlatformModel.repoPath("platform-spa-system"))
-                .isEqualTo("frontends/qits-platform-spa-system");
+                .isEqualTo("frontends/qits-system-platform-frontend");
         assertThat(PlatformModel.archetype("platform-system")).isEqualTo("SERVICE");
         assertThat(PlatformModel.archetype("platform-spa-system")).isEqualTo("FRONTEND");
         assertThat(PlatformModel.dockerfilePath("platform-system")).isEqualTo("docker/Dockerfile");

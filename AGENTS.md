@@ -285,8 +285,8 @@ forced. Add to that list rather than deviating quietly.
   usually also said by the name (`platform-idp`, `platform-mirror`); the tier lives in the WIRE
   ALIAS derived from it (`prod-qits-ci`) — never the other way round. **The list is the authority,
   not the spelling**: qits-deployments and qits-events joined the platform plane on 2026-08-17 and
-  their repositories are renamed only after the local proof, so both answer to a bare name that
-  says no plane at all.
+  their APPLICATIONS still answer to a bare name that says no plane at all, while their
+  repositories say it (`qits-events-platform-service`).
 - **The host's docker socket is granted to THREE services, and every grant is an extras block
   somebody wrote on purpose.** qits-containers starts every workload on the host, qits-deployments
   is a deployer, and qits-platform-system owns the admin console's terminals. A fourth is a

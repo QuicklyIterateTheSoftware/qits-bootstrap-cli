@@ -76,7 +76,7 @@ public final class PayloadImage {
                 files.add(path);
             } else {
                 // The one honest failure here: the context is not this CLI's checkout.
-                throw new IOException(context + " is not a qits-cli-bootstrap checkout — it has "
+                throw new IOException(context + " is not a qits-bootstrap-cli checkout — it has "
                         + "no " + entry + ", so the payload image cannot be built from it");
             }
         }

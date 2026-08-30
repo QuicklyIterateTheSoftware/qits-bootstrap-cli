@@ -837,7 +837,7 @@ class PipelinePhasesTest {
     @Test
     void aPushIsIdAddressedUntilTheAliasesAreRegisteredAndNameAddressedAfter(@TempDir Path temp) {
         Boot boot = boot(Map.of("QITS_ENV_NAME", "dev"), temp);
-        boot.state.repositoryIds.put("qits-ci", "8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
+        boot.state.repositoryIds.put("qits-ci-service", "8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
 
         // Before the pair is registered there is nothing to resolve a name through, so the storage
         // scheme is the only address the git host can answer.
@@ -848,14 +848,14 @@ class PipelinePhasesTest {
         boot.state.repositoriesRegistered = true;
 
         assertThat(boot.gitUrl("ci"))
-                .isEqualTo("http://dev-qits-githost:8080/git/1f0a-project/qits-ci");
+                .isEqualTo("http://dev-qits-githost:8080/git/1f0a-project/qits-ci-service");
     }
 
     /** A project id with no registration behind it changes nothing: both halves have to be true. */
     @Test
     void aProjectIdAloneDoesNotMoveThePushes(@TempDir Path temp) {
         Boot boot = boot(Map.of("QITS_ENV_NAME", "dev"), temp);
-        boot.state.repositoryIds.put("qits-ci", "8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
+        boot.state.repositoryIds.put("qits-ci-service", "8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
         boot.state.projectId = "1f0a-project";
 
         assertThat(boot.gitUrl("ci")).isEqualTo(
@@ -869,7 +869,7 @@ class PipelinePhasesTest {
     @Test
     void aRecordedStorageIdWinsOverTheDefault(@TempDir Path temp) {
         Boot boot = boot(Map.of("QITS_ENV_NAME", "dev"), temp);
-        boot.state.repositoryIds.put("qits-ci", "8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
+        boot.state.repositoryIds.put("qits-ci-service", "8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
 
         assertThat(boot.storageId("ci")).isEqualTo("8b1f0f0e-9a0c-4c3a-9a5b-000000000001");
         assertThat(boot.gitUrl("ci")).isEqualTo(
@@ -889,9 +889,10 @@ class PipelinePhasesTest {
 
         String minted = boot.storageId("events");
 
-        assertThat(minted).matches("[0-9a-f-]{36}").isNotEqualTo("qits-events");
+        assertThat(minted).matches("[0-9a-f-]{36}").isNotEqualTo("qits-events-platform-service");
         assertThat(boot.storageId("events")).isEqualTo(minted);
-        assertThat(boot.state.repositoryIds).containsEntry("qits-events", minted);
+        assertThat(boot.state.repositoryIds)
+                .containsEntry("qits-events-platform-service", minted);
         // And two repositories never share one, which a name-shaped id could not have got wrong.
         assertThat(boot.storageId("ci")).isNotEqualTo(minted);
     }

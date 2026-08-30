@@ -11,7 +11,7 @@ import java.util.stream.Stream;
 /**
  * Where the wrapper repository is. This CLI is a submodule of the wrapper — at
  * {@code cli/qits-cli-bootstrap} under the archetype layout, at
- * {@code components/qits-bootstrap/qits-cli-bootstrap} under the component one — so in the ordinary
+ * {@code components/qits-bootstrap/qits-bootstrap-cli} under the component one — so in the ordinary
  * case it can find the wrapper by looking up from wherever it was run. The walk asks what a
  * directory IS rather than how deep it is, so neither layout is spelled here.
  * <p>
@@ -38,17 +38,20 @@ public final class WrapperDir {
      * The old test grepped for {@code services/qits-}, so the flip would have turned every
      * checkout on every machine into "no wrapper repository at or above …".
      * <p>
-     * The repository is the one the hosted registries live in. <b>BOTH SPELLINGS ARE ACCEPTED, and
-     * that is the pattern rather than a transition</b>: it was qits-artifacts, became
-     * qits-platform-artifacts in the 2026-08-08 rename, and went back to qits-artifacts when the
-     * byte-plane split moved the caches out. A checkout made under either name is a wrapper.
+     * The repository is the one the hosted registries live in. <b>EVERY SPELLING IT HAS EVER HAD IS
+     * ACCEPTED, and that is the pattern rather than a transition</b>: it was qits-artifacts, became
+     * qits-platform-artifacts in the 2026-08-08 rename, went back to qits-artifacts when the
+     * byte-plane split moved the caches out, and became qits-artifacts-service in the phase-2
+     * renames. A checkout made under any of them is a wrapper — an old one on a machine is still
+     * that machine's wrapper, and a marker that stopped recognising it would report "no wrapper
+     * repository at or above …" for a checkout sitting right there.
      * <p>
      * The DIRECTORIES below are the second arm, for a wrapper whose {@code .gitmodules} is missing
      * or unreadable — a checkout is still a wrapper when its submodules are on disk. That arm has
-     * to know both layouts as well as both names, so it is the cross product of the two.
+     * to know both layouts as well as every name, so it is the cross product of the two.
      */
     private static final List<String> MARKER_REPOS =
-            List.of("qits-artifacts", "qits-platform-artifacts");
+            List.of("qits-artifacts", "qits-platform-artifacts", "qits-artifacts-service");
     private static final List<String> MARKER_DIRS = MARKER_REPOS.stream()
             .flatMap(repo -> Stream.of("services/" + repo, "components/" + repo + "/" + repo,
                     "components/qits-artifacts/" + repo))

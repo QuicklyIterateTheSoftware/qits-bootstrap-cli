@@ -90,8 +90,34 @@ class WrapperDirTest {
     }
 
     /**
+     * <b>The renamed store is a wrapper, and so is every checkout that predates the rename.</b>
+     * qits-artifacts became qits-artifacts-service in the phase-2 renames; a marker that learned the
+     * new name and dropped the old ones would report "no wrapper repository at or above …" for a
+     * checkout sitting right there.
+     */
+    @Test
+    void theRenamedStoreIsTheMarkerAndTheOldNamesStillAre() throws IOException {
+        Path root = Files.createDirectories(temp.resolve("renamed"));
+        Files.writeString(root.resolve(".gitmodules"), """
+                [submodule "qits-artifacts-service"]
+                	path = components/qits-artifacts/qits-artifacts-service
+                	url = ../qits-artifacts-service.git
+                """, StandardCharsets.UTF_8);
+
+        assertThat(WrapperDir.isWrapper(root)).isTrue();
+        assertThat(WrapperDir.detect(Files.createDirectories(
+                root.resolve("components/qits-bootstrap/qits-bootstrap-cli")))).contains(root);
+
+        // And the same checkout with no readable .gitmodules: the directory arm knows it too.
+        Path onDisk = Files.createDirectories(temp.resolve("renamed-no-gitmodules"));
+        Files.createDirectories(onDisk.resolve("components/qits-artifacts/qits-artifacts-service"));
+
+        assertThat(WrapperDir.isWrapper(onDisk)).isTrue();
+    }
+
+    /**
      * The same wrapper with no readable {@code .gitmodules}: the directory on disk is the second
-     * arm, and it has to know both layouts as well as both spellings of the store.
+     * arm, and it has to know both layouts as well as every spelling of the store.
      */
     @Test
     void aComponentDirectoryIsMarkerEnoughOnItsOwn() throws IOException {

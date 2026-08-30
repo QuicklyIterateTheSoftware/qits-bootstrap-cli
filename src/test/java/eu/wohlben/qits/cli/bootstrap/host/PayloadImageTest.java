@@ -111,6 +111,6 @@ class PayloadImageTest {
     void aContextThatIsNotThisCheckoutSaysSo(@TempDir Path root) {
         assertThatThrownBy(() -> PayloadImage.tag(root))
                 .isInstanceOf(IOException.class)
-                .hasMessageContaining("is not a qits-cli-bootstrap checkout");
+                .hasMessageContaining("is not a qits-bootstrap-cli checkout");
     }
 }

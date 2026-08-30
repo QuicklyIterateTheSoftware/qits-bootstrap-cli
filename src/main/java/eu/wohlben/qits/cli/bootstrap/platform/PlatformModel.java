@@ -205,9 +205,11 @@ public final class PlatformModel {
      * is gone, and the platform serves no dns of its own. A domain's records are held by an external
      * provider now.
      * <p>
-     * <b>qits-deployments and qits-events joined on 2026-08-17, and neither name says its plane
-     * yet</b> — the repository rename comes after the local proof, so their wire alias is the bare
-     * {@code qits-deployments} and {@code qits-events} rather than a {@code qits-platform-*} one.
+     * <b>qits-deployments and qits-events joined on 2026-08-17, and neither APPLICATION name says
+     * its plane</b> — their wire alias is the bare {@code qits-deployments} and {@code qits-events}
+     * rather than a {@code qits-platform-*} one, and it stays that way. Their repositories say it
+     * ({@code qits-events-platform-service}), which is what makes this list the authority rather
+     * than the spelling: a plane is decided here and read nowhere else.
      * Two reasons, one each. The DEPLOYER: an environment is becoming a cross-environment entity —
      * one tier gating another — and a hierarchy cannot live inside one tier's deployer. The BUS:
      * scoping today is which broker instance a service dials, so a platform deployer on a per-tier
@@ -350,8 +352,11 @@ public final class PlatformModel {
      * being a harmless approximation.</b> {@code components/<component>/<repo>} groups by the
      * component a repository belongs to, and that is not derivable: {@code qits-spa-ci} belongs to
      * {@code qits-ci}. So this method answers only when the wrapper declares nothing — a wrapper
-     * this machine has not cloned yet, or a repository that is no submodule of it — and then the
-     * directory it names is the one a wrapper of the old shape has.
+     * this machine has not cloned yet, or a repository that is no submodule of it — and then it
+     * names the old shape's role directory holding the repository under its CURRENT name. Since the
+     * renames no wrapper on disk has that pairing, which is the point: only a machine with no
+     * wrapper at all may reach this, and the {@code wrapper} phase clones one before anything is
+     * built.
      * <p>
      * <b>A wrong path here used to be silent.</b> The sources phase fell back to GitHub whenever
      * the wrapper path was not a checkout, so a misspelling ignored local commits and cloned last
@@ -531,11 +536,10 @@ public final class PlatformModel {
      * phase-2 rename: the repository moved into the {@code <component>[-<modifier>]-<role>} grammar
      * and nothing on the running platform moved with it.
      * <p>
-     * <b>Keyed by the application name, because that is the one that never moves.</b> The seven
-     * libraries were renamed on 2026-08-30 and the four here follow; the published coordinates they
-     * carry — {@code eu.wohlben.qits:qits-eventstream}, {@code @qits/ui-components},
-     * {@code qits/build-images/*}, {@code qits/workspace-base}, {@code qits/qits-oci-postgresql} —
-     * are independent of both names and stay where they are.
+     * <b>Keyed by the application name, because that is the one that never moves.</b> The published
+     * coordinates the renamed repositories carry — {@code eu.wohlben.qits:qits-eventstream},
+     * {@code @qits/ui-components}, {@code qits/build-images/*}, {@code qits/workspace-base},
+     * {@code qits/qits-oci-postgresql} — are independent of both names and stay where they are.
      * <p>
      * <b>qits-oci-postgresql is the entry that shows why the two names cannot be one.</b> Its
      * application name is in every environment's wire alias, in the seed container this program
@@ -544,7 +548,17 @@ public final class PlatformModel {
      * {@code qits-database-oci}. Renaming the model entry instead of adding it here would have
      * pointed the boot's own database at a host nothing answers to.
      * <p>
-     * An entry that is not here is its own repository, which is every application of today.
+     * <b>The plane is a MODIFIER on the repository and stays a LIST on the application.</b> A
+     * platform service's repository says {@code <component>-platform-<role>}, so the application
+     * {@code events} is the repository {@code qits-events-platform-service} — and the application
+     * still answers to the bare {@code qits-events}, which is its wire alias, its container name and
+     * its client id. {@link #PLATFORM_SERVICES} remains the only place a plane is decided; the
+     * repository name merely agrees with it.
+     * <p>
+     * <b>Four applications keep one name, and each for its own reason.</b> The three daemons are
+     * already in the grammar ({@code qits-ci-daemon}, {@code qits-workspace-daemon},
+     * {@code qits-projects-daemon}), and {@code spa-home} is being archived rather than
+     * reorganised, so nothing renames it.
      */
     private static final Map<String, String> REPOSITORIES = Map.ofEntries(
             Map.entry("oci", "qits-build-images-oci"),
@@ -556,7 +570,52 @@ public final class PlatformModel {
             Map.entry("userflows", "qits-userflows-javalib"),
             Map.entry("integrations-angular", "qits-integrations-angular-jslib"),
             Map.entry("integrations-quarkus", "qits-integrations-quarkus-javalib"),
-            Map.entry("spa-ui-components", "qits-ui-components-jslib"));
+            Map.entry("spa-ui-components", "qits-ui-components-jslib"),
+
+            // The environment tier's services.
+            Map.entry("artifacts", "qits-artifacts-service"),
+            Map.entry("ci", "qits-ci-service"),
+            Map.entry("configuration", "qits-configuration-service"),
+            Map.entry("containers", "qits-containers-service"),
+            Map.entry("docs", "qits-docs-service"),
+            Map.entry("githost", "qits-githost-service"),
+            Map.entry("observability", "qits-observability-service"),
+            Map.entry("projects", "qits-projects-service"),
+            Map.entry("stt", "qits-stt-service"),
+            Map.entry("workspaces", "qits-workspaces-service"),
+
+            // The platform tier's. The application names of six of them already carry the plane as a
+            // PREFIX and the repositories carry it as a modifier instead, so both halves move:
+            // platform-idp is qits-idp-platform-service. The deployer and the bus say no plane at
+            // all on the application side and never will — that is what PLATFORM_SERVICES is for.
+            Map.entry("platform-edge", "qits-edge-platform-service"),
+            Map.entry("platform-idp", "qits-idp-platform-service"),
+            Map.entry("platform-maintenance", "qits-maintenance-platform-service"),
+            Map.entry("platform-mirror", "qits-mirror-platform-service"),
+            Map.entry("platform-orchestrator", "qits-orchestrator-platform-service"),
+            Map.entry("platform-system", "qits-system-platform-service"),
+            Map.entry("deployments", "qits-deployments-platform-service"),
+            Map.entry("events", "qits-events-platform-service"),
+
+            // The frontends. Both old spellings collapse into one: a client's repository takes its
+            // SERVICE's component and plane, whether the model spelled it spa-<x> or
+            // platform-spa-<x>. qits-spa-events and qits-spa-deployments are the pair that shows it
+            // — their services moved plane on 2026-08-17 and the clients follow them here.
+            Map.entry("spa-artifacts", "qits-artifacts-frontend"),
+            Map.entry("spa-ci", "qits-ci-frontend"),
+            Map.entry("spa-configuration", "qits-configuration-frontend"),
+            Map.entry("spa-docs", "qits-docs-frontend"),
+            Map.entry("spa-githost", "qits-githost-frontend"),
+            Map.entry("spa-observability", "qits-observability-frontend"),
+            Map.entry("spa-projects", "qits-projects-frontend"),
+            Map.entry("spa-workspaces", "qits-workspaces-frontend"),
+            Map.entry("spa-deployments", "qits-deployments-platform-frontend"),
+            Map.entry("spa-events", "qits-events-platform-frontend"),
+            Map.entry("platform-spa-idp", "qits-idp-platform-frontend"),
+            Map.entry("platform-spa-maintenance", "qits-maintenance-platform-frontend"),
+            Map.entry("platform-spa-mirror", "qits-mirror-platform-frontend"),
+            Map.entry("platform-spa-orchestrator", "qits-orchestrator-platform-frontend"),
+            Map.entry("platform-spa-system", "qits-system-platform-frontend"));
 
     /**
      * <b>The repository this name is hosted and checked out as</b> — the git-host repository, the

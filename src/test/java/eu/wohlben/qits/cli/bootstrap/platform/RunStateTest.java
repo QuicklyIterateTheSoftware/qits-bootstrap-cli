@@ -31,15 +31,15 @@ class RunStateTest {
     @Test
     void theWrapperSaysWhereARepositorySits() throws IOException {
         RunState state = wrapperDeclaring("""
-                [submodule "qits-ci"]
-                	path = components/qits-ci/qits-ci
-                [submodule "qits-spa-ci"]
-                	path = components/qits-ci/qits-spa-ci
+                [submodule "qits-ci-service"]
+                	path = components/qits-ci/qits-ci-service
+                [submodule "qits-ci-frontend"]
+                	path = components/qits-ci/qits-ci-frontend
                 """);
 
-        assertThat(state.wrapperPath("ci")).isEqualTo("components/qits-ci/qits-ci");
+        assertThat(state.wrapperPath("ci")).isEqualTo("components/qits-ci/qits-ci-service");
         assertThat(state.wrapperCheckout("spa-ci"))
-                .isEqualTo(temp.resolve("components/qits-ci/qits-spa-ci"));
+                .isEqualTo(temp.resolve("components/qits-ci/qits-ci-frontend"));
         assertThat(state.wrapperDeclares("ci")).isTrue();
         assertThat(state.wrapperDeclares("docs")).isFalse();
     }
@@ -48,11 +48,12 @@ class RunStateTest {
     @Test
     void anArchetypeWrapperIsFollowedJustAsLiterally() throws IOException {
         RunState state = wrapperDeclaring("""
-                [submodule "qits-ci"]
-                	path = services/qits-ci
+                [submodule "qits-ci-service"]
+                	path = services/qits-ci-service
                 """);
 
-        assertThat(state.wrapperCheckout("ci")).isEqualTo(temp.resolve("services/qits-ci"));
+        assertThat(state.wrapperCheckout("ci"))
+                .isEqualTo(temp.resolve("services/qits-ci-service"));
     }
 
     /**
@@ -62,15 +63,15 @@ class RunStateTest {
     @Test
     void anUndeclaredRepositoryFallsBackToTheNamesLayout() throws IOException {
         RunState state = wrapperDeclaring("""
-                [submodule "qits-ci"]
-                	path = components/qits-ci/qits-ci
+                [submodule "qits-ci-service"]
+                	path = components/qits-ci/qits-ci-service
                 """);
 
-        assertThat(state.wrapperPath("spa-docs")).isEqualTo("frontends/qits-spa-docs");
+        assertThat(state.wrapperPath("spa-docs")).isEqualTo("frontends/qits-docs-frontend");
 
         RunState bare = new RunState();
         bare.wrapperDir = temp.resolve("not-cloned-yet");
-        assertThat(bare.wrapperPath("ci")).isEqualTo("services/qits-ci");
+        assertThat(bare.wrapperPath("ci")).isEqualTo("services/qits-ci-service");
     }
 
     /**
@@ -82,13 +83,14 @@ class RunStateTest {
     void aWrapperThatArrivesMidRunIsPickedUp() throws IOException {
         RunState state = new RunState();
         state.wrapperDir = temp;
-        assertThat(state.wrapperPath("ci")).isEqualTo("services/qits-ci");
+        assertThat(state.wrapperPath("ci")).isEqualTo("services/qits-ci-service");
 
         Files.writeString(temp.resolve(GitModules.FILE),
-                "[submodule \"qits-ci\"]\n\tpath = components/qits-ci/qits-ci\n",
+                "[submodule \"qits-ci-service\"]\n"
+                        + "\tpath = components/qits-ci/qits-ci-service\n",
                 StandardCharsets.UTF_8);
 
-        assertThat(state.wrapperPath("ci")).isEqualTo("components/qits-ci/qits-ci");
+        assertThat(state.wrapperPath("ci")).isEqualTo("components/qits-ci/qits-ci-service");
     }
 
     /**
@@ -98,12 +100,12 @@ class RunStateTest {
     @Test
     void aWrapperWithNoSubmoduleCheckedOutSaysSo() throws IOException {
         RunState state = wrapperDeclaring("""
-                [submodule "qits-ci"]
-                	path = components/qits-ci/qits-ci
+                [submodule "qits-ci-service"]
+                	path = components/qits-ci/qits-ci-service
                 """);
 
         assertThat(state.wrapperInitialised(path -> false)).isFalse();
-        assertThat(state.wrapperInitialised(
-                path -> path.equals(temp.resolve("components/qits-ci/qits-ci")))).isTrue();
+        assertThat(state.wrapperInitialised(path ->
+                path.equals(temp.resolve("components/qits-ci/qits-ci-service")))).isTrue();
     }
 }
