@@ -101,11 +101,23 @@ that one.
 builds `docker/Dockerfile.bootstrap` into a payload image tagged by its own content, runs itself
 inside it and relays the exit code.
 
-It also **finds the wrapper by itself**. This CLI lives at `cli/qits-cli-bootstrap` inside it, so
-running from anywhere in the checkout is enough: the working directory is walked upwards for the
-first `.gitmodules` naming the qits submodules. `QITS_WRAPPER_DIR` (or `--wrapper-dir`) still wins,
-and preflight prints which of the two happened. The container is told the answer rather than
+It also **finds the wrapper by itself**. This CLI is a submodule of it, so running from anywhere in
+the checkout is enough: the working directory is walked upwards for the first `.gitmodules`
+declaring the qits submodules. The test is which REPOSITORY that file declares, never which
+directory it sits in, so a wrapper grouped by archetype (`services/qits-artifacts`) and one grouped
+by component (`components/qits-artifacts/qits-artifacts`) are both found — and the CLI's own
+checkout is looked for at `cli/qits-cli-bootstrap` and
+`components/qits-bootstrap/qits-cli-bootstrap` alike. `QITS_WRAPPER_DIR` (or `--wrapper-dir`) still
+wins, and preflight prints which of the two happened. The container is told the answer rather than
 walking for it again.
+
+**Where each repository sits is read, never derived.** The wrapper's own `.gitmodules` says, and
+each entry is matched by its name, by its path's last segment and by the repository its url names —
+so a wrapper that has been reorganised, or one carrying an entry named for a rename that has not
+happened, is followed rather than missed. The name-derived layout in `PlatformModel.repoPath` is
+the fallback for a machine that has no wrapper yet. A repository the wrapper DECLARES whose
+directory holds no checkout, while its siblings do, stops the boot with
+`git submodule update --init <path>` rather than quietly cloning the org's last push.
 
 And when there is no wrapper at all, it **clones one**. A bare machine has no checkout to run from
 and no platform git host to clone one from — this run is what creates that host — so the wrapper

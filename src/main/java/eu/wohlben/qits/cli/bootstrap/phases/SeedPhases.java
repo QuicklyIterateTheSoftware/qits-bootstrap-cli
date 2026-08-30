@@ -173,9 +173,9 @@ public class SeedPhases {
             boot.state.dockerGid = boot.docker.socketGroupId();
             ctx.log("  docker socket group: " + boot.state.dockerGid);
 
-            // The CLI lives at cli/qits-cli-bootstrap inside the wrapper, so an unset
-            // QITS_WRAPPER_DIR is answered by walking up from here rather than by assuming the
-            // working directory IS the wrapper. Which of the two happened is printed: a run
+            // The CLI is a submodule of the wrapper, so an unset QITS_WRAPPER_DIR is answered by
+            // walking up from here rather than by assuming the working directory IS the
+            // wrapper. Which of the two happened is printed: a run
             // against the wrong checkout is otherwise indistinguishable from a run against the
             // right one until the sources phase clones something surprising.
             WrapperDir.Resolved resolved =
@@ -421,18 +421,20 @@ public class SeedPhases {
      * <b>Both silences here are gone.</b> This phase decides which sha the whole platform is built
      * from, and both of its old fallbacks answered a broken input with a working-looking run:
      * <ul>
-     *   <li>A wrapper path that was not a checkout fell through to GitHub. A rename that outran
+     *   <li>A wrapper path that was not a checkout fell through to GitHub. A rename — or a LAYOUT
+     *       CHANGE, which is the same defect for all 48 repositories at once — that outran
      *       {@link PlatformModel#repoPath} then deployed the org's last push instead of the work in
-     *       the checkout — and said so in one line among thousands. Now: an ABSENT directory is
-     *       still answered by the org URL (not every model repository has to be a submodule of this
-     *       wrapper), but a directory that exists and is not a checkout stops the boot.
+     *       the checkout, and said so in one line among thousands. Two things answer that now. The
+     *       path is read from the wrapper's own {@code .gitmodules} rather than derived from the
+     *       name, so a reorganised wrapper is followed rather than missed; and
+     *       {@link #localSourceRefusal} stops the boot when a DECLARED module's directory holds no
+     *       checkout while its siblings do.
      *       <p>
-     *       <b>An EMPTY directory counts as absent</b>, and that is not a softening of the rule:
-     *       git puts one at every gitlink whose submodule is not checked out, so the wrapper the
-     *       cold start clones has one per repository. It holds no commits, no local work and no
-     *       answer about which sha to build — there is nothing there for the org URL to ignore.
-     *       A directory with anything at all in it is the case the rule was written for and still
-     *       stops the boot.
+     *       <b>An EMPTY directory is still absent when the whole wrapper is</b>, and that is not a
+     *       softening of the rule: git puts one at every gitlink whose submodule is not checked
+     *       out, so the wrapper the cold start clones has one per repository and every one of them
+     *       is meant to come from the org. It is the wrapper with SOME submodules checked out
+     *       where a missing one is a defect, which is the line the refusal draws.
      *   <li>A refresh that failed logged "using what is checked out" and built the stale copy. A
      *       non-fast-forward is the ordinary cause and the ordinary cause is a rebase, so the stale
      *       copy is a commit that no longer exists anywhere.
@@ -470,16 +472,18 @@ public class SeedPhases {
     public Phase sources() {
         return new Phase("sources", "clone or refresh the platform's sources", ctx -> {
             int restored = 0;
+            // Asked once: a wrapper whose submodules are all uninitialised is the cold start, and
+            // every repository of it legitimately comes from the org.
+            boolean initialised = boot.state.wrapperInitialised(boot.git::isCheckout);
             for (String name : PlatformModel.platformRepos()) {
                 String repo = PlatformModel.repo(name);
                 Path localSrc = boot.state.wrapperCheckout(name);
-                if (Files.exists(localSrc) && !boot.git.isCheckout(localSrc)
-                        && !isEmptyDirectory(localSrc)) {
-                    throw new IllegalStateException(localSrc + " is not a git checkout and is not "
-                            + "empty, so " + repo + " has no source and something else is standing "
-                            + "in its place. Either the submodule is half-initialised or "
-                            + "PlatformModel.repoPath names the wrong directory for '" + name
-                            + "'.");
+                String refusal = localSourceRefusal(repo, localSrc, boot.state.wrapperPath(name),
+                        boot.state.wrapperDeclares(name), initialised,
+                        boot.git.isCheckout(localSrc),
+                        Files.exists(localSrc) && !isEmptyDirectory(localSrc));
+                if (refusal != null) {
+                    throw new IllegalStateException(refusal);
                 }
                 String from = boot.git.isCheckout(localSrc)
                         ? localSrc.toString()
@@ -524,6 +528,51 @@ public class SeedPhases {
             ctx.note(PlatformModel.platformRepos().size() + " repositories, " + restored
                     + " at their release");
         });
+    }
+
+    /**
+     * <b>Why this repository's checkout in the wrapper cannot be used — or null, which means it can
+     * be, or that there honestly is none.</b> The one place the org-URL fallback is allowed to be
+     * silent, and the reason it is a method of its own is that getting it wrong is invisible: a
+     * bootstrap that clones from GitHub instead of from the operator's checkout runs green and
+     * deploys last week's platform.
+     * <p>
+     * Three answers, and the middle one is the layout flip's:
+     * <ul>
+     *   <li>Something that is not a checkout is STANDING in the directory — the old rule, unchanged.
+     *   <li>The wrapper DECLARES this repository, its directory holds no checkout, and its siblings
+     *       do. That is a half-initialised wrapper, and the org fallback would build the org's last
+     *       push while the work sits one submodule away. It stops the boot and names the fix.
+     *   <li>Nothing there, and either the wrapper does not declare it or the wrapper has no
+     *       submodule checked out at all. The second is the COLD START: the run clones the wrapper
+     *       without its submodules on purpose — {@code sources} clones every repository from the
+     *       org anyway — so an empty directory per gitlink is the expected state and hides nothing.
+     * </ul>
+     *
+     * @param declared    the wrapper's {@code .gitmodules} names this repository
+     * @param initialised at least one of the wrapper's submodules is checked out
+     * @param occupied    the directory exists and holds something
+     */
+    static String localSourceRefusal(String repo, Path localSrc, String wrapperPath,
+                                     boolean declared, boolean initialised, boolean checkout,
+                                     boolean occupied) {
+        if (checkout) {
+            return null;
+        }
+        if (occupied) {
+            return localSrc + " is not a git checkout and is not empty, so " + repo + " has no "
+                    + "source and something else is standing in its place. Either the submodule is "
+                    + "half-initialised, or the wrapper's .gitmodules and this directory disagree "
+                    + "about where " + repo + " sits.";
+        }
+        if (declared && initialised) {
+            return "the wrapper declares " + repo + " at " + wrapperPath + " and that directory "
+                    + "holds no checkout, while its siblings do. This run would build the org's "
+                    + "last push of " + repo + " instead of the work in " + localSrc + ", and say "
+                    + "so in one line among thousands. Run `git submodule update --init "
+                    + wrapperPath + "` in the wrapper and rerun.";
+        }
+        return null;
     }
 
     /**

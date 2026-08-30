@@ -51,6 +51,60 @@ class SeedPhasesTest {
         assertThat(SeedPhases.isEmptyDirectory(checkout)).isFalse();
     }
 
+    // --- which source one repository is built from ------------------------------------------------
+
+    private static final String AT = "components/qits-ci/qits-ci";
+
+    /** A checkout in the wrapper is the source, and there is nothing to refuse. */
+    @Test
+    void aCheckoutInTheWrapperIsAccepted() {
+        assertThat(SeedPhases.localSourceRefusal("qits-ci", temp.resolve(AT), AT,
+                true, true, true, true)).isNull();
+    }
+
+    /**
+     * <b>The cold start, and it must stay silent.</b> The run clones the wrapper WITHOUT its
+     * submodules on purpose — this phase clones every repository from the org anyway — so an empty
+     * directory at every gitlink is the expected state and hides no local work.
+     */
+    @Test
+    void aWrapperWithNoSubmoduleCheckedOutFallsBackToTheOrgWithoutASound() {
+        assertThat(SeedPhases.localSourceRefusal("qits-ci", temp.resolve(AT), AT,
+                true, false, false, false)).isNull();
+    }
+
+    /**
+     * <b>The silence the layout flip would have turned into 48 wrong shas.</b> The wrapper declares
+     * this repository, its directory holds no checkout, and its siblings do — a half-initialised
+     * checkout. The org fallback would build last week's push and say so in one line among
+     * thousands, so it stops the boot and names the fix.
+     */
+    @Test
+    void aDeclaredModuleMissingFromAnInitialisedWrapperStopsTheBoot() {
+        String refusal = SeedPhases.localSourceRefusal("qits-ci", temp.resolve(AT), AT,
+                true, true, false, false);
+
+        assertThat(refusal)
+                .contains("qits-ci")
+                .contains(AT)
+                .contains("git submodule update --init " + AT);
+    }
+
+    /** A repository the wrapper does not declare has no local source to miss. */
+    @Test
+    void anUndeclaredRepositoryStillComesFromTheOrg() {
+        assertThat(SeedPhases.localSourceRefusal("qits-stt", temp.resolve("services/qits-stt"),
+                "services/qits-stt", false, true, false, false)).isNull();
+    }
+
+    /** Something that is not a checkout is standing in the directory — the older rule, unchanged. */
+    @Test
+    void somethingElseInTheDirectoryStopsTheBootWhoeverPutItThere() {
+        assertThat(SeedPhases.localSourceRefusal("qits-ci", temp.resolve(AT), AT,
+                false, false, false, true))
+                .contains("is not a git checkout and is not empty");
+    }
+
     // --- the records the domain needs -------------------------------------------------------------
 
     /**

@@ -32,7 +32,36 @@ class HostLauncherTest {
     @Test
     void theWrappersOwnSubmoduleIsTheOrdinaryAnswer() throws IOException {
         Path wrapper = Files.createDirectories(temp.resolve("qits-qits"));
-        Path cli = cliCheckout("qits-qits/" + HostLauncher.CLI_PATH);
+        Path cli = cliCheckout("qits-qits/cli/qits-cli-bootstrap");
+
+        assertThat(HostLauncher.imageContext(wrapper, temp)).contains(cli);
+    }
+
+    /**
+     * <b>The component layout's path answers too, and this binary has to ship before the wrapper
+     * flips.</b> The CLI moves to {@code components/qits-bootstrap/qits-cli-bootstrap}; a launcher
+     * that knew only the old path would build the payload from whatever checkout the walk found
+     * next, or from nothing at all.
+     */
+    @Test
+    void theComponentLayoutsPathAnswersItToo() throws IOException {
+        Path wrapper = Files.createDirectories(temp.resolve("qits-qits"));
+        Path cli = cliCheckout("qits-qits/components/qits-bootstrap/qits-cli-bootstrap");
+
+        assertThat(HostLauncher.CLI_PATHS)
+                .containsExactly("cli/qits-cli-bootstrap",
+                        "components/qits-bootstrap/qits-cli-bootstrap");
+        assertThat(HostLauncher.imageContext(wrapper, temp)).contains(cli);
+    }
+
+    /** Both on one machine — a flip in progress — and the one that is there first wins. */
+    @Test
+    void thePathThatHoldsACheckoutIsTheOneUsed() throws IOException {
+        Path wrapper = Files.createDirectories(temp.resolve("qits-qits"));
+        // The old path exists as a bare gitlink with nothing in it, which is what a moved
+        // submodule leaves until somebody sweeps it.
+        Files.createDirectories(wrapper.resolve("cli/qits-cli-bootstrap"));
+        Path cli = cliCheckout("qits-qits/components/qits-bootstrap/qits-cli-bootstrap");
 
         assertThat(HostLauncher.imageContext(wrapper, temp)).contains(cli);
     }
@@ -124,8 +153,35 @@ class HostLauncherTest {
             throws IOException {
         // The gitlink is there, the checkout is not, so there is no Dockerfile to build from. The
         // launcher's message then names every place it looked.
-        Path wrapper = Files.createDirectories(temp.resolve("qits-qits/" + HostLauncher.CLI_PATH));
+        Files.createDirectories(temp.resolve("qits-qits/cli/qits-cli-bootstrap"));
+        Files.createDirectories(
+                temp.resolve("qits-qits/components/qits-bootstrap/qits-cli-bootstrap"));
 
-        assertThat(HostLauncher.imageContext(wrapper.getParent().getParent(), temp)).isEmpty();
+        assertThat(HostLauncher.imageContext(temp.resolve("qits-qits"), temp)).isEmpty();
+    }
+
+    /**
+     * <b>A worktree of a COMPONENT-layout wrapper: its submodules sit three levels down.</b> The
+     * walk used to stop at two, so every source clone inside the container would have died with
+     * "not a git repository" — the git directory the pointer names was never mounted.
+     */
+    @Test
+    void aComponentLayoutsSubmodulePointersAreResolvedThreeLevelsDown() throws IOException {
+        Path common = Files.createDirectories(temp.resolve("primary/.git"));
+        Path wrapperSlice = Files.createDirectories(common.resolve("worktrees/w"));
+        Files.writeString(wrapperSlice.resolve("commondir"), "../..\n", StandardCharsets.UTF_8);
+        Path embedded = Files.createDirectories(
+                temp.resolve("primary/components/qits-ci/qits-ci/.git"));
+        Path embeddedSlice = Files.createDirectories(embedded.resolve("worktrees/w"));
+        Files.writeString(embeddedSlice.resolve("commondir"), "../..\n", StandardCharsets.UTF_8);
+
+        Path wrapper = Files.createDirectories(temp.resolve("w"));
+        Files.writeString(wrapper.resolve(".git"), "gitdir: " + wrapperSlice + "\n",
+                StandardCharsets.UTF_8);
+        Path sub = Files.createDirectories(wrapper.resolve("components/qits-ci/qits-ci"));
+        Files.writeString(sub.resolve(".git"), "gitdir: " + embeddedSlice + "\n",
+                StandardCharsets.UTF_8);
+
+        assertThat(HostLauncher.linkedGitDirs(wrapper)).containsExactly(common, embedded);
     }
 }

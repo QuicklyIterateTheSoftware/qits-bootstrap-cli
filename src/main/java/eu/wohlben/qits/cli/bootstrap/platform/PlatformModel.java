@@ -333,17 +333,25 @@ public final class PlatformModel {
     }
 
     /**
-     * Where a repository sits in the wrapper repository, by the role it plays.
+     * <b>The FALLBACK answer to where a repository sits in the wrapper — the archetype layout,
+     * derived from the name. The wrapper's own {@code .gitmodules} is the authority</b>, read by
+     * {@link GitModules} and asked first by {@link RunState#wrapperCheckout}.
+     * <p>
+     * <b>A name cannot say where a repository sits, and the component layout is where that stops
+     * being a harmless approximation.</b> {@code components/<component>/<repo>} groups by the
+     * component a repository belongs to, and that is not derivable: {@code qits-spa-ci} belongs to
+     * {@code qits-ci}. So this method answers only when the wrapper declares nothing — a wrapper
+     * this machine has not cloned yet, or a repository that is no submodule of it — and then the
+     * directory it names is the one a wrapper of the old shape has.
      * <p>
      * <b>A wrong path here used to be silent.</b> The sources phase fell back to GitHub whenever
      * the wrapper path was not a checkout, so a misspelling ignored local commits and cloned last
-     * week's platform instead. It is loud now: {@code SeedPhases.sources} fails when the directory
-     * EXISTS, holds something and is not a checkout. An absent directory is answered by the org
-     * URL, and so is an EMPTY one — git leaves one of those at every gitlink of a wrapper cloned
-     * without its submodules, which is what a cold start has, and it hides no local work. The
-     * rule below was walked against the wrapper on 2026-08-08 and every name in this file resolves
-     * to a real checkout, so there is nothing left to special-case — but a rename that outruns
-     * this method now stops the boot in the first minute rather than deploying the wrong sha.
+     * week's platform instead — and after the layout flip that would have been EVERY repository.
+     * It is loud now, twice over: a directory that exists, holds something and is not a checkout
+     * stops the boot, and so does a module the wrapper DECLARES whose directory holds no checkout
+     * while its siblings do. An absent directory is still answered by the org URL when the wrapper
+     * has no submodules initialised at all — git leaves an empty one at every gitlink of a wrapper
+     * cloned without them, which is exactly what a cold start has.
      */
     public static String repoPath(String name) {
         return switch (name) {
@@ -370,25 +378,84 @@ public final class PlatformModel {
      * <b>What KIND of component a repository is, in qits-projects' vocabulary</b> — the value the
      * registration hands it as {@code archetype}.
      * <p>
-     * Derived from {@link #repoPath} rather than listed, because that is the derivation qits-projects
-     * itself makes: <em>the directory is the archetype</em>, in both directions, and the wrapper's
-     * {@code .gitmodules} is where both sides read it from. A second list here would be a copy of
-     * the layout that could disagree with the paths this program clones into.
+     * <b>Two derivations, and which one applies is decided by the wrapper's own path.</b> Under the
+     * archetype layout the first segment IS the archetype, in both directions, and that is the
+     * derivation qits-projects itself makes — so a wrapper of that shape is read that way and the
+     * two sides cannot disagree. Under the component layout ({@code components/<component>/<repo>})
+     * the first segment says nothing about kind, so the NAME answers instead.
      * <p>
-     * A directory nothing claims answers {@code SERVICE}, which is qits-projects' own default for an
-     * adopted row with no archetype. Every path this model spells is one of the six today.
+     * <b>The name's answer has two arms, in this order.</b> First the grammar phase 2 of the
+     * reorganisation renames every repository into — {@code -service}, {@code -frontend},
+     * {@code -daemon}, {@code -oci}, {@code -cli}, {@code -javalib}/{@code -jslib} — which is what
+     * makes this method outlive the renames. Then, for the names of today, a table derived from the
+     * layout {@link #repoPath} still spells: the same knowledge keyed by name instead of by
+     * directory. The lib set is asked BEFORE the {@code spa-} prefix, because
+     * {@code qits-spa-ui-components} is a component library and not a frontend.
+     * <p>
+     * Anything nothing claims answers {@code SERVICE}, which is qits-projects' own default for an
+     * adopted row with no archetype.
+     *
+     * @param wrapperPath where the wrapper actually puts it, or null when nothing knows
      */
-    public static String archetype(String name) {
-        String path = repoPath(name);
-        String directory = path.substring(0, Math.max(0, path.indexOf('/')));
+    public static String archetype(String name, String wrapperPath) {
+        String directory = wrapperPath == null || wrapperPath.indexOf('/') < 0
+                ? ""
+                : wrapperPath.substring(0, wrapperPath.indexOf('/'));
         return switch (directory) {
             case "libs" -> "LIBRARY";
             case "frontends" -> "FRONTEND";
             case "daemons" -> "DAEMON";
             case "images" -> "IMAGE";
             case "cli" -> "CLI";
-            default -> "SERVICE";
+            case "services" -> "SERVICE";
+            default -> archetypeOfName(name);
         };
+    }
+
+    /** The same question when nobody has said where the repository sits. */
+    public static String archetype(String name) {
+        return archetype(name, repoPath(name));
+    }
+
+    /** The names that are libraries today, and are none of them spelled so. */
+    private static final List<String> LIBRARY_NAMES =
+            List.of("eventstream", "blobstore", "registries", "spa-ui-components", "userflows",
+                    "integrations-angular", "integrations-quarkus");
+
+    /** The names that are image builds today, and are none of them spelled so. */
+    private static final List<String> IMAGE_NAMES = List.of("oci", "oci-postgresql", "oci-workspace");
+
+    private static String archetypeOfName(String name) {
+        // The grammar the renames land on. It is asked first so a renamed repository needs no
+        // entry in the tables below, which are what the un-renamed names of phase 1 need.
+        if (name.endsWith("-service")) {
+            return "SERVICE";
+        }
+        if (name.endsWith("-frontend")) {
+            return "FRONTEND";
+        }
+        if (name.endsWith("-daemon")) {
+            return "DAEMON";
+        }
+        if (name.endsWith("-oci")) {
+            return "IMAGE";
+        }
+        if (name.endsWith("-cli")) {
+            return "CLI";
+        }
+        if (name.endsWith("-javalib") || name.endsWith("-jslib")) {
+            return "LIBRARY";
+        }
+        if (LIBRARY_NAMES.contains(name)) {
+            return "LIBRARY";
+        }
+        if (IMAGE_NAMES.contains(name)) {
+            return "IMAGE";
+        }
+        if (name.startsWith("spa-") || name.startsWith("platform-spa-")) {
+            return "FRONTEND";
+        }
+        return "SERVICE";
     }
 
     /**

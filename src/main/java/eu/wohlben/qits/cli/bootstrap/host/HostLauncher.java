@@ -19,6 +19,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * The host half: the same program, started outside a container, putting itself inside one.
@@ -40,8 +41,15 @@ import java.util.Optional;
 public final class HostLauncher {
     public static final String SUPERVISOR = "qits-bootstrap-progress";
 
-    /** Where this CLI sits inside the wrapper, and therefore where the image is built from. */
-    static final String CLI_PATH = "cli/qits-cli-bootstrap";
+    /**
+     * <b>Where this CLI sits inside the wrapper, and therefore where the image is built from —
+     * BOTH layouts, whichever is on the machine.</b> {@code cli/qits-cli-bootstrap} is the
+     * archetype layout's answer and {@code components/qits-bootstrap/qits-cli-bootstrap} is the
+     * component layout's; the first one that holds a checkout wins, so this binary works on a
+     * wrapper from either side of the flip. The list is what the failure message names, too.
+     */
+    static final List<String> CLI_PATHS =
+            List.of("cli/qits-cli-bootstrap", "components/qits-bootstrap/qits-cli-bootstrap");
 
     /** This CLI's own repository name, which is what a clone of it is called. */
     static final String CLI_CHECKOUT = "qits-cli-bootstrap";
@@ -105,7 +113,9 @@ public final class HostLauncher {
             Path context = imageContext(wrapper.path(), workDir).orElse(null);
             if (context == null) {
                 out.println("no qits-cli-bootstrap checkout to build the payload image from — "
-                        + "looked in " + wrapper.path().resolve(CLI_PATH) + ", at and above "
+                        + "looked in " + CLI_PATHS.stream().map(wrapper.path()::resolve)
+                                .map(Path::toString).collect(Collectors.joining(" and "))
+                        + ", at and above "
                         + workDir + ", and in " + workDir.resolve(CLI_CHECKOUT) + ". Run this from "
                         + "inside a checkout of this CLI, or from a wrapper whose submodules are "
                         + "initialised (git submodule update --init)");
@@ -214,8 +224,8 @@ public final class HostLauncher {
      * <p>
      * Three places, in order, and each is a machine the bootstrap is actually started on:
      * <ol>
-     *   <li>the wrapper's own {@code cli/qits-cli-bootstrap} submodule — the ordinary run, from
-     *       inside the checkout;
+     *   <li>the wrapper's own submodule of this CLI, at either of {@link #CLI_PATHS} — the
+     *       ordinary run, from inside the checkout;
      *   <li>at or above the working directory — a clone of this CLI alone, which is all a COLD
      *       machine has: {@code curl … | bash} clones this repository, builds it and runs it, and
      *       there is no wrapper until the run itself clones one;
@@ -237,24 +247,39 @@ public final class HostLauncher {
      * set's dedup collapses the rest. Not all of them: a submodule that carries an EMBEDDED
      * {@code .git} directory keeps its worktree slice under that, beside the primary's — which is
      * why every submodule is asked rather than only the wrapper.
+     * <p>
+     * <b>The walk is DEPTH-BOUNDED rather than depth-fixed, and that is the layout flip's doing.</b>
+     * It used to look exactly two levels down, which was every submodule of the archetype layout
+     * ({@code <archetype>/<repo>}) and none of the component one
+     * ({@code components/<component>/<repo>}) — a worktree of a reorganised wrapper would have
+     * mounted the wrapper's own git directory and no submodule's, and every source clone inside the
+     * container would have died with "not a git repository". Both depths are walked now, and a
+     * directory with no pointer file answers nothing and costs nothing.
      */
+    private static final int SUBMODULE_DEPTH = 3;
+
     static List<Path> linkedGitDirs(Path wrapper) {
         List<Path> dirs = new ArrayList<>();
-        linkedGitDir(wrapper).ifPresent(dirs::add);
-        // The submodules sit two levels down: <group>/<name>. A directory without a pointer file
-        // answers nothing and costs nothing.
-        try (var groups = Files.list(wrapper)) {
-            for (Path group : groups.filter(Files::isDirectory).sorted().toList()) {
-                try (var subs = Files.list(group)) {
-                    for (Path sub : subs.filter(Files::isDirectory).sorted().toList()) {
-                        linkedGitDir(sub).ifPresent(dirs::add);
-                    }
+        collectLinkedGitDirs(wrapper, SUBMODULE_DEPTH, dirs);
+        return List.copyOf(dirs);
+    }
+
+    private static void collectLinkedGitDirs(Path dir, int depth, List<Path> into) {
+        linkedGitDir(dir).ifPresent(into::add);
+        if (depth <= 0) {
+            return;
+        }
+        try (var children = Files.list(dir)) {
+            for (Path child : children.filter(Files::isDirectory).sorted().toList()) {
+                // The git directory itself is bookkeeping, never a checkout, and walking into it
+                // would find every submodule's slice a second time.
+                if (!child.getFileName().toString().equals(".git")) {
+                    collectLinkedGitDirs(child, depth - 1, into);
                 }
             }
         } catch (IOException unreadable) {
             // preflight's own message is the better one when the wrapper cannot be read
         }
-        return List.copyOf(dirs);
     }
 
     /**
@@ -292,9 +317,11 @@ public final class HostLauncher {
 
     static Optional<Path> imageContext(Path wrapper, Path from) {
         Path start = from.toAbsolutePath().normalize();
-        Path inWrapper = wrapper.resolve(CLI_PATH);
-        if (isCliCheckout(inWrapper)) {
-            return Optional.of(inWrapper);
+        for (String cliPath : CLI_PATHS) {
+            Path inWrapper = wrapper.resolve(cliPath);
+            if (isCliCheckout(inWrapper)) {
+                return Optional.of(inWrapper);
+            }
         }
         for (Path candidate = start; candidate != null; candidate = candidate.getParent()) {
             if (isCliCheckout(candidate)) {

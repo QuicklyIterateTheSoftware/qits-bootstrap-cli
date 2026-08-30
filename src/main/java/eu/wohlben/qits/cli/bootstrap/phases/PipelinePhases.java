@@ -657,7 +657,10 @@ public class PipelinePhases {
                           String token) {
         ctx.status("registering " + repo + " (/git/" + id + ")");
         Http.Response answer = boot.projects.adoptRepository(projectId, id, repo,
-                boot.config.orgUrl() + "/" + repo + ".git", PlatformModel.archetype(name), token);
+                boot.config.orgUrl() + "/" + repo + ".git",
+                // From where the WRAPPER puts it, so this run and qits-projects' own reconcile read
+                // one fact rather than two derivations of it.
+                PlatformModel.archetype(name, boot.state.wrapperPath(name)), token);
         if (!answer.ok() && resolvedStorageId(projectId, repo, token) == null) {
             throw new IllegalStateException("registering " + repo + " (/git/" + id
                     + ") under project " + projectId + " answered " + answer.describe()

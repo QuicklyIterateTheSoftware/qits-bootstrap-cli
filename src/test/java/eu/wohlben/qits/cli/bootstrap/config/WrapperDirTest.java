@@ -65,6 +65,43 @@ class WrapperDirTest {
         assertThat(WrapperDir.isWrapper(root)).isTrue();
     }
 
+    /**
+     * <b>The component layout is a wrapper too, and this is the test the flip would have broken.</b>
+     * Detection asks which REPOSITORY the file declares, not which directory it sits in — the old
+     * grep was for {@code services/qits-}, so a reorganised wrapper answered "no wrapper repository
+     * at or above …" on every machine and every un-configured run died in preflight.
+     */
+    @Test
+    void aComponentLayoutWrapperIsFoundJustTheSame() throws IOException {
+        Path root = Files.createDirectories(temp.resolve("components-layout"));
+        Files.writeString(root.resolve(".gitmodules"), """
+                [submodule "qits-artifacts"]
+                	path = components/qits-artifacts/qits-artifacts
+                	url = ../qits-artifacts.git
+                	ignore = all
+                	branch = main
+                	update = merge
+                """, StandardCharsets.UTF_8);
+        Path here = Files.createDirectories(
+                root.resolve("components/qits-bootstrap/qits-cli-bootstrap"));
+
+        assertThat(WrapperDir.isWrapper(root)).isTrue();
+        assertThat(WrapperDir.detect(here)).contains(root);
+    }
+
+    /**
+     * The same wrapper with no readable {@code .gitmodules}: the directory on disk is the second
+     * arm, and it has to know both layouts as well as both spellings of the store.
+     */
+    @Test
+    void aComponentDirectoryIsMarkerEnoughOnItsOwn() throws IOException {
+        Path root = Files.createDirectories(temp.resolve("no-gitmodules-components"));
+        Path store = Files.createDirectories(
+                root.resolve("components/qits-artifacts/qits-artifacts"));
+
+        assertThat(WrapperDir.detect(store)).contains(root);
+    }
+
     @Test
     void aGitmodulesNamingSomethingElseIsNotAWrapper() throws IOException {
         Path other = Files.createDirectories(temp.resolve("someone-elses-repo"));
@@ -76,6 +113,27 @@ class WrapperDirTest {
 
         assertThat(WrapperDir.isWrapper(other)).isFalse();
         assertThat(WrapperDir.detect(other)).isEmpty();
+    }
+
+    /**
+     * <b>A platform repository that embeds another one is NOT a wrapper.</b> Every SPA-hosting
+     * service carries its frontend as a submodule at {@code service/src/main/webui}, and qits-ci
+     * carries qits-eventstream — so "declares a qits- submodule" would make each of them answer the
+     * walk before the real wrapper above it did. The store is the marker for that reason.
+     */
+    @Test
+    void aServiceEmbeddingItsFrontendIsNotAWrapper() throws IOException {
+        Path service = Files.createDirectories(temp.resolve("qits-ci"));
+        Files.writeString(service.resolve(".gitmodules"), """
+                [submodule "qits-spa-ci"]
+                	path = service/src/main/webui
+                	url = ../qits-spa-ci.git
+                [submodule "qits-eventstream"]
+                	path = lib/qits-eventstream
+                	url = ../qits-eventstream.git
+                """, StandardCharsets.UTF_8);
+
+        assertThat(WrapperDir.isWrapper(service)).isFalse();
     }
 
     @Test
