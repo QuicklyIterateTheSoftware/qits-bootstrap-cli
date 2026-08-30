@@ -262,8 +262,16 @@ forced. Add to that list rather than deviating quietly.
   2026-08-11. **Every one of those scripts deletes `eu/wohlben/qits` out of the cache first**: a
   third-party jar is immutable at its version and a seed-built qits jar is not, because seed
   builds reuse calvers across runs.
-- **A name in `PlatformModel` is the repository name without `qits-`, and it is load-bearing three
-  times over**: the git-host repository, the seed image tag and the deployer's application key.
+- **A name in `PlatformModel` is the APPLICATION name without `qits-`, and it is load-bearing
+  three times over**: the wire alias, the seed image tag and the deployer's application key.
+  **The REPOSITORY is a second name, and `PlatformModel.REPOSITORIES` is where the two part
+  company.** It used to be one name doing both jobs; the phase-2 renames move the repository into
+  the `<component>-<role>` grammar and move nothing the running platform answers to, which is what
+  `deployments.yml`'s `application:` key pins from the repository's own side. So `repo(name)`
+  answers the git-host repository, the clone url, the `.gitmodules` entry and the checkout
+  directory, while `application(name)` answers everything the platform is addressed by — and
+  `wireAlias`, `pdNamePrefix` and the extras family are the only callers of the second. Getting
+  them the wrong way round points the boot's own database at a host nothing serves.
   **The wrapper DIRECTORY is no longer one of them, and that is deliberate.** The wrapper is moving
   from six archetype directories to `components/<component>/<repo>`, and a component is not
   derivable from a name — `qits-spa-ci` belongs to component `qits-ci`. So the wrapper's own

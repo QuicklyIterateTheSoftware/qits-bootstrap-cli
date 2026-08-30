@@ -43,16 +43,33 @@ public final class HostLauncher {
 
     /**
      * <b>Where this CLI sits inside the wrapper, and therefore where the image is built from —
-     * BOTH layouts, whichever is on the machine.</b> {@code cli/qits-cli-bootstrap} is the
-     * archetype layout's answer and {@code components/qits-bootstrap/qits-cli-bootstrap} is the
-     * component layout's; the first one that holds a checkout wins, so this binary works on a
-     * wrapper from either side of the flip. The list is what the failure message names, too.
+     * EVERY layout and name it has had, newest first.</b> The first one that holds a checkout wins,
+     * so this binary works on a wrapper from either side of the layout flip and either side of the
+     * rename. The list is what the failure message names, too.
+     * <ul>
+     *   <li>{@code components/qits-bootstrap/qits-bootstrap-cli} — the component layout with the
+     *       repository renamed into the {@code <component>-<role>} grammar;
+     *   <li>{@code components/qits-bootstrap/qits-cli-bootstrap} — the component layout before the
+     *       rename;
+     *   <li>{@code cli/qits-cli-bootstrap} — the archetype layout.
+     * </ul>
+     * <b>Newest first is what makes a half-renamed machine build the right tree.</b> A rename is a
+     * {@code git mv} in the wrapper, and a checkout that has not pulled it still has the old
+     * directory beside the new one; taking the oldest hit would build the stale copy without saying
+     * so.
      */
-    static final List<String> CLI_PATHS =
-            List.of("cli/qits-cli-bootstrap", "components/qits-bootstrap/qits-cli-bootstrap");
+    static final List<String> CLI_PATHS = List.of(
+            "components/qits-bootstrap/qits-bootstrap-cli",
+            "components/qits-bootstrap/qits-cli-bootstrap",
+            "cli/qits-cli-bootstrap");
 
-    /** This CLI's own repository name, which is what a clone of it is called. */
-    static final String CLI_CHECKOUT = "qits-cli-bootstrap";
+    /**
+     * This CLI's own repository name, which is what a clone of it is called — both spellings,
+     * newest first, for the same reason the paths carry both. A cold {@code curl … | bash} clones
+     * the repository beside the working directory, so what the directory is called is whatever
+     * GitHub served the clone under.
+     */
+    static final List<String> CLI_CHECKOUTS = List.of("qits-bootstrap-cli", "qits-cli-bootstrap");
 
     private HostLauncher() {
     }
@@ -112,11 +129,13 @@ public final class HostLauncher {
 
             Path context = imageContext(wrapper.path(), workDir).orElse(null);
             if (context == null) {
-                out.println("no qits-cli-bootstrap checkout to build the payload image from — "
+                out.println("no bootstrap CLI checkout to build the payload image from — "
                         + "looked in " + CLI_PATHS.stream().map(wrapper.path()::resolve)
                                 .map(Path::toString).collect(Collectors.joining(" and "))
                         + ", at and above "
-                        + workDir + ", and in " + workDir.resolve(CLI_CHECKOUT) + ". Run this from "
+                        + workDir + ", and in " + CLI_CHECKOUTS.stream().map(workDir::resolve)
+                                .map(Path::toString).collect(Collectors.joining(" and "))
+                        + ". Run this from "
                         + "inside a checkout of this CLI, or from a wrapper whose submodules are "
                         + "initialised (git submodule update --init)");
                 return 2;
@@ -224,13 +243,14 @@ public final class HostLauncher {
      * <p>
      * Three places, in order, and each is a machine the bootstrap is actually started on:
      * <ol>
-     *   <li>the wrapper's own submodule of this CLI, at either of {@link #CLI_PATHS} — the
+     *   <li>the wrapper's own submodule of this CLI, at any of {@link #CLI_PATHS} — the
      *       ordinary run, from inside the checkout;
      *   <li>at or above the working directory — a clone of this CLI alone, which is all a COLD
      *       machine has: {@code curl … | bash} clones this repository, builds it and runs it, and
      *       there is no wrapper until the run itself clones one;
-     *   <li>{@code <working directory>/qits-cli-bootstrap} — the same cold clone, from a script
-     *       that stepped back out of it so the wrapper lands beside it rather than inside it.
+     *   <li>{@code <working directory>/<one of }{@link #CLI_CHECKOUTS}{@code >} — the same cold
+     *       clone, from a script that stepped back out of it so the wrapper lands beside it rather
+     *       than inside it.
      * </ol>
      * The marker is the Dockerfile, not the directory name: a checkout is what has one, whatever
      * anyone called the directory.
@@ -328,8 +348,13 @@ public final class HostLauncher {
                 return Optional.of(candidate);
             }
         }
-        Path beside = start.resolve(CLI_CHECKOUT);
-        return isCliCheckout(beside) ? Optional.of(beside) : Optional.empty();
+        for (String checkout : CLI_CHECKOUTS) {
+            Path beside = start.resolve(checkout);
+            if (isCliCheckout(beside)) {
+                return Optional.of(beside);
+            }
+        }
+        return Optional.empty();
     }
 
     private static boolean isCliCheckout(Path dir) {

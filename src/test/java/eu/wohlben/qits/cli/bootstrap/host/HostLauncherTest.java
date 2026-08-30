@@ -39,7 +39,7 @@ class HostLauncherTest {
 
     /**
      * <b>The component layout's path answers too, and this binary has to ship before the wrapper
-     * flips.</b> The CLI moves to {@code components/qits-bootstrap/qits-cli-bootstrap}; a launcher
+     * flips.</b> The CLI moved to {@code components/qits-bootstrap/qits-cli-bootstrap}; a launcher
      * that knew only the old path would build the payload from whatever checkout the walk found
      * next, or from nothing at all.
      */
@@ -48,13 +48,29 @@ class HostLauncherTest {
         Path wrapper = Files.createDirectories(temp.resolve("qits-qits"));
         Path cli = cliCheckout("qits-qits/components/qits-bootstrap/qits-cli-bootstrap");
 
-        assertThat(HostLauncher.CLI_PATHS)
-                .containsExactly("cli/qits-cli-bootstrap",
-                        "components/qits-bootstrap/qits-cli-bootstrap");
         assertThat(HostLauncher.imageContext(wrapper, temp)).contains(cli);
     }
 
-    /** Both on one machine — a flip in progress — and the one that is there first wins. */
+    /**
+     * <b>The renamed repository's path answers, and it answers FIRST.</b> Phase 2 renames this
+     * repository qits-bootstrap-cli, so the checkout moves once more — and the order is what makes
+     * a half-pulled wrapper build the tree it just moved to rather than the stale one beside it.
+     */
+    @Test
+    void theRenamedPathIsTheFirstAnswer() throws IOException {
+        Path wrapper = Files.createDirectories(temp.resolve("qits-qits"));
+        Path cli = cliCheckout("qits-qits/components/qits-bootstrap/qits-bootstrap-cli");
+        // The pre-rename checkout is still there, whole, as a stale pull leaves it.
+        cliCheckout("qits-qits/components/qits-bootstrap/qits-cli-bootstrap");
+
+        assertThat(HostLauncher.CLI_PATHS)
+                .containsExactly("components/qits-bootstrap/qits-bootstrap-cli",
+                        "components/qits-bootstrap/qits-cli-bootstrap",
+                        "cli/qits-cli-bootstrap");
+        assertThat(HostLauncher.imageContext(wrapper, temp)).contains(cli);
+    }
+
+    /** Both layouts on one machine — a flip in progress — and the newest that holds one wins. */
     @Test
     void thePathThatHoldsACheckoutIsTheOneUsed() throws IOException {
         Path wrapper = Files.createDirectories(temp.resolve("qits-qits"));
@@ -83,6 +99,15 @@ class HostLauncherTest {
         // The same cold clone, from a script that stepped back out of it so the wrapper is cloned
         // beside this CLI rather than inside it.
         Path cli = cliCheckout("work/qits-cli-bootstrap");
+        Path workDir = temp.resolve("work");
+
+        assertThat(HostLauncher.imageContext(workDir.resolve("qits-qits"), workDir)).contains(cli);
+    }
+
+    /** The same clone under the renamed repository's directory, which is what GitHub serves now. */
+    @Test
+    void aCloneBesideTheWorkingDirectoryAnswersUnderTheNewNameToo() throws IOException {
+        Path cli = cliCheckout("work/qits-bootstrap-cli");
         Path workDir = temp.resolve("work");
 
         assertThat(HostLauncher.imageContext(workDir.resolve("qits-qits"), workDir)).contains(cli);

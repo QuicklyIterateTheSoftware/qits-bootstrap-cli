@@ -84,12 +84,12 @@ class DockerBuildTest {
         ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok("done"));
 
         docker(runner, config(Map.of())).build(List.of("-t", "qits/build-images/ci-base:latest",
-                "-f", "/src/qits-oci/ci-base/Dockerfile", "/src/qits-oci"), null);
+                "-f", "/src/qits-build-images-oci/ci-base/Dockerfile", "/src/qits-build-images-oci"), null);
 
         assertThat(runner.argv.getLast()).containsExactly("docker", "buildx", "build", "--builder",
                 "qits-bootstrap-builder-v5", "--load", "--build-arg", ARG,
                 "-t", "qits/build-images/ci-base:latest",
-                "-f", "/src/qits-oci/ci-base/Dockerfile", "/src/qits-oci");
+                "-f", "/src/qits-build-images-oci/ci-base/Dockerfile", "/src/qits-build-images-oci");
     }
 
     @Test

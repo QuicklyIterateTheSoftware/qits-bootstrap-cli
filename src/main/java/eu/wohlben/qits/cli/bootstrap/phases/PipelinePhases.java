@@ -1817,7 +1817,7 @@ public class PipelinePhases {
 
     /** The seed line: qits-projects' {@code QITS_PROJECTS_AGENT_IMAGE_VERSION} deployment env. */
     static String projectsAgentImageVersionSeed(String version) {
-        return "qits.platform.deployments.extras." + PlatformModel.repo("projects")
+        return "qits.platform.deployments.extras." + PlatformModel.application("projects")
                 + ".env.QITS_PROJECTS_AGENT_IMAGE_VERSION=" + version;
     }
 
@@ -1841,7 +1841,7 @@ public class PipelinePhases {
 
     /** The seed line: qits-workspaces' {@code QITS_WORKSPACE_IMAGE_VERSION} deployment env. */
     static String workspaceImageVersionSeed(String version) {
-        return "qits.platform.deployments.extras." + PlatformModel.repo("workspaces")
+        return "qits.platform.deployments.extras." + PlatformModel.application("workspaces")
                 + ".env.QITS_WORKSPACE_IMAGE_VERSION=" + version;
     }
 
@@ -1867,7 +1867,7 @@ public class PipelinePhases {
         return new Phase("configuration-flip",
                 "point the running deployer at qits-configuration", ctx -> {
             String extras = ComposeTemplate.extras(new SeedPhases(boot).tokens());
-            List<String> env = flipEnv(extras, PlatformModel.repo("deployments"));
+            List<String> env = flipEnv(extras, PlatformModel.application("deployments"));
             String alias = PlatformModel.wireAlias("deployments", boot.config.envName());
             List<String> services = boot.docker.serviceNames();
             // The seed's stack-qualified name first, then the bare alias — which is what the

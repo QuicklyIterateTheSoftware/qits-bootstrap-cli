@@ -12,12 +12,21 @@ import java.util.regex.Pattern;
  * the lists at the top of {@code qits-local-up.sh}, comments included: they are the reason the
  * order is what it is.
  * <p>
- * A <b>name</b> here is the repository's name without the {@code qits-} prefix, and it is also the
- * deployer's application name — {@code platform-idp} is qits-platform-idp is the application
- * {@code qits-platform-idp}. The 2026-08-08 rename moved the plane INTO the repository names, so a
- * name now says which plane its service is on and nothing else has to. The byte-plane split moved
- * three of them the other way on 2026-08-10: {@code artifacts}, {@code docs} and {@code githost}
- * are environment services and say so by carrying no plane at all.
+ * A <b>name</b> here is the deployer's APPLICATION name without the {@code qits-} prefix —
+ * {@code platform-idp} is the application {@code qits-platform-idp}. The 2026-08-08 rename moved
+ * the plane INTO the repository names, so a name now says which plane its service is on and nothing
+ * else has to. The byte-plane split moved three of them the other way on 2026-08-10:
+ * {@code artifacts}, {@code docs} and {@code githost} are environment services and say so by
+ * carrying no plane at all.
+ * <p>
+ * <b>The repository is a SECOND name now, and {@link #REPOSITORIES} is where the two part
+ * company.</b> A name here used to be both — the wire alias, the seed image tag and the deployer's
+ * application key on one side, the git-host repository and the wrapper checkout on the other — and
+ * the phase-2 renames break that in one direction only: the repository is renamed into the
+ * {@code <component>-<role>} grammar while the running platform keeps every name it answers to,
+ * which is what {@code deployments.yml}'s {@code application:} key exists to pin. So
+ * {@link #application} derives the identity from the name unchanged, {@link #repo} answers the
+ * repository, and the two differ for exactly the entries the table lists.
  */
 public final class PlatformModel {
 
@@ -355,13 +364,13 @@ public final class PlatformModel {
      */
     public static String repoPath(String name) {
         return switch (name) {
-            case "ci-daemon", "workspace-daemon", "projects-daemon" -> "daemons/qits-" + name;
-            case "oci", "oci-postgresql", "oci-workspace" -> "images/qits-" + name;
+            case "ci-daemon", "workspace-daemon", "projects-daemon" -> "daemons/" + repo(name);
+            case "oci", "oci-postgresql", "oci-workspace" -> "images/" + repo(name);
             // Framework glue is shared code, so the integrations sit in libs/ like any other lib —
             // and so do the byte plane's two, which are libraries by the same test: three services
             // consume them and none of them is deployed.
             case "eventstream", "blobstore", "registries", "spa-ui-components", "userflows",
-                 "integrations-angular", "integrations-quarkus" -> "libs/qits-" + name;
+                 "integrations-angular", "integrations-quarkus" -> "libs/" + repo(name);
             // Anything served at a URL is a frontend, whether it is spelled qits-spa-<x> or
             // qits-platform-spa-<x>. Both spellings are live: the byte-plane split renamed two the
             // first way (qits-spa-artifacts, qits-spa-docs) and qits-platform-spa-mirror was born
@@ -369,8 +378,8 @@ public final class PlatformModel {
             // catches a wrapper checked out before that rename, whose directories still carry the
             // old names — and a path that resolves to nothing clones the org's copy in silence.
             default -> name.startsWith("spa-") || name.startsWith("platform-spa-")
-                    ? "frontends/qits-" + name
-                    : "services/qits-" + name;
+                    ? "frontends/" + repo(name)
+                    : "services/" + repo(name);
         };
     }
 
@@ -417,12 +426,23 @@ public final class PlatformModel {
         return archetype(name, repoPath(name));
     }
 
-    /** The names that are libraries today, and are none of them spelled so. */
+    /**
+     * The names that are libraries today, and are none of them spelled so.
+     * <p>
+     * <b>These are APPLICATION names, so the renames do not touch them.</b> Their repositories are
+     * {@code qits-eventstream-javalib} and its siblings — {@link #REPOSITORIES} holds the mapping —
+     * and those spellings answer through the {@code -javalib}/{@code -jslib} arm above without an
+     * entry here. Nothing is missing from this list; it is the table for the names that say nothing.
+     */
     private static final List<String> LIBRARY_NAMES =
             List.of("eventstream", "blobstore", "registries", "spa-ui-components", "userflows",
                     "integrations-angular", "integrations-quarkus");
 
-    /** The names that are image builds today, and are none of them spelled so. */
+    /**
+     * The names that are image builds today, and are none of them spelled so. Their renamed
+     * repositories — {@code qits-build-images-oci}, {@code qits-database-oci},
+     * {@code qits-workspace-oci} — answer through the {@code -oci} arm above.
+     */
     private static final List<String> IMAGE_NAMES = List.of("oci", "oci-postgresql", "oci-workspace");
 
     private static String archetypeOfName(String name) {
@@ -506,7 +526,56 @@ public final class PlatformModel {
         };
     }
 
+    /**
+     * <b>The repositories whose git-host name is not their application name.</b> Every entry is a
+     * phase-2 rename: the repository moved into the {@code <component>[-<modifier>]-<role>} grammar
+     * and nothing on the running platform moved with it.
+     * <p>
+     * <b>Keyed by the application name, because that is the one that never moves.</b> The seven
+     * libraries were renamed on 2026-08-30 and the four here follow; the published coordinates they
+     * carry — {@code eu.wohlben.qits:qits-eventstream}, {@code @qits/ui-components},
+     * {@code qits/build-images/*}, {@code qits/workspace-base}, {@code qits/qits-oci-postgresql} —
+     * are independent of both names and stay where they are.
+     * <p>
+     * <b>qits-oci-postgresql is the entry that shows why the two names cannot be one.</b> Its
+     * application name is in every environment's wire alias, in the seed container this program
+     * starts, in the seed image tag {@code qits/oci-postgresql:latest} the generated stack names,
+     * and in the JDBC url of every consumer that stack renders. Its repository is
+     * {@code qits-database-oci}. Renaming the model entry instead of adding it here would have
+     * pointed the boot's own database at a host nothing answers to.
+     * <p>
+     * An entry that is not here is its own repository, which is every application of today.
+     */
+    private static final Map<String, String> REPOSITORIES = Map.ofEntries(
+            Map.entry("oci", "qits-build-images-oci"),
+            Map.entry("oci-postgresql", "qits-database-oci"),
+            Map.entry("oci-workspace", "qits-workspace-oci"),
+            Map.entry("eventstream", "qits-eventstream-javalib"),
+            Map.entry("blobstore", "qits-blobstore-javalib"),
+            Map.entry("registries", "qits-registries-javalib"),
+            Map.entry("userflows", "qits-userflows-javalib"),
+            Map.entry("integrations-angular", "qits-integrations-angular-jslib"),
+            Map.entry("integrations-quarkus", "qits-integrations-quarkus-javalib"),
+            Map.entry("spa-ui-components", "qits-ui-components-jslib"));
+
+    /**
+     * <b>The repository this name is hosted and checked out as</b> — the git-host repository, the
+     * name a clone url carries, the wrapper's {@code .gitmodules} entry and the directory a source
+     * is cloned into. It is the application name for everything the renames have not reached, and
+     * {@link #REPOSITORIES} for everything they have.
+     */
     public static String repo(String name) {
+        return REPOSITORIES.getOrDefault(name, "qits-" + name);
+    }
+
+    /**
+     * <b>The APPLICATION name: what the platform answers to</b> — the wire alias peers dial, the
+     * container the deployer manages, the extras family, the seed image tag. It is derived from the
+     * model name and nothing else, so a repository rename cannot move it. A renamed repository says
+     * the same thing from its own side, with {@code application:} in its
+     * {@code .config/qits/deployments.yml}, and the two have to agree.
+     */
+    public static String application(String name) {
         return "qits-" + name;
     }
 
@@ -562,7 +631,9 @@ public final class PlatformModel {
      * </ul>
      */
     public static String wireAlias(String name, String envName) {
-        return isPlatformService(name) ? repo(name) : envName + "-" + repo(name);
+        return isPlatformService(name)
+                ? application(name)
+                : envName + "-" + application(name);
     }
 
     /**
@@ -576,8 +647,8 @@ public final class PlatformModel {
      */
     public static String pdNamePrefix(String name, String envName) {
         return isPlatformService(name)
-                ? "qits-pd-" + repo(name) + "-"
-                : "qits-pd-" + envName + "-" + repo(name) + "-";
+                ? "qits-pd-" + application(name) + "-"
+                : "qits-pd-" + envName + "-" + application(name) + "-";
     }
 
     /**
@@ -782,7 +853,7 @@ public final class PlatformModel {
             tokens.put("ALIAS_" + clientKey(app), wireAlias(app, envName));
             tokens.put("TIER_ENV_" + clientKey(app), tierEnv(app, envName, "      ", ""));
             tokens.put("TIER_ENV_EXTRAS_" + clientKey(app), tierEnv(app, envName, "",
-                    "qits.platform.deployments.extras." + repo(app) + ".env."));
+                    "qits.platform.deployments.extras." + application(app) + ".env."));
         }
         for (String app : IDP_CLIENT_APPS) {
             tokens.put("CLIENT_KEY_" + clientKey(app), clientKey(wireAlias(app, envName)));

@@ -27,8 +27,9 @@ class PlatformModelTest {
                 .isEqualTo("frontends/qits-spa-artifacts");
         // The byte plane's own, each in the directory its ROLE puts it in: two libraries and two
         // services, whatever plane the services are on.
-        assertThat(PlatformModel.repoPath("blobstore")).isEqualTo("libs/qits-blobstore");
-        assertThat(PlatformModel.repoPath("registries")).isEqualTo("libs/qits-registries");
+        assertThat(PlatformModel.repoPath("blobstore")).isEqualTo("libs/qits-blobstore-javalib");
+        assertThat(PlatformModel.repoPath("registries"))
+                .isEqualTo("libs/qits-registries-javalib");
         assertThat(PlatformModel.repoPath("platform-mirror"))
                 .isEqualTo("services/qits-platform-mirror");
         assertThat(PlatformModel.repoPath("githost")).isEqualTo("services/qits-githost");
@@ -56,12 +57,14 @@ class PlatformModelTest {
                 .isEqualTo("daemons/qits-workspace-daemon");
         assertThat(PlatformModel.repoPath("projects-daemon"))
                 .isEqualTo("daemons/qits-projects-daemon");
-        assertThat(PlatformModel.repoPath("oci")).isEqualTo("images/qits-oci");
-        assertThat(PlatformModel.repoPath("oci-workspace")).isEqualTo("images/qits-oci-workspace");
+        // The renamed repositories: the DIRECTORY is the repository's name, which is no longer the
+        // application name the model is keyed by.
+        assertThat(PlatformModel.repoPath("oci")).isEqualTo("images/qits-build-images-oci");
+        assertThat(PlatformModel.repoPath("oci-workspace")).isEqualTo("images/qits-workspace-oci");
         // An image repository, not a service: the default arm would clone services/ from GitHub.
-        assertThat(PlatformModel.repoPath("oci-postgresql"))
-                .isEqualTo("images/qits-oci-postgresql");
-        assertThat(PlatformModel.repoPath("eventstream")).isEqualTo("libs/qits-eventstream");
+        assertThat(PlatformModel.repoPath("oci-postgresql")).isEqualTo("images/qits-database-oci");
+        assertThat(PlatformModel.repoPath("eventstream"))
+                .isEqualTo("libs/qits-eventstream-javalib");
         assertThat(PlatformModel.repoPath("spa-docs")).isEqualTo("frontends/qits-spa-docs");
         // The pre-split spelling still resolves, because a wrapper checked out before the rename
         // has that directory and a path that resolves to nothing clones the org's copy in silence.
@@ -69,9 +72,58 @@ class PlatformModelTest {
                 .isEqualTo("frontends/qits-platform-spa-artifacts");
         // Framework glue is a lib; the wrapper has no integrations/ directory.
         assertThat(PlatformModel.repoPath("integrations-angular"))
-                .isEqualTo("libs/qits-integrations-angular");
+                .isEqualTo("libs/qits-integrations-angular-jslib");
         assertThat(PlatformModel.repoPath("integrations-quarkus"))
-                .isEqualTo("libs/qits-integrations-quarkus");
+                .isEqualTo("libs/qits-integrations-quarkus-javalib");
+    }
+
+    /**
+     * <b>The repository and the application are two names now, and this is the whole of the
+     * difference.</b> A phase-2 rename moves the repository — the git-host name, the clone url, the
+     * wrapper entry, the checkout directory — and moves nothing the platform answers to. Getting
+     * this backwards points the boot's own database at a host nothing serves.
+     */
+    @Test
+    void aRenamedRepositoryKeepsItsApplicationName() {
+        assertThat(PlatformModel.repo("oci-postgresql")).isEqualTo("qits-database-oci");
+        assertThat(PlatformModel.application("oci-postgresql")).isEqualTo("qits-oci-postgresql");
+        // The alias every consumer's JDBC url spells, and the container this program starts.
+        assertThat(PlatformModel.wireAlias("oci-postgresql", "dev"))
+                .isEqualTo("dev-qits-oci-postgresql");
+        assertThat(PlatformModel.pdNamePrefix("oci-postgresql", "dev"))
+                .isEqualTo("qits-pd-dev-qits-oci-postgresql-");
+
+        assertThat(PlatformModel.repo("oci")).isEqualTo("qits-build-images-oci");
+        assertThat(PlatformModel.repo("oci-workspace")).isEqualTo("qits-workspace-oci");
+        assertThat(PlatformModel.repo("eventstream")).isEqualTo("qits-eventstream-javalib");
+        assertThat(PlatformModel.repo("blobstore")).isEqualTo("qits-blobstore-javalib");
+        assertThat(PlatformModel.repo("registries")).isEqualTo("qits-registries-javalib");
+        assertThat(PlatformModel.repo("userflows")).isEqualTo("qits-userflows-javalib");
+        assertThat(PlatformModel.repo("spa-ui-components")).isEqualTo("qits-ui-components-jslib");
+        assertThat(PlatformModel.repo("integrations-angular"))
+                .isEqualTo("qits-integrations-angular-jslib");
+        assertThat(PlatformModel.repo("integrations-quarkus"))
+                .isEqualTo("qits-integrations-quarkus-javalib");
+
+        // Everything the renames have not reached is its own repository, and the two answers are
+        // one string.
+        assertThat(PlatformModel.repo("ci")).isEqualTo("qits-ci");
+        assertThat(PlatformModel.application("ci")).isEqualTo("qits-ci");
+        assertThat(PlatformModel.repo("platform-idp")).isEqualTo("qits-platform-idp");
+    }
+
+    /**
+     * Every wrapper entry the model names must be one the wrapper declares. This is the assertion
+     * that fails on the day a rename lands in {@code .gitmodules} and not here — or here and not
+     * there.
+     */
+    @Test
+    void everyRenamedRepositoryIsSpelledTheWayTheWrapperDeclaresIt() {
+        assertThat(PlatformModel.platformRepos().stream().map(PlatformModel::repo))
+                .doesNotContain("qits-oci", "qits-oci-postgresql", "qits-oci-workspace",
+                        "qits-eventstream", "qits-blobstore", "qits-registries", "qits-userflows",
+                        "qits-spa-ui-components", "qits-integrations-angular",
+                        "qits-integrations-quarkus");
     }
 
     /**

@@ -106,8 +106,9 @@ the checkout is enough: the working directory is walked upwards for the first `.
 declaring the qits submodules. The test is which REPOSITORY that file declares, never which
 directory it sits in, so a wrapper grouped by archetype (`services/qits-artifacts`) and one grouped
 by component (`components/qits-artifacts/qits-artifacts`) are both found — and the CLI's own
-checkout is looked for at `cli/qits-cli-bootstrap` and
-`components/qits-bootstrap/qits-cli-bootstrap` alike. `QITS_WRAPPER_DIR` (or `--wrapper-dir`) still
+checkout is looked for at `components/qits-bootstrap/qits-bootstrap-cli`,
+`components/qits-bootstrap/qits-cli-bootstrap` and `cli/qits-cli-bootstrap` alike, newest first so
+a half-pulled wrapper builds what it just moved to. `QITS_WRAPPER_DIR` (or `--wrapper-dir`) still
 wins, and preflight prints which of the two happened. The container is told the answer rather than
 walking for it again.
 

@@ -352,7 +352,7 @@ class ComposeTemplateTest {
                         .as("the seed block of %s", app)
                         .doesNotContain("QITS_ENVIRONMENT");
             }
-            assertThat(extras(PlatformModel.repo(app))).as("the extras of %s", app)
+            assertThat(extras(PlatformModel.application(app))).as("the extras of %s", app)
                     .doesNotContain("QITS_ENVIRONMENT");
         }
         // QITS_MAINTENANCE_ENVIRONMENT is not this variable and the loop above proves it: it
@@ -866,7 +866,7 @@ class ComposeTemplateTest {
         List<String> keys = extrasKeys();
 
         for (String application : PlatformModel.DEPLOYABLES) {
-            String prefix = EXTRAS + PlatformModel.repo(application) + ".";
+            String prefix = EXTRAS + PlatformModel.application(application) + ".";
             assertThat(keys).as("extras of %s", application)
                     .anyMatch(line -> line.startsWith(prefix));
         }
