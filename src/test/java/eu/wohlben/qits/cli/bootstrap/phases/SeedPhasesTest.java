@@ -213,15 +213,18 @@ class SeedPhasesTest {
     @Test
     void theSeedLibrariesAreEveryJarASeedImageResolves() {
         assertThat(SeedPhases.SEED_LIBRARIES).containsExactly(
-                "integrations-quarkus", "blobstore", "registries", "eventstream", "githost",
+                "integrations-quarkus", "registries", "eventstream", "githost",
                 "containers");
-        // Dependency order, and every pair is forced by a pom: qits-blobstore is written against
+        // Dependency order, and every pair is forced by a pom: the blob store is written against
         // qits-db-core (a module of qits-integrations-quarkus) since its DbRetry release,
-        // qits-registries against qits-blobstore's entities, qits-eventstream against qits-db-core
-        // too, qits-githost-events against qits-eventstream, and the orchestrator's two libraries
-        // against qits-db-core and qits-eventstream both.
+        // qits-eventstream against qits-db-core too, qits-githost-events against qits-eventstream,
+        // and the orchestrator's two libraries against qits-db-core and qits-eventstream both.
+        // THE BLOB STORE HAS NO ENTRY, and needs none since 2026-08-30: it is a module of the
+        // qits-registries reactor, which is published whole, so the registries entry is what puts
+        // qits-blobstore in the registry — after the integrations, as it always was.
+        assertThat(SeedPhases.SEED_LIBRARIES).doesNotContain("blobstore");
         assertThat(SeedPhases.SEED_LIBRARIES)
-                .containsSubsequence("integrations-quarkus", "blobstore", "registries");
+                .containsSubsequence("integrations-quarkus", "registries");
         assertThat(SeedPhases.SEED_LIBRARIES)
                 .containsSubsequence("integrations-quarkus", "eventstream", "githost");
         assertThat(SeedPhases.SEED_LIBRARIES)
@@ -243,7 +246,8 @@ class SeedPhasesTest {
         assertThat(SeedPhases.mavenModuleArgs("githost")).isEqualTo(" -pl githost-events -am");
         assertThat(SeedPhases.mavenModuleArgs("containers")).isEqualTo(" -pl core,client -am");
         assertThat(SeedPhases.mavenModuleArgs("eventstream")).isEmpty();
-        assertThat(SeedPhases.mavenModuleArgs("blobstore")).isEmpty();
+        // Whole, and that is what carries the blob store: it is a module of this reactor.
+        assertThat(SeedPhases.mavenModuleArgs("registries")).isEmpty();
         assertThat(SeedPhases.mavenModuleArgs("integrations-quarkus")).isEmpty();
     }
 

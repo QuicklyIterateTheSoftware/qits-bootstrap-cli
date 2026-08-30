@@ -53,11 +53,12 @@ class BootstrapPlanTest {
         // artifacts is built and started before anything can be published into it, and every maven
         // publish lands before the ci image that consumes them is built.
         assertThat(ids).containsSubsequence("seed-image-artifacts", "seed-artifacts",
-                // The integrations FIRST: qits-blobstore is built against qits-db-core since its
+                // The integrations FIRST: the blob store is built against qits-db-core since its
                 // DbRetry release, and qits-eventstream since 2026-08-11 — one of their three
-                // modules either way.
+                // modules either way. The blob store has no publish of its own since 2026-08-30:
+                // its jar is a module of the qits-registries reactor, which is deployed whole.
                 "publish-qits-auth-core",
-                "publish-qits-blobstore", "publish-qits-registries-oci",
+                "publish-qits-registries-oci",
                 "publish-qits-eventstream",
                 // The git host's vocabulary follows its own dependency: it is built against
                 // qits-eventstream and against nothing else of this platform.
@@ -87,7 +88,7 @@ class BootstrapPlanTest {
         // third-party half through the mirror's caches — and postgres before the mirror, which
         // refuses to boot without its database.
         assertThat(ids).containsSubsequence("seed-image-platform-mirror", "seed-postgres",
-                "seed-mirror", "seed-artifacts", "publish-qits-blobstore");
+                "seed-mirror", "seed-artifacts", "publish-qits-registries-oci");
         // The edge needs nothing from the platform — no client bundle, no qits dependency — so its
         // image is built in the first half and needs no service image before it.
         assertThat(ids).containsSubsequence("seed-image-platform-edge", "seed-image-artifacts");

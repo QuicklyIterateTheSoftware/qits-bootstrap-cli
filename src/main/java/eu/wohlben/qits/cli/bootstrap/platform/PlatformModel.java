@@ -258,11 +258,13 @@ public final class PlatformModel {
      * deployments.yml and no health endpoint. They need the repository, the history and the release
      * replay below, and nothing else.
      * <p>
-     * <b>qits-blobstore and qits-registries joined on 2026-08-10</b>, and they are the byte plane's
-     * own libraries: the content-addressed blob store, and one Maven module per registry format.
-     * Three services build against them — qits-artifacts, qits-platform-mirror and qits-githost —
-     * and none of those builds can run on the platform until the jars are IN the platform's Maven
-     * registry, which is what a repository plus a release replay gets them.
+     * <b>qits-registries joined on 2026-08-10</b>, and it is the byte plane's own library: one
+     * Maven module per registry format, and since 2026-08-30 the content-addressed blob store as
+     * one more module of the same reactor. Three services build against it — qits-artifacts,
+     * qits-platform-mirror and qits-githost — and none of those builds can run on the platform
+     * until the jars are IN the platform's Maven registry, which is what a repository plus a
+     * release replay gets them. qits-blobstore had its own entry here until the merge; the
+     * repository is retired, and the reactor publishes its jar under the unchanged coordinate.
      * <p>
      * <b>qits-spa-githost and qits-platform-spa-mirror joined on 2026-08-11</b>, the last two byte
      * services to grow a client. They are here for the reason every other frontend is: a checkout
@@ -290,7 +292,7 @@ public final class PlatformModel {
      * is not restored to a tag.
      */
     public static final List<String> SEEDED_REPOS = List.of(
-            "oci", "oci-postgresql", "ci-daemon", "eventstream", "blobstore", "registries", "spa-ui-components",
+            "oci", "oci-postgresql", "ci-daemon", "eventstream", "registries", "spa-ui-components",
             "userflows", "spa-docs", "spa-deployments",
             "integrations-angular", "integrations-quarkus", "spa-projects",
             "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events",
@@ -322,11 +324,11 @@ public final class PlatformModel {
      *       It is independent of qits-workspace-daemon; only the base has to precede it.
      * </ul>
      * <p>
-     * <b>The byte-plane libraries are NOT here yet, deliberately.</b> A replay restores a pin, and
-     * nothing pins a calver of qits-blobstore or qits-registries: every consumer still names
-     * {@code 1.0.0-SNAPSHOT}, which the seed publishes restore. They join this list — registries
-     * after blobstore, both before qits-eventstream — the moment their first releases are cut and
-     * the consumer poms move onto the calvers.
+     * <b>qits-registries is NOT here yet, deliberately.</b> A replay restores a pin, and nothing
+     * pins a calver of it or of the qits-blobstore jar its reactor carries: every consumer still
+     * names {@code 1.0.0-SNAPSHOT}, which the seed publishes restore. It joins this list — before
+     * qits-eventstream — the moment its first release is cut and the consumer poms move onto the
+     * calvers.
      */
     public static final List<String> RELEASE_PUBLISHERS =
             List.of("spa-ui-components", "integrations-angular", "integrations-quarkus",
@@ -372,9 +374,9 @@ public final class PlatformModel {
             case "ci-daemon", "workspace-daemon", "projects-daemon" -> "daemons/" + repo(name);
             case "oci", "oci-postgresql", "oci-workspace" -> "images/" + repo(name);
             // Framework glue is shared code, so the integrations sit in libs/ like any other lib —
-            // and so do the byte plane's two, which are libraries by the same test: three services
-            // consume them and none of them is deployed.
-            case "eventstream", "blobstore", "registries", "spa-ui-components", "userflows",
+            // and so does the byte plane's own, a library by the same test: three services consume
+            // it and it is not deployed.
+            case "eventstream", "registries", "spa-ui-components", "userflows",
                  "integrations-angular", "integrations-quarkus" -> "libs/" + repo(name);
             // Anything served at a URL is a frontend, whether it is spelled qits-spa-<x> or
             // qits-platform-spa-<x>. Both spellings are live: the byte-plane split renamed two the
@@ -440,7 +442,7 @@ public final class PlatformModel {
      * entry here. Nothing is missing from this list; it is the table for the names that say nothing.
      */
     private static final List<String> LIBRARY_NAMES =
-            List.of("eventstream", "blobstore", "registries", "spa-ui-components", "userflows",
+            List.of("eventstream", "registries", "spa-ui-components", "userflows",
                     "integrations-angular", "integrations-quarkus");
 
     /**
@@ -564,7 +566,6 @@ public final class PlatformModel {
             Map.entry("oci-postgresql", "qits-database-oci"),
             Map.entry("oci-workspace", "qits-workspace-oci"),
             Map.entry("eventstream", "qits-eventstream-javalib"),
-            Map.entry("blobstore", "qits-blobstore-javalib"),
             Map.entry("registries", "qits-registries-javalib"),
             Map.entry("userflows", "qits-userflows-javalib"),
             Map.entry("integrations-angular", "qits-integrations-angular-jslib"),

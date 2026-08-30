@@ -30,9 +30,8 @@ class PlatformModelTest {
                 .isEqualTo("frontends/qits-deployments-platform-frontend");
         assertThat(PlatformModel.repoPath("spa-artifacts"))
                 .isEqualTo("frontends/qits-artifacts-frontend");
-        // The byte plane's own, each in the directory its ROLE puts it in: two libraries and two
+        // The byte plane's own, each in the directory its ROLE puts it in: one library and two
         // services, whatever plane the services are on.
-        assertThat(PlatformModel.repoPath("blobstore")).isEqualTo("libs/qits-blobstore-javalib");
         assertThat(PlatformModel.repoPath("registries"))
                 .isEqualTo("libs/qits-registries-javalib");
         assertThat(PlatformModel.repoPath("platform-mirror"))
@@ -102,7 +101,6 @@ class PlatformModelTest {
         assertThat(PlatformModel.repo("oci")).isEqualTo("qits-build-images-oci");
         assertThat(PlatformModel.repo("oci-workspace")).isEqualTo("qits-workspace-oci");
         assertThat(PlatformModel.repo("eventstream")).isEqualTo("qits-eventstream-javalib");
-        assertThat(PlatformModel.repo("blobstore")).isEqualTo("qits-blobstore-javalib");
         assertThat(PlatformModel.repo("registries")).isEqualTo("qits-registries-javalib");
         assertThat(PlatformModel.repo("userflows")).isEqualTo("qits-userflows-javalib");
         assertThat(PlatformModel.repo("spa-ui-components")).isEqualTo("qits-ui-components-jslib");
@@ -182,7 +180,6 @@ class PlatformModelTest {
         expected.put("platform-spa-orchestrator", "qits-orchestrator-platform-frontend");
         expected.put("platform-spa-system", "qits-system-platform-frontend");
         // The libraries and the image builds, renamed on 2026-08-30.
-        expected.put("blobstore", "qits-blobstore-javalib");
         expected.put("eventstream", "qits-eventstream-javalib");
         expected.put("integrations-angular", "qits-integrations-angular-jslib");
         expected.put("integrations-quarkus", "qits-integrations-quarkus-javalib");
@@ -480,7 +477,12 @@ class PlatformModelTest {
                 // And the home page, removed from the platform on 2026-08-30: the wrapper declares
                 // it no more, its row and its bare are deleted, and the org copy is archived. Left
                 // here it would be created and pushed on every boot, with nobody maintaining it.
-                "spa-home");
+                "spa-home",
+                // The blob store went the same way on 2026-08-30, by MERGE rather than by
+                // archival: its jar is a module of the qits-registries reactor now, under the same
+                // coordinate, so the seed still publishes it — through the registries entry. The
+                // repository is retired, and a name here would seed a repository nothing hosts.
+                "blobstore");
     }
 
     @Test
@@ -571,7 +573,7 @@ class PlatformModelTest {
         // module is a native image nobody resolves. Comma-separated is maven's own -pl spelling.
         assertThat(PlatformModel.mavenModule("containers")).isEqualTo("core,client");
         assertThat(PlatformModel.mavenModule("eventstream")).isEmpty();
-        assertThat(PlatformModel.mavenModule("blobstore")).isEmpty();
+        // Whole, and that is how the blob store is seeded: it is a module of this reactor.
         assertThat(PlatformModel.mavenModule("registries")).isEmpty();
         assertThat(PlatformModel.mavenModule("integrations-quarkus")).isEmpty();
     }
@@ -614,11 +616,10 @@ class PlatformModelTest {
         assertThat(PlatformModel.RELEASE_PUBLISHERS)
                 .containsSubsequence("oci-workspace", "workspace-daemon")
                 .containsSubsequence("oci-workspace", "projects-daemon");
-        // The byte-plane libs are deliberately absent until their first calver release exists:
-        // a replay restores a pin, and every consumer still pins 1.0.0-SNAPSHOT, which the seed
-        // publishes restore. When they join, registries follows blobstore, both before eventstream.
-        assertThat(PlatformModel.RELEASE_PUBLISHERS)
-                .doesNotContain("blobstore", "registries");
+        // The byte-plane lib is deliberately absent until its first calver release exists: a replay
+        // restores a pin, and every consumer still pins 1.0.0-SNAPSHOT, which the seed publishes
+        // restore. When it joins, it goes before eventstream.
+        assertThat(PlatformModel.RELEASE_PUBLISHERS).doesNotContain("registries");
     }
 
     @Test

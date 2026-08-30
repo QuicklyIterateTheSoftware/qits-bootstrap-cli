@@ -79,13 +79,18 @@ public class SeedPhases {
      * <p>
      * Every pair here is forced by a pom:
      * <ul>
-     *   <li>qits-blobstore is written against qits-db-core, a module of qits-integrations-quarkus,
-     *       since its DbRetry release (2026.813.161828) — so the integrations come FIRST. The same
-     *       class of break as the 2026-08-11 one below, bought a second time on 2026-08-13: every
-     *       earlier green run had a blobstore with no qits dependency at all, and the day it grew
-     *       one the seed resolved qits-db-core against a registry that does not exist yet —
-     *       "Connection refused" on localhost:8081, seconds into the phase.
-     *   <li>qits-registries is written against qits-blobstore's entities and follows it.
+     *   <li>qits-registries carries the blob store as a module since 2026-08-30, and that module is
+     *       written against qits-db-core, a module of qits-integrations-quarkus, since its DbRetry
+     *       release (2026.813.161828) — so the integrations come FIRST. The same class of break as
+     *       the 2026-08-11 one below, bought a second time on 2026-08-13: every earlier green run
+     *       had a blob store with no qits dependency at all, and the day it grew one the seed
+     *       resolved qits-db-core against a registry that does not exist yet — "Connection refused"
+     *       on localhost:8081, seconds into the phase.
+     *   <li><b>qits-blobstore needs no entry of its own any more.</b> Its repository is retired and
+     *       its jar is a module of the qits-registries reactor, which is published WHOLE — so this
+     *       one entry puts qits-blobstore and every registries jar in the registry, in the reactor's
+     *       own order, before the first seed image is built. The pair that used to be spelled here
+     *       (registries against the blob store's entities) is now inside one pom.
      *   <li>qits-eventstream is written against qits-db-core too, so the integrations come BEFORE
      *       it as well. This is the edge that broke the 2026-08-11 proving run: the integrations
      *       used to be last, and the day eventstream grew the dependency the seed died the same
@@ -99,7 +104,7 @@ public class SeedPhases {
      * PlatformModel#mavenModule} says which modules and why.
      */
     static final List<String> SEED_LIBRARIES = List.of(
-            "integrations-quarkus", "blobstore", "registries", "eventstream", "githost",
+            "integrations-quarkus", "registries", "eventstream", "githost",
             "containers");
 
     /**
@@ -675,8 +680,8 @@ public class SeedPhases {
      * <p>
      * <b>One container, one deploy per entry, in the order {@link #SEED_LIBRARIES} spells.</b>
      * {@code mvn deploy} installs into the local repository on its way out, so qits-registries
-     * resolves the qits-blobstore the line above it just built — which is the whole reason these
-     * are not one container each. The other side of that: a library built before the qits jar it
+     * resolves the qits-db-core the line above it just built — which is the whole reason these are
+     * not one container each. The other side of that: a library built before the qits jar it
      * depends on resolves nothing local, reaches for the registry port that no server holds yet,
      * and fails with "Connection refused". Read the poms before moving a line.
      * <p>
@@ -1177,7 +1182,7 @@ public class SeedPhases {
                 + "      <url>" + boot.config.mirrorUrl() + "/artifacts/maven/central</url>\n"
                 + "    </mirror>\n"
                 // The hosted half: a publish that consumes an earlier publish (registries needs
-                // blobstore, githost-events needs eventstream) resolves it from the store it was
+                // qits-db-core, githost-events needs eventstream) resolves it from the store it was
                 // just deployed to. Same exact-id trick — the consumer poms declare a `qits-maven`
                 // repository, and this mirror is what wins over the external:http:* blocker.
                 + "    <mirror>\n"
