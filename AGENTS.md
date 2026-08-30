@@ -1,4 +1,4 @@
-# AGENTS.md — qits-cli-bootstrap
+# AGENTS.md — qits-bootstrap-cli
 
 ## What this repository is
 
@@ -265,16 +265,16 @@ forced. Add to that list rather than deviating quietly.
 - **A name in `PlatformModel` is the APPLICATION name without `qits-`, and it is load-bearing
   three times over**: the wire alias, the seed image tag and the deployer's application key.
   **The REPOSITORY is a second name, and `PlatformModel.REPOSITORIES` is where the two part
-  company.** It used to be one name doing both jobs; the phase-2 renames move the repository into
-  the `<component>-<role>` grammar and move nothing the running platform answers to, which is what
+  company.** It used to be one name doing both jobs; the phase-2 renames moved the repository into
+  the `<component>-<role>` grammar and moved nothing the running platform answers to, which is what
   `deployments.yml`'s `application:` key pins from the repository's own side. So `repo(name)`
   answers the git-host repository, the clone url, the `.gitmodules` entry and the checkout
   directory, while `application(name)` answers everything the platform is addressed by — and
   `wireAlias`, `pdNamePrefix` and the extras family are the only callers of the second. Getting
   them the wrong way round points the boot's own database at a host nothing serves.
-  **The wrapper DIRECTORY is no longer one of them, and that is deliberate.** The wrapper is moving
+  **The wrapper DIRECTORY is no longer one of them, and that is deliberate.** The wrapper moved
   from six archetype directories to `components/<component>/<repo>`, and a component is not
-  derivable from a name — `qits-spa-ci` belongs to component `qits-ci`. So the wrapper's own
+  derivable from a name — `qits-ci-frontend` belongs to component `qits-ci`. So the wrapper's own
   `.gitmodules` is the authority on where a repository sits: `GitModules` reads it, `RunState`
   looks each repository up by name, by the path's last segment and by the url's, and
   `PlatformModel.repoPath` is only the fallback for a wrapper this machine has not cloned yet.

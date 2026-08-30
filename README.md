@@ -1,4 +1,4 @@
-# qits-cli-bootstrap
+# qits-bootstrap-cli
 
 Brings the qits platform up on your workstation's docker daemon, **through the platform's own
 pipeline**, and tells you what it is doing while it does it.
@@ -7,18 +7,18 @@ It **is** `qits-local-up.sh` in the wrapper repository — that file is now a sh
 CLI and runs it. The choreography is the shell port's, step for step; what is new is that a
 four-hour cold start is no longer four hours of silence.
 
-    ┌ qits bootstrap · 41m12s elapsed · log qits-bootstrap-cli.log ──────────────┐
-    │   … 31 earlier phases done                                                 │
-    │   ✓ 32/59 wait for the seed services (1m20s)                               │
-    │   ✓ 33/59 publish the ci-daemon binary to the registry (12s)  — 8d0f1a2b…  │
-    │ ▸ 34/59 create the platform's repositories and register their names ⠹ 4s   │
-    │      PUT http://prod-qits-githost:8080/git/6b0e…-9a5b-0001                 │
-    │   25 phases pending — next: pre-seed release-train histories               │
-    ├────────────────────────────────────────────────────────────────────────────┤
-    │  qits-spa-deployments -> /git/1f0a…-4c3a  (created), registered            │
-    │  qits-spa-observability -> /git/8b1f…-9a0c  (created), registered          │
-    │  … the running step's own output, live                                     │
-    └────────────────────────────────────────────────────────────────────────────┘
+    ┌ qits bootstrap · 41m12s elapsed · log qits-bootstrap-cli.log ─────────────────┐
+    │   … 31 earlier phases done                                                    │
+    │   ✓ 32/59 wait for the seed services (1m20s)                                  │
+    │   ✓ 33/59 publish the ci-daemon binary to the registry (12s)  — 8d0f1a2b…     │
+    │ ▸ 34/59 create the platform's repositories and register their names ⠹ 4s      │
+    │      PUT http://prod-qits-githost:8080/git/6b0e…-9a5b-0001                    │
+    │   25 phases pending — next: pre-seed release-train histories                  │
+    ├───────────────────────────────────────────────────────────────────────────────┤
+    │  qits-deployments-platform-frontend -> /git/1f0a…-4c3a  (created), registered │
+    │  qits-observability-frontend -> /git/8b1f…-9a0c  (created), registered        │
+    │  … the running step's own output, live                                        │
+    └───────────────────────────────────────────────────────────────────────────────┘
 
 The same run is also served at the bootstrap edge while it runs — see
 [The browser view](#the-browser-view).
@@ -105,7 +105,7 @@ It also **finds the wrapper by itself**. This CLI is a submodule of it, so runni
 the checkout is enough: the working directory is walked upwards for the first `.gitmodules`
 declaring the qits submodules. The test is which REPOSITORY that file declares, never which
 directory it sits in, so a wrapper grouped by archetype (`services/qits-artifacts`) and one grouped
-by component (`components/qits-artifacts/qits-artifacts`) are both found — and the CLI's own
+by component (`components/qits-artifacts/qits-artifacts-service`) are both found — and the CLI's own
 checkout is looked for at `components/qits-bootstrap/qits-bootstrap-cli`,
 `components/qits-bootstrap/qits-cli-bootstrap` and `cli/qits-cli-bootstrap` alike, newest first so
 a half-pulled wrapper builds what it just moved to. `QITS_WRAPPER_DIR` (or `--wrapper-dir`) still
@@ -258,8 +258,8 @@ the marker — which is what the launcher sets — it is the **payload**, and it
 
     docker daemon: reachable
     swarm: active
-    wrapper: /home/dev/qits-qits  (detected from /home/dev/qits-qits/cli/qits-cli-bootstrap)
-    payload built from: /home/dev/qits-qits/cli/qits-cli-bootstrap
+    wrapper: /home/dev/qits-qits  (detected from /home/dev/qits-qits/components/qits-bootstrap/qits-bootstrap-cli)
+    payload built from: /home/dev/qits-qits/components/qits-bootstrap/qits-bootstrap-cli
     payload image: qits-bootstrap:23105f76262d (built already)
     $ docker run --rm --name qits-bootstrap-cli …
 
@@ -367,9 +367,10 @@ linked against this host's glibc starts on no alpine image at all, and a *static
 binary resolves no names — glibc reaches the name services through `dlopen`, which a static binary
 has no loader for, while every address this CLI dials is a wire alias on `qits-net`. musl compiles
 its resolver in. The Dockerfile's header says the rest, including why the builder stage is GraalVM
-CE and adds its own musl toolchain; `daemons/qits-ci-daemon/docker/Dockerfile.musl-builder` in the
-wrapper is where that reasoning was first written down. This repository copies it rather than
-sharing it, because the image has to build from a git URL on a machine that has seen no platform.
+CE and adds its own musl toolchain;
+`components/qits-ci/qits-ci-daemon/docker/Dockerfile.musl-builder` in the wrapper is where that
+reasoning was first written down. This repository copies it rather than sharing it, because the
+image has to build from a git URL on a machine that has seen no platform.
 
 The run itself, flag by flag:
 
@@ -492,7 +493,7 @@ for 49. `QITS_DOMAIN` adds two more, marked below.
 | 17 | have qits-artifacts serving, so there is somewhere to publish to (the seed one holds the registry port on 127.0.0.1 for the builds that run `--network host`) |
 | 18–25 | publish `qits-blobstore`, `qits-registries`, `qits-eventstream`, `qits-githost-events`, `qits-auth-core`, the two `qits-containers` libraries (`core` and `client`, the modules its consumers pin — never its service, which is a native image nobody resolves), `@qits/ui-components`, `@qits/angular`. The git host's vocabulary is here because two consumers need it out of the store long before the git host's own deployment could publish anything: the `qits/ci` image three phases below, and the `qits/projects` image beside it — both are seed images, and both resolve it from this store |
 | 26–30 | seed images `qits/ci`, `qits/deployments`, `qits/platform-idp`, `qits/containers`, `qits/projects` — the five built out of jars the publishes above put in the store. The last is the alias table's owner, in the seed since 2026-08-21 so that a repository has a public address before the first push |
-| 31–35 | the five step images from qits-oci |
+| 31–35 | the five step images from qits-build-images-oci |
 | 36 | the ci-daemon musl static binary, and its digest |
 | 37 | resolve the idp's client secrets (given, kept, generated) and record the run state |
 | 38–39 | generate the seed stack file; write the deployer's per-application extras onto its config volume. That file holds EXTRAS and nothing else — what the deployer configures itself with is `QITS_PLATFORM_DEPLOYMENTS_*` env, spelled on the seed service and on the deployer's own extras block alike |
@@ -569,8 +570,9 @@ A repository on this platform has **two** identifiers and only one of them is pu
   and push url there is — for CI, the daemons, a deploy push and a person alike — and qits-projects'
   alias table is its only authority. The git host resolves it per request through
   `qits.projects.name-resolver-url` and remembers nothing. The first segment may be the project's
-  **slug**, which is the public spelling the closing report prints (`/git/qits/qits-ci.git`); the id
-  is matched first and always works, so machine paths keep using it.
+  **slug**, which is the public spelling the closing report prints
+  (`/git/qits/qits-ci-service.git`); the id is matched first and always works, so machine paths keep
+  using it.
 
 **This program creates the bares, so it mints the ids — and it registers each pair before it pushes
 to it.** qits-projects is a seed service, so the alias table answers minutes before the first push
@@ -640,13 +642,13 @@ repository per boot, seed and successor alike.
 
 **Only where the output carries a version, though**, and that scope is the other half of the rule. A
 deployable and a release publisher each have a last release the platform can state and consumers
-pin. Everything else that gets seeded — qits-oci's step images, the SPA sources behind the
-placeholder bundles, the ci-daemon binary published by digest — is rebuilt from source every boot
-and pinned by nobody, so its tags go stale without anyone noticing. Measured the next run: qits-oci's
-newest tag was three days behind main and predated the passwd-backed `build` user its step images
-grew when steps stopped running as root, so the seed maven-base built from it could not launch a
-step declaring `user: build` — "unable to find user build: no matching entries in passwd file".
-Those repositories stay on main in both modes.
+pin. Everything else that gets seeded — qits-build-images-oci's step images, the SPA sources behind
+the placeholder bundles, the ci-daemon binary published by digest — is rebuilt from source every
+boot and pinned by nobody, so its tags go stale without anyone noticing. Measured the next run:
+qits-build-images-oci's newest tag was three days behind main and predated the passwd-backed `build`
+user its step images grew when steps stopped running as root, so the seed maven-base built from it
+could not launch a step declaring `user: build` — "unable to find user build: no matching entries in
+passwd file". Those repositories stay on main in both modes.
 
 | plane | applications | wire alias | container |
 | --- | --- | --- | --- |
@@ -654,9 +656,11 @@ Those repositories stay on main in both modes.
 | platform | platform-edge, platform-idp, platform-mirror, deployments, events, platform-orchestrator, platform-maintenance, platform-system | `qits-<app>` | `qits-pd-qits-<app>-<id8>` |
 
 **qits-deployments and qits-events moved to the platform plane on 2026-08-17**, and their aliases
-are the bare repository names rather than `qits-platform-*` ones: the repositories are renamed after
-the local proof, not before it. The deployer moved because an environment is becoming a
-cross-environment entity — one tier gating another — which cannot live inside one tier's deployer;
+stayed bare — `qits-deployments`, `qits-events` — rather than becoming `qits-platform-*` ones. The
+REPOSITORIES say the plane instead (`qits-deployments-platform-service`,
+`qits-events-platform-service`): a rename moves the repository and nothing the running platform
+answers to. The deployer moved because an environment is becoming a cross-environment entity — one
+tier gating another — which cannot live inside one tier's deployer;
 the bus moved because which broker a service dials WAS the scope, so a platform deployer on a
 per-tier bus could announce to one tier only.
 

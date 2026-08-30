@@ -161,12 +161,14 @@ What must **NOT** be deleted:
 
 ## Step 5 — release and deploy the two repositories, deployer last
 
-qits-deployments and qits-cli-bootstrap both changed. Cut releases through the release door
-(a direct main push deploys code with a stale version identity), then deploy in this order:
+qits-deployments-platform-service and qits-bootstrap-cli both changed. Cut releases through the
+release door (a direct main push deploys code with a stale version identity), then deploy in this
+order:
 
-1. **qits-deployments** — the demotion is in the deployer itself. Its self-deploy is the first
-   deployment that runs the new update argv, so step 1's comparison has to be done before it.
-2. **qits-cli-bootstrap** — nothing is deployed; it takes effect at the next bootstrap or the next
+1. **qits-deployments-platform-service** — the demotion is in the deployer itself. Its self-deploy
+   is the first deployment that runs the new update argv, so step 1's comparison has to be done
+   before it.
+2. **qits-bootstrap-cli** — nothing is deployed; it takes effect at the next bootstrap or the next
    `pd-extras` write. A rerun of the bootstrap rewrites the file without the demoted line and
    restates the env on the seed service, which makes steps 1, 2 and 4 idempotent rather than
    necessary a second time.
