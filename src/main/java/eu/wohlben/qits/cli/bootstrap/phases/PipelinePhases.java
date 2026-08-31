@@ -2428,7 +2428,7 @@ public class PipelinePhases {
                     // read that does not answer prints the shape instead of a table — the same
                     // courtesy every optional read in this program keeps.
                     projectSlugs(),
-                    ExtraSans.of(boot.config, DomainName.of(boot.config)))));
+                    ExtraSans.of(boot.config, Optional.of(domain)))));
             report.add("images:    the release replays published qits/workspace-base, qits/workspace,");
             report.add("           qits/projects-daemon and qits/project-agent at their released "
                     + "versions —");
