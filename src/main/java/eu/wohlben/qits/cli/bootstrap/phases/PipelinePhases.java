@@ -5,6 +5,7 @@ import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.Json;
 import eu.wohlben.qits.cli.bootstrap.config.Acme;
 import eu.wohlben.qits.cli.bootstrap.config.DomainName;
+import eu.wohlben.qits.cli.bootstrap.config.ExtraSans;
 import eu.wohlben.qits.cli.bootstrap.config.PublicIp;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
@@ -421,7 +422,7 @@ public class PipelinePhases {
      * the address already filled in, exactly as the register token's lines do for its own one call.
      */
     static List<String> domainLines(String domain, String publicIp, Acme.Mode mode, String email,
-            String certificate) {
+            String certificate, List<String> projectSlugs, List<String> extraSans) {
         List<String> lines = new ArrayList<>();
         lines.add("domain:    " + domain + " — DNS IS NOT THIS PLATFORM'S. Check your provider "
                 + "holds these A records:");
@@ -436,7 +437,59 @@ public class PipelinePhases {
         lines.add("           Names are relative to the apex — @ is the apex, and no wildcard "
                 + "matches it.");
         lines.add("           Every one carries " + publicIp + ", the address this run was given.");
+        lines.addAll(editorLines(domain, projectSlugs, extraSans));
         lines.addAll(tlsLines(domain, mode, email, certificate));
+        return lines;
+    }
+
+    /**
+     * <b>The editor hosts, beside the records, and what the certificate does about them.</b>
+     * <p>
+     * The two halves of a public name come apart here, which is why this block sits between them.
+     * DNS is fine by construction: {@code editor.<project>.<domain>} is the same depth as
+     * {@code <app>.<env>.<domain>}, so the {@code *.*} record above answers it for every project
+     * there will ever be. The CERTIFICATE is not: a wildcard covers one label, so
+     * {@code *.<domain>} stops above these names and {@code *.<env>.<domain>} only holds where the
+     * middle label is an environment. Each editor host is therefore a SAN of its own.
+     * <p>
+     * <b>Printed per project rather than as a shape</b>, because the interesting fact is which
+     * projects are covered and which are not — a project created after the certificate was ordered
+     * has a working name serving a certificate it is not in, and a browser refuses it with an
+     * error about the site's identity rather than about a missing name.
+     */
+    private static List<String> editorLines(String domain, List<String> projectSlugs,
+            List<String> extraSans) {
+        List<String> lines = new ArrayList<>();
+        lines.add("editor:    the web editor is one origin per project, editor.<project>."
+                + domain + ". The records");
+        lines.add("           above already cover them — that is the *.* depth — but the "
+                + "CERTIFICATE does not:");
+        lines.add("           a wildcard covers ONE label, so each name is its own SAN, named in "
+                + "QITS_ACME_EXTRA_SANS.");
+        if (projectSlugs.isEmpty()) {
+            lines.add("           No project list was read, so add one name per project: "
+                    + "QITS_ACME_EXTRA_SANS=editor.<project>");
+            return lines;
+        }
+        List<String> missing = new ArrayList<>();
+        for (String slug : projectSlugs) {
+            String host = ExtraSans.editorHost(slug, domain);
+            boolean covered = extraSans.contains(host);
+            lines.add("             " + host + (covered ? "   on the certificate"
+                    : "   NOT on the certificate"));
+            if (!covered) {
+                missing.add("editor." + slug);
+            }
+        }
+        if (!missing.isEmpty()) {
+            lines.add("           Add QITS_ACME_EXTRA_SANS=" + String.join(",", missing)
+                    + " and rerun, or restart the edge");
+            lines.add("           once the value is in its extras — a name reaches the "
+                    + "certificate at the next ORDER,");
+            lines.add("           which is a renewal or a restart, not a deploy. Until then those "
+                    + "hosts serve TLS a");
+            lines.add("           browser refuses.");
+        }
         return lines;
     }
 
@@ -2033,6 +2086,43 @@ public class PipelinePhases {
     }
 
     /**
+     * Every project slug the platform holds, or none.
+     * <p>
+     * <b>A courtesy read, and it must never end the run.</b> It exists so the closing report can
+     * name each project's editor host and say whether the certificate covers it; a report is not
+     * worth failing a boot for, so a listing that does not answer prints the shape instead of the
+     * table.
+     */
+    private List<String> projectSlugs() {
+        try {
+            return projectSlugs(boot.projects.projects(projectsToken()));
+        } catch (RuntimeException unavailable) {
+            return List.of();
+        }
+    }
+
+    /**
+     * The slugs in a listing answer, in the order it gave them.
+     * <p>
+     * The SLUG and not the name: the slug is the public spelling of a project everywhere a name
+     * reaches DNS, and {@code editor.<slug>.<domain>} is one of those places. Kept static and pure
+     * so the shape of qits-projects' listing is provable without one.
+     */
+    static List<String> projectSlugs(Http.Response listing) {
+        if (!listing.ok()) {
+            return List.of();
+        }
+        List<String> slugs = new ArrayList<>();
+        for (JsonNode entry : Json.parse(listing.body()).path("entries")) {
+            String slug = Json.text(entry.path("project"), "slug");
+            if (slug != null && !slug.isBlank() && !slugs.contains(slug)) {
+                slugs.add(slug);
+            }
+        }
+        return List.copyOf(slugs);
+    }
+
+    /**
      * The bootstrap's own bearer, addressed to qits-projects — or null with the gate off, where the
      * forwarded identity headers are the whole credential.
      */
@@ -2274,7 +2364,12 @@ public class PipelinePhases {
             // and say which of them are actually in place.
             DomainName.of(boot.config).ifPresent(domain -> report.addAll(domainLines(domain,
                     PublicIp.of(boot.config).orElse(""), Acme.mode(boot.config),
-                    Acme.email(boot.config, domain), boot.state.certificate)));
+                    Acme.email(boot.config, domain), boot.state.certificate,
+                    // The editor hosts are per PROJECT, so the list comes from the platform. A
+                    // read that does not answer prints the shape instead of a table — the same
+                    // courtesy every optional read in this program keeps.
+                    projectSlugs(),
+                    ExtraSans.of(boot.config, DomainName.of(boot.config)))));
             report.add("images:    the release replays published qits/workspace-base, qits/workspace,");
             report.add("           qits/projects-daemon and qits/project-agent at their released "
                     + "versions —");

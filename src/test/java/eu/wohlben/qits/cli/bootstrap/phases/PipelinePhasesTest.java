@@ -370,8 +370,13 @@ class PipelinePhasesTest {
     // --- the domain in the closing report ---------------------------------------------------------
 
     private static String domainReport(Acme.Mode mode, String certificate) {
+        return domainReport(mode, certificate, List.of(), List.of());
+    }
+
+    private static String domainReport(Acme.Mode mode, String certificate,
+            List<String> projectSlugs, List<String> extraSans) {
         return String.join("\n", PipelinePhases.domainLines("qits-dev.eu", "203.0.113.7", mode,
-                "hostmaster@qits-dev.eu", certificate));
+                "hostmaster@qits-dev.eu", certificate, projectSlugs, extraSans));
     }
 
     /**
@@ -459,6 +464,83 @@ class PipelinePhasesTest {
     @Test
     void theRetryCommandFollowsTheModeThatWasAskedFor() {
         assertThat(domainReport(Acme.Mode.PRODUCTION, null)).doesNotContain("--staging");
+    }
+
+    // --- the editor hosts, beside the records ------------------------------------------------------
+
+    /**
+     * <b>The records cover the editor hosts and the certificate does not, and that is the whole
+     * reason this block is printed.</b> {@code editor.<project>.<domain>} is the {@code *.*} depth,
+     * so dns needs no step per project — while a wildcard covers ONE label, so every one of those
+     * names is a SAN of its own.
+     */
+    @Test
+    void everyProjectsEditorHostIsPrintedWithWhetherTheCertificateCarriesIt() {
+        String report = domainReport(Acme.Mode.PRODUCTION, "production",
+                List.of("qits", "acme"), List.of("editor.qits.qits-dev.eu"));
+
+        assertThat(report).contains("editor.qits.qits-dev.eu   on the certificate");
+        assertThat(report).contains("editor.acme.qits-dev.eu   NOT on the certificate");
+        // What to do about the one that is missing, spelled as the value rather than as a shape.
+        assertThat(report).contains("QITS_ACME_EXTRA_SANS=editor.acme");
+    }
+
+    /**
+     * A platform whose certificate carries every project says so by having nothing to add: no
+     * instruction is printed, because there is nothing to do.
+     */
+    @Test
+    void aFullyCoveredPlatformIsToldToDoNothing() {
+        String report = domainReport(Acme.Mode.PRODUCTION, "production", List.of("qits"),
+                List.of("editor.qits.qits-dev.eu"));
+
+        assertThat(report).contains("editor.qits.qits-dev.eu   on the certificate")
+                .doesNotContain("NOT on the certificate")
+                .doesNotContain("QITS_ACME_EXTRA_SANS=editor");
+    }
+
+    /**
+     * <b>A name reaches the certificate at the next ORDER, not at the next deploy</b>, and the
+     * report says which act that is: a project created after the certificate was issued has a
+     * working host serving a certificate it is not named in.
+     */
+    @Test
+    void theReportSaysANewProjectNeedsAReorderRatherThanADeploy() {
+        String report = domainReport(Acme.Mode.PRODUCTION, "production", List.of("acme"),
+                List.of());
+
+        assertThat(report).contains("renewal or a restart, not a deploy")
+                .contains("browser refuses");
+    }
+
+    /**
+     * The listing is a courtesy read and may not answer. The block then states the shape rather
+     * than a table it cannot fill, and no boot fails over a report.
+     */
+    @Test
+    void withNoProjectListTheShapeIsPrintedInstead() {
+        String report = domainReport(Acme.Mode.PRODUCTION, "production");
+
+        assertThat(report).contains("editor.<project>.qits-dev.eu")
+                .contains("QITS_ACME_EXTRA_SANS=editor.<project>")
+                .doesNotContain("on the certificate");
+    }
+
+    /** The slug, not the name: the slug is the label that reaches DNS. */
+    @Test
+    void theProjectSlugsAreReadOutOfTheListingInOrder() {
+        String listing = """
+                {"entries":[
+                  {"project":{"id":"p-other","name":"Check Out","slug":"checkout"}},
+                  {"project":{"id":"p-qits","name":"qits","slug":"qits"}}
+                ]}""";
+
+        assertThat(PipelinePhases.projectSlugs(new eu.wohlben.qits.cli.bootstrap.api.Http.Response(
+                200, listing))).containsExactly("checkout", "qits");
+        // An answer that is not one is not read as an empty platform: the report then prints the
+        // shape rather than claiming this platform holds no project.
+        assertThat(PipelinePhases.projectSlugs(new eu.wohlben.qits.cli.bootstrap.api.Http.Response(
+                503, ""))).isEmpty();
     }
 
     /** Everything deployed: there is nothing left for this phase to start. */
