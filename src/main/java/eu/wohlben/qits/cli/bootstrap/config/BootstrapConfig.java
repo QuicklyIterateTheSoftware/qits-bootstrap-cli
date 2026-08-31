@@ -166,6 +166,23 @@ public interface BootstrapConfig {
      */
     Optional<String> acmeEmail();
 
+    /**
+     * <b>Names the edge's certificate must carry beyond the wildcards it derives</b>, separated by
+     * commas or whitespace and written whole or relative to the domain.
+     * <p>
+     * The edge orders the apex, {@code *.<domain>} and {@code *.<env>.<domain>}, which is every
+     * depth its Host reading has. A wildcard covers ONE label, so nothing it orders reaches
+     * {@code editor.<project>.<domain>} — the web editor's origin, one per project. Those names go
+     * here, one per project: {@code QITS_ACME_EXTRA_SANS=editor.acme,editor.gizmo}.
+     * <p>
+     * Generic on purpose. It says "put these names on the certificate" and knows nothing about
+     * editors or projects; {@link ExtraSans} is where the shape and the refusals live, and the
+     * closing report is where a project whose name is missing is named.
+     * <p>
+     * Ignored with no domain, because there is nothing to issue for.
+     */
+    Optional<String> acmeExtraSans();
+
     /** Hetzner Cloud DNS token used only by the edge's DNS-01 certificate manager. */
     Optional<String> dnsHetznerToken();
 

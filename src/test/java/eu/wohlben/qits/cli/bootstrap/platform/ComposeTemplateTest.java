@@ -89,6 +89,14 @@ class ComposeTemplateTest {
         return values;
     }
 
+    /** The same values again, with names the derived wildcards cannot reach. */
+    static Map<String, String> tokens(String domain, List<String> extraSans) {
+        Map<String, String> values = tokens(domain);
+        values.putAll(DomainTokens.of(Optional.of(domain), "staging", "hostmaster@" + domain,
+                "hetzner-token", Optional.empty(), extraSans));
+        return values;
+    }
+
     /**
      * One service's own lines, so an assertion about what it does NOT carry means that service.
      * <p>
@@ -261,6 +269,92 @@ class ComposeTemplateTest {
                 .contains("env.QITS_EDGE_APPS_REGISTRY_HOST_PATTERN={env}-qits-artifacts")
                 .contains("env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN=qits-platform-mirror")
                 .contains("env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost");
+    }
+
+    /**
+     * <b>The web editor is a fourth app alias and nothing more.</b> {@code
+     * editor.<project>.<domain>} is one origin per project, but the edge reads two labels: a
+     * project slug is not a known environment, so the name takes the {@code <app>.<domain>}
+     * reading and lands in the DEFAULT tier. The entry is therefore the same shape the byte plane
+     * uses, and {@code {env}} in it always resolves to the default environment.
+     * <p>
+     * <b>The audience is the assertion that matters.</b> An app entry that names none inherits the
+     * REGISTRY audience, so an unspelled editor entry would let a token bought for {@code docker
+     * pull} open any project's editor.
+     */
+    @Test
+    void theEditorVhostFrontsWorkspacesOnTheWorkspacesAudienceInBothFiles() {
+        String edge = serviceBlock(ComposeTemplate.compose(tokens()), "qits-platform-edge");
+        String edgeExtras = extras("qits-platform-edge");
+
+        assertThat(edge).contains("QITS_EDGE_APPS_EDITOR_HOST_PATTERN: \"{env}-qits-workspaces\"")
+                .contains("QITS_EDGE_APPS_EDITOR_AUDIENCE_PATTERN: \"{env}-qits-workspaces\"");
+        assertThat(edgeExtras)
+                .contains("env.QITS_EDGE_APPS_EDITOR_HOST_PATTERN={env}-qits-workspaces")
+                .contains("env.QITS_EDGE_APPS_EDITOR_AUDIENCE_PATTERN={env}-qits-workspaces");
+        // The port is the edge's own default for an app, and the three byte-plane entries keep the
+        // same silence. A key here would be a second place to keep 8080 in step.
+        assertThat(edge).doesNotContain("QITS_EDGE_APPS_EDITOR_PORT");
+        assertThat(edgeExtras).doesNotContain("QITS_EDGE_APPS_EDITOR_PORT");
+        // The host pattern is the WIRE ALIAS of qits-workspaces, spelled with the edge's own
+        // runtime placeholder — never this generator's ${ENV_NAME}, which would pin one tier.
+        assertThat(edge).doesNotContain("QITS_EDGE_APPS_EDITOR_HOST_PATTERN: \"" + ENV
+                + "-qits-workspaces\"");
+    }
+
+    /**
+     * <b>A project slug sits where the edge reads a tier, so the environment names are reserved.</b>
+     * {@code editor.<project>.<domain>} and {@code <app>.<env>.<domain>} are one shape: a project
+     * called after this platform's environment would be read as that environment and its editor
+     * would be served out of the wrong one. The list is seeded from the environments this
+     * bootstrap knows, which is the one it names.
+     */
+    @Test
+    void qitsProjectsIsToldWhichSlugsAreTheEnvironmentNames() {
+        String projects = serviceBlock(ComposeTemplate.compose(tokens()),
+                ENV + "-qits-projects");
+
+        assertThat(projects).contains("QITS_PROJECTS_RESERVED_SLUGS: " + ENV);
+        // On the extras too, or the first self-deploy drops it: the update argv --env-rm's what
+        // the extras do not state.
+        assertThat(extras("qits-projects"))
+                .contains("env.QITS_PROJECTS_RESERVED_SLUGS=" + ENV);
+    }
+
+    /**
+     * <b>The extra SANs reach the edge as one generic key, in both files.</b> The edge derives the
+     * apex, {@code *.<domain>} and {@code *.<env>.<domain>} for itself, and a wildcard covers one
+     * label — so {@code editor.<project>.<domain>} is reachable by none of them and has to be
+     * named. The key says nothing about editors: it is a list of names, and the editor is today's
+     * reason for it.
+     */
+    @Test
+    void theExtraSansReachTheEdgeAsAdditionalCertificateNames() {
+        Map<String, String> values = tokens(DOMAIN,
+                List.of("editor.acme." + DOMAIN, "editor.gizmo." + DOMAIN));
+        String edge = serviceBlock(ComposeTemplate.compose(values), "qits-platform-edge");
+
+        assertThat(edge).contains("QITS_EDGE_ACME_ADDITIONAL_NAMES: editor.acme." + DOMAIN
+                + ",editor.gizmo." + DOMAIN);
+        // On the extras too, or the edge's first self-deploy orders a certificate without them.
+        assertThat(extras("qits-platform-edge", values))
+                .contains("env.QITS_EDGE_ACME_ADDITIONAL_NAMES=editor.acme." + DOMAIN
+                        + ",editor.gizmo." + DOMAIN);
+    }
+
+    /**
+     * No extra names spells no key at all. An empty list and an absent one are the same answer, and
+     * a key holding nothing is a line for the next reader to wonder about.
+     */
+    @Test
+    void noExtraSansSpellsNoKey() {
+        assertThat(ComposeTemplate.compose(tokens(DOMAIN)))
+                .doesNotContain("QITS_EDGE_ACME_ADDITIONAL_NAMES");
+        assertThat(ComposeTemplate.extras(tokens(DOMAIN)))
+                .doesNotContain("QITS_EDGE_ACME_ADDITIONAL_NAMES");
+        // And a platform with no domain has no TLS wiring for one to hide in.
+        assertThat(ComposeTemplate.compose(tokens()))
+                .doesNotContain("QITS_EDGE_ACME_ADDITIONAL_NAMES");
     }
 
     /**

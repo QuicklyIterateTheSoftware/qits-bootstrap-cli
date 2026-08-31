@@ -5,6 +5,7 @@ import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.Json;
 import eu.wohlben.qits.cli.bootstrap.config.Acme;
 import eu.wohlben.qits.cli.bootstrap.config.DomainName;
+import eu.wohlben.qits.cli.bootstrap.config.ExtraSans;
 import eu.wohlben.qits.cli.bootstrap.config.PublicIp;
 import eu.wohlben.qits.cli.bootstrap.config.WrapperDir;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
@@ -2346,7 +2347,11 @@ public class SeedPhases {
         // so both files render exactly as a platform with no public names always rendered them.
         values.putAll(DomainTokens.of(DomainName.of(boot.config), Acme.mode(boot.config).word(),
                 DomainName.of(boot.config).map(domain -> Acme.email(boot.config, domain)).orElse(""),
-                boot.config.dnsHetznerToken().orElse(""), boot.config.dnsHetznerSecret()));
+                boot.config.dnsHetznerToken().orElse(""), boot.config.dnsHetznerSecret(),
+                // The names the derived wildcards cannot reach — editor.<project>.<domain> above
+                // all, which is depth three under a label that is not an environment. Checked
+                // here, where a refusal is a message about a knob rather than a failed order.
+                ExtraSans.of(boot.config, DomainName.of(boot.config))));
         // While the disposable edge owns the public domain, the seed edge remains an internal
         // service. The deployment extras deliberately keep 80/443 so the real edge can take them
         // at the explicit handoff near the end of the deployment train.

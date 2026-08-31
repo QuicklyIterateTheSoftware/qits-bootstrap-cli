@@ -195,6 +195,16 @@ as `<old>-qits-*` while every generated file addresses `<new>-qits-*`. The phase
 there and points at `unwrap`. Moving the plane on a live platform is a PATCH on the deployer's
 `pd_environment.platform`, with the undeploy and redeploy that implies, and nothing here does it.
 
+**An environment may not be named after a project, and a project may not be named after an
+environment.** They are read at the same place: the edge takes the first two labels of a host and
+reads position 1 as an environment when it is one, so `editor.<project>.<domain>` — the web editor's
+origin, one per project — is the same shape as `<app>.<env>.<domain>`. A tier called after a project
+would take that project's own names for itself. Creating a new environment into that collision is
+refused here, on the create arm only, because an environment row that already stands is a platform
+already running under that name and refusing its rerun would strand rather than repair it. The other
+direction is closed at the source: qits-projects is handed the environment names as
+`QITS_PROJECTS_RESERVED_SLUGS` and refuses them as slugs.
+
 `--domain <domain>` and `--public-ip <ipv4>` are checked before the payload image is built, because
 both values leave this machine: they become a certificate request to Let's Encrypt and the records a
 person types at a dns provider, and a rerun with the spelling fixed undoes neither. A domain without
@@ -234,6 +244,32 @@ certificate over the environment and app vhosts cannot be ordered through this e
 the name that matters: it is the browser's door and the passkey's relying party. Covering the rest
 wants a wildcard, a wildcard wants DNS-01, and DNS-01 wants a TXT record written at the dns provider
 mid-order — so it needs a provider API this program has no hook for yet.
+
+**A wildcard covers ONE label, and `QITS_ACME_EXTRA_SANS` is what covers the rest.** The name set the
+edge derives is the apex, `*.<domain>` and `*.<env>.<domain>` per environment, which is every depth
+its Host reading has. `*.<domain>` therefore answers for `editor.<domain>` and for nothing under it,
+and `*.<env>.<domain>` only holds where that middle label is an environment. The web editor is served
+at `editor.<project>.<domain>` — one origin per project, at a depth under a label that is a project —
+so no wildcard this platform orders can reach it. Those names are written down, one per project:
+
+    QITS_ACME_EXTRA_SANS=editor.acme,editor.gizmo    # or --acme-extra-san, repeatable
+
+Whole or relative to the domain; `editor.acme` is `editor.acme.<domain>`. The knob is a list of
+NAMES and knows nothing about editors — the editor is today's reason for it and will not be the last.
+It reaches the edge as `QITS_EDGE_ACME_ADDITIONAL_NAMES`, on the seed stack and on the extras both,
+and an empty list spells no key at all.
+
+**The source of that list is configuration, deliberately.** Both generated files are written before
+qits-projects has answered anything — the seed stack is what starts it — so a list derived from the
+platform's own projects would be empty on every cold boot and one boot stale on every warm one, and
+it would make the rendered extras depend on data that changes without a bootstrap. **So a project
+created later is not on the certificate until its name is added here and the edge re-orders**, which
+its renewal does on its own schedule and a restart does at once; until then its editor host answers
+on a certificate it is not named in and browsers refuse it. The closing report prints every project's
+editor host beside the records and marks the ones the certificate does not cover.
+
+A name outside the domain is refused before the run: the edge answers its challenges in this domain's
+own zone, and one name that cannot be validated fails the whole order.
 
 **A failed order warns and the boot goes on**, like the register token's mint. The edge keeps its
 self-signed placeholder — 443 answers, browsers refuse it — and the closing report prints the retry

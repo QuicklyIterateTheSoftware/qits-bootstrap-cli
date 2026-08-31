@@ -498,6 +498,29 @@ public final class ComposeTemplate {
                   QITS_EDGE_APPS_MIRROR_HOST_PATTERN: "qits-platform-mirror"
                   QITS_EDGE_APPS_GITHOST_HOST_PATTERN: "{env}-qits-githost"
                   QITS_EDGE_APPS_GITHOST_AUDIENCE_PATTERN: "{env}-qits-githost"
+                  # A FOURTH NAME, AND IT IS READ AT A DIFFERENT DEPTH. The three above are
+                  # <app>.<env>.<domain>; the web editor is editor.<project>.<domain>, one origin
+                  # per PROJECT. The edge needs no code for it: it reads at most the first two
+                  # labels, `editor` is a configured app and `<project>` is not a known environment,
+                  # so the name falls to the <app>.<domain> reading and lands on the DEFAULT
+                  # environment. That is why {env} below always resolves to ${ENV_NAME} here, and
+                  # why a project slug that spells an environment name would break it — the label
+                  # would be read as a tier and the editor would be served out of the wrong one.
+                  # qits-projects refuses those slugs (QITS_PROJECTS_RESERVED_SLUGS) and the
+                  # `environment` phase refuses the mirror image of the same collision.
+                  #
+                  # No port key: 8080 is the edge's default for an app, the same silence the three
+                  # above keep.
+                  QITS_EDGE_APPS_EDITOR_HOST_PATTERN: "{env}-qits-workspaces"
+                  # THE AUDIENCE IS SPELLED BECAUSE THE DEFAULT IS THE REGISTRY'S. An app entry that
+                  # names none accepts {env}-qits-artifacts, so leaving it out would make a token
+                  # bought for `docker pull` a key to every project's editor. What is named instead
+                  # is exactly the audience the upstream validates for itself
+                  # (qits-workspaces' QITS_AUTH_MACHINE_AUDIENCE), so this vhost admits the one
+                  # machine credential the service behind it would admit anyway and no other.
+                  # Browsers are unaffected either way: they arrive with a session cookie and never
+                  # reach the machine gate.
+                  QITS_EDGE_APPS_EDITOR_AUDIENCE_PATTERN: "{env}-qits-workspaces"
                   # USER SESSIONS ARE THE DEFAULT. The environment vhost refuses an anonymous
                   # browser — a navigation is redirected to /idp/login, anything else is 401 — and
                   # turns a session cookie into X-Qits-User, X-Qits-User-Id and X-Qits-Roles.
@@ -995,6 +1018,15 @@ public final class ComposeTemplate {
                   # the first time on the DEPLOYED container — where every entry now matches a row
                   # by alias and nothing is cloned.
                   QITS_STARTUP_SEED_RECONCILE_REPOSITORIES: "false"
+                  # THE SLUGS NO PROJECT MAY TAKE, and the list is this platform's environment
+                  # names. A project slug is the SECOND label of editor.<project>.<domain>, which
+                  # is the position the edge reads an environment at — so a project called `prod`
+                  # would make editor.prod.<domain> parse as the app `editor` in the tier `prod`
+                  # rather than as that project's editor, and the same collision would take
+                  # <app>.<project>.<domain> for every other app with it. qits-projects refuses
+                  # these slugs; the `environment` phase refuses the mirror image, an environment
+                  # named after a project that already exists.
+                  QITS_PROJECTS_RESERVED_SLUGS: ${ENV_NAME}
                   # Where its own git mirrors go. The image defaults it under ${user.home}, which is
                   # the literal "?" for this passwd-less uid — the same trap the deployment extras
                   # spell it out for.
@@ -1469,6 +1501,13 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN=qits-platform-mirror
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_AUDIENCE_PATTERN={env}-qits-githost
+            # THE EDITOR VHOST, editor.<project>.<domain>, onto qits-workspaces. Same generic app
+            # alias as the three above and no edge code: the edge reads two labels, so a project
+            # slug in position 1 is not an environment and the name resolves in the DEFAULT tier.
+            # The audience is spelled rather than defaulted — an unspelled one is the REGISTRY's,
+            # which would let a docker pull token open a project's editor.
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_EDITOR_HOST_PATTERN={env}-qits-workspaces
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_EDITOR_AUDIENCE_PATTERN={env}-qits-workspaces
             # USER SESSIONS ARE ENFORCED at the public environment vhost; IdP routes remain the
             # protocol-required anonymous carve-out.
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_ENABLED=true
@@ -2080,6 +2119,11 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_GITHOST_CLIENT_ID=${ENV_NAME}-qits-projects
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_GITHOST_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-githost
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_GITHOST_CREDENTIALS_SECRET=${IDP_SECRET_PROJECTS}
+            # THE SLUGS NO PROJECT MAY TAKE: this platform's environment names, because a project
+            # slug sits at the label the edge reads a tier at — editor.<project>.<domain>. Spelled
+            # here as well as on the seed, or the first self-deploy drops it: the update argv
+            # --env-rm's what the extras do not state.
+            qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RESERVED_SLUGS=${ENV_NAME}
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_DATA_DIR=/data/mirrors
             qits.platform.deployments.extras.qits-projects.env.QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080
             qits.platform.deployments.extras.qits-projects.env.QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN}

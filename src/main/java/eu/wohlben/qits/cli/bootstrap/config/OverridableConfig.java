@@ -20,6 +20,7 @@ public class OverridableConfig implements BootstrapConfig {
     private String publicIp;
     private String acmeMode;
     private String acmeEmail;
+    private String acmeExtraSans;
 
     public OverridableConfig(BootstrapConfig base) {
         this.base = base;
@@ -73,6 +74,15 @@ public class OverridableConfig implements BootstrapConfig {
     /** {@code --acme-email}; blank is no answer, so {@code .env} keeps it. */
     public OverridableConfig acmeEmail(String value) {
         this.acmeEmail = value == null || value.isBlank() ? null : value.strip();
+        return this;
+    }
+
+    /**
+     * {@code --acme-extra-san}, repeatable: the option's values joined with commas, which is the
+     * one spelling {@link ExtraSans} parses. Blank is no answer, so {@code .env} keeps it.
+     */
+    public OverridableConfig acmeExtraSans(String value) {
+        this.acmeExtraSans = value == null || value.isBlank() ? null : value.strip();
         return this;
     }
 
@@ -155,6 +165,11 @@ public class OverridableConfig implements BootstrapConfig {
     @Override
     public Optional<String> acmeEmail() {
         return acmeEmail != null ? Optional.of(acmeEmail) : base.acmeEmail();
+    }
+
+    @Override
+    public Optional<String> acmeExtraSans() {
+        return acmeExtraSans != null ? Optional.of(acmeExtraSans) : base.acmeExtraSans();
     }
 
     @Override
