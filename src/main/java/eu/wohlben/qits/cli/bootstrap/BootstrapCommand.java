@@ -3,6 +3,7 @@ package eu.wohlben.qits.cli.bootstrap;
 import eu.wohlben.qits.cli.bootstrap.config.Acme;
 import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
 import eu.wohlben.qits.cli.bootstrap.config.DomainName;
+import eu.wohlben.qits.cli.bootstrap.config.ExtraSans;
 import eu.wohlben.qits.cli.bootstrap.config.OverridableConfig;
 import eu.wohlben.qits.cli.bootstrap.config.PublicIp;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
@@ -125,6 +126,18 @@ public class BootstrapCommand implements Callable<Integer> {
                     + "convention for the role that answers for a domain (QITS_ACME_EMAIL).")
     String acmeEmail;
 
+    /**
+     * Names the certificate must carry beyond the wildcards the edge derives. Repeatable, because
+     * the list is one name per project and a person adds them one at a time; the values are joined
+     * with commas, which is the spelling {@code .env} uses for the same knob.
+     */
+    @CommandLine.Option(names = "--acme-extra-san", paramLabel = "<name>",
+            description = "An extra name for the edge's certificate, whole or relative to the "
+                    + "domain (editor.acme). Repeatable. The derived wildcards cover one label, so "
+                    + "editor.<project>.<domain> needs one of these per project "
+                    + "(QITS_ACME_EXTRA_SANS).")
+    String[] acmeExtraSans;
+
     @Override
     public Integer call() throws Exception {
         BootstrapConfig effective = new OverridableConfig(config)
@@ -136,6 +149,7 @@ public class BootstrapCommand implements Callable<Integer> {
                 .publicIp(publicIp)
                 .acmeMode(acmeMode)
                 .acmeEmail(acmeEmail)
+                .acmeExtraSans(acmeExtraSans == null ? null : String.join(",", acmeExtraSans))
                 .tui(noTui ? Boolean.FALSE : null);
 
         // BEFORE either half does anything, and on the host half too: every one of these values
@@ -148,6 +162,9 @@ public class BootstrapCommand implements Callable<Integer> {
             DomainName.of(effective);
             PublicIp.of(effective);
             Acme.mode(effective);
+            // The extra SANs leave the machine the same way, inside the same order — and one bad
+            // name fails the WHOLE order, taking the names that would have worked with it.
+            ExtraSans.of(effective, DomainName.of(effective));
         } catch (IllegalArgumentException e) {
             System.err.println(e.getMessage());
             return 2;

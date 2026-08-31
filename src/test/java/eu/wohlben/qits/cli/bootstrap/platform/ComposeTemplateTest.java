@@ -89,6 +89,14 @@ class ComposeTemplateTest {
         return values;
     }
 
+    /** The same values again, with names the derived wildcards cannot reach. */
+    static Map<String, String> tokens(String domain, List<String> extraSans) {
+        Map<String, String> values = tokens(domain);
+        values.putAll(DomainTokens.of(Optional.of(domain), "staging", "hostmaster@" + domain,
+                "hetzner-token", Optional.empty(), extraSans));
+        return values;
+    }
+
     /**
      * One service's own lines, so an assertion about what it does NOT carry means that service.
      * <p>
@@ -311,6 +319,42 @@ class ComposeTemplateTest {
         // the extras do not state.
         assertThat(extras("qits-projects"))
                 .contains("env.QITS_PROJECTS_RESERVED_SLUGS=" + ENV);
+    }
+
+    /**
+     * <b>The extra SANs reach the edge as one generic key, in both files.</b> The edge derives the
+     * apex, {@code *.<domain>} and {@code *.<env>.<domain>} for itself, and a wildcard covers one
+     * label — so {@code editor.<project>.<domain>} is reachable by none of them and has to be
+     * named. The key says nothing about editors: it is a list of names, and the editor is today's
+     * reason for it.
+     */
+    @Test
+    void theExtraSansReachTheEdgeAsAdditionalCertificateNames() {
+        Map<String, String> values = tokens(DOMAIN,
+                List.of("editor.acme." + DOMAIN, "editor.gizmo." + DOMAIN));
+        String edge = serviceBlock(ComposeTemplate.compose(values), "qits-platform-edge");
+
+        assertThat(edge).contains("QITS_EDGE_ACME_ADDITIONAL_NAMES: editor.acme." + DOMAIN
+                + ",editor.gizmo." + DOMAIN);
+        // On the extras too, or the edge's first self-deploy orders a certificate without them.
+        assertThat(extras("qits-platform-edge", values))
+                .contains("env.QITS_EDGE_ACME_ADDITIONAL_NAMES=editor.acme." + DOMAIN
+                        + ",editor.gizmo." + DOMAIN);
+    }
+
+    /**
+     * No extra names spells no key at all. An empty list and an absent one are the same answer, and
+     * a key holding nothing is a line for the next reader to wonder about.
+     */
+    @Test
+    void noExtraSansSpellsNoKey() {
+        assertThat(ComposeTemplate.compose(tokens(DOMAIN)))
+                .doesNotContain("QITS_EDGE_ACME_ADDITIONAL_NAMES");
+        assertThat(ComposeTemplate.extras(tokens(DOMAIN)))
+                .doesNotContain("QITS_EDGE_ACME_ADDITIONAL_NAMES");
+        // And a platform with no domain has no TLS wiring for one to hide in.
+        assertThat(ComposeTemplate.compose(tokens()))
+                .doesNotContain("QITS_EDGE_ACME_ADDITIONAL_NAMES");
     }
 
     /**

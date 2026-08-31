@@ -1,6 +1,7 @@
 package eu.wohlben.qits.cli.bootstrap.platform;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.nio.charset.StandardCharsets;
@@ -44,7 +45,21 @@ public final class DomainTokens {
     /** The complete edge runtime contract, optionally reusing an existing Swarm secret. */
     public static Map<String, String> of(Optional<String> domain, String mode, String email,
             String hetznerToken, Optional<String> existingSecret) {
+        return of(domain, mode, email, hetznerToken, existingSecret, List.of());
+    }
+
+    /**
+     * The complete edge runtime contract, with the names the certificate must carry beyond the
+     * wildcards the edge derives for itself.
+     *
+     * @param extraSans checked names inside the domain — see {@code ExtraSans}. Empty is the
+     *     ordinary platform and spells no key at all: an empty list and an absent one are the same
+     *     answer, and a key holding nothing is a line for the next reader to wonder about.
+     */
+    public static Map<String, String> of(Optional<String> domain, String mode, String email,
+            String hetznerToken, Optional<String> existingSecret, List<String> extraSans) {
         Map<String, String> values = new LinkedHashMap<>();
+        String additional = domain.isPresent() ? String.join(",", extraSans) : "";
         String secret = existingSecret.map(String::strip).filter(value -> !value.isEmpty())
                 .orElseGet(() -> secretName(hetznerToken));
         // NOTE: this could be a hook to register the domain's dns records with an external dns
@@ -54,9 +69,11 @@ public final class DomainTokens {
         // identity here.
         values.put("LETSENCRYPT_VOLUME", domain.map(ignored -> letsEncryptVolume(secret)).orElse(""));
         values.put("EDGE_SEED_TLS_PORTS", domain.isPresent() ? EDGE_TLS_PORTS : "");
-        values.put("EDGE_TLS", domain.map(value -> edgeTls(value, mode, email, secret)).orElse(""));
+        values.put("EDGE_TLS",
+                domain.map(value -> edgeTls(value, mode, email, secret, additional)).orElse(""));
         values.put("EDGE_TLS_NOTE", domain.isPresent() ? EDGE_TLS_NOTE : "");
-        values.put("EDGE_TLS_ARGS", domain.map(value -> edgeTlsArgs(value, mode, email)).orElse(""));
+        values.put("EDGE_TLS_ARGS",
+                domain.map(value -> edgeTlsArgs(value, mode, email, additional)).orElse(""));
         return values;
     }
 
@@ -84,7 +101,32 @@ public final class DomainTokens {
             + "        protocol: tcp\n"
             + "        mode: host";
 
-    private static String edgeTls(String domain, String mode, String email, String secretName) {
+    /**
+     * The extra SANs, as one env line or as nothing.
+     * <p>
+     * <b>The certificate the edge derives is a wildcard set, and a wildcard covers ONE label.</b>
+     * {@code *.<domain>} answers for {@code editor.<domain>} and for nothing under it, and
+     * {@code *.<env>.<domain>} only holds for a label the edge routes as an environment. The web
+     * editor's origin is {@code editor.<project>.<domain>} — depth three under a label that is a
+     * PROJECT — so no wildcard this platform orders can reach it and each one has to be named.
+     * <p>
+     * <b>Generic on purpose.</b> The key says "also these names" and nothing about what serves
+     * them. The editor is today's reason for it and will not be the last.
+     * <p>
+     * <b>A name added here is not on the certificate until the edge re-orders</b>, which its
+     * renewal does within the day, or a restart does at once. So a project created after this file
+     * was written has an editor host that answers on a certificate it is not named in until then,
+     * and browsers refuse it. The closing report says which projects are in that state.
+     *
+     * @param names already checked and joined with commas, or empty for the ordinary platform
+     */
+    private static String acmeAdditionalNames(String names, String prefix, String separator) {
+        return names.isEmpty() ? ""
+                : "\n" + prefix + "QITS_EDGE_ACME_ADDITIONAL_NAMES" + separator + names;
+    }
+
+    private static String edgeTls(String domain, String mode, String email, String secretName,
+            String additionalNames) {
         return "\n"
             + "      # WHERE THE CERTIFICATE IS READ FROM, and the whole of what wakes the image's\n"
             + "      # certificate support: it remains inert\n"
@@ -102,7 +144,8 @@ public final class DomainTokens {
             + "      QITS_EDGE_ACME_MODE: " + mode + "\n"
             + "      QITS_EDGE_ACME_DOMAIN: " + domain + "\n"
             + "      QITS_EDGE_ACME_EMAIL: " + email + "\n"
-            + "      QITS_EDGE_ACME_HETZNER_TOKEN_FILE: /run/secrets/qits-dns-hetzner-token\n"
+            + "      QITS_EDGE_ACME_HETZNER_TOKEN_FILE: /run/secrets/qits-dns-hetzner-token"
+            + acmeAdditionalNames(additionalNames, "      ", ": ") + "\n"
             + "    volumes:\n"
             + "      - qits-edge-letsencrypt:/work/.letsencrypt\n"
             + "    secrets:\n"
@@ -122,7 +165,8 @@ public final class DomainTokens {
             + "# cutover. DNS-01 is performed directly against Hetzner's API and needs no public\n"
             + "# challenge or management listener.\n";
 
-    private static String edgeTlsArgs(String domain, String mode, String email) {
+    private static String edgeTlsArgs(String domain, String mode, String email,
+            String additionalNames) {
         return "\n" + EDGE + "publishes[1]=443:8443"
                     + "\n" + EDGE + "mounts[0]=volume:qits-edge-letsencrypt:/work/.letsencrypt"
                     + "\n" + EDGE
@@ -135,7 +179,8 @@ public final class DomainTokens {
                     + "\n" + EDGE + "env.QITS_EDGE_ACME_DOMAIN=" + domain
                     + "\n" + EDGE + "env.QITS_EDGE_ACME_EMAIL=" + email
                     + "\n" + EDGE
-                    + "env.QITS_EDGE_ACME_HETZNER_TOKEN_FILE=/run/secrets/qits-dns-hetzner-token";
+                    + "env.QITS_EDGE_ACME_HETZNER_TOKEN_FILE=/run/secrets/qits-dns-hetzner-token"
+                    + acmeAdditionalNames(additionalNames, EDGE + "env.", "=");
     }
 
     public static String secretName(String token) {
