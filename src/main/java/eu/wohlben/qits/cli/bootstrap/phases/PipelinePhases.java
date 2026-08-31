@@ -956,6 +956,7 @@ public class PipelinePhases {
                 ctx.log("  reconciled the existing '" + name + "' environment onto " + branch);
             } else {
                 refuseIfAnotherEnvironmentIsThePlatformOne(name);
+                refuseIfAProjectAlreadyHasThisName(ctx, name);
                 Http.Response created = boot.pd.createEnvironment(name, branch, Boot.NETWORK,
                         boot.tokenOrNull(PlatformModel.wireAlias("ci", boot.config.envName()),
                     PlatformModel.wireAlias("deployments", boot.config.envName())));
@@ -1014,6 +1015,64 @@ public class PipelinePhases {
                             + "_* entries in .qits-bootstrap.env. Run `qits unwrap` first, or "
                             + "bootstrap with --platform-env " + standing + ".");
         });
+    }
+
+    /**
+     * <b>A project already answers to this name: STOP.</b>
+     * <p>
+     * An environment name and a project slug are read at the same place. The edge takes at most the
+     * first two labels of a Host header, and position 1 is an ENVIRONMENT if it is one — so
+     * {@code editor.<project>.<domain>}, the web editor's origin, is the same shape as
+     * {@code <app>.<env>.<domain>}. Bootstrapping an environment called after an existing project
+     * makes every one of that project's own names read as that tier's: its editor is served out of
+     * the wrong environment, and the tie-break says so before any app label is even considered.
+     * <p>
+     * <b>The other direction is closed at the source.</b> qits-projects is handed the environment
+     * names as {@code QITS_PROJECTS_RESERVED_SLUGS} and refuses them, so a project cannot be
+     * created into this collision. This is what closes the direction that service cannot see: an
+     * environment named after a project that is already there.
+     * <p>
+     * <b>It refuses rather than renames</b>, for the same reason the platform-environment check
+     * beside it does — the name is inside every wire alias, every container name and every recorded
+     * idp secret key, and none of that is repaired here.
+     * <p>
+     * <b>On the CREATE arm only, and that is the same line rerun-safety is always drawn on.</b> An
+     * environment row that already stands is a platform that is already running under that name;
+     * refusing its rerun would strand it rather than repair anything. What this stops is a NEW
+     * environment being made into the collision, which is the only moment the choice is still open.
+     * <p>
+     * <b>A listing that does not answer blocks nothing.</b> The read is one line of evidence, not a
+     * gate the boot has to pass through: qits-projects has answered several phases earlier for this
+     * run to have got here at all, and refusing a boot because a report-grade read timed out would
+     * be a worse failure than the one being prevented.
+     */
+    private void refuseIfAProjectAlreadyHasThisName(PhaseContext ctx, String wanted) {
+        List<String> slugs = projectSlugs();
+        if (slugs.isEmpty()) {
+            ctx.log("  no project list was read, so the slug collision check is skipped");
+            return;
+        }
+        environmentNameRefusal(wanted, slugs).ifPresent(refusal -> {
+            throw new IllegalArgumentException(refusal);
+        });
+    }
+
+    /**
+     * The refusal an environment name earns from the project slugs, or empty. Pure so the rule is
+     * provable without a platform.
+     */
+    static Optional<String> environmentNameRefusal(String wanted, List<String> projectSlugs) {
+        String name = wanted.strip().toLowerCase(Locale.ROOT);
+        return projectSlugs.stream()
+                .filter(slug -> slug.strip().toLowerCase(Locale.ROOT).equals(name))
+                .findFirst()
+                .map(slug -> "A project on this platform is already called '" + slug + "', and "
+                        + "this boot asks for an environment of the same name. They are read at the "
+                        + "same place: the edge takes the first two labels of a host, and the label "
+                        + "in front is an APPLICATION when the one behind it is an environment — so "
+                        + "editor." + slug + ".<domain>, that project's own web editor, would be "
+                        + "read as the editor of the '" + name + "' tier instead. Bootstrap with "
+                        + "--platform-env under another name, or rename the project first.");
     }
 
     private void patch(String id, String json) {

@@ -195,6 +195,16 @@ as `<old>-qits-*` while every generated file addresses `<new>-qits-*`. The phase
 there and points at `unwrap`. Moving the plane on a live platform is a PATCH on the deployer's
 `pd_environment.platform`, with the undeploy and redeploy that implies, and nothing here does it.
 
+**An environment may not be named after a project, and a project may not be named after an
+environment.** They are read at the same place: the edge takes the first two labels of a host and
+reads position 1 as an environment when it is one, so `editor.<project>.<domain>` — the web editor's
+origin, one per project — is the same shape as `<app>.<env>.<domain>`. A tier called after a project
+would take that project's own names for itself. Creating a new environment into that collision is
+refused here, on the create arm only, because an environment row that already stands is a platform
+already running under that name and refusing its rerun would strand rather than repair it. The other
+direction is closed at the source: qits-projects is handed the environment names as
+`QITS_PROJECTS_RESERVED_SLUGS` and refuses them as slugs.
+
 `--domain <domain>` and `--public-ip <ipv4>` are checked before the payload image is built, because
 both values leave this machine: they become a certificate request to Let's Encrypt and the records a
 person types at a dns provider, and a rerun with the spelling fixed undoes neither. A domain without

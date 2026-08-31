@@ -466,6 +466,41 @@ class PipelinePhasesTest {
         assertThat(domainReport(Acme.Mode.PRODUCTION, null)).doesNotContain("--staging");
     }
 
+    // --- an environment may not be called after a project -----------------------------------------
+
+    /**
+     * <b>An environment name and a project slug are read at the same place.</b> The edge takes the
+     * first two labels of a host and reads position 1 as an environment when it is one, so
+     * {@code editor.<project>.<domain>} — the web editor's own origin — is the same shape as
+     * {@code <app>.<env>.<domain>}. A new environment named after an existing project would take
+     * that project's names for its own tier.
+     */
+    @Test
+    void anEnvironmentNamedAfterAProjectIsRefusedAndTheMessageSaysWhy() {
+        assertThat(PipelinePhases.environmentNameRefusal("acme", List.of("qits", "acme")))
+                .get(org.assertj.core.api.InstanceOfAssertFactories.STRING)
+                .contains("acme")
+                .contains("editor.acme.<domain>")
+                .contains("--platform-env");
+    }
+
+    /** Case is not a difference: a DNS label is compared lowercase wherever it is read. */
+    @Test
+    void theComparisonIsNotCaseSensitive() {
+        assertThat(PipelinePhases.environmentNameRefusal(" Acme ", List.of("acme"))).isPresent();
+    }
+
+    /** Every other name passes, including one that merely contains a slug. */
+    @Test
+    void aNameNoProjectHoldsIsFine() {
+        assertThat(PipelinePhases.environmentNameRefusal("prod", List.of("qits", "acme")))
+                .isEmpty();
+        assertThat(PipelinePhases.environmentNameRefusal("acme-staging", List.of("acme")))
+                .isEmpty();
+        // No project list is no refusal: the check is evidence, not a gate.
+        assertThat(PipelinePhases.environmentNameRefusal("acme", List.of())).isEmpty();
+    }
+
     // --- the editor hosts, beside the records ------------------------------------------------------
 
     /**
