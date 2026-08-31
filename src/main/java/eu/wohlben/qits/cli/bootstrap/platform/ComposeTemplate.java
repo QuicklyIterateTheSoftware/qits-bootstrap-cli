@@ -498,6 +498,29 @@ public final class ComposeTemplate {
                   QITS_EDGE_APPS_MIRROR_HOST_PATTERN: "qits-platform-mirror"
                   QITS_EDGE_APPS_GITHOST_HOST_PATTERN: "{env}-qits-githost"
                   QITS_EDGE_APPS_GITHOST_AUDIENCE_PATTERN: "{env}-qits-githost"
+                  # A FOURTH NAME, AND IT IS READ AT A DIFFERENT DEPTH. The three above are
+                  # <app>.<env>.<domain>; the web editor is editor.<project>.<domain>, one origin
+                  # per PROJECT. The edge needs no code for it: it reads at most the first two
+                  # labels, `editor` is a configured app and `<project>` is not a known environment,
+                  # so the name falls to the <app>.<domain> reading and lands on the DEFAULT
+                  # environment. That is why {env} below always resolves to ${ENV_NAME} here, and
+                  # why a project slug that spells an environment name would break it — the label
+                  # would be read as a tier and the editor would be served out of the wrong one.
+                  # qits-projects refuses those slugs (QITS_PROJECTS_RESERVED_SLUGS) and the
+                  # `environment` phase refuses the mirror image of the same collision.
+                  #
+                  # No port key: 8080 is the edge's default for an app, the same silence the three
+                  # above keep.
+                  QITS_EDGE_APPS_EDITOR_HOST_PATTERN: "{env}-qits-workspaces"
+                  # THE AUDIENCE IS SPELLED BECAUSE THE DEFAULT IS THE REGISTRY'S. An app entry that
+                  # names none accepts {env}-qits-artifacts, so leaving it out would make a token
+                  # bought for `docker pull` a key to every project's editor. What is named instead
+                  # is exactly the audience the upstream validates for itself
+                  # (qits-workspaces' QITS_AUTH_MACHINE_AUDIENCE), so this vhost admits the one
+                  # machine credential the service behind it would admit anyway and no other.
+                  # Browsers are unaffected either way: they arrive with a session cookie and never
+                  # reach the machine gate.
+                  QITS_EDGE_APPS_EDITOR_AUDIENCE_PATTERN: "{env}-qits-workspaces"
                   # USER SESSIONS ARE THE DEFAULT. The environment vhost refuses an anonymous
                   # browser — a navigation is redirected to /idp/login, anything else is 401 — and
                   # turns a session cookie into X-Qits-User, X-Qits-User-Id and X-Qits-Roles.
@@ -1469,6 +1492,13 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN=qits-platform-mirror
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_AUDIENCE_PATTERN={env}-qits-githost
+            # THE EDITOR VHOST, editor.<project>.<domain>, onto qits-workspaces. Same generic app
+            # alias as the three above and no edge code: the edge reads two labels, so a project
+            # slug in position 1 is not an environment and the name resolves in the DEFAULT tier.
+            # The audience is spelled rather than defaulted — an unspelled one is the REGISTRY's,
+            # which would let a docker pull token open a project's editor.
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_EDITOR_HOST_PATTERN={env}-qits-workspaces
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_EDITOR_AUDIENCE_PATTERN={env}-qits-workspaces
             # USER SESSIONS ARE ENFORCED at the public environment vhost; IdP routes remain the
             # protocol-required anonymous carve-out.
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_ENABLED=true

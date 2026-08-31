@@ -264,6 +264,37 @@ class ComposeTemplateTest {
     }
 
     /**
+     * <b>The web editor is a fourth app alias and nothing more.</b> {@code
+     * editor.<project>.<domain>} is one origin per project, but the edge reads two labels: a
+     * project slug is not a known environment, so the name takes the {@code <app>.<domain>}
+     * reading and lands in the DEFAULT tier. The entry is therefore the same shape the byte plane
+     * uses, and {@code {env}} in it always resolves to the default environment.
+     * <p>
+     * <b>The audience is the assertion that matters.</b> An app entry that names none inherits the
+     * REGISTRY audience, so an unspelled editor entry would let a token bought for {@code docker
+     * pull} open any project's editor.
+     */
+    @Test
+    void theEditorVhostFrontsWorkspacesOnTheWorkspacesAudienceInBothFiles() {
+        String edge = serviceBlock(ComposeTemplate.compose(tokens()), "qits-platform-edge");
+        String edgeExtras = extras("qits-platform-edge");
+
+        assertThat(edge).contains("QITS_EDGE_APPS_EDITOR_HOST_PATTERN: \"{env}-qits-workspaces\"")
+                .contains("QITS_EDGE_APPS_EDITOR_AUDIENCE_PATTERN: \"{env}-qits-workspaces\"");
+        assertThat(edgeExtras)
+                .contains("env.QITS_EDGE_APPS_EDITOR_HOST_PATTERN={env}-qits-workspaces")
+                .contains("env.QITS_EDGE_APPS_EDITOR_AUDIENCE_PATTERN={env}-qits-workspaces");
+        // The port is the edge's own default for an app, and the three byte-plane entries keep the
+        // same silence. A key here would be a second place to keep 8080 in step.
+        assertThat(edge).doesNotContain("QITS_EDGE_APPS_EDITOR_PORT");
+        assertThat(edgeExtras).doesNotContain("QITS_EDGE_APPS_EDITOR_PORT");
+        // The host pattern is the WIRE ALIAS of qits-workspaces, spelled with the edge's own
+        // runtime placeholder — never this generator's ${ENV_NAME}, which would pin one tier.
+        assertThat(edge).doesNotContain("QITS_EDGE_APPS_EDITOR_HOST_PATTERN: \"" + ENV
+                + "-qits-workspaces\"");
+    }
+
+    /**
      * <b>The byte plane publishes nothing, in the seed and in the deployment alike.</b> Three host
      * ports went with unify-ingress: the host reaches all three services through the edge, by name.
      * A publish that came back would be an unauthenticated door beside the authenticated one.
