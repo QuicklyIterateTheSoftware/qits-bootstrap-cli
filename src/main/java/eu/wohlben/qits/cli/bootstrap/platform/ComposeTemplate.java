@@ -1018,6 +1018,15 @@ public final class ComposeTemplate {
                   # the first time on the DEPLOYED container — where every entry now matches a row
                   # by alias and nothing is cloned.
                   QITS_STARTUP_SEED_RECONCILE_REPOSITORIES: "false"
+                  # THE SLUGS NO PROJECT MAY TAKE, and the list is this platform's environment
+                  # names. A project slug is the SECOND label of editor.<project>.<domain>, which
+                  # is the position the edge reads an environment at — so a project called `prod`
+                  # would make editor.prod.<domain> parse as the app `editor` in the tier `prod`
+                  # rather than as that project's editor, and the same collision would take
+                  # <app>.<project>.<domain> for every other app with it. qits-projects refuses
+                  # these slugs; the `environment` phase refuses the mirror image, an environment
+                  # named after a project that already exists.
+                  QITS_PROJECTS_RESERVED_SLUGS: ${ENV_NAME}
                   # Where its own git mirrors go. The image defaults it under ${user.home}, which is
                   # the literal "?" for this passwd-less uid — the same trap the deployment extras
                   # spell it out for.
@@ -2110,6 +2119,11 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_GITHOST_CLIENT_ID=${ENV_NAME}-qits-projects
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_GITHOST_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-githost
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_GITHOST_CREDENTIALS_SECRET=${IDP_SECRET_PROJECTS}
+            # THE SLUGS NO PROJECT MAY TAKE: this platform's environment names, because a project
+            # slug sits at the label the edge reads a tier at — editor.<project>.<domain>. Spelled
+            # here as well as on the seed, or the first self-deploy drops it: the update argv
+            # --env-rm's what the extras do not state.
+            qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RESERVED_SLUGS=${ENV_NAME}
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_DATA_DIR=/data/mirrors
             qits.platform.deployments.extras.qits-projects.env.QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080
             qits.platform.deployments.extras.qits-projects.env.QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN}

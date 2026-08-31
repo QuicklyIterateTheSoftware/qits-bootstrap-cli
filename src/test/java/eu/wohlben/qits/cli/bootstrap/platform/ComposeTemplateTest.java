@@ -295,6 +295,25 @@ class ComposeTemplateTest {
     }
 
     /**
+     * <b>A project slug sits where the edge reads a tier, so the environment names are reserved.</b>
+     * {@code editor.<project>.<domain>} and {@code <app>.<env>.<domain>} are one shape: a project
+     * called after this platform's environment would be read as that environment and its editor
+     * would be served out of the wrong one. The list is seeded from the environments this
+     * bootstrap knows, which is the one it names.
+     */
+    @Test
+    void qitsProjectsIsToldWhichSlugsAreTheEnvironmentNames() {
+        String projects = serviceBlock(ComposeTemplate.compose(tokens()),
+                ENV + "-qits-projects");
+
+        assertThat(projects).contains("QITS_PROJECTS_RESERVED_SLUGS: " + ENV);
+        // On the extras too, or the first self-deploy drops it: the update argv --env-rm's what
+        // the extras do not state.
+        assertThat(extras("qits-projects"))
+                .contains("env.QITS_PROJECTS_RESERVED_SLUGS=" + ENV);
+    }
+
+    /**
      * <b>The byte plane publishes nothing, in the seed and in the deployment alike.</b> Three host
      * ports went with unify-ingress: the host reaches all three services through the edge, by name.
      * A publish that came back would be an unauthenticated door beside the authenticated one.
