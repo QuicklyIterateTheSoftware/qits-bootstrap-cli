@@ -2256,6 +2256,17 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_PROJECTS_URL=http://${ALIAS_PROJECTS}:8080
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_GITHOST_URL=http://${ALIAS_GITHOST}:8080
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_CI_URL=http://${ALIAS_CI}:8080
+            # The two writes-adjacent targets of the dependency-updates wave: the SBOM reads (a
+            # fourth address on qits-artifacts, bare host — the /artifacts/sboms path is the
+            # service's own API, not a movable mount) and the release door a SUCCEEDED bump asks.
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_ARTIFACTS_URL=http://${ALIAS_ARTIFACTS}:8080
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_WORKSPACES_URL=http://${ALIAS_WORKSPACES}:8080
+            # NIGHTLY INTERNAL BUMPS SHIP OFF, deliberately, although the jar defaults them on: the
+            # per-repository hop files still follow releases immediately until the decommissioning
+            # waves land, and two mechanisms pushing the same branches is noise a fresh platform
+            # does not need. Flip to true when the hop files go. The retired
+            # QITS_MAINTENANCE_BUMP_AUTO key is gone with the scan-coupled auto-bump it gated.
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_BUMP_INTERNAL_AUTO=false
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_REGISTRIES_MAVEN_URL=http://${ALIAS_ARTIFACTS}:8080/artifacts/maven/maven
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_REGISTRIES_NPM_URL=http://${ALIAS_ARTIFACTS}:8080/artifacts/npm/npm
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_REGISTRIES_OCI_URL=http://${ALIAS_ARTIFACTS}:8080/v2
@@ -2277,6 +2288,14 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_CI_CLIENT_ID=${ALIAS_PLATFORM_MAINTENANCE}
             qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_CI_CREDENTIALS_SECRET=${IDP_SECRET_PLATFORM_MAINTENANCE}
             qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_CI_GRANT_OPTIONS_CLIENT_AUDIENCE=${ALIAS_CI}
+            # The sixth client: the release door. Its ask arm admits qits:system beside qits:admin,
+            # so this is the ordinary machine credential with the workspaces audience — no person's
+            # role lands on the client, per the ROLES seed block's doctrine.
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_WORKSPACES_CLIENT_ENABLED=${MACHINE_CLIENT}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_WORKSPACES_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_WORKSPACES_CLIENT_ID=${ALIAS_PLATFORM_MAINTENANCE}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_WORKSPACES_CREDENTIALS_SECRET=${IDP_SECRET_PLATFORM_MAINTENANCE}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_WORKSPACES_GRANT_OPTIONS_CLIENT_AUDIENCE=${ALIAS_WORKSPACES}
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE BASE SYSTEM PANELS, AND THIS BLOCK IS THE THIRD GRANT OF THE HOST'S DOCKER SOCKET
             # — after qits-containers above and the deployer. Like both of those, the grant is
