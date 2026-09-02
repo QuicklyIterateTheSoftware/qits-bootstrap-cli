@@ -2311,8 +2311,12 @@ public class PipelinePhases {
                         + "at");
                 report.add("             " + idp + "/idp/register");
             }
-            report.add("ipv6:      ONE STANDING HOST RULE, and without it every vhost client "
-                    + "HANGS rather than fails:");
+            report.add("ipv6:      ONE HOST RULE, and without it every vhost client HANGS rather "
+                    + "than fails. The");
+            report.add("           launcher installs it on each run, so it is already in place "
+                    + "unless the run said");
+            report.add("           otherwise — it needs root, and a warning there means it is "
+                    + "yours to run:");
             report.add("             sudo ip6tables -I INPUT -i lo -p tcp --dport "
                     + boot.config.port() + " -j REJECT \\");
             report.add("               --reject-with tcp-reset");
@@ -2325,7 +2329,8 @@ public class PipelinePhases {
             report.add("           to IPv4 at once. A host-mode publish never had this — "
                     + "docker-proxy bound both");
             report.add("           families — so it arrives with ingress. The rule does NOT "
-                    + "survive a reboot.");
+                    + "survive a reboot, which");
+            report.add("           is why the launcher installs it every time rather than once.");
             report.add("workloads: " + PlatformModel.wireAlias("containers", env)
                     + " on qits-net — the orchestrator that holds the");
             report.add("           docker socket. No host port and no public route: every caller "

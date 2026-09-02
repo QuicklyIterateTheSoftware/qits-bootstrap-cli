@@ -114,12 +114,16 @@ forced. Add to that list rather than deviating quietly.
   — and the successor's image is now pulled THROUGH the edge, so it would have to be down to come
   up. Ingress puts the port on the swarm rather than the task, so the predecessor keeps answering
   while its successor pulls, starts and passes health. Two host settings follow from it and neither
-  is this program's to make: the daemon needs the two registry names in `insecure-registries`
-  (preflight asks the daemon and WARNS), and the host needs
+  comes from a run's own configuration: the daemon needs the two registry names in
+  `insecure-registries` (preflight asks the daemon and WARNS), and the host needs
   `ip6tables … --dport <edge port> -j REJECT --reject-with tcp-reset` on `lo`, because a
   `*.localhost` name resolves to `::1` first and the ingress mesh is IPv4-only — the listener
-  accepts and never answers, so clients hang instead of failing over. The launcher probes
-  `[::1]:<edge port>` and warns; the closing report prints both steps.
+  accepts and never answers, so clients hang instead of failing over. **The launcher installs the
+  second one itself**: it probes `[::1]:<edge port>`, runs `ip6tables` when the connect succeeds,
+  and re-probes to prove the rule took. On EVERY run, because the rule does not survive a reboot
+  and a past run's is no evidence — one that was gone let a release run's SBOM upload hang forty
+  minutes on 2026-09-02. Installing needs root, so a plain user gets the old warning instead; the
+  closing report prints both steps.
 - **A seed build resolves the platform's own jars from the SEED registry, and is TOLD so.** Every
   image this run builds — the seed images, the step images, the ci-daemon's musl builder — carries
   `--build-arg QITS_MAVEN_REPOSITORY_URL=http://localhost:<registry port>/artifacts/maven/maven`,
