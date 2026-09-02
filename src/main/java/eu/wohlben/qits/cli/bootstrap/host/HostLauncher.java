@@ -16,6 +16,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -103,7 +104,7 @@ public final class HostLauncher {
             // daemon and refuses every other state that is not an active manager. This line stays
             // because it is the state the run started from, printed before anything changes it.
             out.println("swarm: " + docker.swarmState());
-            warnAboutIpv6Loopback(config, out);
+            fixIpv6Loopback(runner, config, out);
 
             // A wrapper that is not here yet is a COLD START, not a failure: the run clones it,
             // inside the container, into the working directory. This half only has to agree with
@@ -199,8 +200,8 @@ public final class HostLauncher {
     }
 
     /**
-     * <b>The one host check the payload cannot make, and it is a warning rather than a refusal:
-     * whether the edge's port ACCEPTS an IPv6 connection on this host's loopback.</b>
+     * <b>The one host repair the payload cannot make: the edge's port must REFUSE an IPv6
+     * connection on this host's loopback, and this makes it refuse.</b>
      * <p>
      * The byte plane is reached at {@code <app>.<env>.localhost}, and a resolver answers
      * {@code ::1} for such a name FIRST. The edge publishes its port in swarm INGRESS mode now, and
@@ -209,32 +210,67 @@ public final class HostLauncher {
      * host-mode publish never showed this — docker-proxy bound both families — which is why it
      * arrives with the mode.
      * <p>
-     * The fix is one standing host rule, and it does not survive a reboot:
+     * <b>It hangs with no error, and that is what makes it expensive.</b> On 2026-09-02 a release
+     * run's SBOM upload — one {@code curl -X PUT} to {@code registry.<env>.localhost} from a CI
+     * step on the host network — sat on {@code [::1]:<port>} for over forty minutes and blocked the
+     * whole CI queue behind it. Nothing timed out and nothing said anything.
+     * <p>
+     * The fix is one host rule:
      * <pre>ip6tables -I INPUT -i lo -p tcp --dport &lt;edge port&gt; -j REJECT --reject-with tcp-reset</pre>
      * The reset is what makes every client fall back at once; a DROP would leave them hanging just
      * as the accept does.
      * <p>
-     * <b>Asked here rather than in the preflight PHASE, because only this half is on the host.</b>
-     * The payload is a container: {@code ::1} inside it is its own loopback, and the host's is not
-     * reachable from there at all. What is asked is the effect and not the rule — a connect to
-     * {@code [::1]:<port>} that SUCCEEDS is the broken state, whatever produced it. Refused is the
-     * good answer and so is nothing listening, which is every cold boot, so this stays quiet unless
-     * there is something to say.
+     * <b>The rule does not survive a reboot, which is why this runs on EVERY boot rather than
+     * once.</b> A past run's rule is not evidence: the landmine re-arms itself at the next restart,
+     * and the only honest question is what the loopback answers right now. So the effect is probed
+     * rather than the rule table read — a connect to {@code [::1]:<port>} that SUCCEEDS is the
+     * broken state, whatever produced it — the rule is installed, and the probe is repeated to
+     * prove it took. Refused is the good answer and so is nothing listening, which is every cold
+     * boot, so this stays quiet unless there was something to do.
+     * <p>
+     * <b>Done here rather than in the preflight PHASE, because only this half is on the host.</b>
+     * The payload is a container: {@code ::1} inside it is its own loopback, the host's is not
+     * reachable from there, and its own network namespace has no rule table worth writing.
+     * <p>
+     * Installing needs root and an {@code ip6tables} binary, and a launcher started as a plain user
+     * has neither. That is not a failure of the boot: it falls back to the warning the operator
+     * used to get, with the command to run by hand.
      */
-    static void warnAboutIpv6Loopback(BootstrapConfig config, PrintStream out) {
+    static void fixIpv6Loopback(ProcessRunner runner, BootstrapConfig config, PrintStream out) {
+        if (!ipv6LoopbackAccepts(config.port())) {
+            return;
+        }
+        // Quiet on success: the log keeps the command and its output, the screen gets one line.
+        ProcessResult result = runner.run(
+                Cmd.of(ip6tablesReject(config.port())).timeout(Duration.ofSeconds(30)), null);
+        if (result.ok() && !ipv6LoopbackAccepts(config.port())) {
+            out.println("ipv6 loopback: [::1]:" + config.port() + " resets now — ip6tables rule "
+                    + "installed (it does not survive a reboot, so every run installs it)");
+            return;
+        }
+        out.println("WARNING: [::1]:" + config.port() + " accepts connections and this run could "
+                + "not stop it (ip6tables exited " + result.exitCode() + " — installing needs "
+                + "root). Every *.localhost name resolves to ::1 first, and swarm's ingress mesh "
+                + "serves IPv4 only — so a client reaching the edge by name will HANG rather than "
+                + "fail over. Run this by hand, after every reboot:");
+        out.println("  sudo " + String.join(" ", ip6tablesReject(config.port())));
+    }
+
+    /** The rule, in one place: what is run, and what the fall-back warning prints. */
+    static List<String> ip6tablesReject(int port) {
+        return List.of("ip6tables", "-I", "INPUT", "-i", "lo", "-p", "tcp",
+                "--dport", String.valueOf(port), "-j", "REJECT", "--reject-with", "tcp-reset");
+    }
+
+    private static boolean ipv6LoopbackAccepts(int port) {
         try (Socket probe = new Socket()) {
-            probe.connect(new InetSocketAddress("::1", config.port()), 2000);
+            probe.connect(new InetSocketAddress("::1", port), 2000);
+            return true;
         } catch (IOException e) {
             // Refused, unreachable or timed out: nothing is accepting v6 on that port, which is
             // what the rule produces and what an empty host looks like.
-            return;
+            return false;
         }
-        out.println("WARNING: [::1]:" + config.port() + " accepts connections. Every "
-                + "*.localhost name resolves to ::1 first, and swarm's ingress mesh serves IPv4 "
-                + "only — so a client reaching the edge by name will HANG rather than fail over. "
-                + "One host rule fixes it, and it does not survive a reboot:");
-        out.println("  sudo ip6tables -I INPUT -i lo -p tcp --dport " + config.port()
-                + " -j REJECT --reject-with tcp-reset");
     }
 
     /**

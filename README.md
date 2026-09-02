@@ -304,8 +304,8 @@ and the fourth names the clone of this CLI the run was started from — the wrap
 is where the image is built from when there is a wrapper, and a checkout of this repository at or
 above the working directory (or beside it) is what answers on a cold one.
 
-**Two host settings this program warns about and cannot make.** Both come from the byte plane
-moving behind the edge, and both are standing configuration of the machine rather than of a run:
+**Two host settings this program does not get from a run's own configuration.** Both come from the
+byte plane moving behind the edge, and both are standing configuration of the machine:
 
     "insecure-registries": ["registry.<env>.localhost:8080", "mirror.<env>.localhost:8080"]
     sudo ip6tables -I INPUT -i lo -p tcp --dport 8080 -j REJECT --reject-with tcp-reset
@@ -317,11 +317,17 @@ response to HTTPS client". The payload's preflight asks the DAEMON what it allow
 which a daemon may not have re-read) and warns without stopping: the fix can be made while the run
 goes on, and the closing report prints the line again.
 
-The second is the launcher's own check, because only it is on the host. A `*.localhost` name
-resolves to `::1` first, and swarm's ingress mesh is IPv4-only: the listener ACCEPTS the v6
-connection and never serves it, so curl, docker, git, maven and npm all hang rather than fail over.
-The reset makes each one fall back at once. A host-mode publish never showed this — docker-proxy
-bound both families — so it arrives with ingress, and the rule does **not** survive a reboot.
+The second is the launcher's, because only it is on the host, and **it installs the rule rather than
+asking for it**: it probes `[::1]:<edge port>`, runs the `ip6tables` line when the connect succeeds,
+and probes again to prove it took. A `*.localhost` name resolves to `::1` first, and swarm's ingress
+mesh is IPv4-only: the listener ACCEPTS the v6 connection and never serves it, so curl, docker, git,
+maven and npm all hang rather than fail over — a release run's SBOM upload sat there forty minutes
+on 2026-09-02 and blocked the CI queue behind it. The reset makes each client fall back at once. A
+host-mode publish never showed this — docker-proxy bound both families — so it arrives with ingress.
+
+The rule does **not** survive a reboot, which is why every run installs it rather than trusting the
+last one's. Installing needs root and an `ip6tables` binary; a launcher without either warns with
+the command, as it always did, and the boot goes on.
 
 **Swarm is reported here and repaired inside.** The line above is the state this run started from;
 the payload's own preflight is what acts on it. An `inactive` daemon — one in nobody's swarm — is
