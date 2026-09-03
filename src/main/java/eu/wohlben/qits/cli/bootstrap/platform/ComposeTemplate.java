@@ -2256,11 +2256,14 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_PROJECTS_URL=http://${ALIAS_PROJECTS}:8080
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_GITHOST_URL=http://${ALIAS_GITHOST}:8080
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_CI_URL=http://${ALIAS_CI}:8080
-            # The two writes-adjacent targets of the dependency-updates wave: the SBOM reads (a
-            # fourth address on qits-artifacts, bare host — the /artifacts/sboms path is the
-            # service's own API, not a movable mount) and the release door a SUCCEEDED bump asks.
+            # The SBOM reads: a fourth address on qits-artifacts, bare host — the /artifacts/sboms
+            # path is the service's own API, not a movable mount.
+            #
+            # NO WORKSPACES TARGET. A SUCCEEDED bump used to ask qits-workspaces' release door for a
+            # release request; the door is retired and the ask is a qits-projects route now, on the
+            # PROJECTS url and the PROJECTS credential already set above. Nothing was added here for
+            # it, and QITS_MAINTENANCE_TARGETS_WORKSPACES_URL went with the door.
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_ARTIFACTS_URL=http://${ALIAS_ARTIFACTS}:8080
-            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_WORKSPACES_URL=http://${ALIAS_WORKSPACES}:8080
             # NIGHTLY INTERNAL BUMPS SHIP OFF, deliberately, although the jar defaults them on: the
             # per-repository hop files still follow releases immediately until the decommissioning
             # waves land, and two mechanisms pushing the same branches is noise a fresh platform
@@ -2288,14 +2291,10 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_CI_CLIENT_ID=${ALIAS_PLATFORM_MAINTENANCE}
             qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_CI_CREDENTIALS_SECRET=${IDP_SECRET_PLATFORM_MAINTENANCE}
             qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_CI_GRANT_OPTIONS_CLIENT_AUDIENCE=${ALIAS_CI}
-            # The sixth client: the release door. Its ask arm admits qits:system beside qits:admin,
-            # so this is the ordinary machine credential with the workspaces audience — no person's
-            # role lands on the client, per the ROLES seed block's doctrine.
-            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_WORKSPACES_CLIENT_ENABLED=${MACHINE_CLIENT}
-            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_WORKSPACES_AUTH_SERVER_URL=${IDP}
-            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_WORKSPACES_CLIENT_ID=${ALIAS_PLATFORM_MAINTENANCE}
-            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_WORKSPACES_CREDENTIALS_SECRET=${IDP_SECRET_PLATFORM_MAINTENANCE}
-            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_CLIENT_WORKSPACES_GRANT_OPTIONS_CLIENT_AUDIENCE=${ALIAS_WORKSPACES}
+            # THERE IS NO SIXTH CLIENT. There was one — the release door's, audience qits-workspaces
+            # — and it went with the door. The release ask is a qits-projects route now, so it rides
+            # the PROJECTS client above; that route admits qits:system, which this credential
+            # already carries, and no person's role lands on the client.
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE BASE SYSTEM PANELS, AND THIS BLOCK IS THE THIRD GRANT OF THE HOST'S DOCKER SOCKET
             # — after qits-containers above and the deployer. Like both of those, the grant is
