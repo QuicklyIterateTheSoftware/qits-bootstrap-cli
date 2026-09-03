@@ -21,7 +21,7 @@ import java.util.Optional;
  * <p>
  * <b>The source is {@code docker logs}, not an event feed.</b> The bus is in the seed since
  * 2026-08-10, so it does answer by the time the deploy waits run — but what this relay wants is the
- * deployer's own account of one repository, which is a log line and not an event, and the docker
+ * deployer's own account of one application, which is a log line and not an event, and the docker
  * socket is the one thing the whole program cannot run without. Timestamps come from docker
  * ({@code --timestamps}), so "what is new since the last poll" is a since-filter rather than a
  * diff, and the deployer is found fresh on every read because a self-update hand-off renames its
@@ -38,24 +38,24 @@ final class DeployLogStream {
 
     private final Docker docker;
     private final PhaseContext ctx;
-    private final String repo;
+    private final String application;
     private final String deployerAlias;
     private final String deployerPdPrefix;
 
     /** Only lines stamped after this are new. Starts at the wait, so an old boot's lines stay out. */
     private Instant since;
 
-    DeployLogStream(Docker docker, PhaseContext ctx, String repo, String deployerAlias,
+    DeployLogStream(Docker docker, PhaseContext ctx, String application, String deployerAlias,
             String deployerPdPrefix) {
         this.docker = docker;
         this.ctx = ctx;
-        this.repo = repo;
+        this.application = application;
         this.deployerAlias = deployerAlias;
         this.deployerPdPrefix = deployerPdPrefix;
         this.since = Instant.now();
     }
 
-    /** Relays what the deployer has said about this repository since the last call. */
+    /** Relays what the deployer has said about this application since the last call. */
     void follow() {
         Optional<String> deployer = deployerContainer();
         if (deployer.isEmpty()) {
@@ -67,7 +67,7 @@ final class DeployLogStream {
         } catch (RuntimeException e) {
             return;
         }
-        for (String line : fresh(raw, since, repo)) {
+        for (String line : fresh(raw, since, application)) {
             ctx.log(PREFIX + line);
         }
         since = lastStamp(raw, since);
@@ -84,15 +84,15 @@ final class DeployLogStream {
     }
 
     /**
-     * The lines about this repository that are stamped after {@code since}, without their stamps.
+     * The lines about this application that are stamped after {@code since}, without their stamps.
      * <p>
      * {@code docker logs --since} includes lines AT the given moment, so the boundary is compared
-     * again here, on parsed stamps. The repository filter is what keeps another service's telemetry
+     * again here, on parsed stamps. The application filter is what keeps another service's telemetry
      * noise out of a wait that is only about this one; whatever the deployer says about the
-     * deployment names the repository, and lines it cannot recognise stay in the deployer's own
+     * deployment names the application, and lines it cannot recognise stay in the deployer's own
      * log.
      */
-    static List<String> fresh(List<String> stamped, Instant since, String repo) {
+    static List<String> fresh(List<String> stamped, Instant since, String application) {
         List<String> out = new ArrayList<>();
         for (String line : stamped) {
             Instant stamp = stampOf(line);
@@ -100,7 +100,7 @@ final class DeployLogStream {
                 continue;
             }
             String text = line.substring(line.indexOf(' ') + 1);
-            if (text.contains(repo)) {
+            if (text.contains(application)) {
                 out.add(Ansi.clean(text));
             }
         }

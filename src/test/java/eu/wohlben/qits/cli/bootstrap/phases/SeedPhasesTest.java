@@ -374,18 +374,18 @@ class SeedPhasesTest {
      * THE BOOT'S IDENTITY for a DEPLOYABLE, and the reason it exists: a seed built from main
      * applies main's migrations, and the released successor the train deploys minutes later
      * refuses to start against a schema ahead of it. qits-ci is both seeded and deployed, and it
-     * is the one this cost. Same answer as the deploy ref's, by construction — both go through
-     * PlatformModel.newestRelease.
+     * is the one this cost. Same answer as the version the deploy phase asks for, by construction
+     * — both go through PlatformModel.newestRelease over the version-sorted merged tags.
      */
     @Test
     void aDeployableStandsAtItsNewestRelease() {
-        assertThat(SeedPhases.bootIdentity(false, "ci", TAGS)).isEqualTo("2026.812.153438");
+        assertThat(SeedPhases.bootIdentity("ci", TAGS)).isEqualTo("2026.812.153438");
     }
 
     /** A release publisher's output is a coordinate consumers pin, so it follows its tag too. */
     @Test
     void aReleasePublisherStandsAtItsNewestRelease() {
-        assertThat(SeedPhases.bootIdentity(false, "eventstream", TAGS))
+        assertThat(SeedPhases.bootIdentity("eventstream", TAGS))
                 .isEqualTo("2026.812.153438");
     }
 
@@ -396,26 +396,32 @@ class SeedPhasesTest {
      */
     @Test
     void aSeededSourceWithNoVersionIdentityStaysOnMain() {
-        assertThat(SeedPhases.bootIdentity(false, "oci", TAGS)).isEmpty();
+        assertThat(SeedPhases.bootIdentity("oci", TAGS)).isEmpty();
         // The SPA seed sources are the same shape: a placeholder bundle, then the real client from
         // the pipeline.
-        assertThat(SeedPhases.bootIdentity(false, "spa-projects", TAGS)).isEmpty();
+        assertThat(SeedPhases.bootIdentity("spa-projects", TAGS)).isEmpty();
     }
 
     /** In scope but never released: main, which is what an empty answer means to the caller. */
     @Test
     void aRepositoryWithNoReleaseStaysOnMain() {
-        assertThat(SeedPhases.bootIdentity(false, "ci", List.of())).isEmpty();
+        assertThat(SeedPhases.bootIdentity("ci", List.of())).isEmpty();
         // A stray tag is not a release.
-        assertThat(SeedPhases.bootIdentity(false, "ci", List.of("latest"))).isEmpty();
+        assertThat(SeedPhases.bootIdentity("ci", List.of("latest"))).isEmpty();
     }
 
-    /** {@code --ship-mains}: every checkout stays on main and the tags are not even read. */
+    /**
+     * <b>{@code --ship-mains} cannot reach this any more, and that is the assertion.</b> The flag
+     * used to leave every checkout on main AND point the deploy ref there, so seed and successor
+     * still agreed. There is no deploy ref: the successor is the last release whatever the seed was
+     * built from, and a seed from main beside it applies migrations that successor has never heard
+     * of. The identity takes the name and the tags, and nothing else may be added to it.
+     */
     @Test
-    void shipMainsLeavesEveryCheckoutOnMain() {
-        assertThat(SeedPhases.bootIdentity(true, "ci", TAGS)).isEmpty();
-        assertThat(SeedPhases.bootIdentity(true, "eventstream", TAGS)).isEmpty();
-        assertThat(SeedPhases.bootIdentity(true, "oci", TAGS)).isEmpty();
+    void nothingButTheNameAndTheTagsDecidesWhatACheckoutStandsAt() {
+        assertThat(SeedPhases.bootIdentity("ci", TAGS)).isEqualTo("2026.812.153438");
+        assertThat(SeedPhases.bootIdentity("eventstream", TAGS)).isEqualTo("2026.812.153438");
+        assertThat(SeedPhases.bootIdentity("oci", TAGS)).isEmpty();
     }
 
     // --- the pullers' docker credentials -----------------------------------------------------------

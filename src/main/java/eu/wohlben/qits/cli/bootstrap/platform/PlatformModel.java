@@ -215,9 +215,9 @@ public final class PlatformModel {
      * scoping today is which broker instance a service dials, so a platform deployer on a per-tier
      * bus could publish {@code DeploymentActive} onto one tier only.
      * <p>
-     * There is no platform deploy ref any more. Both planes answer the same question of a green
-     * build — does an environment listen to this ref — so {@code environment/<name>} is the whole
-     * set and {@code platform/main} is retired.
+     * There is no deploy ref on either plane any more. A green build deploys nothing; a RELEASE
+     * does, and both planes enter at the one designated environment — so {@code environment/<name>}
+     * and {@code platform/main} are both retired.
      * <p>
      * <b>qits-platform-orchestrator joined on 2026-08-21, and a technical process is
      * platform-wide by construction.</b> Its first one is the deletion run, and what it deletes —

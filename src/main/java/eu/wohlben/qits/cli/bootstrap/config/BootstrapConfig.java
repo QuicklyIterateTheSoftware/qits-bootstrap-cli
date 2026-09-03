@@ -284,9 +284,9 @@ public interface BootstrapConfig {
     }
 
     /**
-     * The standing environment's name, and <b>the platform environment</b>: the tier whose branch
-     * deploys the platform plane. {@code --platform-env} on the command line, {@code QITS_ENV_NAME}
-     * in {@code .env}.
+     * The standing environment's name, and <b>the platform environment</b>: the one tier the
+     * platform plane is deployed into. {@code --platform-env} on the command line, {@code
+     * QITS_ENV_NAME} in {@code .env}.
      * <p>
      * It is not only a label: the wire alias of every environment service is
      * {@code <this>-qits-<app>}, so it is inside every address the generated files carry, inside
@@ -406,15 +406,15 @@ public interface BootstrapConfig {
     @WithDefault("8h")
     Duration bootstrapIngressTtl();
 
-    /**
-     * The branch that deploys, and the ONLY one. main stays the integration trunk on every
-     * repository and whichever plane it is on: a platform service is deployed by a green build of
-     * this same ref, because both planes ask one question of a build — does an environment listen
-     * to it. {@code platform/main} is retired.
-     */
-    default String envBranch() {
-        return "environment/" + envName();
-    }
+    // THERE IS NO DEPLOY REF ANY MORE, and nothing here may derive one.
+    //
+    // envBranch() answered "environment/<name>" and every deploy pushed it. Deployment is driven by
+    // a RELEASE now: qits-ci announces SoftwareRelease per published artifact, qits-deployments
+    // turns the docker one into a deployment request and pulls qits/<app>:<version>. The deployer
+    // matches no branch — pd_environment lost its branch column outright — so a ref by that name is
+    // a branch nothing listens to, and seeding one would leave a dead ref on every repository of
+    // every platform this program touches. main is the trunk, a tag is the release, and there is no
+    // third ref.
 
     /** The issuer string, and the address consumers dial. One value, on qits-net. */
     default String idpIssuer() {

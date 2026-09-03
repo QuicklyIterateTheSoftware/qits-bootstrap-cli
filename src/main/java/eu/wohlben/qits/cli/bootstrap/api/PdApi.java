@@ -2,7 +2,9 @@ package eu.wohlben.qits.cli.bootstrap.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -77,14 +79,20 @@ public class PdApi {
                 : Map.of("Authorization", "Bearer " + token);
     }
     /**
-     * The standing environment, created as THE PLATFORM ENVIRONMENT. That flag is what lets a green
-     * build of a platform service deploy at all: the deployer ships the platform plane only from
-     * the branch this environment listens to, and from no other tier's.
+     * The standing environment, created as THE PLATFORM ENVIRONMENT. That flag is the whole of what
+     * makes it deploy anything: the deployer's entry tier is the one row carrying it, and an
+     * environment created without it is a row nothing is ever deployed into.
+     * <p>
+     * <b>It carries no branch, and one must never be sent again.</b> The column is gone —
+     * {@code pd_environment} lost it, and the create and update requests lost the field with it —
+     * because a deployment is entered by a {@code SoftwareRelease} rather than matched against a
+     * ref. An older sender's {@code branch} is ignored by the deserializer rather than refused,
+     * which is exactly why sending one would be invisible: the boot would look green and the value
+     * would mean nothing.
      */
-    public Http.Response createEnvironment(String name, String branch, String network,
-            String token) {
+    public Http.Response createEnvironment(String name, String network, String token) {
         return http.postJson(base + "/api/environments",
-                Json.object("name", name, "branch", branch, "network", network,
+                Json.object("name", name, "network", network,
                         "platform", Json.verbatim("true")),
                 bearer(token));
     }
@@ -113,20 +121,53 @@ public class PdApi {
     }
 
     /**
-     * Hands the deployer the build-succeeded event a green run should have announced. The intake is
-     * idempotent enough for a replay: a (repo, branch, sha) it already deployed becomes a no-op
-     * cutover to the same image. The branch is an argument, not 'main': the event is matched
-     * against the ref that DEPLOYS the application, and an event naming the other ref matches
-     * nothing.
+     * <b>Hands the deployer the release a green run should have announced.</b>
+     * {@code POST /api/events/software-released} is the manual half of the intake the bus
+     * subscriber serves: the same deployment request, from a caller who knows the version rather
+     * than from a {@code SoftwareRelease} frame. It answers 202 and deploys
+     * {@code qits/<application>:<version>} — so the image has to be published before this is worth
+     * calling, and on this run the release pipeline is what published it.
+     * <p>
+     * <b>{@code /api/events/build-succeeded} is GONE and 404s.</b> It named a {@code (repo, branch,
+     * sha)}, which is three facts this platform no longer deploys by: there is no branch to match,
+     * and the image coordinate is a version. Nothing may reintroduce a sha-addressed intake here.
+     * <p>
+     * <b>The public pair travels when this run holds it.</b> {@code projectId} and {@code repoName}
+     * are both-or-neither — with both, the deployer reads the deployment spec name-addressed at
+     * {@code /git/<projectId>/<repoName>}, and with either missing it falls back to the storage
+     * scheme, which the deployed git host serves to qits-projects' client alone. So an incomplete
+     * pair is worse than none, and this method sends neither unless it has both.
+     * <p>
+     * {@code application} is the deployed identity out of the repository's {@code deployments.yml},
+     * not the repository name: {@code qits-ci} is built from {@code qits-ci-service}, and the image
+     * is {@code qits/qits-ci}.
      */
-    public Http.Response buildSucceeded(String repoId, String branch, String commitSha, String token) {
+    public Http.Response softwareReleased(String repoId, String projectId, String repoName,
+            String application, String version, String token) {
         Map<String, String> headers = new LinkedHashMap<>();
         if (token != null && !token.isBlank()) {
             headers.put("Authorization", "Bearer " + token);
         }
-        return http.postJson(base + "/api/events/build-succeeded",
-                Json.object("runId", "bootstrap", "repoId", repoId, "branch", branch,
-                        "commitSha", commitSha),
-                headers);
+        return http.postJson(base + "/api/events/software-released",
+                softwareReleasedBody(repoId, projectId, repoName, application, version), headers);
+    }
+
+    /**
+     * The body, built where it can be read without a deployer. An OPTIONAL field is left OUT rather
+     * than sent empty: every identifier on that door is pattern-validated, and an empty string is a
+     * 400 where an absent key is the documented "ask somebody".
+     */
+    static String softwareReleasedBody(String repoId, String projectId, String repoName,
+            String application, String version) {
+        List<String> fields = new ArrayList<>(List.of(
+                "runId", "bootstrap", "repoId", repoId, "version", version));
+        if (application != null && !application.isBlank()) {
+            fields.addAll(List.of("application", application));
+        }
+        if (projectId != null && !projectId.isBlank()
+                && repoName != null && !repoName.isBlank()) {
+            fields.addAll(List.of("projectId", projectId, "repoName", repoName));
+        }
+        return Json.object(fields.toArray(new String[0]));
     }
 }

@@ -71,7 +71,7 @@ class EventFeedTest {
     void aBuildIsItsRepositoryWithNoVersionToShow() {
         assertThat(EventFeed.line(event(envelope(
                 "\"name\":\"BuildSuccessful\",\"occurredAt\":\"2026-08-10T14:20:00Z\"",
-                "{\"repoId\":\"qits-stt\",\"branch\":\"environment/prod\"}")), UTC))
+                "{\"repoId\":\"qits-stt\",\"branch\":\"main\"}")), UTC))
                 .isEqualTo("14:20:00 BuildSuccessful qits-stt");
     }
 

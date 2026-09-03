@@ -168,71 +168,28 @@ class PipelinePhasesTest {
         assertThat(PipelinePhases.isRedRunStatus("")).isFalse();
     }
 
-    // --- where the deploy ref points ---------------------------------------------------------------
-
-    private static final String MAIN = "1111111111111111111111111111111111111111";
-    private static final String RELEASE = "2222222222222222222222222222222222222222";
-
-    /** The default: the platform comes back as its last released self. */
-    @Test
-    void aReleaseTagIsWhatTheDeployRefPointsAt() {
-        PipelinePhases.DeployPoint point = PipelinePhases.deployPoint(
-                false, false, "2026.812.101500", RELEASE, RELEASE, MAIN);
-
-        assertThat(point.sha()).isEqualTo(RELEASE);
-        assertThat(point.tag()).isEqualTo("2026.812.101500");
-        assertThat(point.restored()).isTrue();
-        assertThat(point.warn()).isFalse();
-        assertThat(point.why()).isEqualTo("release 2026.812.101500");
-    }
-
-    /** {@code --ship-mains}: the dev loop, and the tag is not even read. */
-    @Test
-    void shipMainsDeploysMainsHead() {
-        PipelinePhases.DeployPoint point =
-                PipelinePhases.deployPoint(true, false, "", "", MAIN, MAIN);
-
-        assertThat(point.sha()).isEqualTo(MAIN);
-        assertThat(point.restored()).isFalse();
-        assertThat(point.warn()).isFalse();
-        assertThat(point.why()).contains("--ship-mains");
-    }
-
-    /** Nothing released: main's head, and the run says it deployed unreleased code. */
-    @Test
-    void noReleaseTagFallsBackToMainsHeadAndWarns() {
-        PipelinePhases.DeployPoint point =
-                PipelinePhases.deployPoint(false, false, "", "", MAIN, MAIN);
-
-        assertThat(point.sha()).isEqualTo(MAIN);
-        assertThat(point.restored()).isFalse();
-        assertThat(point.warn()).isTrue();
-    }
-
-    /** A tag whose commit could not be read is a tag that cannot be deployed. */
-    @Test
-    void aTagWithNoReadableCommitFallsBackTheSameWay() {
-        PipelinePhases.DeployPoint point =
-                PipelinePhases.deployPoint(false, false, "2026.812.101500", "", MAIN, MAIN);
-
-        assertThat(point.sha()).isEqualTo(MAIN);
-        assertThat(point.warn()).isTrue();
-    }
+    // --- the release the bring-up announces ------------------------------------------------------
 
     /**
-     * qits-ci reads the pipeline out of the commit the deploy ref names, so a repository whose
-     * config this run had to write deploys THAT commit — the checkout's own head, which in a
-     * restore is the release plus one bootstrap-authored commit.
+     * <b>Both spellings of the name, and a version.</b> qits-ci resolves a condition on the id path
+     * against the name field whenever the payload has one, and the estate's release recipes select
+     * the NAME — an announcement carrying only {@code repository} evaluated clean against nineteen
+     * repositories and matched none.
      */
     @Test
-    void anOverlaidPipelineConfigDeploysTheCommitItWasWrittenInto() {
-        String overlay = "3333333333333333333333333333333333333333";
-        PipelinePhases.DeployPoint point = PipelinePhases.deployPoint(
-                false, true, "2026.812.101500", RELEASE, overlay, MAIN);
+    void theAnnouncedReleaseNamesTheRepositoryBothWaysAndTheVersion() {
+        assertThat(PipelinePhases.releaseEvent("qits-ci-service", "2026.812.101500"))
+                .isEqualTo("{\"name\":\"SCMRelease\",\"payload\":{"
+                        + "\"repository\":\"qits-ci-service\","
+                        + "\"repositoryName\":\"qits-ci-service\","
+                        + "\"version\":\"2026.812.101500\"}}");
+    }
 
-        assertThat(point.sha()).isEqualTo(overlay);
-        assertThat(point.restored()).isFalse();
-        assertThat(point.warn()).isFalse();
+    /** No branch: a release is a tag, and the request's backing branch is deleted with it. */
+    @Test
+    void theAnnouncedReleaseNamesNoBranch() {
+        assertThat(PipelinePhases.releaseEvent("qits-stt-service", "2026.901.90000"))
+                .doesNotContain("branch");
     }
 
     // --- what a rerun deploys ----------------------------------------------------------------------

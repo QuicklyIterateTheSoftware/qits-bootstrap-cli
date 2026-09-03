@@ -17,8 +17,8 @@ it replaced is in that repository's git history (`git log -- qits-local-up.sh`).
 That changes what care means here:
 
 - **The operational knowledge is in these comments and nowhere else** — ordering constraints, the
-  409/PATCH reconcile, the dual-ref pushes with `-o qits.no-ci`, the one deploy ref both planes
-  share, the wire aliases the seed services are named after, the mirror-prefix rewrite, the
+  409/PATCH reconcile, the quiet pushes with `-o qits.no-ci`, the release each deployable is
+  restored to, the wire aliases the seed services are named after, the mirror-prefix rewrite, the
   release replays, the lost-event self-heal, the machine-token minting. They were ported from the
   script on purpose, and the script is no longer there to check them against. Do not thin them out.
 - **A behaviour change is a change to the only bring-up path there is.** Prove it with a real
@@ -62,14 +62,17 @@ forced. Add to that list rather than deviating quietly.
   each step's output whole and bounded, so the relay subtracts by overlap rather than by length. It
   is a courtesy and never a dependency: reads that stop answering turn it off with one line.
   The deploy half of the same wait talks too: `DeployLogStream` relays the deployer's log lines
-  about the repository being waited for under a `  pd| ` prefix, read from `docker logs
-  --timestamps` because what it wants is the deployer's own account of one repository — a log line,
+  about the application being waited for under a `  pd| ` prefix, read from `docker logs
+  --timestamps` because what it wants is the deployer's own account of one application — a log line,
   not an event — while the docker socket is always there. Same courtesy rule: a read that fails
   relays nothing and fails nothing.
 - **An announcement the platform makes once, this program re-makes once — where one can still be
-  lost.** The run's build-succeeded is fire-and-forget and has been lost for real, so a green run
-  with no deployment row after a minute gets it re-made exactly once inside the wait. One more
-  attempt, never a retry loop.
+  lost.** A green release run announces one `SoftwareRelease` per published artifact, and the
+  deployer is an application THIS BOOT redeploys — a subscriber mid-cutover catches up on its own
+  sweep rather than at once — so a green run with no deployment row after a minute gets the release
+  handed over exactly once inside the wait, through `POST /platform-deployments/api/events/
+  software-released`. One more attempt, never a retry loop. `/events/build-succeeded` is gone from
+  the deployer and 404s; nothing here may go looking for a sha-addressed intake again.
   **The PUSH half of that rule is retired, and its retirement is the byte-plane split's dividend.**
   qits-githost writes `SCMPublishCommit` to the eventstream outbox inside the push's own
   transaction and qits-ci consumes it durably, so a ci that was down, restarting or mid-cutover
@@ -181,6 +184,15 @@ forced. Add to that list rather than deviating quietly.
   The volume itself stays whatever happens: `config.json`, the credential `DOCKER_CONFIG` names, is a
   second file on it with a phase of its own. `demotion-rollout.md` is the hand procedure for a
   platform that is already flipped.
+- **A DEPLOYMENT IS A RELEASE, and there is no ref that deploys.** qits-projects tags a release
+  through qits-githost's primitives and publishes `SCMRelease`; the repository's own
+  `ci-event-release.yml` builds that tag and publishes `qits/<app>:<version>`; qits-ci announces
+  `SoftwareRelease`; qits-deployments enters a deployment request and pulls that image into the one
+  designated platform environment. So this program seeds NO `environment/*` ref, derives none, and
+  spells none in a generated file — the deployer's environments have no branch column to hold one.
+  What a bring-up does instead is restore two SCM facts per deployable (main, and the newest release
+  tag) and then say the one word that starts the release build. `environment-branch-retirement.md`
+  is the hand procedure for a platform that still carries the old refs.
 - **One binary, two halves, ONE configuration contract.** Outside a container the binary launches
   itself inside one; inside it, it runs the phases. The host half reads the same `BootstrapConfig`
   and re-interprets no `QITS_*` value: the container's working directory is the launcher's, so

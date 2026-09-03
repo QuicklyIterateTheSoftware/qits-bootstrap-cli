@@ -161,7 +161,7 @@ the same names `qits-local-up.sh` read:
 | `QITS_DNS_HETZNER_TOKEN` | unset | Hetzner Cloud token used by the edge to create and remove DNS-01 TXT records. Required when a domain uses `staging` or `production`; keep it out of source control. |
 | `QITS_DNS_HETZNER_SECRET` | unset | Name of an existing Swarm secret containing the Hetzner token. Preferred for repeat bootstraps; when set, bootstrap verifies and reuses it instead of requiring the plaintext token. |
 | `QITS_SKIP_BUILD` | `0` | 1 = the seed images and the daemon binary exist; skip to the stack deploy and the pushes |
-| `QITS_SHIP_MAINS` | `0` | 1 = build and deploy the local mains instead of RESTORING each deployable's and publisher's newest release tag. A boot restores by default: the deploy ref is moved to the release commit, so a main that is ahead deploys nothing. This is the dev loop's flag, and it is also why the 2026-08-08 accident cannot repeat — shipping unreleased code takes saying so. `--ship-mains` is the same knob for one run |
+| `QITS_SHIP_MAINS` | `0` | **ignored**, and kept only so an old `.env` does not fail a boot. It built and deployed the local mains instead of RESTORING each deployable's and publisher's newest release tag. A deployment is `qits/<app>:<version>` now and an unreleased main has no version, so there is nothing to point at — and honouring the build half alone would seed from main beside deployments of the last release, which is the Flyway mismatch the restore exists to prevent. A run that sets it is warned in the `sources` phase. Deploying your commit means cutting a release request in qits-projects |
 | `QITS_CI_CONCURRENT_BUILDS` | computed | **how many builds qits-ci runs at once, and it is sized by this host's memory rather than written down**: `max(1, floor((total GiB - 10) / 6))` — 1 on a 16 GB host, 2 from 22 GB, 3 from 28 GB. A step's `docker build` is served by the HOST daemon, so a GraalVM-native build runs OUTSIDE the step container's `QITS_CI_MEMORY_LIMIT=4g` and costs gigabytes of its own; two of them on a 16 GB host with no swap livelocked the machine on 2026-08-22, and the literal `2` this replaces is what wrote an operator's hand-set `1` back over on the next re-bootstrap. Set this to use a number of your own instead |
 | `QITS_MACHINE_AUTH` | `1` | machine-token enforcement for ci, deployments and artifacts |
 | `QITS_PUSH_TOKEN` | `local-dev` | the git host's push token — the documented escape hatch, not a secret |
@@ -169,7 +169,7 @@ the same names `qits-local-up.sh` read:
 | `QITS_RELEASE_TIMEOUT` | `3600` | seconds to wait per replayed release run |
 | `QITS_HEALTH_TIMEOUT` | `120` | seconds to wait per seed service |
 | `QITS_POLL_INTERVAL` | `10` | seconds between polls |
-| `QITS_ENV_NAME` | `prod` | the environment, and the ONE deploy ref is its `environment/<name>`. It is the **platform environment** — the tier whose branch deploys the platform plane — and it is inside every wire alias, every deployed container name and every idp client id. `--platform-env` is the same knob for one run |
+| `QITS_ENV_NAME` | `prod` | the environment. It is the **platform environment** — the one tier every release enters at, and the one the platform plane is deployed into — and it is inside every wire alias, every deployed container name and every idp client id. There is no deploy ref beside it. `--platform-env` is the same knob for one run |
 | `QITS_IDP_CLIENT_<ID>_SECRET` | generated | pin one idp client's secret instead of generating it |
 | `QITS_PG_SUPERUSER_PASSWORD` | generated | pin postgres' superuser password. 16–64 hex, because it is assembled into SQL that cannot be parametrized. It applies at initdb only, so on an existing cluster the value in `.qits-bootstrap.env` is the only way in |
 | `QITS_PG_DEPLOYMENTS_PASSWORD` | generated | the same, for the deployer's own role. This one converges on every rerun |
@@ -527,7 +527,7 @@ for 49. `QITS_DOMAIN` adds two more, marked below.
 
 | | phase |
 | --- | --- |
-| 1–7 | preflight (docker, buildx, the swarm — initialised when the daemon is in none — git, where the wrapper is, and which domain — if any — this platform serves); join `qits-net`, the attachable overlay every address after it needs; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 47 platform repositories **and stand each one at this boot's identity** — its newest release tag in a restore, but only where the output CARRIES a version (a deployable or a release publisher); the step-image sources and the SPA seed sources stay on main, as does everything under `--ship-mains` and anything never released; read `.qits-bootstrap.env` |
+| 1–7 | preflight (docker, buildx, the swarm — initialised when the daemon is in none — git, where the wrapper is, and which domain — if any — this platform serves); join `qits-net`, the attachable overlay every address after it needs; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 47 platform repositories **and stand each one at this boot's identity** — its newest release tag in a restore, but only where the output CARRIES a version (a deployable or a release publisher); the step-image sources and the SPA seed sources stay on main, as does anything never released; a run setting the ignored `--ship-mains` is warned here; read `.qits-bootstrap.env` |
 | 8 | seed the qits libraries the byte plane is built from — `qits-blobstore`, `qits-registries`, `qits-eventstream`, `qits-githost-events` (one module of qits-githost: the vocabulary its consumers need, not its service), `qits-auth-core` — into a temporary file repository served over HTTP, which is what breaks the first-boot cycle: three of the images below are built out of jars only this platform will ever publish. Its maven container, every publish container below and the ci-daemon build share one download cache — the `qits-maven-cache` volume, mounted at `/cache` and named by `-Dmaven.repo.local` — so Maven Central is read once per machine rather than once per phase. Each of those scripts starts by deleting `eu/wohlben/qits` out of it: third-party bytes are immutable at their version and ours are not, because seed builds reuse calvers across runs |
 | 9–14 | seed images `qits/platform-edge`, `qits/platform-mirror`, `qits/artifacts`, `qits/githost`, `qits/oci-postgresql`, `qits/events` — the six that need nothing from a running platform |
 | 15 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC every database the seed stack needs: the deployer's own and its outbox's, qits-ci's own and its outbox's, qits-platform-idp's, qits-events', qits-artifacts', qits-platform-mirror's, qits-githost's own and its outbox's, qits-projects' THREE (its rows, the epics beside them and its outbox), qits-containers' own and its outbox's, and the edge's pair. Five are outboxes because the eventstream library keeps its own Flyway lineage and cannot share a database with its host. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |
@@ -548,22 +548,21 @@ for 49. `QITS_DOMAIN` adds two more, marked below.
 | 45–47 | create the 47 repositories on qits-githost **under a minted UUID** and register each (uuid, name) pair with qits-projects before the next one is touched, recording the pairing in `.qits-bootstrap.env` as it goes; push the seeded repositories to it; pre-seed the seeded histories with `-o qits.no-ci`. The seeded push is here rather than at the end because every deployable's gitlinks have to be advertised before ci clones it. The lifecycle PUT is the only thing this run addresses by id — **every push of the boot is `/git/<projectId>/<repo>`** — see [Two coordinates, one seam](#two-coordinates-one-seam) |
 | 48–54 | replay each publisher the platform pins by **pushing its release tag**, and wait for the run the tag starts. The release recipes select on `SCMPublishTag`, so the push is the whole trigger — nothing is announced by hand, and in particular no `SCMRelease`: that word means "a version is NEW", and saying it here woke the release train against a platform whose qits-workspaces is still fifteen phases away. Four of the seven are the Maven and npm packages the wrapper's builds install; three are docker images — `qits/workspace-base`, then `qits/workspace` and `qits/projects-daemon` + `qits/project-agent`. **The base goes first and that order is load-bearing**: both daemon builds pull it at a pinned version, and the base's own replay is what puts it in the registry. A publisher with no release tag reachable from main STOPS the boot, which is right: a pin nobody has minted has nothing to dangle. A tag the git host already has moves no ref, so it announces nothing and the phase is SKIPPED — the registry holds that version from the boot that first pushed it |
 | 55 | reconcile the `prod` environment in qits-deployments by PATCH — never delete, which would tear down the platform |
-| 56–74 | one phase per deployable: push `main` quietly, push the newest release tag, and move `environment/<name>` **to that tag's commit** — the boot RESTORES, so a main that is ahead of the release deploys nothing. `--ship-mains` points the deploy ref at main's head instead, which is what the boot always did and what shipped an unreleased stack by accident on 2026-08-08. A deployable with no release tag falls back to main's head and warns. Then wait for the CI run and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-containers is immediately before qits-ci, because ci runs every pipeline step as a container it asks that service for. qits-platform-edge is second to last: it is the host's one door, and every other service is behind it — its publish is `mode: ingress`, so the swarm holds the port and the successor pulls its own image through the predecessor rather than needing the door it is replacing. qits-configuration is FOURTH, after postgres and the idp, because the two phases below are what the rest of the train deploys through. qits-platform-orchestrator is LATE, after every peer its technical processes call — the store, the container orchestrator, ci and the deployer — because it holds a scheduler and a run that starts inside a peer's cutover fails against a service being replaced. qits-platform-maintenance follows it for the same reason: it reads qits-projects, qits-githost, qits-artifacts and the mirror and asks ci for a bump, so every peer it reads is above it, and it holds a scheduler of its own |
+| 56–74 | one phase per deployable: push `main` quietly, push the newest release tag, then announce that release to qits-ci — the boot RESTORES, and what it restores is a VERSION. The announcement is what runs the repository's release recipe, which builds the tag and publishes `qits/<app>:<version>`; a green run announces the `SoftwareRelease` the deployer enters a deployment request from. A release that already ran green is not built again — the deployer is asked for that version directly — and a deployable with no release tag reachable from main is WARNED and skipped, because there is no version to deploy. Then wait for the release build and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-containers is immediately before qits-ci, because ci runs every pipeline step as a container it asks that service for. qits-platform-edge is second to last: it is the host's one door, and every other service is behind it — its publish is `mode: ingress`, so the swarm holds the port and the successor pulls its own image through the predecessor rather than needing the door it is replacing. qits-configuration is FOURTH, after postgres and the idp, because the two phases below are what the rest of the train deploys through. qits-platform-orchestrator is LATE, after every peer its technical processes call — the store, the container orchestrator, ci and the deployer — because it holds a scheduler and a run that starts inside a peer's cutover fails against a service being replaced. qits-platform-maintenance follows it for the same reason: it reads qits-projects, qits-githost, qits-artifacts and the mirror and asks ci for a bump, so every peer it reads is above it, and it holds a scheduler of its own |
 | 60–61 | **deployment configuration becomes platform state.** Import the extras this boot rendered into qits-configuration — the whole properties file, unchanged, idempotent — then point the RUNNING deployer at it with `QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL` and the `configuration` oidc client. From here the deployer reads each application's configuration from the service and REFUSES a deployment it cannot read, so both sides of the order are load-bearing: flipped before the import, it would refuse every deployment left in the train; not flipped before qits-deployments deploys itself, the successor would come up holding the url over a service nobody filled. The file on the config volume is untouched, and from the flip on it is UNREAD: the service is the sole source, or a key deleted from the store would come back out of a file nobody emptied. It stays what the cold boot deploys from and what the import is rendered from; unsetting the url is the rollback, and by then the file may be stale |
 | 75 | the closing report |
 | 76 | **reclaim the builder.** `docker buildx rm qits-bootstrap-builder-v4` — the container and its state volume, 13.7 GB measured on wohlben.eu — then `qits-maven-seed` and the `qits-maven-cache` download cache when nothing holds them. The builder is BOOTSTRAP-TIME ONLY: every build after this run goes through qits-containers to the host's default builder, and the next bootstrap creates a new one. Last because nothing above it may build after it, and because the phase above only BUILDS the closing account — it is printed once every phase has run. `QITS_KEEP_BUILDER=1` skips it: a re-bootstrap without the warm cache rebuilds the seed images cold and re-fetches Maven Central, ten to twenty minutes more, which is the dev loop's price and not a server's. It removes no IMAGES — a dangling image carries no record of the tag it held, so nothing here can tell one of ours from one of somebody else's; attributed image deletion is qits-containers' gc endpoint, driven by qits-platform-orchestrator with the pin set in hand |
 
-Five things every deploy phase does that are easy to miss: it pushes `main` quietly
-(`-o qits.no-ci`) so a second cold native build is not queued for the same sha; it pushes the
-release tag quietly too, which starts nothing — a deployable's release recipe fires on `SCMRelease`,
-not on a tag — and stamps the commit the deploy ref is about to name; it FORCES the deploy-ref push
-when restoring, because a machine whose last boot shipped mains carries that ref ahead of the
-release and a rewind is a non-fast-forward (`--ship-mains` keeps the plain push, so the dev loop
-cannot rewind anything); it replays the `build-succeeded` event once when a run is green but no
-deployment row appeared after a minute — the announcement is fire-and-forget and has been lost for
-real; and when the push is up to date and the only run at that sha is RED, it says so and waits,
-because a red run means there is no image and replaying the build event would only buy an
-`IMAGE_MISSING` row.
+Four things every deploy phase does that are easy to miss: it pushes `main` quietly
+(`-o qits.no-ci`), because the option is a fact on the push event and without it every boot would
+queue a build of a commit nothing deploys; it pushes the newest release tag quietly too, which
+starts nothing by itself — a deployable's release recipe selects `SCMRelease`, not `SCMPublishTag`;
+it then announces that `SCMRelease` through qits-ci's manual door, which is what runs the release
+recipe, publishes `qits/<app>:<version>` and — on a green run — announces the `SoftwareRelease` the
+deployer enters a deployment request from; and it hands the deployer that release by hand when
+nothing ran (an earlier boot already published this version) or when a green run's announcement
+never produced a row after a minute. That hand-over is `POST /platform-deployments/api/events/
+software-released`; `/events/build-succeeded` is gone from the deployer and 404s.
 
 While a deploy phase waits it also talks: the CI run's own output is relayed under `ci|` (a poll of
 the run, not a feed — qits-ci serves none), and the deployer's account of this repository —
@@ -663,16 +662,20 @@ without it.**
 thing WP-L could not arrange from this side: without it honoured there, a seed boot mirrors the
 estate in from GitHub before the bootstrap has created anything.
 
-## Two planes, one branch
+## Two planes, no branch
 
-`main` is the integration trunk of every repository and deploys nothing. What deploys is
-`environment/<name>` — for BOTH planes, because both ask a green build the same question: does an
-environment listen to this ref. `platform/main` is retired.
+`main` is the integration trunk of every repository and deploys nothing. **Nothing that is pushed
+deploys.** What deploys is a RELEASE: qits-projects tags it, the repository's own release recipe
+builds that tag and publishes `qits/<app>:<version>`, qits-ci announces one `SoftwareRelease` per
+published artifact, and qits-deployments turns the docker one into a deployment request and pulls
+that image. `environment/<name>` and `platform/main` are both retired, and the deployer's
+environments have no branch column to hold either.
 
-A bootstrap points that ref at the commit of each deployable's **newest release tag**, so a boot is
-a RESTORE of the last released platform rather than a shipment of whatever your checkouts hold.
-`--ship-mains` points it at main's head instead; that is the dev loop, and it now has to be asked
-for.
+A bootstrap therefore restores a VERSION rather than a ref: per deployable it re-establishes main
+and the **newest release tag**, and asks qits-ci for that release's build. So a boot is a RESTORE of
+the last released platform rather than a shipment of whatever your checkouts hold — always, now:
+`--ship-mains` is ignored, because an unreleased main has no version and a version is the only
+coordinate the deployer takes.
 
 **The seed is built from that same commit**, and it has to be. A seed container is scaffolding, but
 it is scaffolding that touches the platform's data: a seed qits-ci built from main applies main's
@@ -823,7 +826,7 @@ already had. All four are fixed above and `./mvnw clean verify` is green; the ga
 rerun.
 
 **The 2026-08-08 platform re-model reached a real platform** — one environment named `prod`, one
-deploy ref, six renamed repositories, a platform plane of four, and qits-platform-edge in front of
+deploy ref (retired since), six renamed repositories, a platform plane of four, and qits-platform-edge in front of
 the gateway. It got there with the three hand-recoveries above, so the re-model's own proof is the
 same rerun the fixes are waiting on. The runs below are the pre-re-model ones.
 

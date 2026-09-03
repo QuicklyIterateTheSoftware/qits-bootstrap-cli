@@ -67,8 +67,8 @@ public class BootstrapCommand implements Callable<Integer> {
      * accident at the root: an unreleased local main cannot deploy by not being noticed.
      */
     @CommandLine.Option(names = "--ship-mains",
-            description = "Deploy the local mains instead of restoring each deployable's newest "
-                    + "release tag. The dev loop (QITS_SHIP_MAINS).")
+            description = "IGNORED. A deployment is qits/<app>:<version> and an unreleased main "
+                    + "has none; every checkout is stood at its release (QITS_SHIP_MAINS).")
     Boolean shipMains;
 
     @CommandLine.Option(names = "--no-tui",
@@ -76,19 +76,20 @@ public class BootstrapCommand implements Callable<Integer> {
     boolean noTui;
 
     /**
-     * The standing environment's name, and with it every derived name: the deploy ref
-     * {@code environment/<name>}, the wire alias {@code <name>-qits-<app>} inside every generated
-     * address, the deployed container names, and the idp client ids.
+     * The standing environment's name, and with it every derived name: the wire alias
+     * {@code <name>-qits-<app>} inside every generated address, the deployed container names, and
+     * the idp client ids. There is no deploy ref among them any more — a release deploys, and it
+     * enters at this environment because it is the designated one.
      * <p>
-     * It is also the PLATFORM environment — the one whose branch deploys the platform plane — which
-     * is why the option says so rather than being called {@code --env-name}. Making a different
+     * It is also the PLATFORM environment — the one the platform plane is deployed into — which is
+     * why the option says so rather than being called {@code --env-name}. Making a different
      * environment the platform one later is a PATCH on the deployer, and is not this.
      * <p>
      * This is a knob for a FIRST boot. Re-bootstrapping with a different name is refused, not
      * honoured as a rename — see the {@code environment} phase.
      */
     @CommandLine.Option(names = "--platform-env", paramLabel = "<name>",
-            description = "The standing environment to build the platform in. It deploys the "
+            description = "The standing environment to build the platform in. It holds the "
                     + "platform plane and names every wire alias. Default: prod (QITS_ENV_NAME).")
     String platformEnv;
 

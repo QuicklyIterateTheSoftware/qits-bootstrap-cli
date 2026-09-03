@@ -2119,6 +2119,36 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_GITHOST_CLIENT_ID=${ENV_NAME}-qits-projects
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_GITHOST_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-githost
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_GITHOST_CREDENTIALS_SECRET=${IDP_SECRET_PROJECTS}
+            # THE RELEASE EXECUTOR'S OWN CLIENT, audience qits-ci. A release request asks ci what is
+            # still running against the merged sha and withdraws the runs it supersedes, and both
+            # routes are behind ci's machine gate — so the executor needs a token for THAT audience,
+            # which the githost client above cannot mint. Same service identity, third named client;
+            # the default (unnamed) one is qits-containers' and must not be borrowed for either.
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_CI_CLIENT_ENABLED=${MACHINE_CLIENT}
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_CI_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_CI_CLIENT_ID=${ENV_NAME}-qits-projects
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_CI_GRANT_OPTIONS_CLIENT_AUDIENCE=${ALIAS_CI}
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_CI_CREDENTIALS_SECRET=${IDP_SECRET_PROJECTS}
+            # THE TWO ADDRESSES THE RELEASE FLOW IS SWITCHED ON BY, and they ship UNSET on purpose:
+            # qits-projects refuses to release at all while it cannot name a git host, and a tier
+            # that is not meant to release simply never learns one. This platform releases, so both
+            # are spelled — the tier's own peers, dialled on qits-net.
+            #
+            # The FIRST is not a second spelling of QITS_GITHOST_URL below. That one is where the
+            # mirrors clone from; this one is the base of the git PRIMITIVES the executor drives —
+            # the octopus merge onto release/<id>, the manifest commit, the tag, the branch delete.
+            # The SECOND is qits-ci's, for the active-run listing the release gate settles against
+            # and the cancellations it makes.
+            #
+            # qits.projects.release-requests.workspaces-url is NOT here and must not come back: it
+            # addressed qits-workspaces' release door, and that door is gone with the entry branch.
+            #
+            # THE SEED BLOCK SPELLS NEITHER, deliberately. Nothing releases during the seed window —
+            # a bootstrap restores tags, it cuts no release — and the seed qits-projects is replaced
+            # by its own deployment before any person could ask for one. What the seed needs is the
+            # githost client, which it has, because it creates bares.
+            qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RELEASE_REQUESTS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080
+            qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RELEASE_REQUESTS_CI_URL=http://${ALIAS_CI}:8080
             # THE SLUGS NO PROJECT MAY TAKE: this platform's environment names, because a project
             # slug sits at the label the edge reads a tier at — editor.<project>.<domain>. Spelled
             # here as well as on the seed, or the first self-deploy drops it: the update argv
@@ -2190,7 +2220,12 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_NPM_PROXY_URL=http://qits-platform-mirror:8080/artifacts/npm/npmjs/
             qits.platform.deployments.extras.qits-workspaces.env.QITS_EVENTS_URL=http://${ALIAS_EVENTS}:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_GIT_HOST=${ENV_NAME}-qits-workspaces
-            qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/${ENV_NAME}
+            # NO RELEASE ENTRY BRANCH. QITS_WORKSPACES_RELEASE_ENTRY_BRANCH named the
+            # environment/<name> ref this service fast-forwarded after writing a release commit, and
+            # both halves are gone: the release door left qits-workspaces for qits-projects, and
+            # there is no deploy ref to promote onto. The key is unread by the image, so spelling it
+            # would configure nothing — and an extras block is exactly where a dead key survives
+            # longest, because every self-deploy writes it back onto the service.
             qits.platform.deployments.extras.qits-workspaces.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The reading surface over qits-artifacts' docs repository. Two variables and no volume, because
             # this service stores nothing — `latest` is a query over the store's rows rather than a

@@ -156,8 +156,6 @@ class BootstrapConfigTest {
         assertThat(config.platformDeploymentsUrl())
                 .isEqualTo("http://qits-deployments:8080/platform-deployments");
         assertThat(config.eventsUrl()).isEqualTo("http://qits-events:8080/events");
-        // The ONE deploy ref, on both planes: platform/main is retired.
-        assertThat(config.envBranch()).isEqualTo("environment/preprod");
         // The issuer is a value consumers validate as well as an address this program dials.
         assertThat(config.idpIssuer()).isEqualTo("http://qits-platform-idp:8080/idp");
     }
@@ -288,19 +286,20 @@ class BootstrapConfigTest {
     }
 
     /**
-     * {@code --platform-env} names the standing environment, and with it the deploy ref every
-     * push in the boot goes to. The two move together by construction — {@code envBranch()} is
-     * derived rather than configured — and this is what pins that they still do through an
-     * override.
+     * {@code --platform-env} names the standing environment, and with it every address the run
+     * dials. There is no deploy ref beside it any more — {@code envBranch()} is gone with the
+     * branch nothing listens to — so what an override has to move is the wire aliases.
      */
     @Test
-    void platformEnvNamesTheEnvironmentAndItsDeployRef() {
+    void platformEnvNamesTheEnvironmentAndEveryAddressDerivedFromIt() {
         BootstrapConfig base = from(Map.of());
 
         BootstrapConfig effective = new OverridableConfig(base).platformEnv("staging");
 
         assertThat(effective.envName()).isEqualTo("staging");
-        assertThat(effective.envBranch()).isEqualTo("environment/staging");
+        assertThat(effective.ciUrl()).isEqualTo("http://staging-qits-ci:8080/ci");
+        assertThat(effective.artifactsUrl())
+                .isEqualTo("http://staging-qits-artifacts:8080/artifacts");
     }
 
     @Test

@@ -12,8 +12,8 @@ class JsonTest {
 
     @Test
     void everyOrdinaryValueIsQuoted() {
-        assertThat(Json.object("name", "prod", "branch", "environment/prod"))
-                .isEqualTo("{\"name\":\"prod\",\"branch\":\"environment/prod\"}");
+        assertThat(Json.object("name", "prod", "network", "qits-net"))
+                .isEqualTo("{\"name\":\"prod\",\"network\":\"qits-net\"}");
     }
 
     /**

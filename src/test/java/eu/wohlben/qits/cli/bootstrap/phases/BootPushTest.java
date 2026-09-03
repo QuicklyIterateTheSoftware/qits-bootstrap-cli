@@ -58,7 +58,7 @@ class BootPushTest {
         AtomicLong clock = new AtomicLong();
         AtomicInteger tries = new AtomicInteger();
 
-        ProcessResult result = Boot.pushRetrying(ctx, "qits-platform-idp to environment/dev",
+        ProcessResult result = Boot.pushRetrying(ctx, "qits-platform-idp to main",
                 Duration.ofSeconds(90), Duration.ofSeconds(5),
                 () -> {
                     tries.incrementAndGet();
@@ -79,7 +79,7 @@ class BootPushTest {
         AtomicLong clock = new AtomicLong();
         AtomicInteger tries = new AtomicInteger();
 
-        ProcessResult result = Boot.pushRetrying(ctx, "qits-platform-idp to environment/dev",
+        ProcessResult result = Boot.pushRetrying(ctx, "qits-platform-idp to main",
                 Duration.ofSeconds(90), Duration.ofSeconds(5),
                 () -> tries.incrementAndGet() < 4
                         ? failed("remote: 500 Internal Server Error", "fatal: unable to access")
@@ -92,10 +92,10 @@ class BootPushTest {
         // Every failure is a line of its own, so a stalled push does not look like a slow one.
         assertThat(ctx.logs).hasSize(3);
         assertThat(ctx.logs.getFirst())
-                .contains("push of qits-platform-idp to environment/dev failed (exit 128)")
+                .contains("push of qits-platform-idp to main failed (exit 128)")
                 .contains("fatal: unable to access");
         assertThat(ctx.statuses.getFirst())
-                .contains("waiting for the push of qits-platform-idp to environment/dev")
+                .contains("waiting for the push of qits-platform-idp to main")
                 .contains("attempt 1 failed")
                 .contains("gives up after 1m30s");
     }
@@ -106,7 +106,7 @@ class BootPushTest {
         AtomicLong clock = new AtomicLong();
         AtomicInteger tries = new AtomicInteger();
 
-        assertThatThrownBy(() -> Boot.pushRetrying(ctx, "qits-platform-idp to environment/dev",
+        assertThatThrownBy(() -> Boot.pushRetrying(ctx, "qits-platform-idp to main",
                 Duration.ofSeconds(90), Duration.ofSeconds(5),
                 () -> {
                     tries.incrementAndGet();
@@ -114,7 +114,7 @@ class BootPushTest {
                 },
                 clock::get, clock::addAndGet))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("push of qits-platform-idp to environment/dev failed 19 times")
+                .hasMessageContaining("push of qits-platform-idp to main failed 19 times")
                 .hasMessageContaining("over 1m30s")
                 .hasMessageContaining("exit 128")
                 .hasMessageContaining("error: failed to push some refs");

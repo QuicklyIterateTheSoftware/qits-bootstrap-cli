@@ -8,7 +8,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/** qits-ci: the run listings the waits poll. Nothing here writes — this client only reads. */
+/** qits-ci: the manual event door the bring-up starts release builds with, and the run listings the
+ * waits poll. */
 public class CiApi {
 
     /** The one file whose run IS a repository's release — the identity no other run fact gives. */
@@ -35,14 +36,46 @@ public class CiApi {
         return health().ok();
     }
 
-    // THERE IS NO TRIGGER CALL ANY MORE, and the door it used is still there for a person.
-    // POST /ci/api/events/trigger took a hand-built SCMRelease, and the release replays presented
-    // one per publisher — an announcement of NOVELTY made by a restore, which woke the release
-    // train against a platform that was half deployed: every consumer's bump run ended in a
-    // release call to qits-workspaces, which the boot deploys minutes later. The replays push the
-    // release tag and nothing else now; the recipes select on SCMPublishTag, so the push IS the
-    // trigger. The endpoint, and the one project=* client that opens it, are kept for a person
-    // asking qits-ci for a run by hand.
+    /**
+     * <b>The manual door: {@code POST /ci/api/events/trigger}, a domain event handed to ci by
+     * hand.</b> It evaluates on the request thread — 200 means the run rows exist as the call
+     * returns and names them, and 503 means NOTHING was accepted, so a retry loses nothing. The
+     * door demands the one project=* client, the same identity the git host announces pushes with.
+     * <p>
+     * <b>It is back, and what it is used for is the opposite of what it was used for.</b> The
+     * release REPLAYS used to present a hand-built {@code SCMRelease} per publisher — novelty
+     * announced by a restore, which woke a release train against a half-deployed platform — and
+     * they push the release tag and nothing else since. A DEPLOYABLE is the other case: its release
+     * recipe selects {@code SCMRelease} rather than {@code SCMPublishTag}, so a tag alone starts
+     * nothing, and there is no other pipeline left that publishes {@code qits/<app>:<version>} —
+     * which is the only coordinate qits-deployments deploys. The bring-up therefore says the one
+     * word that starts a release build, and says it only for the version the checkout is already
+     * standing at.
+     * <p>
+     * <b>A hand-supplied SCMRelease closes qits-ci's release join by construction</b> — the event
+     * that caused the run IS the release announcement, so the green run announces its {@code
+     * SoftwareRelease} per declared artifact and the deployer's own subscriber does the rest. That
+     * is the ordinary path, and {@link PdApi#softwareReleased} is what stands in when it is not
+     * taken: a rerun whose run is long green announces nothing, because nothing ran.
+     */
+    public Http.Response trigger(String eventJson, String token) {
+        return http.postJson(base + "/api/events/trigger", eventJson, bearer(token));
+    }
+
+    /** The runs a trigger answered with, so a caller can say whether any recipe selected it. */
+    public static List<String> triggeredRunIds(Http.Response answer) {
+        List<String> runs = new ArrayList<>();
+        if (!answer.ok()) {
+            return runs;
+        }
+        Json.parse(answer.body()).path("runIds").forEach(id -> runs.add(id.asText()));
+        return runs;
+    }
+
+    private static Map<String, String> bearer(String token) {
+        return token == null || token.isBlank() ? Map.of()
+                : Map.of("Authorization", "Bearer " + token);
+    }
 
     // THERE IS NO postReceive REPLAY EITHER, and its absence is the byte-plane split's dividend.
     // POST /ci/api/events/post-receive was the git host's fire-and-forget announcement, and this

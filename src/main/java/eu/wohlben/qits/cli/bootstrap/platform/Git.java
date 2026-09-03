@@ -144,16 +144,13 @@ public class Git {
         return runner.run(Cmd.of(command).timeout(Duration.ofMinutes(60)).mask(pushToken).mask(bearer), out);
     }
 
-    public ProcessResult add(Path repo, String path, Consumer<String> out) {
-        return in(repo, out, "add", path);
-    }
-
-    /** A commit made by the bootstrap itself, identified as such. */
-    public ProcessResult commitAsBootstrap(Path repo, String message, Consumer<String> out) {
-        return runner.run(Cmd.of(List.of("git", "-C", repo.toString(),
-                "-c", "user.name=qits-bootstrap", "-c", "user.email=bootstrap@qits.invalid",
-                "commit", "-q", "-m", message)), out);
-    }
+    // THIS PROGRAM WRITES NO COMMITS ANY MORE, and `add` plus `commitAsBootstrap` went with the one
+    // that did. The deploy phase used to overlay a ci-post-receive.yml into a repository that
+    // carried no pipeline config and commit it, so that the ref it was about to push would build
+    // something. Nothing is deployed by a push now — a release is, and its recipe is the
+    // repository's own — so an overlaid pipeline would build a commit nobody deploys, in a commit
+    // this program invented on somebody's checkout. A deployable with no release recipe is a fact
+    // the deploy phase reports; it is not one to paper over from here.
 
     public boolean available() {
         return runner.run(Cmd.of("git", "--version"), null).ok();

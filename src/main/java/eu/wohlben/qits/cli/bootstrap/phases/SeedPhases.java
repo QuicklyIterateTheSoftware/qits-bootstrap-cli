@@ -478,6 +478,16 @@ public class SeedPhases {
     public Phase sources() {
         return new Phase("sources", "clone or refresh the platform's sources", ctx -> {
             int restored = 0;
+            if (boot.config.shipMains()) {
+                // Said once, here, because this is the phase the flag used to change. A boot that
+                // honoured it would build seeds from main and deploy the last release beside them,
+                // which is the Flyway mismatch the restore exists to prevent.
+                ctx.warn("--ship-mains (QITS_SHIP_MAINS) changes nothing on this platform and is "
+                        + "ignored: a deployment is qits/<app>:<version> and an unreleased main "
+                        + "has no version. Every checkout is stood at its newest release, seed "
+                        + "images included. Cut a release request in qits-projects to deploy your "
+                        + "commit");
+            }
             // Asked once: a wrapper whose submodules are all uninitialised is the cold start, and
             // every repository of it legitimately comes from the org.
             boolean initialised = boot.state.wrapperInitialised(boot.git::isCheckout);
@@ -518,8 +528,7 @@ public class SeedPhases {
                     ctx.status("cloning " + repo + " from " + from);
                     Boot.must(boot.git.clone(from, target, ctx::log), "clone of " + repo + " failed");
                 }
-                String identity = bootIdentity(boot.config.shipMains(), name,
-                        boot.git.tagsNewestFirst(target, "main"));
+                String identity = bootIdentity(name, boot.git.tagsNewestFirst(target, "main"));
                 if (!identity.isEmpty()) {
                     ctx.status("standing " + repo + " at " + identity);
                     Boot.must(boot.git.checkoutDetached(target, identity, ctx::log),
@@ -585,11 +594,20 @@ public class SeedPhases {
      * THE BOOT'S IDENTITY for one checkout: the release tag it stands at, or empty for "stay on
      * main".
      * <p>
-     * The same answer the deploy phase's {@code deployPoint} builds on — {@link
-     * PlatformModel#newestRelease} is the one place that decides which tag is a release — so the
-     * seed image and the successor that replaces it are the same code. Empty means main, and three
-     * different things answer empty: {@code --ship-mains}, a repository that has never been
-     * released, and a repository whose output carries no version identity at all.
+     * The same answer the deploy phase asks for — {@link PlatformModel#newestRelease} over the
+     * version-sorted merged tags is the one place that decides which tag is a release — so the seed
+     * image and the successor that replaces it are the same code. Empty means main, and two
+     * different things answer empty: a repository that has never been released, and a repository
+     * whose output carries no version identity at all.
+     * <p>
+     * <b>{@code --ship-mains} is not one of them any more, and it must never be again.</b> The flag
+     * used to answer empty here AND point the deploy ref at main, so seed and successor still
+     * agreed. There is no deploy ref: a deployment is {@code qits/<app>:<version>} and an
+     * unreleased main has no version, so the successor is the last release whatever this answers.
+     * A seed built from main beside it is the exact failure the restore was introduced to end — the
+     * seed applies main's Flyway migrations and the released successor refuses to start against a
+     * schema ahead of it. So the flag no longer reaches this function, and the {@code sources}
+     * phase says so out loud when a run sets it.
      * <p>
      * <b>That last one is the scope, and it was learned the hard way.</b> Only a deployable or a
      * release publisher has a "last release" the platform can state — see
@@ -598,10 +616,10 @@ public class SeedPhases {
      * construction: qits-oci's newest tag predated the {@code build} user its step images grew, and
      * a maven-base built from it could not launch a step that declares {@code user: build}.
      */
-    static String bootIdentity(boolean shipMains, String name, List<String> tagsNewestFirst) {
-        return shipMains || !PlatformModel.carriesVersionIdentity(name)
-                ? ""
-                : PlatformModel.newestRelease(tagsNewestFirst);
+    static String bootIdentity(String name, List<String> tagsNewestFirst) {
+        return PlatformModel.carriesVersionIdentity(name)
+                ? PlatformModel.newestRelease(tagsNewestFirst)
+                : "";
     }
 
     /**

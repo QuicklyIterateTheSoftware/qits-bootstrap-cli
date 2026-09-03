@@ -348,10 +348,10 @@ class PlatformModelTest {
     }
 
     @Test
-    void everyDeployableIsUnderTheOneDeployRefAndNoneUnderMain() {
-        // There is no deployRef any more, and that is the assertion: both planes ask a green build
-        // the same question, so environment/<name> is the whole set. Nothing may reintroduce a
-        // second ref without this file saying so.
+    void noPlaneCarriesADeployRefOfItsOwn() {
+        // There is no deploy ref at all any more, and that is the assertion: a release deploys and
+        // both planes enter at the one designated environment. Nothing may reintroduce a per-plane
+        // ref without this file saying so.
         assertThat(PlatformModel.platformRepos()).doesNotContain("platform-branch");
         assertThat(PlatformModel.PLATFORM_SERVICES)
                 .allSatisfy(name -> assertThat(PlatformModel.isPlatformService(name)).isTrue());

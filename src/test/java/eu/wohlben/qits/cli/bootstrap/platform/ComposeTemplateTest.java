@@ -1658,23 +1658,43 @@ class ComposeTemplateTest {
     }
 
     /**
-     * qits-workspaces is told where a release lands, and it is this environment's deploy ref.
-     * <p>
-     * It ships a default of {@code environment/prod}, so a platform bootstrapped under any other
-     * name would silently promote every release onto a branch no environment listens to — the
-     * release lands, CI never fires, nothing deploys, and no component reports an error. The
-     * generated key is what stops that, and it is why it belongs beside the env name rather than in
-     * the image.
+     * <b>Nothing is told where a release lands any more, because a release lands on no branch.</b>
+     * qits-workspaces used to be handed {@code QITS_WORKSPACES_RELEASE_ENTRY_BRANCH} so its release
+     * door could fast-forward this environment's deploy ref after writing the release commit. The
+     * door left that service, the ref is retired, and the key is unread by the image — so spelling
+     * it would configure nothing while surviving every self-deploy, which is exactly how a dead
+     * key outlives the thing it configured.
      */
     @Test
-    void workspacesIsToldWhereAReleaseLands() {
-        assertThat(extras("qits-workspaces"))
-                .contains("env.QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/prod");
+    void noApplicationIsToldAnEntryBranch() {
+        // The KEYS, not the file: the comment above them says what left and why, and it names the
+        // retired ref to do it.
+        assertThat(String.join("\n", extrasKeys()))
+                .doesNotContain("QITS_WORKSPACES_RELEASE_ENTRY_BRANCH")
+                .doesNotContain("environment/");
+        assertThat(ComposeTemplate.compose(tokens()).lines()
+                .filter(line -> !line.strip().startsWith("#")).toList())
+                .noneMatch(line -> line.contains("environment/"));
+    }
 
-        Map<String, String> staging = tokens();
-        staging.put("ENV_NAME", "staging");
-        assertThat(ComposeTemplate.extras(staging))
-                .contains("env.QITS_WORKSPACES_RELEASE_ENTRY_BRANCH=environment/staging");
+    /**
+     * <b>The release executor's two addresses and its third client.</b> qits-projects refuses to
+     * release at all while it cannot name a git host, and both keys ship unset — a tier that does
+     * not release never learns one. This platform releases, so both are spelled, and the ci client
+     * is what lets the release gate read qits-ci's active runs and cancel what it supersedes.
+     */
+    @Test
+    void projectsIsToldWhereToDriveAReleaseAndWithWhichCredential() {
+        String projects = extras("qits-projects");
+
+        assertThat(projects)
+                .contains("env.QITS_PROJECTS_RELEASE_REQUESTS_GITHOST_URL=http://prod-qits-githost:8080")
+                .contains("env.QITS_PROJECTS_RELEASE_REQUESTS_CI_URL=http://prod-qits-ci:8080")
+                .contains("env.QUARKUS_OIDC_CLIENT_CI_CLIENT_ID=prod-qits-projects")
+                .contains("env.QUARKUS_OIDC_CLIENT_CI_GRANT_OPTIONS_CLIENT_AUDIENCE=prod-qits-ci")
+                .contains("env.QUARKUS_OIDC_CLIENT_CI_CREDENTIALS_SECRET=");
+        // The retired address: it named qits-workspaces' release door, which is gone.
+        assertThat(projects).doesNotContain("RELEASE_REQUESTS_WORKSPACES_URL");
     }
 
     @Test
