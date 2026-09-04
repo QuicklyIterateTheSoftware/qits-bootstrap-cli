@@ -161,9 +161,10 @@ What must **NOT** be deleted:
 
 ## Step 5 — release and deploy the two repositories, deployer last
 
-qits-deployments-platform-service and qits-bootstrap-cli both changed. Cut releases through the
-release door (a direct main push deploys code with a stale version identity), then deploy in this
-order:
+qits-deployments-platform-service and qits-bootstrap-cli both changed. Cut releases through a
+**release request** on each repository (`POST /projects/api/repositories/<repoId>/release-requests`,
+or the Release Requests view) — a direct main push releases nothing at all and deploys nothing — then
+deploy in this order:
 
 1. **qits-deployments-platform-service** — the demotion is in the deployer itself. Its self-deploy
    is the first deployment that runs the new update argv, so step 1's comparison has to be done
