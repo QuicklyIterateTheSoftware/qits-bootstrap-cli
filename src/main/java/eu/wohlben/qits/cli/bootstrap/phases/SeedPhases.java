@@ -62,6 +62,15 @@ public class SeedPhases {
     static final String AUTH_SEED_HTTP = "qits-maven-seed-http";
 
     /**
+     * <b>The temporary file registry's volume, and what the whole run resolves through.</b> The
+     * nginx above serves it at {@code /artifacts/maven/maven}, and the bootstrap ingress's maven
+     * route proxies there for the WHOLE run — it is never repointed at the store. So a jar that is
+     * only in the store is a 404 to anything reaching the platform through that door, which is
+     * every seed image build and every {@code ADD} of a seed Dockerfile.
+     */
+    static final String SEED_REPO_VOLUME = "qits-maven-seed";
+
+    /**
      * The temporary registry as THIS CLI reaches it. The mount puts the repository under
      * {@code /artifacts/maven/maven}, so it answers the same paths the real store does — which is
      * what lets the seed builds resolve against either one without knowing which is up.
@@ -743,7 +752,7 @@ public class SeedPhases {
                     // shutdown hook removes the nginx proxy, so treating either an existing volume
                     // or the in-network store as a reason to skip leaves localhost unserved on the
                     // very next retry.
-                    boot.docker.ensureVolume("qits-maven-seed", ctx::log);
+                    boot.docker.ensureVolume(SEED_REPO_VOLUME, ctx::log);
                     boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
                     // THE PINS, READ BEFORE THE FIRST TREE IS COPIED. What the estate still asks
                     // for decides how many trees this container holds, so the closure is the
@@ -755,7 +764,7 @@ public class SeedPhases {
                     }
                     String cid = create(ctx, List.of(
                             "docker", "create", "--user", "root", "--entrypoint", "sh",
-                            "-v", "qits-maven-seed:/repo", "-v", MAVEN_CACHE_MOUNT,
+                            "-v", SEED_REPO_VOLUME + ":/repo", "-v", MAVEN_CACHE_MOUNT,
                             "maven:3.9-eclipse-temurin-25",
                             "-c", seedScript(extra)));
                     for (String library : SEED_LIBRARIES) {
@@ -794,7 +803,7 @@ public class SeedPhases {
                     // build resolves nothing.
                     Boot.must(boot.docker.exec(ctx::log, "run", "-d", "--name", container,
                                     "--network", Boot.NETWORK,
-                                    "-v", "qits-maven-seed:/usr/share/nginx/html/artifacts/maven/maven:ro",
+                                    "-v", SEED_REPO_VOLUME + ":/usr/share/nginx/html/artifacts/maven/maven:ro",
                                     "nginx:alpine"),
                             "the temporary maven registry did not start");
                     boot.state.authSeedContainer = container;
@@ -1363,9 +1372,17 @@ public class SeedPhases {
      * hash to them. Ninety megabytes from a community host is exactly the fetch a checksum is for.
      * <p>
      * <b>Published the way every other Maven artifact of this boot is</b> — {@code deploy:deploy-file}
-     * in a maven container with the seed's own settings — so the store gets the same shape a hand
+     * in a maven container with the seed's own settings — so both registries get the shape a hand
      * upload left on the live platform: the tarball, its {@code .sha1} and {@code .md5}, a generated
-     * pom and the metadata. A coordinate the store already holds is skipped, one file at a time.
+     * pom and the metadata.
+     * <p>
+     * <b>BOTH registries, because the bootstrap ingress serves the TEMPORARY one for the whole
+     * run.</b> Its maven route proxies to {@code qits-maven-seed-http} from the moment it starts and
+     * is never repointed, so a tarball that reached only the store is a 404 to the {@code ADD} two
+     * phases below — measured on 2026-09-05, where the store held both files and the builder build
+     * failed anyway. The file registry is written FIRST for the same reason the library seed writes
+     * it first: it is the copy the next build actually reads. Whatever a registry already holds is
+     * skipped, one file and one registry at a time.
      */
     public Phase toolchainSeed() {
         return new Phase("seed-toolchain",
@@ -1374,62 +1391,109 @@ public class SeedPhases {
                     List<MuslToolchain.Tarball> declared = MuslToolchain.read(
                             Files.readString(repo.resolve(MUSL_BUILDER_DOCKERFILE),
                                     StandardCharsets.UTF_8));
-                    List<MuslToolchain.Tarball> missing = declared.stream()
-                            .filter(tarball -> !boot.artifacts.mavenPublished(tarball.groupPath(),
-                                    tarball.artifactId(), tarball.version(), tarball.extension()))
-                            .toList();
-                    for (MuslToolchain.Tarball tarball : declared) {
-                        ctx.log("  " + tarball.storePath()
-                                + (missing.contains(tarball) ? " — seeding from " + tarball.upstream()
-                                        : " — already in the store"));
-                    }
-                    if (missing.isEmpty()) {
-                        ctx.skip("the store holds both toolchain tarballs");
-                    }
+                    boot.docker.ensureVolume(SEED_REPO_VOLUME, ctx::log);
                     boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
-                    ctx.status("downloading and publishing " + missing.size() + " tarball(s)");
+                    List<String> inFileRegistry = fileRegistryHolds(declared);
+                    List<Publish> wanted = new ArrayList<>();
+                    for (MuslToolchain.Tarball tarball : declared) {
+                        boolean seeded = inFileRegistry.contains(tarball.storePath());
+                        boolean stored = boot.artifacts.mavenPublished(tarball.groupPath(),
+                                tarball.artifactId(), tarball.version(), tarball.extension());
+                        ctx.log("  " + tarball.storePath() + " — file registry: "
+                                + (seeded ? "held" : "to seed") + ", store: "
+                                + (stored ? "held" : "to publish"));
+                        if (!seeded || !stored) {
+                            wanted.add(new Publish(tarball, !seeded, !stored));
+                        }
+                    }
+                    if (wanted.isEmpty()) {
+                        ctx.skip("both registries hold both toolchain tarballs");
+                    }
+                    ctx.status("downloading and publishing " + wanted.size() + " tarball(s)");
                     String cid = create(ctx, List.of(
                             "docker", "create", "--network", Boot.NETWORK, "--user", "root",
-                            "--entrypoint", "sh", "-v", MAVEN_CACHE_MOUNT,
+                            "--entrypoint", "sh", "-v", SEED_REPO_VOLUME + ":/repo",
+                            "-v", MAVEN_CACHE_MOUNT,
                             "maven:3.9-eclipse-temurin-25",
-                            "-c", toolchainScript(missing)));
+                            "-c", toolchainScript(wanted)));
                     startAndReap(ctx, cid, "seeding the musl toolchain failed");
-                    ctx.note(missing.size() + " tarball(s) seeded");
+                    ctx.note(wanted.size() + " tarball(s) seeded");
                 });
     }
 
+    /** One tarball and the registries it is still missing from. */
+    record Publish(MuslToolchain.Tarball tarball, boolean toFileRegistry, boolean toStore) {
+    }
+
     /**
-     * Download, verify, deploy — one block per tarball, in one container.
+     * Which of these paths the temporary file registry already holds. It is a volume rather than a
+     * server — the nginx in front of it answers only on qits-net, and this asks the bytes
+     * themselves — so the question is a {@code test -f} in a throwaway container, on the image this
+     * phase is about to use anyway.
+     */
+    private List<String> fileRegistryHolds(List<MuslToolchain.Tarball> tarballs) {
+        StringBuilder script = new StringBuilder();
+        for (MuslToolchain.Tarball tarball : tarballs) {
+            script.append("[ -f '/repo/").append(tarball.storePath()).append("' ] && echo '")
+                    .append(tarball.storePath()).append("'\n");
+        }
+        script.append("exit 0\n");
+        ProcessResult result = boot.docker.run(Cmd.of(List.of("docker", "run", "--rm",
+                "-v", SEED_REPO_VOLUME + ":/repo:ro", "--entrypoint", "sh",
+                "maven:3.9-eclipse-temurin-25", "-c", script.toString())), null);
+        return result.ok()
+                ? result.captured().stream().map(String::strip).filter(line -> !line.isBlank())
+                        .toList()
+                : List.of();
+    }
+
+    /**
+     * Download, verify, deploy — one block per tarball, in one container, into the registries that
+     * block still needs.
+     * <p>
+     * <b>The file registry comes first in every block.</b> It is what the bootstrap ingress serves
+     * for the whole run, so it is the copy the builder build two phases below reads; writing the
+     * store first would leave a window where a retry of that build still 404s.
      * <p>
      * The deploy plugin is PINNED rather than resolved as {@code deploy:deploy-file} would: a
      * prefix goal asks the registry which version is newest, and a cold boot's answer to that is
-     * whatever the mirror happened to cache. {@code -DgeneratePom} is left at its default so the
-     * store gets the pom and the checksums a Maven client expects beside an artifact.
+     * whatever the mirror happened to cache. {@code -DgeneratePom} is left at its default so both
+     * registries get the pom and the checksums a Maven client expects beside an artifact.
      */
-    String toolchainScript(List<MuslToolchain.Tarball> tarballs) {
+    String toolchainScript(List<Publish> publishes) {
         StringBuilder script = new StringBuilder("set -eu\n").append(mavenSettings());
-        for (MuslToolchain.Tarball tarball : tarballs) {
+        for (Publish publish : publishes) {
+            MuslToolchain.Tarball tarball = publish.tarball();
             script.append("echo \"downloading ").append(tarball.fileName()).append(" from ")
                     .append(tarball.upstream()).append("\"\n")
                     .append("curl -fsSL --retry 3 --retry-delay 5 -o /tmp/")
                     .append(tarball.fileName()).append(" '").append(tarball.upstream()).append("'\n")
                     // The pin is the consuming repository's, and it is checked before anything is
-                    // uploaded: a store is forever, and a truncated download from a slow community
-                    // host would be a builder image that fails for everyone afterwards.
+                    // uploaded: a registry is forever, and a truncated download from a slow
+                    // community host would be a builder image that fails for everyone afterwards.
                     .append("echo \"").append(tarball.sha256()).append("  /tmp/")
-                    .append(tarball.fileName()).append("\" | sha256sum -c -\n")
-                    .append("mvn -B -ntp -s /root/.m2/settings.xml")
-                    .append(" org.apache.maven.plugins:maven-deploy-plugin:3.1.2:deploy-file")
-                    .append(" -Dfile=/tmp/").append(tarball.fileName())
-                    .append(" -DgroupId=").append(tarball.groupId())
-                    .append(" -DartifactId=").append(tarball.artifactId())
-                    .append(" -Dversion=").append(tarball.version())
-                    .append(" -Dpackaging=").append(tarball.extension())
-                    .append(" -DrepositoryId=qits -Durl=")
-                    .append(boot.config.artifactsUrl()).append("/maven/maven")
-                    .append(MAVEN_REPO_LOCAL).append("\n");
+                    .append(tarball.fileName()).append("\" | sha256sum -c -\n");
+            if (publish.toFileRegistry()) {
+                script.append(deployFile(tarball, "seed", "file:///repo"));
+            }
+            if (publish.toStore()) {
+                script.append(deployFile(tarball, "qits",
+                        boot.config.artifactsUrl() + "/maven/maven"));
+            }
         }
         return script.toString();
+    }
+
+    private static String deployFile(MuslToolchain.Tarball tarball, String repositoryId, String url) {
+        return "mvn -B -ntp -s /root/.m2/settings.xml"
+                + " org.apache.maven.plugins:maven-deploy-plugin:3.1.2:deploy-file"
+                + " -Dfile=/tmp/" + tarball.fileName()
+                + " -DgroupId=" + tarball.groupId()
+                + " -DartifactId=" + tarball.artifactId()
+                + " -Dversion=" + tarball.version()
+                + " -Dpackaging=" + tarball.extension()
+                + " -DrepositoryId=" + repositoryId + " -Durl=" + url
+                + MAVEN_REPO_LOCAL + "\n";
     }
 
     public Phase ciDaemon() {

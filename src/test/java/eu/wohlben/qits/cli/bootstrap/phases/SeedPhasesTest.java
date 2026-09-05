@@ -411,9 +411,15 @@ class SeedPhasesTest {
             ARG ZLIB_URL=http://registry.dev.localhost:8080/artifacts/maven/maven/eu/wohlben/qits/toolchain/zlib/1.3.1/zlib-1.3.1.tar.gz
             """;
 
+    private static List<SeedPhases.Publish> bothRegistries() {
+        return MuslToolchain.read(MUSL_DOCKERFILE).stream()
+                .map(tarball -> new SeedPhases.Publish(tarball, true, true))
+                .toList();
+    }
+
     /**
      * <b>Downloaded, CHECKED, and only then published.</b> The pin comes from the repository that
-     * consumes the bytes, and it is verified before the upload rather than after: a store is
+     * consumes the bytes, and it is verified before the upload rather than after: a registry is
      * forever, and a truncated ninety-megabyte download from a community host would be a builder
      * image that fails for everyone afterwards.
      */
@@ -422,7 +428,7 @@ class SeedPhasesTest {
         SeedPhases phases = new SeedPhases(
                 new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
 
-        String script = phases.toolchainScript(MuslToolchain.read(MUSL_DOCKERFILE));
+        String script = phases.toolchainScript(bothRegistries());
 
         assertThat(script).startsWith("set -eu\n");
         assertThat(script).contains(
@@ -438,6 +444,49 @@ class SeedPhasesTest {
     }
 
     /**
+     * <b>BOTH REGISTRIES, and the temporary one FIRST.</b> The bootstrap ingress proxies its maven
+     * route to the temporary file registry for the whole run and is never repointed at the store —
+     * so a tarball published only to the store is a 404 to the builder build two phases below,
+     * which is exactly what happened on 2026-09-05 with both files sitting in the store.
+     */
+    @Test
+    void theToolchainReachesTheFileRegistryBeforeTheStore() {
+        SeedPhases phases = new SeedPhases(
+                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+
+        String script = phases.toolchainScript(bothRegistries());
+
+        assertThat(script).contains("-DrepositoryId=seed -Durl=file:///repo")
+                .contains("-DrepositoryId=qits -Durl=http://prod-qits-artifacts:8080/artifacts"
+                        + "/maven/maven");
+        assertThat(script.indexOf("-DrepositoryId=seed"))
+                .isLessThan(script.indexOf("-DrepositoryId=qits"));
+        // And the mount those two lines need is the one the library seed writes through.
+        assertThat(SeedPhases.SEED_REPO_VOLUME).isEqualTo("qits-maven-seed");
+    }
+
+    /** A registry that already holds a tarball is not written to again. */
+    @Test
+    void aRegistryThatHoldsTheTarballIsSkippedOnItsOwn() {
+        SeedPhases phases = new SeedPhases(
+                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+        MuslToolchain.Tarball zlib = MuslToolchain.read(MUSL_DOCKERFILE).get(1);
+
+        String storeOnly = phases.toolchainScript(
+                List.of(new SeedPhases.Publish(zlib, false, true)));
+        String seedOnly = phases.toolchainScript(
+                List.of(new SeedPhases.Publish(zlib, true, false)));
+
+        assertThat(storeOnly).doesNotContain("-DrepositoryId=seed").contains("-DrepositoryId=qits");
+        assertThat(seedOnly).contains("-DrepositoryId=seed").doesNotContain("-DrepositoryId=qits");
+        // Both still download and check: the bytes are what the checksum is for.
+        assertThat(storeOnly).contains("sha256sum -c -");
+        assertThat(seedOnly).contains("sha256sum -c -");
+        // Nothing missing anywhere is an empty script — the phase skips before it gets here.
+        assertThat(phases.toolchainScript(List.of())).doesNotContain("curl");
+    }
+
+    /**
      * The coordinates are the ARG default's, so the file lands exactly where the Dockerfile's own
      * {@code ADD} would have looked for it — and the plugin is pinned rather than resolved by
      * prefix, because a cold boot's answer to "which version is newest" is whatever the mirror
@@ -448,17 +497,13 @@ class SeedPhasesTest {
         SeedPhases phases = new SeedPhases(
                 new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
 
-        String script = phases.toolchainScript(MuslToolchain.read(MUSL_DOCKERFILE));
+        String script = phases.toolchainScript(bothRegistries());
 
         assertThat(script).contains("org.apache.maven.plugins:maven-deploy-plugin:3.1.2:deploy-file")
                 .contains("-DgroupId=eu.wohlben.qits.toolchain")
                 .contains("-DartifactId=x86_64-linux-musl-native -Dversion=11.2.1 -Dpackaging=tgz")
                 .contains("-DartifactId=zlib -Dversion=1.3.1 -Dpackaging=tar.gz")
-                .contains("-DrepositoryId=qits -Durl=http://prod-qits-artifacts:8080/artifacts"
-                        + "/maven/maven")
                 .contains("-Dmaven.repo.local=/cache/repository");
-        // Only what is missing is fetched: the caller filters, so an empty list is an empty script.
-        assertThat(phases.toolchainScript(List.of())).doesNotContain("curl");
     }
 
     /**
