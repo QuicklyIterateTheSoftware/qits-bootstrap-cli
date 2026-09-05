@@ -576,7 +576,13 @@ queue a build of a commit nothing deploys; it pushes the newest release tag quie
 starts nothing by itself — a deployable's release recipe selects `SCMRelease`, not `SCMPublishTag`;
 it then announces that `SCMRelease` through qits-ci's manual door, which is what runs the release
 recipe, publishes `qits/<app>:<version>` and — on a green run — announces the `SoftwareRelease` the
-deployer enters a deployment request from; and it hands the deployer that release by hand when
+deployer enters a deployment request from. **The payload is the one qits-workspaces really
+publishes**, read out of the live event store rather than guessed: `{branch, commitSha, projectId,
+repository, repositoryName, version}`, with `repository` the storage UUID (which is what qits-ci's
+platform pass looks a repository up by while the seed catalogue answers ids and no names) and
+`branch` the TAG (the release request's backing branch is deleted with the tag, so naming it would
+name a ref that no longer exists). A value this run cannot fill is an absent key, never an empty
+string. It hands the deployer that release by hand when
 nothing ran (an earlier boot already published this version) or when a green run's announcement
 never produced a row after a minute. That hand-over is `POST /platform-deployments/api/events/
 software-released`; `/events/build-succeeded` is gone from the deployer and 404s.

@@ -26,8 +26,10 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import java.util.Set;
 import java.util.concurrent.TimeoutException;
 
@@ -940,7 +942,7 @@ public class PipelinePhases {
         // release recipes selected `SCMPublishTag`, which a pushed tag announces by itself. Every
         // one of them selects `SCMRelease` since 2026-09-04, so the tag alone now starts nothing
         // and this phase waited its whole budget out for a run that was never going to exist.
-        List<String> runs = announceRelease(ctx, repo, version);
+        List<String> runs = announceRelease(ctx, name, src, version);
         if (runs.isEmpty()) {
             // Nothing selected the event, so nothing will publish this version. A warning rather
             // than a stop, exactly as the deploy phase treats the same answer: the publishers
@@ -1328,7 +1330,7 @@ public class PipelinePhases {
                         + " is already green — qits/" + application + ":" + version
                         + " is published, so this asks the deployer for it directly");
             } else {
-                List<String> runs = announceRelease(ctx, repo, version);
+                List<String> runs = announceRelease(ctx, name, src, version);
                 if (runs.isEmpty()) {
                     // No release recipe selected it, so nothing is going to publish the image. Said
                     // once and loudly: the deployer is still asked below, because a version this
@@ -1380,8 +1382,13 @@ public class PipelinePhases {
      * discovering it eighteen times over eighteen timeouts is an hour each; the boot stops with
      * qits-ci's own words instead.
      */
-    private List<String> announceRelease(PhaseContext ctx, String repo, String version) {
-        String event = releaseEvent(repo, version);
+    private List<String> announceRelease(PhaseContext ctx, String name, Path src, String version) {
+        String repo = PlatformModel.repo(name);
+        // THE COMMIT THE TAG POINTS AT, peeled: a recipe declaring `sha: commitSha` records and
+        // builds it, and one that does not is unaffected. Read from the checkout rather than asked
+        // of the git host — the tag was pushed from here moments ago.
+        String event = releaseEvent(boot.state.projectId, boot.storageId(name), repo, version,
+                boot.git.commitOf(src, version));
         // The door demands the one project=* client — the same identity the git host announces
         // pushes with, because this stands in for an announcement the platform makes itself.
         String token = boot.tokenOrNull(
@@ -1411,19 +1418,49 @@ public class PipelinePhases {
     }
 
     /**
-     * The event itself, built where it can be read without a platform: this is the one announcement
-     * this program makes that another service's committed trigger file has to select, so the shape
-     * is worth pinning.
+     * <b>The event itself, in the shape qits-workspaces really publishes.</b> This is the one
+     * announcement this program makes that another service's committed trigger file has to select,
+     * so the shape is pinned here and read out of the live event store rather than guessed:
+     * {@code {branch, commitSha, projectId, repository, repositoryName, version}}.
      * <p>
-     * <b>No branch.</b> A real one carries none either — a release is a tag, and the request's
-     * backing branch is deleted in the same operation that creates that tag, so a branch here would
-     * name a ref that no longer exists.
+     * <b>{@code repository} is the STORAGE UUID, not the name.</b> That is what a real event
+     * carries, and it is what qits-ci's platform pass needs: {@code evaluatePlatform} looks the
+     * payload's {@code repository} up among its candidates by name FIRST and by id second, and
+     * during the seed window that catalogue is the git host's own listing, which answers ids and no
+     * names at all. A name there therefore matched nothing and no platform pipeline ran. Selection
+     * is unaffected: qits-ci aliases a condition on {@code repository} onto {@code repositoryName}
+     * whenever the payload carries one, which is why every {@code ci-event-release.yml} can go on
+     * spelling {@code repository: {exact: qits-…-service}}.
+     * <p>
+     * <b>{@code branch} is the TAG, not the release request's backing branch.</b> A real event
+     * names {@code release/<uuid>}, and that branch is deleted in the same operation that creates
+     * the tag — so a replay naming it would name a ref that no longer exists. The tag is a ref, it
+     * is what {@code clone --branch} resolves, and it is the ref column a replayed run should read
+     * as. Nothing consumes the field either way: every release recipe that declares {@code
+     * checkout:} points it at {@code version}, and one that declares none builds main by
+     * convention.
      */
-    static String releaseEvent(String repo, String version) {
-        return "{\"name\":\"SCMRelease\",\"payload\":{"
-                + "\"repository\":" + Json.quote(repo) + ","
-                + "\"repositoryName\":" + Json.quote(repo) + ","
-                + "\"version\":" + Json.quote(version) + "}}";
+    static String releaseEvent(String projectId, String repositoryId, String repoName,
+                               String version, String commitSha) {
+        // KEYS IN ALPHABETICAL ORDER, which is the order the bus stores them in: qits-eventstream's
+        // canonical JSON sorts them, so a payload written this way reads identically to a real one
+        // beside it in the event store.
+        Map<String, String> payload = new LinkedHashMap<>();
+        payload.put("branch", version);
+        payload.put("commitSha", commitSha);
+        payload.put("projectId", projectId);
+        payload.put("repository", repositoryId);
+        payload.put("repositoryName", repoName);
+        payload.put("version", version);
+        // A VALUE THIS RUN DOES NOT KNOW IS AN ABSENT KEY, never an empty string and never a JSON
+        // null: absent is what a release published before the field existed looks like, which is
+        // the case every reader already handles — `sha: commitSha` under `optional: true` falls
+        // back to main's head rather than fetching the four characters `null`.
+        String fields = payload.entrySet().stream()
+                .filter(entry -> entry.getValue() != null && !entry.getValue().isBlank())
+                .map(entry -> Json.quote(entry.getKey()) + ":" + Json.quote(entry.getValue()))
+                .collect(Collectors.joining(","));
+        return "{\"name\":\"SCMRelease\",\"payload\":{" + fields + "}}";
     }
 
     /**

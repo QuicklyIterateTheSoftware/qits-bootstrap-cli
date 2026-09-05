@@ -172,42 +172,97 @@ class PipelinePhasesTest {
 
     // --- the release the bring-up announces ------------------------------------------------------
 
-    /**
-     * <b>Both spellings of the name, and a version.</b> qits-ci resolves a condition on the id path
-     * against the name field whenever the payload has one, and the estate's release recipes select
-     * the NAME — an announcement carrying only {@code repository} evaluated clean against nineteen
-     * repositories and matched none.
-     */
-    @Test
-    void theAnnouncedReleaseNamesTheRepositoryBothWaysAndTheVersion() {
-        assertThat(PipelinePhases.releaseEvent("qits-ci-service", "2026.812.101500"))
-                .isEqualTo("{\"name\":\"SCMRelease\",\"payload\":{"
-                        + "\"repository\":\"qits-ci-service\","
-                        + "\"repositoryName\":\"qits-ci-service\","
-                        + "\"version\":\"2026.812.101500\"}}");
-    }
-
-    /** No branch: a release is a tag, and the request's backing branch is deleted with it. */
-    @Test
-    void theAnnouncedReleaseNamesNoBranch() {
-        assertThat(PipelinePhases.releaseEvent("qits-stt-service", "2026.901.90000"))
-                .doesNotContain("branch");
-    }
+    private static final String PROJECT = "b03b84b1-1875-4071-9dbf-854550156258";
+    private static final String STORAGE_ID = "0045af99-5245-49e7-9260-aba22ddcdb83";
 
     /**
-     * <b>A release replay says exactly what a deploy says.</b> Both go through the same helper
-     * since 2026-09-04, when the last release recipe moved off {@code SCMPublishTag} and a pushed
-     * tag stopped starting anything. It is the GIT-HOST repository the payload names — a recipe is
-     * a file in that repository — never the application the platform answers to.
+     * <b>The payload, whole, in the shape qits-workspaces really publishes</b> — read out of the
+     * live event store on 2026-09-05 and pinned here, because it is the one announcement this
+     * program makes that another service's committed file has to select and another service's run
+     * row is built from. Keys alphabetical, which is what the bus's canonical JSON stores.
      */
     @Test
-    void aPublisherIsAnnouncedByItsRepositoryName() {
-        assertThat(PipelinePhases.releaseEvent(PlatformModel.repo("eventstream"),
-                "2026.905.25646"))
+    void theAnnouncedReleaseIsTheEventQitsWorkspacesPublishes() {
+        assertThat(PipelinePhases.releaseEvent(PROJECT, STORAGE_ID, "qits-qits",
+                "2026.905.141334", "3b095a54dcd21f8dee0993e0b1a4db03b9b13b8b"))
                 .isEqualTo("{\"name\":\"SCMRelease\",\"payload\":{"
-                        + "\"repository\":\"qits-eventstream-javalib\","
-                        + "\"repositoryName\":\"qits-eventstream-javalib\","
-                        + "\"version\":\"2026.905.25646\"}}");
+                        + "\"branch\":\"2026.905.141334\","
+                        + "\"commitSha\":\"3b095a54dcd21f8dee0993e0b1a4db03b9b13b8b\","
+                        + "\"projectId\":\"" + PROJECT + "\","
+                        + "\"repository\":\"" + STORAGE_ID + "\","
+                        + "\"repositoryName\":\"qits-qits\","
+                        + "\"version\":\"2026.905.141334\"}}");
+    }
+
+    /**
+     * <b>{@code repository} is the STORAGE UUID and {@code repositoryName} the name, exactly as a
+     * real event spells them.</b> Selection is unaffected — qits-ci aliases a condition on
+     * {@code repository} onto the name field whenever the payload carries one, which is what lets
+     * every {@code ci-event-release.yml} go on writing {@code repository: {exact: qits-…}}. What
+     * the UUID buys is the platform pass: {@code evaluatePlatform} looks the field up among its
+     * candidates by name first and by id second, and in the seed window that catalogue is the git
+     * host's listing, which answers ids and no names.
+     */
+    @Test
+    void theRepositoryFieldIsTheStorageIdAndTheNameTravelsBesideIt() {
+        String event = PipelinePhases.releaseEvent(PROJECT, STORAGE_ID,
+                PlatformModel.repo("eventstream"), "2026.905.25646", "abc123");
+
+        assertThat(event).contains("\"repository\":\"" + STORAGE_ID + "\"")
+                .contains("\"repositoryName\":\"qits-eventstream-javalib\"");
+    }
+
+    /**
+     * <b>{@code branch} is the TAG.</b> A real event names the release request's backing branch,
+     * and that branch is deleted in the same operation that creates the tag — so a replay naming it
+     * would name a ref that no longer exists. A tag is a ref, {@code clone --branch} resolves one,
+     * and every release recipe that declares {@code checkout:} points its branch at {@code version}
+     * anyway.
+     */
+    @Test
+    void theBranchIsTheTagBecauseTheBackingBranchIsGone() {
+        String event = PipelinePhases.releaseEvent(PROJECT, STORAGE_ID, "qits-stt-service",
+                "2026.901.90000", "def456");
+
+        assertThat(event).contains("\"branch\":\"2026.901.90000\"")
+                .doesNotContain("release/");
+    }
+
+    /**
+     * <b>A value this run does not know is an absent key</b>, never an empty string and never a
+     * JSON null. Absent is what a release published before the field existed looks like, and every
+     * reader already handles it — {@code sha: commitSha} under {@code optional: true} falls back to
+     * main's head rather than fetching the four characters {@code null}.
+     */
+    @Test
+    void aFieldThisRunCannotFillIsLeftOutRatherThanEmptied() {
+        String event = PipelinePhases.releaseEvent(null, STORAGE_ID, "qits-stt-service",
+                "2026.901.90000", "");
+
+        assertThat(event).doesNotContain("projectId").doesNotContain("commitSha")
+                .doesNotContain("null").doesNotContain("\"\"");
+        assertThat(event).isEqualTo("{\"name\":\"SCMRelease\",\"payload\":{"
+                + "\"branch\":\"2026.901.90000\","
+                + "\"repository\":\"" + STORAGE_ID + "\","
+                + "\"repositoryName\":\"qits-stt-service\","
+                + "\"version\":\"2026.901.90000\"}}");
+    }
+
+    /**
+     * <b>A release replay says exactly what a deploy says.</b> Both callers reach the one helper,
+     * so there is one shape and not two — which is what stopped the replays drifting when the
+     * recipes moved off {@code SCMPublishTag}.
+     */
+    @Test
+    void theReplayAndTheDeployBuildTheSameShape() {
+        assertThat(PipelinePhases.releaseEvent(PROJECT, STORAGE_ID, "qits-ci-service",
+                "2026.812.101500", "0123abc"))
+                .isEqualTo(PipelinePhases.releaseEvent(PROJECT, STORAGE_ID, "qits-ci-service",
+                        "2026.812.101500", "0123abc"));
+        // One private method builds it, so the two phases cannot spell it differently: both call
+        // announceRelease, which is the only caller of this.
+        assertThat(PipelinePhases.class.getDeclaredMethods())
+                .filteredOn(method -> method.getName().equals("announceRelease")).hasSize(1);
     }
 
     /**
