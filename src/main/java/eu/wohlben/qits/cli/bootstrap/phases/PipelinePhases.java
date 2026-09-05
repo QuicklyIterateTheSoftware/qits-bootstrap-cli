@@ -877,12 +877,10 @@ public class PipelinePhases {
             if (replayTag(ctx, name, repo, src, storageId, version)) {
                 replayed++;
             } else {
-                // The tag is already here, so no ref moved: an earlier boot pushed it and asked for
-                // its build, and the check above says that build is not green on THIS platform. A
-                // restore re-establishes SCM state, and this state stands; asking for the publish
-                // again is a person's move, through qits-ci's manual trigger or by deleting the tag
-                // on the git host and pushing it back.
-                ctx.skip(version + " is already on the git host — no ref moved"
+                // The tag is here AND the registry holds what its run publishes, so there is
+                // nothing left for this phase to restore. A restore re-establishes SCM state, and
+                // this state stands.
+                ctx.skip(version + " is already on the git host and published"
                         + (replayed == 0 ? "" : " (" + replayed + " pinned tags replayed above)"));
             }
             ctx.note(replayed == 1 ? version : version + " + " + (replayed - 1) + " pinned");
@@ -894,10 +892,16 @@ public class PipelinePhases {
      * The newest release and every older version something still pins go through here, so both are
      * restored the same way and neither can drift into a second recipe.
      *
-     * @return whether a ref actually moved. A version whose tag the git host already has is passed
-     *         over: an earlier boot pushed it and asked for its build, and there is no cheap
-     *         per-version question to ask instead — a publisher's artifact is a jar, an npm package
-     *         or a docker image depending on which publisher it is.
+     * <b>A tag that already stands is not proof of a publish.</b> A previous boot's run can have
+     * built the image and then died pushing it, which is what happened to
+     * {@code qits/workspace-base:2026.905.92439} on 2026-09-05: the rerun skipped that version and
+     * every later phase that pulls it failed instead. So the skip asks the REGISTRY too, at the
+     * coordinates {@link PlatformModel#releasePackages} names, and asks for the build again when a
+     * package is missing — the tag needs no second push for that, only the announcement.
+     *
+     * @return whether this version was replayed. A version whose tag stands and whose packages the
+     *         registry holds is passed over, and so is one whose packages cannot be addressed by
+     *         the release version at all — the two npm publishers, whose semver is their own.
      */
     private boolean replayTag(PhaseContext ctx, String name, String repo, Path src,
                               String storageId, String version) throws Exception {
@@ -909,16 +913,28 @@ public class PipelinePhases {
                 List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
                 "refs/tags/" + version);
         if (upToDate(push)) {
-            // No ref moved, so this version's tag was pushed by an earlier boot and the release
-            // build it asked for is that boot's business. There is no cheap per-version question
-            // to ask instead — a publisher's artifact is a jar here, an npm package there and a
-            // docker image in three more places — so this stays what it has always been: a
-            // version whose tag stands is passed over. The caller's green-run check is what
-            // catches the NEWEST version of a platform that has been rebuilt since.
-            ctx.log("  " + version + " is already on the git host — no ref moved");
-            return false;
+            // NO REF MOVED, WHICH IS NOT THE SAME AS "PUBLISHED". An earlier boot pushed this tag
+            // and asked for its build, and that build can have gone red AFTER the image was built
+            // — measured on 2026-09-05, where qits-oci-workspace's run failed pushing
+            // qits/workspace-base:2026.905.92439 and the rerun skipped a version the registry was
+            // still missing, so every later phase that pulls it failed instead. The tag needs no
+            // second push; the announcement below is the whole of what is left to do.
+            List<String> missing = missingPackages(name, version);
+            if (missing == null) {
+                ctx.log("  " + version + " is already on the git host, and what its run publishes "
+                        + "cannot be addressed by the release version — treating it as published");
+                return false;
+            }
+            if (missing.isEmpty()) {
+                ctx.log("  " + version + " is already on the git host and the registry holds what "
+                        + "its run publishes");
+                return false;
+            }
+            ctx.log("  " + version + " is on the git host but the registry has no "
+                    + String.join(", ", missing) + " — asking for the build again");
+        } else {
+            ctx.log("  " + version + " pushed");
         }
-        ctx.log("  " + version + " pushed");
 
         // AND THEN THE WORD THAT STARTS THE BUILD. The push used to be the whole trigger: the
         // release recipes selected `SCMPublishTag`, which a pushed tag announces by itself. Every
@@ -965,6 +981,42 @@ public class PipelinePhases {
         }
         ctx.log("  " + repo + " released " + version);
         return true;
+    }
+
+    /**
+     * <b>Which of this publisher's release packages the registry does NOT hold at this version</b> —
+     * empty when it holds them all, and NULL when the question cannot be asked, which is a third
+     * answer rather than a missing one.
+     */
+    private List<String> missingPackages(String name, String version) {
+        List<PlatformModel.ReleasePackage> packages = PlatformModel.releasePackages(name);
+        if (packages.isEmpty()) {
+            return null;
+        }
+        List<String> missing = new ArrayList<>();
+        for (PlatformModel.ReleasePackage published : packages) {
+            boolean held = switch (published.kind()) {
+                case MAVEN -> boot.artifacts.mavenPublished(PlatformModel.MAVEN_GROUP_PATH,
+                        published.coordinate(), version, "jar");
+                case OCI -> boot.artifacts.imagePublished(published.coordinate(), version);
+            };
+            if (!held) {
+                missing.add(published.coordinate() + ":" + version);
+            }
+        }
+        return missing;
+    }
+
+    /**
+     * <b>Does this version still need a build?</b> The whole decision, kept pure so the four cases
+     * can be read without a registry.
+     *
+     * @param refMoved     whether the tag push moved anything — a fresh tag always needs its run
+     * @param addressable  whether this publisher's packages can be named by the release version
+     * @param packagesHeld whether the registry holds all of them
+     */
+    static boolean needsRelease(boolean refMoved, boolean addressable, boolean packagesHeld) {
+        return refMoved || (addressable && !packagesHeld);
     }
 
     // --- the environment --------------------------------------------------------------------------

@@ -1179,4 +1179,72 @@ class PipelinePhasesTest {
                 .containsExactly("spa-ui-components", "integrations-angular", "oci-workspace",
                         "workspace-daemon", "projects-daemon");
     }
+
+    // --- when a tag that already stands still needs its build ------------------------------------
+
+    /**
+     * <b>The four cases, and the third one is the defect.</b> On 2026-09-05 qits-oci-workspace's
+     * release run built {@code qits/workspace-base:2026.905.92439} and then died pushing it. The
+     * tag stood, so the rerun skipped the version — and every later phase that pulls that image
+     * failed instead. A tag on the git host is evidence of a PUSH, never of a publish.
+     */
+    @Test
+    void aTagThatStandsStillNeedsItsBuildWhenTheRegistryIsMissingThePackage() {
+        // A fresh tag always does, whatever the registry says.
+        assertThat(PipelinePhases.needsRelease(true, true, false)).isTrue();
+        assertThat(PipelinePhases.needsRelease(true, true, true)).isTrue();
+        // The tag stands and the packages are there: nothing left to restore.
+        assertThat(PipelinePhases.needsRelease(false, true, true)).isFalse();
+        // The tag stands and a package is missing: ask for the build again.
+        assertThat(PipelinePhases.needsRelease(false, true, false)).isTrue();
+        // Not addressable — the npm publishers — so the tag is all the evidence there is.
+        assertThat(PipelinePhases.needsRelease(false, false, false)).isFalse();
+        assertThat(PipelinePhases.needsRelease(false, false, true)).isFalse();
+    }
+
+    /**
+     * <b>What each publisher's run leaves behind, addressed by the RELEASE version.</b> The image
+     * publishers tag with the version itself, which is what makes the question answerable; the two
+     * npm ones publish their own semver, and answering nothing is honest rather than a gap.
+     */
+    @Test
+    void everyPublisherSaysWhatItsRunPublishes() {
+        assertThat(PlatformModel.releasePackages("oci-workspace")).singleElement()
+                .isEqualTo(new PlatformModel.ReleasePackage(
+                        PlatformModel.ReleasePackage.Kind.OCI, "qits/workspace-base"));
+        assertThat(PlatformModel.releasePackages("workspace-daemon")).singleElement()
+                .isEqualTo(new PlatformModel.ReleasePackage(
+                        PlatformModel.ReleasePackage.Kind.OCI, "qits/workspace"));
+        // Two images from one run, so either one missing is a run to ask for again.
+        assertThat(PlatformModel.releasePackages("projects-daemon")).hasSize(2)
+                .extracting(PlatformModel.ReleasePackage::coordinate)
+                .containsExactly("qits/projects-daemon", "qits/project-agent");
+        assertThat(PlatformModel.releasePackages("eventstream")).singleElement()
+                .isEqualTo(new PlatformModel.ReleasePackage(
+                        PlatformModel.ReleasePackage.Kind.MAVEN, "qits-eventstream"));
+        assertThat(PlatformModel.releasePackages("integrations-quarkus")).singleElement()
+                .extracting(PlatformModel.ReleasePackage::coordinate).isEqualTo("qits-auth-core");
+        // @qits/ui-components@0.0.4 is named by no function of the release tag.
+        assertThat(PlatformModel.releasePackages("spa-ui-components")).isEmpty();
+        assertThat(PlatformModel.releasePackages("integrations-angular")).isEmpty();
+        // Every publisher the plan makes a phase for is answered one way or the other.
+        assertThat(PlatformModel.RELEASE_PUBLISHERS)
+                .allSatisfy(name -> assertThat(PlatformModel.releasePackages(name)).isNotNull());
+    }
+
+    /**
+     * The Distribution API lives at the SERVICE root and not under {@code /artifacts} — measured on
+     * the live store, where the second spelling answers 404 and the first 200.
+     */
+    @Test
+    void theRegistryIsAskedAtTheDistributionApiRoot() {
+        assertThat(CiApi.class).isNotNull();
+        assertThat(eu.wohlben.qits.cli.bootstrap.api.ArtifactsApi.manifestUrl(
+                "http://prod-qits-artifacts:8080", "qits/workspace-base", "2026.905.92439"))
+                .isEqualTo("http://prod-qits-artifacts:8080/v2/qits/workspace-base/manifests/"
+                        + "2026.905.92439");
+        assertThat(new eu.wohlben.qits.cli.bootstrap.api.ArtifactsApi(
+                new Http(), "http://prod-qits-artifacts:8080/artifacts").registryBase())
+                .isEqualTo("http://prod-qits-artifacts:8080");
+    }
 }

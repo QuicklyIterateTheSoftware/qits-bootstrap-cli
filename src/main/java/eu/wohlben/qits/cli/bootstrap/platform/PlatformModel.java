@@ -335,6 +335,51 @@ public final class PlatformModel {
                     "eventstream",
                     "oci-workspace", "workspace-daemon", "projects-daemon");
 
+    /**
+     * <b>What a release publisher's green run leaves in a registry, addressed by the RELEASE
+     * version.</b> It is the answer to "did that run actually publish anything", which a replay has
+     * to ask before it decides a version needs no build.
+     * <p>
+     * <b>Two of the seven answer nothing, and that is the honest answer rather than a gap.</b>
+     * {@code spa-ui-components} and {@code integrations-angular} publish npm packages whose
+     * versions are their own semver — {@code @qits/ui-components@0.0.4} — and no function of the
+     * release tag names them. A replay of those keeps the old rule: a tag on the git host is
+     * treated as a version somebody already published.
+     * <p>
+     * The image publishers tag with the release version itself, which is what makes them
+     * answerable: {@code qits/workspace-base:2026.905.92439} is the coordinate the workspace
+     * daemon's build pins and the coordinate that release run pushes. Verified against the live
+     * registry's own tag lists on 2026-09-05.
+     */
+    public record ReleasePackage(Kind kind, String coordinate) {
+
+        /** How the coordinate is addressed: a maven artifactId, or an image repository. */
+        public enum Kind { MAVEN, OCI }
+    }
+
+    /** The group every qits jar is published under. */
+    public static final String MAVEN_GROUP_PATH = "eu/wohlben/qits";
+
+    /** The packages a publisher's release run publishes, or empty when none is addressable. */
+    public static List<ReleasePackage> releasePackages(String name) {
+        return switch (name) {
+            case "eventstream" ->
+                    List.of(new ReleasePackage(ReleasePackage.Kind.MAVEN, "qits-eventstream"));
+            // One of its six jars stands for the reactor, the same one the seed publish probes.
+            case "integrations-quarkus" ->
+                    List.of(new ReleasePackage(ReleasePackage.Kind.MAVEN, "qits-auth-core"));
+            case "oci-workspace" ->
+                    List.of(new ReleasePackage(ReleasePackage.Kind.OCI, "qits/workspace-base"));
+            case "workspace-daemon" ->
+                    List.of(new ReleasePackage(ReleasePackage.Kind.OCI, "qits/workspace"));
+            // Two images from one run, and a replay that found either one missing has to ask again.
+            case "projects-daemon" -> List.of(
+                    new ReleasePackage(ReleasePackage.Kind.OCI, "qits/projects-daemon"),
+                    new ReleasePackage(ReleasePackage.Kind.OCI, "qits/project-agent"));
+            default -> List.of();
+        };
+    }
+
     private PlatformModel() {
     }
 
