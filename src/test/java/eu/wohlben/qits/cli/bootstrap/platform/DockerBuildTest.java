@@ -106,7 +106,7 @@ class DockerBuildTest {
                         "--oom-score-adj", "500",
                         "--memory", "9g", "--cpu-quota", "400000", "--cpuset-cpus", "0-3",
                         "-v", "qits-buildkitd-state:/var/lib/buildkit",
-                        IMAGE, "--addr", "tcp://0.0.0.0:1234"));
+                        IMAGE, "--addr", "tcp://0.0.0.0:1234", "--oci-worker-net=host"));
     }
 
     /**

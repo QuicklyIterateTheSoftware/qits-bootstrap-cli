@@ -680,8 +680,15 @@ public class Docker {
                     "--memory", "9g", "--cpu-quota", "400000", "--cpuset-cpus", "0-3",
                     "-v", BUILDKIT_STATE_VOLUME + ":/var/lib/buildkit",
                     BUILDKIT_IMAGE,
-                    // The image entrypoints to buildkitd, so this rides as its arguments.
-                    "--addr", BUILDKIT_LISTEN)), out);
+                    // The image entrypoints to buildkitd, so these ride as its arguments.
+                    // --oci-worker-net=host puts every RUN in the container's own network
+                    // namespace — the machine's, since this container is host-net — because the
+                    // default sandbox namespace has no DNS and no route anywhere: a seed build's
+                    // RUN that resolves the platform's own Maven repository over localhost would
+                    // die on name resolution before its first request. Measured on the platform's
+                    // first converted release run (there against the qits-net namespace; the
+                    // failure mode is the worker's, not the network's).
+                    "--addr", BUILDKIT_LISTEN, "--oci-worker-net=host")), out);
         }
         buildkitdReady = ready.ok();
         return ready;
