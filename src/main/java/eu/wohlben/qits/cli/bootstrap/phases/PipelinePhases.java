@@ -820,7 +820,7 @@ public class PipelinePhases {
      * {@link eu.wohlben.qits.cli.bootstrap.platform.PinnedVersions} finds still pinned is replayed
      * too, oldest first and the newest last, on exactly the terms above — except for a publisher
      * that is also a {@link SeedPhases#SEED_LIBRARIES} entry, whose pinned versions the maven
-     * publishes of phases 18-26 have already put in the store.
+     * publishes of phases 19-27 have already put in the store.
      */
     public Phase releaseReplay(String name) {
         String repo = PlatformModel.repo(name);
@@ -846,7 +846,7 @@ public class PipelinePhases {
             // — a tag the git host already has moves no ref and is passed over.
             //
             // NOT FOR A SEED LIBRARY, and that is the whole of the exclusion below. The maven
-            // publishes of phases 18-26 already put every pinned version of those five in the
+            // publishes of phases 19-27 already put every pinned version of those five in the
             // store, out of the same closure — so replaying their older tags here would buy the
             // registry nothing and cost the boot one full ci run per tag.
             int replayed = 0;

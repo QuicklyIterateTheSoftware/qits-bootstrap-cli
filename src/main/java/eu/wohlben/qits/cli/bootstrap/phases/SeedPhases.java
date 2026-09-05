@@ -1973,6 +1973,107 @@ public class SeedPhases {
                 });
     }
 
+    // --- the one host rule this platform cannot run without ---------------------------------------
+
+    /**
+     * <b>The edge's port must REFUSE an IPv6 connection on this host's loopback, and this phase
+     * makes it refuse.</b>
+     * <p>
+     * The byte plane is reached at {@code <app>.<env>.localhost}, and a resolver answers
+     * {@code ::1} for such a name FIRST. The edge publishes its port in swarm INGRESS mode and the
+     * routing mesh is IPv4-only: the v6 listener accepts the connection and then serves nothing, so
+     * curl, docker, git, maven and npm all HANG instead of failing over to IPv4. A host-mode
+     * publish never showed this — docker-proxy bound both families — which is why it arrives with
+     * the mode.
+     * <p>
+     * <b>It hangs with no error, and that is what makes it expensive.</b> On 2026-09-02 a release
+     * run's SBOM upload — one {@code curl -X PUT} to {@code registry.<env>.localhost} from a CI
+     * step on the host network — sat on {@code [::1]:<port>} for over forty minutes and blocked the
+     * whole CI queue behind it. On 2026-09-05 the same landmine timed out a CI step's
+     * {@code docker push} on a cold node, an hour into a boot. Nothing timed out early and nothing
+     * said anything.
+     * <p>
+     * The fix is one host rule, and the RESET is the load-bearing half: it makes every client fall
+     * back at once, where a DROP would leave them hanging exactly as the accept does.
+     * <p>
+     * <b>Installed UNCONDITIONALLY rather than when a probe finds the bad state.</b> This runs in
+     * the plan's first minutes and the swarm ingress does not exist until the seed stack is
+     * deployed, forty phases later — so nothing is accepting v6 on that port yet and a
+     * probe-and-repair would find nothing to do and leave the landmine armed for the run that
+     * needs it. The rule is idempotent by {@code -C} rather than by counting, so a rerun adds no
+     * duplicate. <b>It does not survive a reboot</b>, which is why every run installs it rather
+     * than trusting a past one's.
+     * <p>
+     * <b>The payload is a container, so it acts on the host through the daemon.</b> A throwaway
+     * privileged helper in the host's PID, mount and network namespaces runs the HOST's own
+     * {@code ip6tables} — {@code nsenter -t 1 -m -n} — because {@code ::1} inside a container is
+     * that container's loopback and its netns has no rule table worth writing. The image is
+     * {@code alpine:3} for its busybox {@code nsenter} and {@code nc}, not the payload image, which
+     * is free to stop being alpine.
+     * <p>
+     * <b>A helper that cannot run STOPS the boot.</b> No privileged containers, or a host with no
+     * {@code ip6tables}, means the landmine stays armed and the run finds out an hour later inside
+     * a CI step. The failure names the one command to run by hand.
+     */
+    public Phase ipv6Loopback() {
+        return new Phase("ipv6-loopback", "reset IPv6 loopback connections to the edge port",
+                ctx -> {
+                    int port = boot.config.port();
+                    ctx.status("installing the ip6tables reject for [::1]:" + port);
+                    ProcessResult result = boot.docker.run(Cmd.of(List.of(
+                            "docker", "run", "--rm", "--privileged", "--pid=host",
+                            "--network", "host", "alpine:3",
+                            "nsenter", "-t", "1", "-m", "-n", "--",
+                            "sh", "-c", ipv6LoopbackScript(port))), ctx::log);
+                    if (!result.ok()) {
+                        throw new IllegalStateException("the IPv6 loopback reject for port " + port
+                                + " could not be installed (exit " + result.exitCode() + "). Every "
+                                + "*.localhost name resolves to ::1 first and swarm's ingress mesh "
+                                + "serves IPv4 only, so a client reaching the edge by name HANGS "
+                                + "rather than failing over — a CI step measured forty minutes on "
+                                + "one upload. Run this on the host and rerun:\n  sudo "
+                                + String.join(" ", ip6tablesReject(port)) + "\n"
+                                + result.tailText(10));
+                    }
+                    String outcome = result.captured().stream()
+                            .filter(line -> line.contains(IPV6_MARKER))
+                            .reduce((first, last) -> last).orElse("");
+                    ctx.log("  the rule does not survive a reboot, so every run installs it");
+                    ctx.note(outcome.contains("rule=present") ? "rule already there"
+                            : "rule installed");
+                });
+    }
+
+    /** What the helper prints its verdict under, so the note reads the answer and not the noise. */
+    static final String IPV6_MARKER = "qits-ipv6:";
+
+    /** The rule, in one place: what is installed and what the failure tells a person to run. */
+    static List<String> ip6tablesReject(int port) {
+        return List.of("ip6tables", "-I", "INPUT", "-i", "lo", "-p", "tcp",
+                "--dport", String.valueOf(port), "-j", "REJECT", "--reject-with", "tcp-reset");
+    }
+
+    /**
+     * Probe, install-if-absent, probe again. {@code -C} is what makes it idempotent — a rerun that
+     * inserted blindly would stack a duplicate rule per boot — and the two probes are for the note
+     * rather than for the decision: at this point in the plan nothing listens on that port yet.
+     */
+    static String ipv6LoopbackScript(int port) {
+        String rule = "INPUT -i lo -p tcp --dport " + port
+                + " -j REJECT --reject-with tcp-reset";
+        return "probe() { nc -w 2 ::1 " + port + " </dev/null >/dev/null 2>&1"
+                + " && echo accepts || echo silent; }\n"
+                + "before=$(probe)\n"
+                + "if ip6tables -C " + rule + " 2>/dev/null; then\n"
+                + "  state=present\n"
+                + "else\n"
+                + "  ip6tables -I " + rule + " || exit 1\n"
+                + "  state=installed\n"
+                + "fi\n"
+                + "after=$(probe)\n"
+                + "echo \"" + IPV6_MARKER + " before=$before rule=$state after=$after\"\n";
+    }
+
     /** Generate one run's two ingress capabilities before compose needs githost's fingerprint. */
     public Phase bootstrapIngressPrepare() {
         return new Phase("bootstrap-ingress-prepare", "prepare the bootstrap-only ingress capability",

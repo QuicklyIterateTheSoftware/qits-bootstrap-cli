@@ -113,19 +113,6 @@ class HostLauncherTest {
         assertThat(HostLauncher.imageContext(workDir.resolve("qits-qits"), workDir)).contains(cli);
     }
 
-    /**
-     * <b>The rule the launcher installs, asserted whole.</b> It is run and it is printed for the
-     * operator, and both come from here — a flag dropped on one side would be a rule that either
-     * does not take or cannot be typed. The REJECT is what makes a client fall back to IPv4 at
-     * once; a DROP leaves it hanging exactly as the ingress mesh's own accept does.
-     */
-    @Test
-    void theIpv6LoopbackRuleRejectsWithAReset() {
-        assertThat(HostLauncher.ip6tablesReject(8080))
-                .containsExactly("ip6tables", "-I", "INPUT", "-i", "lo", "-p", "tcp",
-                        "--dport", "8080", "-j", "REJECT", "--reject-with", "tcp-reset");
-    }
-
     @Test
     void anOrdinaryCheckoutHasNoLinkedGitDirectory() throws IOException {
         // .git is a directory inside the wrapper, so the wrapper's own mount covers it.

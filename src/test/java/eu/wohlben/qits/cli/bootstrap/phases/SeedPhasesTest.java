@@ -776,4 +776,42 @@ class SeedPhasesTest {
         assertThat(SeedPhases.alreadyServing(ARTIFACTS, PD_ARTIFACTS,
                 List.of("prod-qits-ci"), List.of("qits_prod-qits-ci"))).isEmpty();
     }
+
+    // --- the IPv6 loopback landmine ---------------------------------------------------------------
+
+    /**
+     * <b>The rule is one string in one place</b>: what the phase installs and what its failure
+     * tells a person to type. The REJECT is what makes a client fall back to IPv4 at once; a DROP
+     * would leave it hanging exactly as the ingress mesh's own accept does.
+     */
+    @Test
+    void theIpv6LoopbackRuleRejectsWithAReset() {
+        assertThat(SeedPhases.ip6tablesReject(8080))
+                .containsExactly("ip6tables", "-I", "INPUT", "-i", "lo", "-p", "tcp",
+                        "--dport", "8080", "-j", "REJECT", "--reject-with", "tcp-reset");
+    }
+
+    /**
+     * <b>Idempotent by {@code -C}, and installed whatever the probe says.</b> The phase runs in the
+     * plan's first minutes, forty phases before the swarm ingress binds that port — so nothing is
+     * accepting v6 there yet, and a probe-and-repair would find nothing to do and leave the
+     * landmine armed for the run that needs it. The probes are for the note.
+     */
+    @Test
+    void theHelperChecksBeforeItInsertsAndInsertsWhateverTheProbeSaid() {
+        String script = SeedPhases.ipv6LoopbackScript(8080);
+
+        assertThat(script).contains("ip6tables -C INPUT -i lo -p tcp --dport 8080 -j REJECT "
+                + "--reject-with tcp-reset");
+        assertThat(script).contains("ip6tables -I INPUT -i lo -p tcp --dport 8080 -j REJECT "
+                + "--reject-with tcp-reset || exit 1");
+        // The check comes first, so a rerun stacks no duplicate rule.
+        assertThat(script.indexOf("ip6tables -C")).isLessThan(script.indexOf("ip6tables -I"));
+        // The insert is not inside any probe test: the probe only feeds the note.
+        assertThat(script).contains("before=$(probe)").contains("after=$(probe)")
+                .contains(SeedPhases.IPV6_MARKER);
+        // The port is the edge's, everywhere in the script.
+        assertThat(SeedPhases.ipv6LoopbackScript(9090)).contains("--dport 9090")
+                .contains("nc -w 2 ::1 9090").doesNotContain("8080");
+    }
 }

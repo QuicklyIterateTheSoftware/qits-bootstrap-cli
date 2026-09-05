@@ -37,8 +37,12 @@ class BootstrapPlanTest {
         // first address is dialled: every address this CLI uses is a wire alias on qits-net.
         // The wrapper comes before the sources because the sources are read out of it, and a cold
         // machine has none: that phase clones it from the org.
-        assertThat(ids(phases)).startsWith("preflight", "network", "bootstrap-ingress-prepare",
-                "bootstrap-ingress", "wrapper", "sources", "recorded-state", "maven-seed");
+        // THE HOST RULE IS THIRD, before anything can dial the edge by name: every *.localhost
+        // name resolves to ::1 and the swarm ingress mesh serves IPv4 only, so a client that meets
+        // the landmine hangs rather than failing over.
+        assertThat(ids(phases)).startsWith("preflight", "network", "ipv6-loopback",
+                "bootstrap-ingress-prepare", "bootstrap-ingress", "wrapper", "sources",
+                "recorded-state", "maven-seed");
         assertThat(ids(phases)).containsSubsequence(
                 "git-repos", "release-train-push", "preseed");
         assertThat(ids(phases)).endsWith("deploy-deployments", "summary",

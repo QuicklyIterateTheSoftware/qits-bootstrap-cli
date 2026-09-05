@@ -27,6 +27,11 @@ public final class BootstrapPlan {
         // Before the first address is dialled, and after preflight, which is where the daemon is
         // proved reachable at all.
         phases.add(seed.joinNetwork());
+        // THE ONE HOST RULE THIS PLATFORM CANNOT RUN WITHOUT, and it is here rather than at the end
+        // because everything after it may dial the edge by name. Nothing is listening on that port
+        // yet, which is the point: the rule is installed unconditionally so the landmine is
+        // disarmed before the swarm ingress arms it.
+        phases.add(seed.ipv6Loopback());
         // The bootstrap edge is the first public component. It owns the normal public door while
         // the seed is built, and it stays there across worker retries until platform-edge cuts it
         // over near the end of this plan.
