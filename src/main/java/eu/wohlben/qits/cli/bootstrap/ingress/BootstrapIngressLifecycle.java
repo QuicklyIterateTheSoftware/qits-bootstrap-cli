@@ -25,7 +25,22 @@ public final class BootstrapIngressLifecycle {
     public static final String CONTAINER = "qits-bootstrap-edge";
     private static final String LABEL = "qits.bootstrap.ingress";
     private static final String STATE_FILE = ".qits-bootstrap-edge.env";
+    /** The edge's certificate volume: what public mode serves, and what decides whether it can. */
+    static final String CERTIFICATE_VOLUME = "qits-edge-letsencrypt";
+    /** The two files the ingress is configured with. Their presence IS the mode decision. */
+    static final String CERTIFICATE = "/cert/lets-encrypt.crt";
+    static final String CERTIFICATE_KEY = "/cert/lets-encrypt.key";
+    /** The mode as the state file spells it, so a retry serves what the first attempt started. */
+    static final String MODE_KEY = "QITS_BOOTSTRAP_INGRESS_MODE";
     private final Boot boot;
+    /**
+     * <b>Where this run's ingress listens, decided once and read by everything that has to agree
+     * with it</b>: the publish, the TLS environment, the address the operator is given and the
+     * maven url every seed image build is built with. It lives here rather than in the run state
+     * because this class is the only thing that decides it — and because a run with no ingress at
+     * all still has to answer the question, which it does with LOOPBACK.
+     */
+    private BootstrapIngressMode mode;
 
     public BootstrapIngressLifecycle(Boot boot) {
         this.boot = boot;
@@ -46,6 +61,10 @@ public final class BootstrapIngressLifecycle {
             boot.state.bootstrapIngressEnvFile = file;
             return;
         }
+        // BEFORE THE URL, because the url is the mode's. Every seed image build resolves the
+        // platform's jars through the address this decides, so a mode chosen after the fact would
+        // be a build argument pointing at a door nothing opened.
+        mode = decide(out);
         String password = random();
         String capability = random();
         long expiresAt = Instant.now().plus(config.bootstrapIngressTtl()).getEpochSecond();
@@ -91,11 +110,16 @@ public final class BootstrapIngressLifecycle {
                         + boot.state.bootstrapIngressExpiresAt, "--restart", "unless-stopped",
                 "--network", Boot.NETWORK,
                 "--cap-drop", "ALL", "--security-opt", "no-new-privileges"));
-        if (boot.config.bootstrapIngressPublicEffective()) {
+        if (mode() == BootstrapIngressMode.PUBLIC_TLS) {
             // The only ingress mount is the retained certificate pair, read-only. This container
             // receives neither the Docker socket nor any platform/configuration volume.
             argv.addAll(List.of("-p", "80:8080", "-p", "443:8443", "-v",
-                    "qits-edge-letsencrypt:/cert:ro"));
+                    CERTIFICATE_VOLUME + ":/cert:ro"));
+        } else if (mode() == BootstrapIngressMode.PUBLIC_HTTP) {
+            // The same public door with no TLS half: no 443 publish, no certificate mount, and no
+            // TLS environment — the server then listens plainly on its one port and redirects
+            // nothing.
+            argv.addAll(List.of("-p", "80:8080"));
         } else {
             argv.addAll(List.of("-p", boot.config.bootstrapIngressBind() + ":"
                     + boot.config.bootstrapIngressPort() + ":8080"));
@@ -106,13 +130,8 @@ public final class BootstrapIngressLifecycle {
                 .mask(boot.state.bootstrapIngressPassword)
                 .mask(boot.state.bootstrapIngressGitCapability);
         Boot.must(boot.docker.run(command, out), "starting the bootstrap ingress failed");
-        String address = boot.config.bootstrapIngressPublicEffective()
-                ? "https://" + ingressHost() : "http://" + boot.config.bootstrapIngressHost() + ":"
-                        + boot.config.bootstrapIngressPort();
-        out.accept("  bootstrap ingress: " + address + " ("
-                + (boot.config.bootstrapIngressPublicEffective() ? "TLS domain handoff" : "loopback-published")
-                + ", expires "
-                + Instant.ofEpochSecond(boot.state.bootstrapIngressExpiresAt) + ")");
+        out.accept("  bootstrap ingress: " + address() + " (" + description()
+                + ", expires " + Instant.ofEpochSecond(boot.state.bootstrapIngressExpiresAt) + ")");
     }
 
     /** Safe to call for every outcome, including Ctrl-C and an earlier failed phase. */
@@ -163,11 +182,15 @@ public final class BootstrapIngressLifecycle {
                 "QITS_BOOTSTRAP_INGRESS_UI_UPSTREAM=http://qits-bootstrap-progress:" + boot.config.webPort(),
                 "QITS_BOOTSTRAP_INGRESS_MAVEN_UPSTREAM=http://qits-maven-seed-http:80",
                 "QITS_BOOTSTRAP_INGRESS_GIT_UPSTREAM=http://"
-                        + PlatformModel.wireAlias("githost", env) + ":8080");
-        if (boot.config.bootstrapIngressPublicEffective()) {
+                        + PlatformModel.wireAlias("githost", env) + ":8080",
+                // Recorded so a worker retry serves what the first attempt started: the retained
+                // container is not restarted, but the maven url a restore hands back has to be the
+                // one the seed builds were already given.
+                MODE_KEY + "=" + mode());
+        if (mode() == BootstrapIngressMode.PUBLIC_TLS) {
             text += "\nQITS_BOOTSTRAP_INGRESS_TLS_PORT=8443"
-                    + "\nQITS_BOOTSTRAP_INGRESS_TLS_CERTIFICATE=/cert/lets-encrypt.crt"
-                    + "\nQITS_BOOTSTRAP_INGRESS_TLS_KEY=/cert/lets-encrypt.key";
+                    + "\nQITS_BOOTSTRAP_INGRESS_TLS_CERTIFICATE=" + CERTIFICATE
+                    + "\nQITS_BOOTSTRAP_INGRESS_TLS_KEY=" + CERTIFICATE_KEY;
         }
         text += "\n";
         Files.writeString(boot.state.bootstrapIngressEnvFile, text, StandardCharsets.UTF_8);
@@ -194,13 +217,96 @@ public final class BootstrapIngressLifecycle {
         boot.state.bootstrapIngressRepository = "qits-bootstrap";
         boot.state.bootstrapIngressRefPattern = "refs/heads/bootstrap/*";
         boot.state.bootstrapIngressExpiresAt = expiresAt;
+        // A state file from a run older than the three modes records none; deciding afresh is the
+        // right answer there, because the certificate volume says the same thing it said then.
+        mode = BootstrapIngressMode.of(values.get(MODE_KEY), null);
+        if (mode == null) {
+            mode = decide(out);
+        }
         boot.useBootstrapMavenRepository(mavenRepositoryUrl(), password);
         out.accept("  bootstrap edge capability retained (expires " + Instant.ofEpochSecond(expiresAt) + ")");
         return true;
     }
 
+    /**
+     * <b>WHICH MODE THIS RUN IS IN, and it is decided by what is on the certificate volume.</b>
+     * <p>
+     * Configuration decides only whether public mode is wanted at all: it needs a domain and it is
+     * on by default there. What it cannot decide is whether the machine can serve TLS, because
+     * that is a fact about the volume — a re-bootstrap keeps the pair its last run wrote, a fresh
+     * host has an empty volume, and the placeholder certificate is written forty phases below this
+     * one. Asking the volume is the only honest question, and asking it wrongly costs the boot its
+     * first seed image build.
+     * <p>
+     * The probe runs {@code test -f} on the two paths the ingress would be CONFIGURED with, in this
+     * program's own payload image, mounting the volume read-only. Where the image cannot be
+     * identified the answer is TLS, which is what this did before there were three modes — and
+     * {@code start} refuses a run with no payload image two phases later anyway.
+     */
+    private BootstrapIngressMode decide(Consumer<String> out) {
+        BootstrapIngressMode decided = decide(boot.config.bootstrapIngressPublicEffective(),
+                certificatePairPresent());
+        if (decided == BootstrapIngressMode.PUBLIC_HTTP) {
+            out.accept("  " + CERTIFICATE_VOLUME + " holds no certificate pair yet — the bootstrap "
+                    + "ingress serves " + boot.config.domain().orElseThrow() + " over plain HTTP "
+                    + "on port 80 for this run");
+        }
+        return decided;
+    }
+
+    /** The decision itself, so the two facts it turns on can be read without a docker daemon. */
+    static BootstrapIngressMode decide(boolean publicWanted, boolean certificatePresent) {
+        if (!publicWanted) {
+            return BootstrapIngressMode.LOOPBACK;
+        }
+        return certificatePresent
+                ? BootstrapIngressMode.PUBLIC_TLS : BootstrapIngressMode.PUBLIC_HTTP;
+    }
+
+    private boolean certificatePairPresent() {
+        String image = boot.docker.selfImage();
+        if (image == null) {
+            return true;
+        }
+        return boot.docker.run(Cmd.of(List.of("docker", "run", "--rm",
+                "-v", CERTIFICATE_VOLUME + ":/cert:ro", "--entrypoint", "sh", image,
+                "-c", "test -f " + CERTIFICATE + " -a -f " + CERTIFICATE_KEY)), null).ok();
+    }
+
+    /**
+     * The mode this run decided. Before {@code prepare} has decided it — and for a run that never
+     * prepares an ingress at all — it is what configuration alone implies, which is what every
+     * consumer read before the certificate volume had a say.
+     */
+    public BootstrapIngressMode mode() {
+        return mode != null ? mode
+                : decide(boot.config.bootstrapIngress()
+                        && boot.config.bootstrapIngressPublicEffective(), true);
+    }
+
+    /** The seam the address tests drive: a decided mode without a docker daemon to ask. */
+    void mode(BootstrapIngressMode decided) {
+        this.mode = decided;
+    }
+
+    /** Where a person reaches the live progress page while this runs. */
+    String address() {
+        return mode().isPublic()
+                ? mode().scheme() + "://" + ingressHost()
+                : "http://" + boot.config.bootstrapIngressHost() + ":"
+                        + boot.config.bootstrapIngressPort();
+    }
+
+    private String description() {
+        return switch (mode()) {
+            case PUBLIC_TLS -> "TLS domain handoff";
+            case PUBLIC_HTTP -> "plain HTTP on the domain, no certificate on the volume yet";
+            case LOOPBACK -> "loopback-published";
+        };
+    }
+
     private String ingressHost() {
-        return boot.config.bootstrapIngressPublicEffective()
+        return mode().isPublic()
                 ? boot.config.domain().orElseThrow() : boot.config.bootstrapIngressHost();
     }
 
@@ -220,14 +326,18 @@ public final class BootstrapIngressLifecycle {
         return Path.of(STATE_FILE).toAbsolutePath().normalize();
     }
 
+    /**
+     * <b>Where every seed image build resolves this platform's own jars.</b> One address per mode,
+     * and it is the mode's own scheme: host-networked builds use the same door an operator does,
+     * so there is no hidden 8481 publish in either public mode.
+     * <p>
+     * Plain HTTP on the domain resolves as well as TLS does, which is what makes PUBLIC_HTTP a
+     * mode rather than a compromise: every repository's {@code .qits-maven-settings.xml} mirrors
+     * the {@code qits-maven} repository id to this url by EXACT id, and an exact-id mirror wins
+     * over Maven's {@code external:http:*} blocker.
+     */
     String mavenRepositoryUrl() {
-        if (boot.config.bootstrapIngressPublicEffective()) {
-            // Host-networked seed builds use the same normal TLS door as an operator. There is no
-            // hidden 8481 publish in public mode.
-            return "https://" + ingressHost() + "/artifacts/maven/maven";
-        }
-        return "http://" + boot.config.bootstrapIngressHost() + ":"
-                + boot.config.bootstrapIngressPort() + "/artifacts/maven/maven";
+        return address() + "/artifacts/maven/maven";
     }
 
     private static boolean expired(String value, long now) {

@@ -2479,7 +2479,7 @@ public class SeedPhases {
         // While the disposable edge owns the public domain, the seed edge remains an internal
         // service. The deployment extras deliberately keep 80/443 so the real edge can take them
         // at the explicit handoff near the end of the deployment train.
-        if (boot.config.bootstrapIngress() && boot.config.bootstrapIngressPublicEffective()) {
+        if (boot.config.bootstrapIngress() && boot.ingress.mode().isPublic()) {
             values.put("EDGE_SEED_TLS_PORTS", "");
         }
         return values;

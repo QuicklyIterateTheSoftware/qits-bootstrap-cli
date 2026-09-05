@@ -492,7 +492,17 @@ The same run, in a browser, through the bootstrap edge from its first phase on t
 
     http://<bootstrap ingress host>:<bootstrap ingress port>
 
-It is printed on the first line of every run. The page is the terminal display in HTML — the phase
+It is printed on the first line of every run. **Where the node serves a domain the ingress binds the
+domain's own ports instead**, and which of the two public shapes it takes is decided by the
+certificate volume rather than by a knob: with the pair from a previous run on
+`qits-edge-letsencrypt` it publishes `:80` and `:443` and the address is `https://<domain>`, and with
+an empty volume — every truly cold host — it publishes `:80` alone, serves plain HTTP and the address
+is `http://<domain>`. That third mode exists because the seed image builds resolve this platform's
+jars through this address: pointing them at `:443` on a machine where the ingress died for want of a
+key is a boot that fails at its first image with "Connection refused". Plain HTTP resolves as well
+as TLS does — every repository's `.qits-maven-settings.xml` mirrors the `qits-maven` id to
+`${env.QITS_MAVEN_REPOSITORY_URL}` by exact id, which beats Maven's `external:http:*` blocker — and
+the placeholder certificate is written forty phases later, where it would be too late anyway. The page is the terminal display in HTML — the phase
 list with the finished ones dimmed, the running one with its elapsed time counting, the wait line,
 the pending count — and under it the same two columns, the running step's output beside the
 platform's events, each scrolling and sticky at the bottom unless you scroll up. Below 720px they

@@ -389,6 +389,9 @@ public interface BootstrapConfig {
     default boolean bootstrapIngressPublicEffective() {
         return bootstrapIngressPublic() && domain().isPresent();
     }
+    // WHETHER PUBLIC MODE IS TLS IS NOT A CONFIGURATION QUESTION, and there is deliberately no knob
+    // for it: it depends on whether the certificate volume holds a pair, which is a fact about the
+    // machine. See BootstrapIngressMode.
 
     /** The loopback host port of the short-lived bootstrap ingress, kept away from the edge. */
     @WithDefault("8481")
