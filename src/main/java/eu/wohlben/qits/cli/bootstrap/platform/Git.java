@@ -114,6 +114,50 @@ public class Git {
     }
 
     /**
+     * <b>One file out of one ref, without touching the working tree</b> — null when the ref or the
+     * file is not there, which is the honest answer for a tag the clone never fetched and for a
+     * repository that carries no pom at all.
+     * <p>
+     * This is how the pin closure is read ({@link PinnedVersions}): a restoring boot stands every
+     * checkout at its release tag, so {@code HEAD:pom.xml} is that tag's pom, and each pinned
+     * version is read at its own tag beside it. The capture limit is raised because a root pom is
+     * hundreds of lines and a truncated one would parse into a WRONG answer rather than a failure.
+     */
+    public String fileAt(Path repo, String ref, String path) {
+        ProcessResult result = runner.run(Cmd.of(List.of("git", "-C", repo.toString(), "show",
+                ref + ":" + path)).captureLimit(20_000), null);
+        return result.ok() && !result.truncated() ? result.out() : null;
+    }
+
+    /**
+     * A second working tree of one ref, for copying somewhere the checkout itself cannot go. The
+     * seed publishes several versions of a library per boot and each needs its own tree in the
+     * maven container; the checkout holds one.
+     * <p>
+     * A worktree rather than {@code git archive} because it needs git alone — no tar on the host,
+     * no binary stream through a process pipe. The {@code .git} it leaves is a text file pointing
+     * at a path the container does not have, and nothing these builds run reads it: none of the
+     * seed libraries carries a git-commit-id or buildnumber plugin.
+     */
+    public ProcessResult worktreeAdd(Path repo, String ref, Path into, Consumer<String> out) {
+        return in(repo, out, "worktree", "add", "--detach", "--force", into.toString(), ref);
+    }
+
+    /** And its removal. Best effort: a leftover tree costs disk, not correctness. */
+    public ProcessResult worktreeRemove(Path repo, Path tree, Consumer<String> out) {
+        return in(repo, out, "worktree", "remove", "--force", tree.toString());
+    }
+
+    /**
+     * Forget worktrees whose directory is gone. A run killed between the export and the copy leaves
+     * git holding a registration for a path nothing occupies, and {@code worktree add} then refuses
+     * the same path on the next run.
+     */
+    public ProcessResult worktreePrune(Path repo, Consumer<String> out) {
+        return in(repo, out, "worktree", "prune");
+    }
+
+    /**
      * The COMMIT a ref names, peeled. An annotated tag's ref names a tag object, and a branch has
      * to point at a commit — {@code rev-list -n 1} answers the commit for either shape.
      */

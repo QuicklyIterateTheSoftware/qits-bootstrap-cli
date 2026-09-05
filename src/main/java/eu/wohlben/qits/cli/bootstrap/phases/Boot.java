@@ -15,6 +15,7 @@ import eu.wohlben.qits.cli.bootstrap.engine.Waiter;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.Git;
 import eu.wohlben.qits.cli.bootstrap.platform.RunState;
+import eu.wohlben.qits.cli.bootstrap.platform.PinnedVersions;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessRunner;
@@ -53,6 +54,8 @@ public class Boot {
     public final ConfigurationApi configuration;
     /** The alias table's owner: what this run hands its (storage id, name) pairs to. */
     public final ProjectsApi projects;
+    /** The pin closure, read once — see {@link #pinnedVersions}. */
+    private PinnedVersions pinned;
 
     public Boot(BootstrapConfig config, RunLog log) {
         this(config, log, new ProcessRunner(log));
@@ -99,6 +102,26 @@ public class Boot {
     /** The edge replaces the seed port before the first seed image is built. */
     public void useBootstrapMavenRepository(String url, String capability) {
         docker.withBootstrapMavenRepository(url, "bootstrap", capability);
+    }
+
+    /**
+     * <b>Every library version this boot has to publish, not just the checked-out one.</b> Read
+     * once per run out of the checkouts the {@code sources} phase stood, and the warnings are said
+     * once here rather than by each of the phases that ask.
+     * <p>
+     * Lazy because the answer needs every checkout, and the first phase that asks is the first one
+     * after {@code sources}. See {@link PinnedVersions} for why one version per library is not
+     * enough on a platform with an empty store.
+     */
+    public PinnedVersions pinnedVersions(PhaseContext ctx) {
+        if (pinned == null) {
+            pinned = PinnedVersions.read(PlatformModel.platformRepos(),
+                    (name, ref, path) -> git.fileAt(state.repoDir(name), ref, path));
+            pinned.all().forEach((producer, versions) ->
+                    ctx.log("  " + PlatformModel.repo(producer) + " is still pinned at " + versions));
+            pinned.warnings().forEach(ctx::warn);
+        }
+        return pinned;
     }
 
     /**

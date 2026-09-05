@@ -805,6 +805,13 @@ public class PipelinePhases {
      * is a pin nothing holds — there is nothing to dangle, so a replay would be a guess about which
      * version to publish. The failure names the repository, and the fix is to cut a release
      * through qits-workspaces rather than to soften this phase.
+     * <p>
+     * <b>The newest release is not the only version the platform pins.</b> Consumer poms lag —
+     * measured across the estate on 2026-09-05: 36 pins behind their producer's main — and a
+     * lagging pin resolves fine on a platform whose store holds every version ever released and
+     * nowhere at all on a fresh one. So every version of this publisher that
+     * {@link eu.wohlben.qits.cli.bootstrap.platform.PinnedVersions} finds still pinned is replayed
+     * too, oldest first and the newest last, on exactly the terms above.
      */
     public Phase releaseReplay(String name) {
         String repo = PlatformModel.repo(name);
@@ -816,6 +823,25 @@ public class PipelinePhases {
                         + "— nothing to replay");
             }
             ctx.log("  release tag " + version);
+            // BY STORAGE ID, not by name: a ci run row is keyed by the id the announcing push
+            // addressed, which is the git host's and not the platform's public one.
+            String storageId = boot.storageId(name);
+            // MAIN AS A BRANCH, never as HEAD: a restoring boot leaves this checkout detached at
+            // its release tag, and what ci records on an event run is the head of MAIN as the git
+            // host has it — which is the branch this run pushed, not the commit checked out here.
+            String mainSha = boot.git.commitOf(src, "main");
+            // THE OLDER VERSIONS SOMETHING STILL PINS, oldest first and the newest below them.
+            // A pin is only as good as the registry behind it, and the newest release is not the
+            // only version pinned: consumer poms lag, and a fresh platform's registry holds only
+            // what this boot puts there. Each one is pushed and waited for exactly like the newest
+            // — a tag the git host already has moves no ref, announces nothing and is passed over.
+            int replayed = 0;
+            for (String pinned : boot.pinnedVersions(ctx).extraVersions(name)) {
+                if (!pinned.equals(version) && replayTag(ctx, name, repo, src, storageId, mainSha,
+                        pinned)) {
+                    replayed++;
+                }
+            }
             // A replay whose run already went green has nothing left to publish, and re-running it
             // is not free: an image publisher rebuilds for half an hour. The published state is
             // what this phase exists to restore; already restored is a skip, not a rerun. The
@@ -827,29 +853,14 @@ public class PipelinePhases {
             // run that had already succeeded — the second bus-only proving run, phase 36. The
             // CONFIG PATH is what keeps a follow-up bump run (also at main's head) from answering
             // for a release.
-            // MAIN AS A BRANCH, never as HEAD: a restoring boot leaves this checkout detached at
-            // its release tag, and what ci records on an event run is the head of MAIN as the git
-            // host has it — which is the branch this run pushed, not the commit checked out here.
-            String mainSha = boot.git.commitOf(src, "main");
-            // BY STORAGE ID, not by name: a ci run row is keyed by the id the announcing push
-            // addressed, which is the git host's and not the platform's public one.
-            String storageId = boot.storageId(name);
             if (!mainSha.isBlank() && boot.ci.greenReleaseRunAt(storageId, mainSha)) {
                 ctx.skip("release " + version + " already ran green — the registry holds what "
-                        + "this replay publishes");
+                        + "this replay publishes"
+                        + (replayed == 0 ? "" : " (" + replayed + " pinned tags replayed above)"));
             }
-            // The newest finished run BEFORE the tag lands is a previous attempt's, and must not be
-            // read as this one's outcome. Null when the repo never ran.
-            String baselineRun = boot.ci.finishedEventRun(storageId).map(r -> r[0]).orElse(null);
-            // THE PUSH IS THE WHOLE TRIGGER. qits-githost turns every ACCEPTED ref of a push into
-            // an event, so this one tag ref becomes one SCMPublishTag, which is the event the
-            // release recipe declares. `qits.no-ci` stays and suppresses nothing here: it is a
-            // fact on the COMMIT event and this push moves no branch — one refspec, one tag.
-            ProcessResult push = boot.push(ctx, repo + " " + version, src,
-                    boot.gitUrl(name),
-                    List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
-                    "refs/tags/" + version);
-            if (upToDate(push)) {
+            if (replayTag(ctx, name, repo, src, storageId, mainSha, version)) {
+                replayed++;
+            } else {
                 // The tag is already here, so no ref moved, so nothing was announced and no run is
                 // coming — and there is no second door to knock on, which is the design rather
                 // than a gap: a restore re-establishes SCM state, and this state stands. The
@@ -859,52 +870,83 @@ public class PipelinePhases {
                 // a few phases later. Asking for the publish again is a person's move then, and
                 // both doors are theirs: qits-ci's manual trigger, or deleting the tag on the git
                 // host and pushing it again.
-                ctx.skip(version + " is already on the git host — no ref moved, nothing announced");
+                ctx.skip(version + " is already on the git host — no ref moved, nothing announced"
+                        + (replayed == 0 ? "" : " (" + replayed + " pinned tags replayed above)"));
             }
-            ctx.log("  " + version + " pushed — the tag is what starts the release run");
-
-            // The same relay the deploy wait uses. A release run is a build too, and it was as
-            // silent as the other one.
-            CiLogStream ciLog = new CiLogStream(boot.ci, ctx);
-            // The run is waited for by ROW, not by anything this phase was handed: the push
-            // returns as soon as the git host has the tag, and the event, the trigger evaluation
-            // and the run all happen behind it.
-            //
-            // "An EVENT run of this repository" is not "the release run": an upstream's
-            // SoftwareRelease fires this repository's own follow-up bump, also an EVENT run — a
-            // 1-second quiet-exit that landed NEWEST during the first bus-only bootstrap and hid
-            // the wait's real target. The release run is the one that EXECUTED the release
-            // pipeline file, at main's head — where an event-triggered run is cloned and recorded;
-            // the tag checkout is its script's own business. The config path is the fact that
-            // identifies it, and it stays the one to ask by: every event run records main's head,
-            // so the sha collides, and the trigger name is no protection either — it collided
-            // outright while releases were SCMRelease-fired, and a recipe is free to move to
-            // another event again.
-            String status = Waiter.await(ctx, repo + "'s " + version + " release run",
-                    boot.config.releaseTimeout(),
-                    boot.config.pollInterval(), () -> {
-                        boot.ci.newestRun(storageId)
-                                .map(run -> Json.text(run, "id"))
-                                .filter(id -> !id.equals(baselineRun))
-                                .ifPresent(ciLog::follow);
-                        for (String[] run : boot.ci.finishedEventRuns(storageId)) {
-                            if (!run[0].equals(baselineRun)
-                                    && eu.wohlben.qits.cli.bootstrap.api.CiApi.RELEASE_CONFIG
-                                            .equals(run[2])
-                                    && mainSha.equals(run[3])) {
-                                return Waiter.Poll.done(run[1], run[1]);
-                            }
-                        }
-                        return Waiter.Poll.pending("no finished release run for " + version
-                                + " yet");
-                    });
-            if (!"SUCCESS".equals(status)) {
-                throw new IllegalStateException(repo + " release run ended " + status
-                        + " — the registry never got its package");
-            }
-            ctx.log("  " + repo + " released " + version);
-            ctx.note(version);
+            ctx.note(replayed == 1 ? version : version + " + " + (replayed - 1) + " pinned");
         });
+    }
+
+    /**
+     * <b>ONE version replayed: push its tag, then wait for the run that push starts.</b> The newest
+     * release and every older version something still pins go through here, so both are restored
+     * the same way and neither can drift into a second recipe.
+     *
+     * @return whether a ref actually moved. A tag the git host already has announces nothing, so
+     *         there is no run to wait for and nothing to fail on — the registry holds that version
+     *         from the boot whose push first announced it.
+     */
+    private boolean replayTag(PhaseContext ctx, String name, String repo, Path src,
+                              String storageId, String mainSha, String version) throws Exception {
+        // The newest finished run BEFORE the tag lands is a previous attempt's, and must not be
+        // read as this one's outcome. Null when the repo never ran.
+        String baselineRun = boot.ci.finishedEventRun(storageId).map(r -> r[0]).orElse(null);
+        // THE PUSH IS THE WHOLE TRIGGER. qits-githost turns every ACCEPTED ref of a push into
+        // an event, so this one tag ref becomes one SCMPublishTag, which is the event the
+        // release recipe declares. `qits.no-ci` stays and suppresses nothing here: it is a
+        // fact on the COMMIT event and this push moves no branch — one refspec, one tag.
+        ProcessResult push = boot.push(ctx, repo + " " + version, src,
+                boot.gitUrl(name),
+                List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
+                "refs/tags/" + version);
+        if (upToDate(push)) {
+            ctx.log("  " + version + " is already on the git host — no ref moved, nothing "
+                    + "announced");
+            return false;
+        }
+        ctx.log("  " + version + " pushed — the tag is what starts the release run");
+
+        // The same relay the deploy wait uses. A release run is a build too, and it was as
+        // silent as the other one.
+        CiLogStream ciLog = new CiLogStream(boot.ci, ctx);
+        // The run is waited for by ROW, not by anything this phase was handed: the push
+        // returns as soon as the git host has the tag, and the event, the trigger evaluation
+        // and the run all happen behind it.
+        //
+        // "An EVENT run of this repository" is not "the release run": an upstream's
+        // SoftwareRelease fires this repository's own follow-up bump, also an EVENT run — a
+        // 1-second quiet-exit that landed NEWEST during the first bus-only bootstrap and hid
+        // the wait's real target. The release run is the one that EXECUTED the release
+        // pipeline file, at main's head — where an event-triggered run is cloned and recorded;
+        // the tag checkout is its script's own business. The config path is the fact that
+        // identifies it, and it stays the one to ask by: every event run records main's head,
+        // so the sha collides, and the trigger name is no protection either — it collided
+        // outright while releases were SCMRelease-fired, and a recipe is free to move to
+        // another event again.
+        String status = Waiter.await(ctx, repo + "'s " + version + " release run",
+                boot.config.releaseTimeout(),
+                boot.config.pollInterval(), () -> {
+                    boot.ci.newestRun(storageId)
+                            .map(run -> Json.text(run, "id"))
+                            .filter(id -> !id.equals(baselineRun))
+                            .ifPresent(ciLog::follow);
+                    for (String[] run : boot.ci.finishedEventRuns(storageId)) {
+                        if (!run[0].equals(baselineRun)
+                                && eu.wohlben.qits.cli.bootstrap.api.CiApi.RELEASE_CONFIG
+                                        .equals(run[2])
+                                && mainSha.equals(run[3])) {
+                            return Waiter.Poll.done(run[1], run[1]);
+                        }
+                    }
+                    return Waiter.Poll.pending("no finished release run for " + version
+                            + " yet");
+                });
+        if (!"SUCCESS".equals(status)) {
+            throw new IllegalStateException(repo + " release run ended " + status
+                    + " — the registry never got its package");
+        }
+        ctx.log("  " + repo + " released " + version);
+        return true;
     }
 
     // --- the environment --------------------------------------------------------------------------

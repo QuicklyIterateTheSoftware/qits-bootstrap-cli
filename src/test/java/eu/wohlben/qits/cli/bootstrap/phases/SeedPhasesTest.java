@@ -259,7 +259,7 @@ class SeedPhasesTest {
      */
     @Test
     void everySeedBuildResolvesThroughTheSharedCache() {
-        String script = SeedPhases.seedScript();
+        String script = SeedPhases.seedScript(Map.of());
 
         assertThat(script.lines().filter(line -> line.startsWith("cd /src-")))
                 .hasSize(SeedPhases.SEED_LIBRARIES.size())
@@ -276,7 +276,7 @@ class SeedPhasesTest {
      */
     @Test
     void theQitsGroupIsPurgedBeforeAnythingIsBuilt() {
-        String script = SeedPhases.seedScript();
+        String script = SeedPhases.seedScript(Map.of());
 
         assertThat(script).startsWith("set -eu\nrm -rf /cache/repository/eu/wohlben/qits\n");
         // Only our group: the third-party half of the cache is the whole point of having one.
@@ -290,7 +290,7 @@ class SeedPhasesTest {
         SeedPhases phases = new SeedPhases(
                 new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
 
-        String script = phases.publishScript("githost");
+        String script = phases.publishScript("githost", List.of(SeedPhases.publishTree(null)));
 
         assertThat(script).contains("rm -rf /cache/repository/eu/wohlben/qits\n");
         assertThat(script).contains("-Dmaven.repo.local=/cache/repository");
@@ -302,6 +302,92 @@ class SeedPhasesTest {
         // Still by module, and still deploying to the store.
         assertThat(script).contains(" -pl githost-events -am")
                 .contains("-DaltDeploymentRepository=qits::default::");
+    }
+
+    // --- the versions a lagging pin adds ----------------------------------------------------------
+
+    /**
+     * <b>The 2026-09-05 defect, in the script it produces.</b> A consumer pinned an eventstream
+     * release four hours behind the checkout, the temporary registry held only what the seed built,
+     * and the phase died on a version nobody had published. Each pinned version is now its own tree
+     * and its own build, and the checkout's is LAST — everything else prefers it.
+     */
+    @Test
+    void everyPinnedVersionOfALibraryIsSeededBesideTheCheckout() {
+        String script = SeedPhases.seedScript(Map.of(
+                "eventstream", List.of("2026.904.82646", "2026.905.1")));
+
+        List<String> builds = script.lines().filter(line -> line.startsWith("cd ")).toList();
+        assertThat(builds).hasSize(SeedPhases.SEED_LIBRARIES.size() + 2);
+        assertThat(builds).containsSubsequence(
+                "cd /src-eventstream@2026.904.82646 && mvn -B -ntp deploy -DskipTests"
+                        + " -Dmaven.repo.local=/cache/repository"
+                        + " -DaltDeploymentRepository=seed::default::file:///repo",
+                "cd /src-eventstream@2026.905.1 && mvn -B -ntp deploy -DskipTests"
+                        + " -Dmaven.repo.local=/cache/repository"
+                        + " -DaltDeploymentRepository=seed::default::file:///repo",
+                "cd /src-eventstream && mvn -B -ntp deploy -DskipTests"
+                        + " -Dmaven.repo.local=/cache/repository"
+                        + " -DaltDeploymentRepository=seed::default::file:///repo");
+    }
+
+    /**
+     * The library ORDER is untouched by the extra versions: an older version of one library
+     * resolves only libraries above it, whose own pinned versions this container has already
+     * deployed.
+     */
+    @Test
+    void pinnedVersionsDoNotDisturbTheLibraryOrder() {
+        String script = SeedPhases.seedScript(Map.of(
+                "eventstream", List.of("2026.904.82646"),
+                "integrations-quarkus", List.of("2026.902.53026")));
+
+        assertThat(script.lines().filter(line -> line.startsWith("cd ")).toList())
+                .containsSubsequence("cd /src-integrations-quarkus@2026.902.53026"
+                                + " && mvn -B -ntp deploy -DskipTests"
+                                + " -Dmaven.repo.local=/cache/repository"
+                                + " -DaltDeploymentRepository=seed::default::file:///repo",
+                        "cd /src-eventstream@2026.904.82646 && mvn -B -ntp deploy -DskipTests"
+                                + " -Dmaven.repo.local=/cache/repository"
+                                + " -DaltDeploymentRepository=seed::default::file:///repo");
+    }
+
+    /**
+     * A library nothing lags behind is built once, exactly as it always was — the pin closure adds
+     * work only where the estate asks for it.
+     */
+    @Test
+    void withNothingLaggingTheSeedIsOneBuildPerLibrary() {
+        assertThat(SeedPhases.seedScript(Map.of()).lines()
+                .filter(line -> line.startsWith("cd ")).toList())
+                .hasSize(SeedPhases.SEED_LIBRARIES.size());
+        assertThat(SeedPhases.seedTree("eventstream", null)).isEqualTo("/src-eventstream");
+    }
+
+    /** The store half publishes the same set, out of a container holding one repository. */
+    @Test
+    void theStorePublishesEveryPinnedVersionToo() {
+        SeedPhases phases = new SeedPhases(
+                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+
+        String script = phases.publishScript("eventstream",
+                List.of(SeedPhases.publishTree("2026.904.82646"), SeedPhases.publishTree(null)));
+
+        assertThat(script.lines().filter(line -> line.startsWith("cd ")).toList())
+                .containsExactly(
+                        "cd /src@2026.904.82646 && mvn -B -ntp -s /root/.m2/settings.xml deploy "
+                                + "-DskipTests -Dmaven.repo.local=/cache/repository"
+                                + " -DaltDeploymentRepository=qits::default::"
+                                + "http://prod-qits-artifacts:8080/artifacts/maven/maven",
+                        "cd /src && mvn -B -ntp -s /root/.m2/settings.xml deploy "
+                                + "-DskipTests -Dmaven.repo.local=/cache/repository"
+                                + " -DaltDeploymentRepository=qits::default::"
+                                + "http://prod-qits-artifacts:8080/artifacts/maven/maven");
+        // The purge still runs once, before any of them: what one tree hands the next is this
+        // run's bytes, and a purge between the builds would throw away exactly that.
+        assertThat(script.split("rm -rf /cache/repository", -1)).hasSize(2);
+        // And the container's exit code is the FIRST failure's, not the last build's.
+        assertThat(script).startsWith("set -eu\n");
     }
 
     /**

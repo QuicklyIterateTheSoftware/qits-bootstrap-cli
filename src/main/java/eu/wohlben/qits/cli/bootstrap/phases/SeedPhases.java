@@ -16,6 +16,7 @@ import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.DomainTokens;
 import eu.wohlben.qits.cli.bootstrap.platform.PgAdmin;
+import eu.wohlben.qits.cli.bootstrap.platform.PinnedVersions;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.platform.SeedDockerfile;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
@@ -103,6 +104,14 @@ public class SeedPhases {
      * <b>githost and containers name SERVICE repositories and publish modules of them</b> — the git
      * host's event vocabulary, and the orchestrator's core and client. {@link
      * PlatformModel#mavenModule} says which modules and why.
+     * <p>
+     * <b>Each entry is a SET OF VERSIONS, not one.</b> The checkout's own version is published, and
+     * so is every version of that library some pom in the estate still pins — see {@link
+     * PinnedVersions}, and the cold boot of 2026-09-05 that died on a githost-events pin four hours
+     * behind the eventstream checkout. The order above still decides which library is built before
+     * which; within one library the pinned versions are built oldest first and the checkout last.
+     * An older version of a library depends only on libraries ABOVE it here, whose own pinned
+     * versions this same container has already deployed.
      */
     static final List<String> SEED_LIBRARIES = List.of(
             "integrations-quarkus", "registries", "eventstream", "githost",
@@ -708,6 +717,13 @@ public class SeedPhases {
      * re-read every bootstrap — and the script starts by deleting this platform's own group out of
      * it, so what one line hands the next is always this run's bytes. {@link #MAVEN_PURGE_QITS}
      * says why that is not optional.
+     * <p>
+     * <b>Every entry is published at every version the estate still pins, not only at the
+     * checkout's.</b> Consumer poms name library versions in root-pom properties and those
+     * properties lag by hours or weeks; on the live platform that is harmless, because the store
+     * holds every version ever released. Here it is the boot: one lagging pin used to end this
+     * phase minutes in, naming a version nothing had published. {@link PinnedVersions} closes the
+     * set and {@link #seedTree} says where each version's source is put.
      */
     public Phase mavenSeed() {
         return new Phase("maven-seed",
@@ -721,16 +737,29 @@ public class SeedPhases {
                     // very next retry.
                     boot.docker.ensureVolume("qits-maven-seed", ctx::log);
                     boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
+                    // THE PINS, READ BEFORE THE FIRST TREE IS COPIED. What the estate still asks
+                    // for decides how many trees this container holds, so the closure is the
+                    // script's own input rather than something checked afterwards.
+                    PinnedVersions pinned = boot.pinnedVersions(ctx);
+                    Map<String, List<String>> extra = new LinkedHashMap<>();
+                    for (String library : SEED_LIBRARIES) {
+                        extra.put(library, pinned.extraVersions(library));
+                    }
                     String cid = create(ctx, List.of(
                             "docker", "create", "--user", "root", "--entrypoint", "sh",
                             "-v", "qits-maven-seed:/repo", "-v", MAVEN_CACHE_MOUNT,
                             "maven:3.9-eclipse-temurin-25",
-                            "-c", seedScript()));
+                            "-c", seedScript(extra)));
                     for (String library : SEED_LIBRARIES) {
-                        ctx.log("  " + PlatformModel.repo(library) + " -> /src-" + library);
+                        String repo = PlatformModel.repo(library);
+                        for (String version : extra.get(library)) {
+                            copyTag(ctx, library, version, cid, seedTree(library, version));
+                        }
+                        ctx.log("  " + repo + " -> " + seedTree(library, null));
                         Boot.must(boot.docker.exec(Duration.ofMinutes(30), ctx::log, "cp",
-                                        boot.state.repoDir(library) + "/.", cid + ":/src-" + library),
-                                "copying " + PlatformModel.repo(library) + " in failed");
+                                        boot.state.repoDir(library) + "/.",
+                                        cid + ":" + seedTree(library, null)),
+                                "copying " + repo + " in failed");
                     }
                     startAndReap(ctx, cid, "the qits library seed failed");
 
@@ -1046,26 +1075,78 @@ public class SeedPhases {
         return module.isEmpty() ? "" : " -pl " + module + " -am";
     }
 
-    /** One container, every seed library, into the temporary file repository at {@code /repo}. */
-    static String seedScript() {
+    /**
+     * <b>Where one version of one library's source sits inside a maven container.</b> The checkout
+     * itself is {@code /src-<library>}; a version somebody still pins is exported beside it under
+     * its own name, so one container holds every tree it has to build and the script can name them
+     * without knowing how they got there.
+     */
+    static String seedTree(String library, String version) {
+        return version == null ? "/src-" + library : "/src-" + library + "@" + version;
+    }
+
+    /**
+     * Every tree of one library, in build order: the pinned versions oldest first, the checkout
+     * last. Oldest first because {@code mvn deploy} installs locally on its way out — a pinned
+     * version that another pinned version of the same library depends on has to be in the local
+     * repository already — and the checkout last because it is what everything else prefers.
+     */
+    static List<String> seedTrees(String library, List<String> pinned) {
+        List<String> trees = new ArrayList<>();
+        for (String version : pinned) {
+            trees.add(seedTree(library, version));
+        }
+        trees.add(seedTree(library, null));
+        return trees;
+    }
+
+    /**
+     * One container, every seed library at every version anything still pins, into the temporary
+     * file repository at {@code /repo}.
+     *
+     * @param pinned the extra versions per library — {@link PinnedVersions#extraVersions}
+     */
+    static String seedScript(Map<String, List<String>> pinned) {
         StringBuilder script = new StringBuilder("set -eu\n").append(MAVEN_PURGE_QITS);
         for (String library : SEED_LIBRARIES) {
-            script.append("cd /src-").append(library)
-                    .append(" && mvn -B -ntp deploy -DskipTests")
-                    .append(mavenModuleArgs(library))
-                    .append(MAVEN_REPO_LOCAL)
-                    .append(" -DaltDeploymentRepository=seed::default::file:///repo\n");
+            for (String tree : seedTrees(library, pinned.getOrDefault(library, List.of()))) {
+                script.append("cd ").append(tree)
+                        .append(" && mvn -B -ntp deploy -DskipTests")
+                        .append(mavenModuleArgs(library))
+                        .append(MAVEN_REPO_LOCAL)
+                        .append(" -DaltDeploymentRepository=seed::default::file:///repo\n");
+            }
         }
         return script.toString();
     }
 
-    /** One repository, into the store. The settings first, then the purge, then the build. */
-    String publishScript(String repoName) {
-        return mavenSettings() + MAVEN_PURGE_QITS
-                + "cd /src && mvn -B -ntp -s /root/.m2/settings.xml deploy -DskipTests"
-                + mavenModuleArgs(repoName) + MAVEN_REPO_LOCAL
-                + " -DaltDeploymentRepository=qits::default::"
-                + boot.config.artifactsUrl() + "/maven/maven";
+    /**
+     * Where one version of the ONE repository a publish container holds sits. The checkout keeps
+     * the {@code /src} it has always had; a pinned version is exported beside it.
+     */
+    static String publishTree(String version) {
+        return version == null ? "/src" : "/src@" + version;
+    }
+
+    /**
+     * One repository, into the store. The settings first, then the purge, then one build per tree.
+     *
+     * @param trees the source trees to deploy, in build order — {@link #publishTree}
+     */
+    String publishScript(String repoName, List<String> trees) {
+        // `set -eu` is not decoration now that there can be more than one build in here: without
+        // it the container's exit code is the LAST command's, so a failed older version followed
+        // by a green checkout would report success and leave the store short a version.
+        StringBuilder script = new StringBuilder("set -eu\n").append(mavenSettings())
+                .append(MAVEN_PURGE_QITS);
+        for (String tree : trees) {
+            script.append("cd ").append(tree)
+                    .append(" && mvn -B -ntp -s /root/.m2/settings.xml deploy -DskipTests")
+                    .append(mavenModuleArgs(repoName)).append(MAVEN_REPO_LOCAL)
+                    .append(" -DaltDeploymentRepository=qits::default::")
+                    .append(boot.config.artifactsUrl()).append("/maven/maven\n");
+        }
+        return script.toString();
     }
 
     public Phase mavenPublish(String repoName, String artifactId, String title) {
@@ -1080,18 +1161,43 @@ public class SeedPhases {
             // released version — which is the one publish this phase is allowed to make. The rule
             // it must never break is below: unreleased work reaching a released coordinate.
             String version = checkedOutVersion(boot.state.repoDir(repoName));
-            if (version != null
-                    && boot.artifacts.mavenPublished("eu/wohlben/qits", artifactId, version, "jar")) {
+            // AND THE VERSIONS THE ESTATE STILL PINS, on the same terms. The store is empty on a
+            // cold boot, so a consumer's lagging pin resolves nothing unless this phase publishes
+            // what it names — the defect that killed the maven-seed phase of 2026-09-05, which the
+            // store half of the boot would have hit a few phases later.
+            List<String> missing = new ArrayList<>();
+            for (String pinned : boot.pinnedVersions(ctx).extraVersions(repoName)) {
+                if (!boot.artifacts.mavenPublished("eu/wohlben/qits", artifactId, pinned, "jar")) {
+                    missing.add(pinned);
+                }
+            }
+            boolean publishCheckout = version == null
+                    || !boot.artifacts.mavenPublished("eu/wohlben/qits", artifactId, version, "jar");
+            if (missing.isEmpty() && !publishCheckout) {
                 ctx.skip(artifactId + " " + version + " already published");
+            }
+            List<String> trees = new ArrayList<>();
+            for (String pinned : missing) {
+                trees.add(publishTree(pinned));
+            }
+            if (publishCheckout) {
+                trees.add(publishTree(null));
             }
             boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
             String cid = create(ctx, List.of(
                     "docker", "create", "--network", Boot.NETWORK, "--user", "root",
                     "--entrypoint", "sh", "-v", MAVEN_CACHE_MOUNT,
                     "maven:3.9-eclipse-temurin-25",
-                    "-c", publishScript(repoName)));
-            copyIn(ctx, boot.state.repoDir(repoName), cid);
+                    "-c", publishScript(repoName, trees)));
+            for (String pinned : missing) {
+                copyTag(ctx, repoName, pinned, cid, publishTree(pinned));
+            }
+            if (publishCheckout) {
+                copyIn(ctx, boot.state.repoDir(repoName), cid);
+            }
             startAndReap(ctx, cid, artifactId + " publish failed");
+            ctx.note(missing.isEmpty() ? String.valueOf(version)
+                    : missing.size() + " pinned + " + version);
         });
     }
 
@@ -2396,6 +2502,35 @@ public class SeedPhases {
             throw new IllegalStateException("docker create printed no container id");
         }
         return lines.getLast().trim();
+    }
+
+    /**
+     * <b>One release tag of one repository, into a container, beside the checkout.</b> The checkout
+     * stands at one commit and the seed publishes several versions, so the older ones are exported
+     * as their own trees — a detached worktree, made here and removed as soon as docker has the
+     * bytes, so a run leaves nothing behind in the source directory.
+     * <p>
+     * The export is deliberately not a second clone: the tag is already in this checkout, and a
+     * clone would go to the network for bytes that are on the disk.
+     */
+    private void copyTag(PhaseContext ctx, String name, String version, String cid, String into) {
+        Path repo = boot.state.repoDir(name);
+        Path tree = boot.state.srcDir.resolve(".exports").resolve(PlatformModel.repo(name)
+                + "@" + version);
+        ctx.status("exporting " + PlatformModel.repo(name) + " " + version);
+        boot.git.worktreeRemove(repo, tree, null);
+        boot.git.worktreePrune(repo, null);
+        Boot.must(boot.git.worktreeAdd(repo, version, tree, ctx::log),
+                PlatformModel.repo(name) + " has no " + version + " to export — the tag is in the "
+                        + "pin closure but not in the checkout");
+        try {
+            ctx.log("  " + PlatformModel.repo(name) + " " + version + " -> " + into);
+            Boot.must(boot.docker.exec(Duration.ofMinutes(30), ctx::log, "cp",
+                            tree + "/.", cid + ":" + into),
+                    "copying " + PlatformModel.repo(name) + " " + version + " in failed");
+        } finally {
+            boot.git.worktreeRemove(repo, tree, null);
+        }
     }
 
     private void copyIn(PhaseContext ctx, Path source, String cid) {
