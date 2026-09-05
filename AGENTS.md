@@ -127,9 +127,28 @@ forced. Add to that list rather than deviating quietly.
   and a past run's is no evidence — one that was gone let a release run's SBOM upload hang forty
   minutes on 2026-09-02. Installing needs root, so a plain user gets the old warning instead; the
   closing report prints both steps.
+- **Every image this run builds goes through `qits-buildkitd`, and the run does not own it.** The
+  first build ensures the container — `moby/buildkit:v0.33.0`, `--privileged`, host network,
+  `--restart unless-stopped`, `--oom-score-adj 500`, the 9 GB / 4 cpu bounds the old buildx
+  driver-opts carried, and the named volume `qits-buildkitd-state` — and the teardown phase leaves
+  it standing, because from its first deployment on it is **qits-containers'** container at the
+  same name, image and cache volume. The bootstrap only makes it first: it has to build the seed
+  images before there is a platform to make it. Host network is two requirements at once — an `ADD`
+  and the seed maven url are resolved BY the builder, and the client dials the same loopback — and
+  it binds `0.0.0.0:1234` so the same container keeps working once qits-containers moves it onto
+  `qits-net`. Three things follow and none of them may be quietly undone: the host has no
+  `buildctl`, so the client is `docker run --rm --entrypoint buildctl` of the SAME image;
+  `--output type=docker,dest=…` plus `docker load` is what replaces buildx's `--load`, which is why
+  every `docker tag`, `docker create` and `stack deploy --resolve-image never` after a build is
+  untouched; and a build's scratch directories sit under `QITS_SRC` rather than `/tmp`, because
+  those `-v` paths are the one place in the `Docker` facade a path is resolved by the DAEMON and
+  not by the client. A build secret is a FILE (`--secret id=…,src=/secrets/<id>`, 0600, mounted
+  read-only): the client is a container and inherits none of this process's environment, so the
+  `env=` form cannot work. The old `qits-bootstrap-builder*` buildx builders are swept and nothing
+  creates one again.
 - **A seed build resolves the platform's own jars from the SEED registry, and is TOLD so.** Every
   image this run builds — the seed images, the step images, the ci-daemon's musl builder — carries
-  `--build-arg QITS_MAVEN_REPOSITORY_URL=http://localhost:<registry port>/artifacts/maven/maven`,
+  `--opt build-arg:QITS_MAVEN_REPOSITORY_URL=http://localhost:<registry port>/artifacts/maven/maven`,
   set once on the `Docker` facade (`Boot.imageBuildArgs`) rather than at each call site. The
   repositories' own `ARG` default names the edge vhost, which is the address of a platform that is
   already up; a seed build runs before any edge exists. The default WAS this same loopback url

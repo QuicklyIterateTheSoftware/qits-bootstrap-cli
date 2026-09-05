@@ -24,6 +24,10 @@ FROM eclipse-temurin:25-jre-alpine
 
 # The JVM is the only addition compared with the former static payload.  Everything the CLI shells
 # remains available in the runtime image, so its capability and mount model stay unchanged.
+#
+# buildx is kept for ONE job now: sweeping the qits-bootstrap-builder* builders a host may still
+# carry from before the builds moved to qits-buildkitd.  Nothing here builds with it, and buildctl
+# is not installed at all — the client runs out of the buildkit image itself.
 RUN apk add --no-cache \
         ca-certificates \
         docker-cli \

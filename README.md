@@ -405,10 +405,10 @@ has never run maven — which is the machine this program is for. Its repository
 deliberately outside `unwrap`'s `qits/` image sweep: it is the image a running `unwrap` is executing
 from, and keeping it is what makes the next bootstrap start in seconds.
 
-**Buildx is in the image, and preflight checks it is.** The builder is chosen by the CLIENT, and a
-client without buildx does not fail — it falls back to the legacy builder, which reads build flags
-differently and says nothing. That would make every seed image the product of a different builder
-with no line anywhere recording it, so preflight asks `docker buildx version` and stops the run.
+**The payload image is the one build that runs on the host daemon's own builder**, with plain
+`docker build`. Everything else this program builds goes to `qits-buildkitd` (below) — but this
+image makes the container the phases run in, so it is built before any phase and therefore before
+any buildkitd exists. It resolves nothing of the platform, and buildx is not required for it.
 
 **The binary in it is fully static against musl**, and both halves of that are forced. A binary
 linked against this host's glibc starts on no alpine image at all, and a *statically* linked glibc
@@ -543,12 +543,12 @@ for 52. `QITS_DOMAIN` adds two more, marked below.
 
 | | phase |
 | --- | --- |
-| 1–8 | preflight (docker, buildx, the swarm — initialised when the daemon is in none — git, where the wrapper is, and which domain — if any — this platform serves); join `qits-net`, the attachable overlay every address after it needs; **install the IPv6 loopback reject for the edge port** — one `ip6tables` rule, in the host's own namespaces through a throwaway privileged helper, unconditionally and idempotently, because every `*.localhost` name resolves to `::1` and the ingress mesh serves IPv4 only; a helper that cannot run stops the boot; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 47 platform repositories **and stand each one at this boot's identity** — its newest release tag in a restore, but only where the output CARRIES a version (a deployable or a release publisher); the step-image sources and the SPA seed sources stay on main, as does anything never released; a run setting the ignored `--ship-mains` is warned here; read `.qits-bootstrap.env` |
+| 1–8 | preflight (docker, compose, the swarm — initialised when the daemon is in none — git, where the wrapper is, and which domain — if any — this platform serves); join `qits-net`, the attachable overlay every address after it needs; **install the IPv6 loopback reject for the edge port** — one `ip6tables` rule, in the host's own namespaces through a throwaway privileged helper, unconditionally and idempotently, because every `*.localhost` name resolves to `::1` and the ingress mesh serves IPv4 only; a helper that cannot run stops the boot; **clone the wrapper repository when this machine has none** — skipped whenever it has one; clone or refresh the 47 platform repositories **and stand each one at this boot's identity** — its newest release tag in a restore, but only where the output CARRIES a version (a deployable or a release publisher); the step-image sources and the SPA seed sources stay on main, as does anything never released; a run setting the ignored `--ship-mains` is warned here; read `.qits-bootstrap.env` |
 | 9 | seed the six qits libraries every build of this platform resolves — `qits-userflows` (test-scoped in seventeen root poms, and `-DskipTests` resolves test scope all the same), `qits-blobstore`, `qits-registries`, `qits-eventstream`, `qits-githost-events` (one module of qits-githost: the vocabulary its consumers need, not its service), `qits-auth-core`, the two `qits-containers` libraries — into a temporary file repository served over HTTP, which is what breaks the first-boot cycle: three of the images below are built out of jars only this platform will ever publish. Its maven container, every publish container below and the ci-daemon build share one download cache — the `qits-maven-cache` volume, mounted at `/cache` and named by `-Dmaven.repo.local` — so Maven Central is read once per machine rather than once per phase. Each of those scripts starts by deleting `eu/wohlben/qits` out of it: third-party bytes are immutable at their version and ours are not, because seed builds reuse calvers across runs. **Each library is published at every version the estate still pins, not only at the checkout's** — consumer poms name library versions in root-pom properties and those properties lag, which is harmless on a platform whose store holds every version ever released and fatal on one whose store holds only what this phase puts there. `PinnedVersions` closes that set out of the checkouts' own tags, oldest version first and the checkout last |
 | 10–15 | seed images `qits/platform-edge`, `qits/platform-mirror`, `qits/artifacts`, `qits/githost`, `qits/oci-postgresql`, `qits/events` — the six that need nothing from a running platform |
 | 16 | start postgres on a generated superuser password recorded before it first boots, and create over JDBC every database the seed stack needs: the deployer's own and its outbox's, qits-ci's own and its outbox's, qits-platform-idp's, qits-events', qits-artifacts', qits-platform-mirror's, qits-githost's own and its outbox's, qits-projects' THREE (its rows, the epics beside them and its outbox), qits-containers' own and its outbox's, and the edge's pair. Five are outboxes because the eventstream library keeps its own Flyway lineage and cannot share a database with its host. Everything else is provisioned by the deployer from the `resources:` line in each repository's deployments.yml |
 | 17 | have qits-platform-mirror serving, because every publish below resolves its third-party half through it — Maven Central, npmjs — and a cache that is not up is not a slow publish but a failed one. It cannot pull through itself: its own image was built minutes ago with the mirror prefixes rewritten to the direct upstreams |
-| 18 | have qits-artifacts serving, so there is somewhere to publish to (the seed one holds the registry port on 127.0.0.1 for the builds that run `--network host`) |
+| 18 | have qits-artifacts serving, so there is somewhere to publish to (the seed one holds the registry port on 127.0.0.1 for the builds, whose builder is on the host's network namespace) |
 | 19–27 | publish `qits-userflows`, `qits-blobstore`, `qits-registries`, `qits-eventstream`, `qits-githost-events`, `qits-auth-core`, the two `qits-containers` libraries (`core` and `client`, the modules its consumers pin — never its service, which is a native image nobody resolves), `@qits/ui-components`, `@qits/angular`. qits-userflows is first because it resolves nothing of ours and every service build resolves it. The git host's vocabulary is here because two consumers need it out of the store long before the git host's own deployment could publish anything: the `qits/ci` image three phases below, and the `qits/projects` image beside it — both are seed images, and both resolve it from this store. Every one of them is published at the versions phase 8 seeded — the checkout's, plus each version still pinned somewhere in the estate — so a build reading the real store finds what its pom asks for |
 | 28–32 | seed images `qits/ci`, `qits/deployments`, `qits/platform-idp`, `qits/containers`, `qits/projects` — the five built out of jars the publishes above put in the store. The last is the alias table's owner, in the seed since 2026-08-21 so that a repository has a public address before the first push |
 | 33–37 | the five step images from qits-build-images-oci |
@@ -568,7 +568,7 @@ for 52. `QITS_DOMAIN` adds two more, marked below.
 | 59–77 | one phase per deployable: push `main` quietly, push the newest release tag, then announce that release to qits-ci — the boot RESTORES, and what it restores is a VERSION. The announcement is what runs the repository's release recipe, which builds the tag and publishes `qits/<app>:<version>`; a green run announces the `SoftwareRelease` the deployer enters a deployment request from. A release that already ran green is not built again — the deployer is asked for that version directly — and a deployable with no release tag reachable from main is WARNED and skipped, because there is no version to deploy. Then wait for the release build and the deployment. qits-oci-postgresql is second: it is the deployer's own database, so its cutover must never be queued beside a consumer's. qits-containers is immediately before qits-ci, because ci runs every pipeline step as a container it asks that service for. qits-platform-edge is second to last: it is the host's one door, and every other service is behind it — its publish is `mode: ingress`, so the swarm holds the port and the successor pulls its own image through the predecessor rather than needing the door it is replacing. qits-configuration is FOURTH, after postgres and the idp, because the two phases below are what the rest of the train deploys through. qits-platform-orchestrator is LATE, after every peer its technical processes call — the store, the container orchestrator, ci and the deployer — because it holds a scheduler and a run that starts inside a peer's cutover fails against a service being replaced. qits-platform-maintenance follows it for the same reason: it reads qits-projects, qits-githost, qits-artifacts and the mirror and asks ci for a bump, so every peer it reads is above it, and it holds a scheduler of its own |
 | 63–64 | **deployment configuration becomes platform state.** Import the extras this boot rendered into qits-configuration — the whole properties file, unchanged, idempotent — then point the RUNNING deployer at it with `QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL` and the `configuration` oidc client. From here the deployer reads each application's configuration from the service and REFUSES a deployment it cannot read, so both sides of the order are load-bearing: flipped before the import, it would refuse every deployment left in the train; not flipped before qits-deployments deploys itself, the successor would come up holding the url over a service nobody filled. The file on the config volume is untouched, and from the flip on it is UNREAD: the service is the sole source, or a key deleted from the store would come back out of a file nobody emptied. It stays what the cold boot deploys from and what the import is rendered from; unsetting the url is the rollback, and by then the file may be stale |
 | 78 | the closing report |
-| 79 | **reclaim the builder.** `docker buildx rm qits-bootstrap-builder-v4` — the container and its state volume, 13.7 GB measured on wohlben.eu — then `qits-maven-seed` and the `qits-maven-cache` download cache when nothing holds them. The builder is BOOTSTRAP-TIME ONLY: every build after this run goes through qits-containers to the host's default builder, and the next bootstrap creates a new one. Last because nothing above it may build after it, and because the phase above only BUILDS the closing account — it is printed once every phase has run. `QITS_KEEP_BUILDER=1` skips it: a re-bootstrap without the warm cache rebuilds the seed images cold and re-fetches Maven Central, ten to twenty minutes more, which is the dev loop's price and not a server's. It removes no IMAGES — a dangling image carries no record of the tag it held, so nothing here can tell one of ours from one of somebody else's; attributed image deletion is qits-containers' gc endpoint, driven by qits-platform-orchestrator with the pin set in hand |
+| 79 | **reclaim the bootstrap's build plane, minus the part the platform now owns.** `docker buildx rm` for every `qits-bootstrap-builder*` a host still carries from the buildx era — the container and its state volume, 13.7 GB measured on wohlben.eu — then `qits-maven-seed` and the `qits-maven-cache` download cache when nothing holds them. **`qits-buildkitd` and `qits-buildkitd-state` are LEFT STANDING**: that container is qits-containers' from its first deployment on, and its cache is what every build after this run reads. Last because nothing above it may build after it, and because the phase above only BUILDS the closing account — it is printed once every phase has run. `QITS_KEEP_BUILDER=1` skips it: a re-bootstrap without the warm seed caches re-fetches Maven Central, which is the dev loop's price and not a server's. It removes no IMAGES — a dangling image carries no record of the tag it held, so nothing here can tell one of ours from one of somebody else's; attributed image deletion is qits-containers' gc endpoint, driven by qits-platform-orchestrator with the pin set in hand |
 
 Four things every deploy phase does that are easy to miss: it pushes `main` quietly
 (`-o qits.no-ci`), because the option is a fact on the push event and without it every boot would
@@ -602,12 +602,61 @@ phases prevent is a duplicate rather than a `port is already allocated`.
 The temporary registry of phase 6 has **two consumers and two addresses**, which is the shape every
 container the bootstrap starts for the daemon's benefit has: the CLI dials it on `qits-net` by its
 container name, and the seed image builds resolve Maven through `localhost:<registry port>` on the
-host, because a build runs with `--network host` against the host's daemon.
+host, because the builder those builds run on is on the host's network namespace.
 
-**Every image this run builds is told that address, and none of them may infer it.** The
-repositories declare `ARG QITS_MAVEN_REPOSITORY_URL` and their maven settings read it, and the
+### The build plane: qits-buildkitd
+
+**Every image this run builds goes to one BuildKit container, and the run does not own it.** The
+first build of a run ensures `qits-buildkitd` — `moby/buildkit:v0.33.0`, `--privileged`,
+`--restart unless-stopped`, `--oom-score-adj 500`, the 9 GB / 4 cpu bounds the old buildx
+driver-opts carried, and the named volume `qits-buildkitd-state` at `/var/lib/buildkit` — and then
+leaves it standing at the end. From its first deployment on that container is **qits-containers'**:
+same name, same image, same state volume, re-ensured onto `qits-net` where every consumer dials
+`tcp://qits-buildkitd:1234`. The bootstrap only makes it first, because it has to build the seed
+images before there is a platform to make it.
+
+It runs on the **host network** while the bootstrap owns it, and that is two requirements at once: a
+Dockerfile's `ADD http://localhost:8081/…` and `QITS_MAVEN_REPOSITORY_URL=http://localhost:<port>/…`
+are resolved BY the builder, so the builder has to be where those addresses answer — and the client
+reaches the daemon on the same loopback. It binds `tcp://0.0.0.0:1234` rather than the loopback so
+the same container keeps working once qits-containers moves it onto `qits-net`.
+
+**The host has no `buildctl`, so the client is the same image with its entrypoint replaced:**
+
+    docker run --rm --network host \
+      -v <context>:/ctx:ro -v <dockerfiles>:/dfdir:ro -v <out>:/out -v <secrets>:/secrets:ro \
+      --entrypoint buildctl moby/buildkit:v0.33.0 --addr tcp://127.0.0.1:1234 \
+      build --frontend dockerfile.v0 --local context=/ctx --local dockerfile=/dfdir \
+      --opt filename=Dockerfile --opt build-arg:K=V --secret id=<id>,src=/secrets/<id> \
+      --output type=docker,name=<tag>,dest=/out/image.tar
+
+followed by `docker load -i <out>/image.tar`. That pair is what replaces buildx's `--load`: the
+image lands in the host daemon's store under the same tag it always did, so the `docker tag` after a
+step image, the `docker create` of the ci-daemon build and `stack deploy --resolve-image never` know
+nothing about any of it.
+
+Three consequences are worth stating, because each of them is a thing that used to work by accident:
+
+- **There is no `-f -`.** The seed builds rewrite the Dockerfile in memory (the mirror-prefix
+  rewrite) and buildctl reads a named file out of a local mount, so the text is written to a scratch
+  directory instead of fed on stdin. The checkout is still untouched, which was the whole point.
+- **The scratch directories live under `QITS_SRC`, not under `/tmp`.** The buildctl client is a
+  CONTAINER, so its `-v` paths are resolved by the host daemon — the one place in the Docker facade
+  where a path is not the client's. A temp directory in the payload container's own `/tmp` names
+  nothing the host has heard of. `QITS_SRC` is bind-mounted at its own path by the launcher, so it
+  means the same directory on both sides.
+- **A build secret is a FILE.** `--secret id=…,env=VAR` cannot work when the client inherits none of
+  this process's environment, so each value is written 0600 into a directory mounted read-only and
+  passed as `src=`. The Dockerfiles' own `--mount=type=secret` lines are unchanged. The values stay
+  off the screen and out of the log through `Cmd.mask`.
+
+The teardown phase sweeps whatever `qits-bootstrap-builder*` buildx builders a host still carries
+from before this — nothing creates one any more — and leaves `qits-buildkitd` and its cache alone.
+
+**Every image this run builds is told the seed registry's address, and none of them may infer it.**
+The repositories declare `ARG QITS_MAVEN_REPOSITORY_URL` and their maven settings read it, and the
 committed default names the edge vhost — a platform that is RUNNING, which during a seed build it is
-not. So `--build-arg QITS_MAVEN_REPOSITORY_URL=http://localhost:<registry port>/artifacts/maven/maven`
+not. So `--opt build-arg:QITS_MAVEN_REPOSITORY_URL=http://localhost:<registry port>/artifacts/maven/maven`
 rides every build this program starts: the seed images, the step images and the ci-daemon's musl
 builder. It sits on the Docker facade rather than at each call site, because the answer is the same
 for every image and a build added later would inherit nothing. The default happened to be this same
@@ -789,9 +838,11 @@ deliberate difference is left, and it is the one the socket coming back did not 
 
 - **No `/out` mount and no worktree gitdir contortions.** The wrapper's checkouts are read where
   they are, and the stack file and `.qits-bootstrap.env` are written back beside them. That holds
-  because every path this program puts on a docker command line is read by the CLIENT — a build
-  context and a `-f -` Dockerfile are packed and sent, `docker cp` reads the source here, and
-  `docker stack deploy -c` is parsed here.
+  because nearly every path this program puts on a docker command line is read by the CLIENT —
+  `docker cp` reads the source here, and `docker stack deploy -c` is parsed here. The image builds
+  are the one exception, and they pay for it: they go through a buildctl CONTAINER, whose `-v`
+  paths the host daemon resolves, so their scratch directories sit under `QITS_SRC` — a path the
+  launcher mounts at its own name.
 
 Two things about the addressing are worth stating plainly:
 
