@@ -18,6 +18,9 @@ public class ScriptedRunner extends ProcessRunner {
     /** Every command, in order. */
     public final List<List<String>> argv = new ArrayList<>();
 
+    /** The same commands whole, so a test can ask what would have been MASKED before it printed. */
+    public final List<Cmd> cmds = new ArrayList<>();
+
     private final Function<List<String>, ProcessResult> answers;
 
     public ScriptedRunner(Function<List<String>, ProcessResult> answers) {
@@ -28,6 +31,7 @@ public class ScriptedRunner extends ProcessRunner {
     @Override
     public ProcessResult run(Cmd cmd, Consumer<String> sink) {
         argv.add(cmd.command());
+        cmds.add(cmd);
         return answers.apply(cmd.command());
     }
 

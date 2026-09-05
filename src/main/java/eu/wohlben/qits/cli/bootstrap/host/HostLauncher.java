@@ -352,10 +352,13 @@ public final class HostLauncher {
             return true;
         }
         out.println("payload image: " + image + " — building it from " + context);
-        ProcessResult built = docker.build(List.of(
-                "-f", context.resolve(PayloadImage.DOCKERFILE).toString(),
-                "-t", image,
-                context.toString()), out::println);
+        // ON THE HOST DAEMON'S OWN BUILDER, deliberately. Every other build of this program goes
+        // through the platform's buildkitd — but this one makes the container the phases run in, so
+        // it happens before any phase and therefore before any buildkitd exists. Plain
+        // `docker build` is enough: the payload resolves nothing of the platform, and buildx is not
+        // required either.
+        ProcessResult built = docker.buildOnHostDaemon(image,
+                context.resolve(PayloadImage.DOCKERFILE), context, out::println);
         if (!built.ok()) {
             out.println("the payload image did not build (exit " + built.exitCode() + ")");
             return false;

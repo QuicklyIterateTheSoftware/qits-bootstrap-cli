@@ -5,11 +5,16 @@ import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessRunner;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -17,37 +22,68 @@ import java.util.function.Consumer;
 /**
  * The docker CLI, driving the HOST's daemon through the socket mounted into this container.
  * <p>
- * Every path this class puts on a command line is read by the CLIENT — a build context and a
- * {@code -f -} Dockerfile are packed and sent, {@code docker cp} reads the source here, and
- * {@code docker compose -f} parses the file here. So the run's own working directory is the only
- * place paths have to be right, and the script's {@code /out} mount and gitdir contortions stay
- * retired even though the socket came back. The paths that ARE resolved by the daemon are the ones
- * this program hands it deliberately: named volumes, and {@code /var/run/docker.sock} for the
- * services that need it.
+ * Nearly every path this class puts on a command line is read by the CLIENT — {@code docker cp}
+ * reads the source here, and {@code docker compose -f} parses the file here. So the run's own
+ * working directory is the only place those paths have to be right, and the script's {@code /out}
+ * mount and gitdir contortions stay retired even though the socket came back.
+ * <p>
+ * <b>The image builds are the exception, and {@link #buildScratch} is where that is paid for.</b>
+ * They no longer go to the daemon at all: they go to a buildkitd container through a buildctl
+ * container, and the {@code -v} paths of that second container are resolved by the DAEMON. Those
+ * are the paths that have to mean the same thing on both sides. The others the daemon resolves are
+ * the ones this program hands it deliberately: named volumes, and {@code /var/run/docker.sock} for
+ * the services that need it.
  */
 public class Docker {
     /**
-     * <b>The bootstrap's own BuildKit container, and it is bootstrap-time only.</b> Once the
-     * platform is up every build runs on the host's default builder through qits-containers, so
-     * nothing asks for this one again — which is why the run's last phase removes it and
-     * {@link #ensureBuilder} makes the next run a new one.
-     * <p>
-     * The name carries a version because a driver-opt change needs a NEW builder rather than an
-     * edited one: buildx keeps the options at create time and an existing builder is reused as it
-     * stands. Each bump stranded its predecessor's state volume, which is what
-     * {@link #staleBuilders} now sweeps.
+     * <b>The platform's BuildKit daemon, created here and then owned by qits-containers.</b> The
+     * bootstrap is only the first thing that needs it: it has to build the seed images before any
+     * platform exists, so it makes the container itself, at the same name, image and state volume
+     * qits-containers ensures from its first deployment on. That is why the run's last phase leaves
+     * it standing — the warm cache in {@link #BUILDKIT_STATE_VOLUME} is the platform's from then on,
+     * and a teardown here would throw away a cache the next CI build wants.
      */
-    public static final String BUILDER = "qits-bootstrap-builder-v5";
+    public static final String BUILDKITD = "qits-buildkitd";
 
     /**
-     * What every builder this program has ever created is named after. It is the whole test for
-     * "ours": a builder outside this prefix belongs to somebody else on a shared host and is never
-     * touched.
+     * The pin, in the one place this program reads it. During a bootstrap the host daemon resolves
+     * it through its own {@code registry-mirrors}, which is what makes an unqualified Hub name work
+     * before the platform's mirror exists.
+     */
+    public static final String BUILDKIT_IMAGE = "moby/buildkit:v0.33.0";
+
+    /** Where the build cache lives, so it survives the container and the run. */
+    public static final String BUILDKIT_STATE_VOLUME = "qits-buildkitd-state";
+
+    /**
+     * What the client dials. The daemon runs on the HOST's network namespace, so the loopback the
+     * buildctl container sees under {@code --network host} is the same loopback buildkitd listens
+     * on.
+     */
+    public static final String BUILDKIT_ADDR = "tcp://127.0.0.1:1234";
+
+    /**
+     * What buildkitd binds. Bind-all rather than loopback: the client reaches it on 127.0.0.1
+     * either way, and 0.0.0.0 keeps the SAME container usable once qits-containers re-ensures it
+     * onto qits-net, where every consumer dials the {@code qits-buildkitd} alias instead.
+     */
+    public static final String BUILDKIT_LISTEN = "tcp://0.0.0.0:1234";
+
+    /**
+     * What every buildx builder this program EVER created is named after, and nothing creates one
+     * any more. It is kept as the whole test for "ours" in the legacy sweep: a builder outside this
+     * prefix belongs to somebody else on a shared host and is never touched.
      */
     public static final String BUILDER_PREFIX = "qits-bootstrap-builder";
 
     /** Long enough for a cold GraalVM native build, which is what most of these are. */
     public static final Duration BUILD_TIMEOUT = Duration.ofHours(4);
+
+    /** The name the rewritten Dockerfile is written under, and what {@code --opt filename} names. */
+    private static final String DOCKERFILE = "Dockerfile";
+
+    /** Where buildctl writes the image, inside its own container. */
+    private static final String IMAGE_TAR = "image.tar";
 
     /** The only driver a network of this platform has: see {@link #ensureNetwork}. */
     public static final String OVERLAY = "overlay";
@@ -59,16 +95,41 @@ public class Docker {
     private static final Path SELF = Path.of("/etc/hostname");
 
     private final ProcessRunner runner;
-    private boolean builderReady;
+    private boolean buildkitdReady;
 
     /**
      * <b>What every image build this program runs carries, whatever the image is.</b> A build
      * argument an image has no {@code ARG} for is a warning and nothing else, so the honest place
      * for one that MOST builds need is all of them — see {@link #withBuildArgs}.
+     * <p>
+     * Each entry is a bare {@code NAME=value}: buildctl spells a build argument
+     * {@code --opt build-arg:NAME=value}, so the flag is added where the command line is composed
+     * rather than carried in this list.
      */
     private List<String> buildArgs = List.of();
     private List<String> buildArgMasks = List.of();
-    private Map<String, String> buildEnvironment = Map.of();
+
+    /**
+     * BuildKit secrets by id, as VALUES rather than as environment variable names. buildctl runs in
+     * a container of its own here, so it can read no variable of this process — each value is
+     * written to a file the run mounts read-only instead. See {@link #buildkitBuild}.
+     */
+    private Map<String, String> buildSecrets = Map.of();
+
+    /**
+     * <b>Where the scratch directories of a build are made, and it cannot be this container's
+     * {@code /tmp}.</b>
+     * <p>
+     * The buildctl client runs as a container, so the paths it is given with {@code -v} are
+     * resolved by the HOST's daemon and not by this process — the one place in this facade where
+     * that is true. A {@code Files.createTempDirectory()} under the payload container's own
+     * {@code /tmp} names a directory the host has never heard of, and docker would silently create
+     * an empty root-owned one in its place. So the scratch root is a path the launcher already
+     * bind-mounts at its own name, which makes it the same directory on both sides;
+     * {@code Boot} sets it to the run's sources directory. The default below is for the HOST half,
+     * which builds nothing through buildkitd.
+     */
+    private Path buildScratch = Path.of(System.getProperty("java.io.tmpdir", "/tmp"));
 
     public Docker(ProcessRunner runner) {
         this.runner = runner;
@@ -89,7 +150,7 @@ public class Docker {
     public Docker withBuildArgs(List<String> args) {
         this.buildArgs = List.copyOf(args);
         this.buildArgMasks = List.of();
-        this.buildEnvironment = Map.of();
+        this.buildSecrets = Map.of();
         return this;
     }
 
@@ -97,20 +158,31 @@ public class Docker {
     public Docker withBuildArgs(List<String> args, List<String> masks) {
         this.buildArgs = List.copyOf(args);
         this.buildArgMasks = List.copyOf(masks);
-        this.buildEnvironment = Map.of();
+        this.buildSecrets = Map.of();
         return this;
     }
 
-    /** Supplies the capability through the secret ids already mounted by every Maven Dockerfile. */
+    /**
+     * Supplies the capability through the secret ids already mounted by every Maven Dockerfile.
+     * <p>
+     * The values are carried here rather than put in this process's environment because buildctl
+     * runs in a container: it inherits nothing of ours, and the only way in is a file it can read.
+     * They stay off the screen and out of the log through {@link Cmd#mask}.
+     */
     public Docker withBootstrapMavenRepository(String url, String username, String password) {
-        this.buildArgs = List.of(
-                "--build-arg", "QITS_MAVEN_REPOSITORY_URL=" + url,
-                "--secret", "id=qits-client-id,env=QITS_BOOTSTRAP_MAVEN_USER",
-                "--secret", "id=qits-client-secret,env=QITS_BOOTSTRAP_MAVEN_PASSWORD");
+        this.buildArgs = List.of("QITS_MAVEN_REPOSITORY_URL=" + url);
         this.buildArgMasks = List.of(password);
-        this.buildEnvironment = Map.of(
-                "QITS_BOOTSTRAP_MAVEN_USER", username,
-                "QITS_BOOTSTRAP_MAVEN_PASSWORD", password);
+        // Ordered, because the argv it becomes is asserted whole.
+        Map<String, String> secrets = new LinkedHashMap<>();
+        secrets.put("qits-client-id", username);
+        secrets.put("qits-client-secret", password);
+        this.buildSecrets = Collections.unmodifiableMap(secrets);
+        return this;
+    }
+
+    /** Where a build's scratch directories go: a path the host daemon knows by the same name. */
+    public Docker withBuildScratch(Path directory) {
+        this.buildScratch = directory;
         return this;
     }
 
@@ -124,15 +196,6 @@ public class Docker {
 
     public boolean composePluginPresent() {
         return runner.run(Cmd.of("docker", "compose", "version"), null).ok();
-    }
-
-    /**
-     * Whether this client has buildx. The bootstrap does not require it: docker's classic build
-     * flags are used deliberately because they enforce the memory and CPU cgroup limits on every
-     * daemon version the recovery image must support.
-     */
-    public boolean buildxPresent() {
-        return runner.run(Cmd.of("docker", "buildx", "version"), null).ok();
     }
 
     /**
@@ -445,72 +508,236 @@ public class Docker {
     }
 
     /**
-     * Builds an image from a Dockerfile fed on stdin, which is how the seed builds get the
-     * mirror-free FROM lines without touching the checkout.
+     * Builds an image from a Dockerfile this program holds in memory, which is how the seed builds
+     * get the mirror-free FROM lines without touching the checkout.
+     * <p>
+     * <b>It is written to a directory of its own rather than fed on stdin.</b> buildctl has no
+     * {@code -f -}: the dockerfile frontend reads a named file out of a local mount, so the text has
+     * to be a file somewhere. A scratch directory beside the context keeps the checkout untouched,
+     * which was the whole point of the stdin form.
      */
     public ProcessResult buildFromStdin(String tag, String dockerfile, Path context,
-                                        List<String> extraArgs, Consumer<String> out) {
-        ProcessResult ready = ensureBuilder(out);
+                                        List<String> extraBuildArgs, Consumer<String> out) {
+        Path dockerfileDir = null;
+        try {
+            dockerfileDir = Files.createTempDirectory(scratchRoot(), "dockerfile-");
+            Files.writeString(dockerfileDir.resolve(DOCKERFILE), dockerfile, StandardCharsets.UTF_8);
+            return buildkitBuild(tag, dockerfileDir, DOCKERFILE, context, extraBuildArgs, out);
+        } catch (IOException e) {
+            return failed("the Dockerfile for " + tag + " could not be written: " + e.getMessage());
+        } finally {
+            deleteTree(dockerfileDir);
+        }
+    }
+
+    /**
+     * Builds an image from a Dockerfile that IS in the checkout — the step images, whose context is
+     * the repository and whose Dockerfile is a file inside it.
+     * <p>
+     * The two paths are named rather than handed over as a free argv: buildctl takes the directory
+     * and the file name apart ({@code --local dockerfile=<dir>} plus {@code --opt filename=}), and
+     * a caller that assembled {@code -f <path>} would have to be parsed back.
+     */
+    public ProcessResult buildWithFile(String tag, Path dockerfile, Path context,
+                                       List<String> extraBuildArgs, Consumer<String> out) {
+        return buildkitBuild(tag, dockerfile.getParent(), dockerfile.getFileName().toString(),
+                context, extraBuildArgs, out);
+    }
+
+    /**
+     * <b>One build, through the platform's buildkitd, landing in the host daemon's image store.</b>
+     * <p>
+     * The host has no {@code buildctl} binary and this program will not install one, so the client
+     * is the same pinned image the daemon runs, with its entrypoint replaced. {@code --network host}
+     * on the client is how it reaches the daemon's loopback address; the daemon is host-network too,
+     * which is why a Dockerfile's {@code ADD http://localhost:8081/…} and the seed maven repository
+     * still resolve during a bootstrap.
+     * <p>
+     * <b>{@code --output type=docker} plus {@code docker load} is what replaces buildx's
+     * {@code --load}.</b> The image lands in the host daemon's store under the same tag it always
+     * did, so the {@code docker tag}, {@code docker create} and
+     * {@code stack deploy --resolve-image never} that follow a build need to know nothing about any
+     * of this.
+     */
+    private ProcessResult buildkitBuild(String tag, Path dockerfileDir, String dockerfileName,
+                                        Path context, List<String> extraBuildArgs,
+                                        Consumer<String> out) {
+        ProcessResult ready = ensureBuildkitd(out);
         if (!ready.ok()) {
             return ready;
         }
-        List<String> command = new ArrayList<>(List.of(
-                "docker", "buildx", "build", "--builder", BUILDER, "--load",
-                "--network", "host", "-t", tag, "-f", "-"));
-        command.addAll(buildArgs);
-        command.addAll(extraArgs);
-        command.add(context.toString());
-        Cmd cmd = Cmd.of(command)
-                .stdin(dockerfile)
-                .timeout(BUILD_TIMEOUT);
-        buildEnvironment.forEach(cmd::env);
-        buildArgMasks.forEach(cmd::mask);
-        return runner.run(cmd, out);
-    }
-
-    public ProcessResult build(List<String> args, Consumer<String> out) {
-        ProcessResult ready = ensureBuilder(out);
-        if (!ready.ok()) {
-            return ready;
+        Path outDir = null;
+        Path secretsDir = null;
+        try {
+            outDir = Files.createTempDirectory(scratchRoot(), "image-");
+            secretsDir = writeSecrets();
+            List<String> command = new ArrayList<>(List.of(
+                    "docker", "run", "--rm", "--network", "host",
+                    "-v", context + ":/ctx:ro",
+                    "-v", dockerfileDir + ":/dfdir:ro",
+                    "-v", outDir + ":/out",
+                    "-v", secretsDir + ":/secrets:ro",
+                    "--entrypoint", "buildctl", BUILDKIT_IMAGE,
+                    "--addr", BUILDKIT_ADDR,
+                    "build", "--frontend", "dockerfile.v0",
+                    "--local", "context=/ctx",
+                    "--local", "dockerfile=/dfdir",
+                    "--opt", "filename=" + dockerfileName));
+            for (String arg : buildArgs) {
+                command.add("--opt");
+                command.add("build-arg:" + arg);
+            }
+            for (String arg : extraBuildArgs) {
+                command.add("--opt");
+                command.add("build-arg:" + arg);
+            }
+            for (String id : buildSecrets.keySet()) {
+                command.add("--secret");
+                command.add("id=" + id + ",src=/secrets/" + id);
+            }
+            command.add("--output");
+            command.add("type=docker,name=" + tag + ",dest=/out/" + IMAGE_TAR);
+            Cmd cmd = Cmd.of(command).timeout(BUILD_TIMEOUT);
+            buildArgMasks.forEach(cmd::mask);
+            buildSecrets.values().forEach(cmd::mask);
+            ProcessResult built = runner.run(cmd, out);
+            if (!built.ok()) {
+                return built;
+            }
+            // The tar is read by the CLIENT, so this path is this container's own — the one place
+            // the mounts above and this line mean the same directory for two different reasons.
+            return runner.run(Cmd.of(List.of("docker", "load", "-i",
+                    outDir.resolve(IMAGE_TAR).toString())).timeout(BUILD_TIMEOUT), out);
+        } catch (IOException e) {
+            return failed("the build of " + tag + " could not be set up: " + e.getMessage());
+        } finally {
+            deleteTree(outDir);
+            deleteTree(secretsDir);
         }
-        List<String> command = new ArrayList<>(List.of(
-                "docker", "buildx", "build", "--builder", BUILDER, "--load"));
-        command.addAll(buildArgs);
-        command.addAll(args);
-        Cmd cmd = Cmd.of(command).timeout(BUILD_TIMEOUT);
-        buildEnvironment.forEach(cmd::env);
-        buildArgMasks.forEach(cmd::mask);
-        return runner.run(cmd, out);
     }
 
-    /** A BuildKit container whose cgroup is the enforceable limit for every build it executes. */
-    private synchronized ProcessResult ensureBuilder(Consumer<String> out) {
-        if (builderReady) {
+    /**
+     * Builds an image on the host daemon's own default builder, and it is the ONE build that does.
+     * <p>
+     * This is the launcher's payload image — this CLI itself — built on the HOST half, before any
+     * phase has run and therefore before any buildkitd exists to build it. It resolves nothing of
+     * the platform and needs no buildx either: plain {@code docker build} with whatever builder the
+     * daemon has is exactly right, and routing it through buildkitd would be a chicken-and-egg.
+     */
+    public ProcessResult buildOnHostDaemon(String tag, Path dockerfile, Path context,
+                                           Consumer<String> out) {
+        return runner.run(Cmd.of(List.of("docker", "build",
+                "-f", dockerfile.toString(), "-t", tag, context.toString()))
+                .timeout(BUILD_TIMEOUT), out);
+    }
+
+    /**
+     * <b>The buildkitd container, made on the first build of a run and left standing at the end of
+     * it.</b>
+     * <p>
+     * It is host-network for two reasons at once: a build's {@code ADD} and the seed maven
+     * repository are on the host's loopback while the platform is being made, and the buildctl
+     * client above reaches the daemon there too. {@code --privileged} is what BuildKit's own
+     * container needs to run builds; the memory and cpu bounds are the ones the buildx driver-opts
+     * carried, spelled as docker run flags now that there is no driver to hold them.
+     * <p>
+     * <b>Rerun-safe like every other phase.</b> A container of this name that is already running is
+     * adopted — it may be qits-containers' own, re-ensured onto qits-net after a first bootstrap,
+     * and it answers the same address — and a stopped one is started rather than replaced, because
+     * its state volume is the cache.
+     */
+    private synchronized ProcessResult ensureBuildkitd(Consumer<String> out) {
+        if (buildkitdReady) {
             return new ProcessResult(0, List.of(), List.of(), false, false);
         }
-        // EVERY EARLIER NAME OF THIS BUILDER, on the first build of the run. A driver-opt change
-        // needs a new NAME — buildx keeps the options a builder was created with and reuses an
-        // existing one as it stands — so the name has been bumped three times, and each bump left
-        // its predecessor's container and its multi-gigabyte state volume behind, referenced by
-        // nothing and swept by nobody. Removing them here rather than in the teardown phase is
-        // deliberate: this is the method that knows a bump happened.
-        for (String stale : staleBuilders(builderRows(), BUILDER)) {
-            out.accept("  removing the stale bootstrap builder " + stale
-                    + " left by an earlier name");
+        // EVERY BUILDX BUILDER THIS PROGRAM EVER MADE, on the first build of the run. The builder
+        // name was bumped whenever a driver-opt changed — buildx keeps the options a builder was
+        // created with and reuses an existing one as it stands — and each bump left its
+        // predecessor's container and its multi-gigabyte state volume behind, referenced by nothing
+        // and swept by nobody. Nothing creates one any more, so the sweep now takes them all.
+        for (String stale : staleBuilders(builderRows(), "")) {
+            log(out, "  removing the legacy buildx builder " + stale
+                    + " — the bootstrap builds through " + BUILDKITD + " now");
             removeBuilder(stale, out);
         }
-        ProcessResult existing = runner.run(Cmd.of(
-                "docker", "buildx", "inspect", BUILDER), null);
-        ProcessResult ready = existing.ok() ? existing : runner.run(Cmd.of(
-                "docker", "buildx", "create", "--name", BUILDER,
-                "--driver", "docker-container", "--driver-opt",
-                "network=host,memory=9g,cpu-quota=400000,cpuset-cpus=0-3"), out);
-        if (ready.ok()) {
-            ready = runner.run(Cmd.of(
-                    "docker", "buildx", "inspect", "--bootstrap", BUILDER), out);
+        ProcessResult ready;
+        if (containerExists(BUILDKITD)) {
+            if (runningNames().contains(BUILDKITD)) {
+                log(out, "  " + BUILDKITD + " is already running — adopted");
+                ready = new ProcessResult(0, List.of(), List.of(), false, false);
+            } else {
+                log(out, "  starting the existing " + BUILDKITD + " and its warm cache");
+                ready = runner.run(Cmd.of("docker", "start", BUILDKITD), out);
+            }
+        } else {
+            ensureVolume(BUILDKIT_STATE_VOLUME, out);
+            ready = runner.run(Cmd.of(List.of(
+                    "docker", "run", "-d", "--name", BUILDKITD,
+                    "--privileged", "--network", "host",
+                    "--restart", "unless-stopped",
+                    // So the kernel takes buildkitd before it takes a platform service.
+                    "--oom-score-adj", "500",
+                    "--memory", "9g", "--cpu-quota", "400000", "--cpuset-cpus", "0-3",
+                    "-v", BUILDKIT_STATE_VOLUME + ":/var/lib/buildkit",
+                    BUILDKIT_IMAGE,
+                    // The image entrypoints to buildkitd, so this rides as its arguments.
+                    "--addr", BUILDKIT_LISTEN)), out);
         }
-        builderReady = ready.ok();
+        buildkitdReady = ready.ok();
         return ready;
+    }
+
+    /**
+     * Each secret as a file only its owner can read, in a directory of its own. buildctl's
+     * {@code env=} form cannot be used here: the client is a container and inherits none of this
+     * process's environment.
+     */
+    private Path writeSecrets() throws IOException {
+        Path dir = Files.createTempDirectory(scratchRoot(), "secrets-");
+        for (Map.Entry<String, String> secret : buildSecrets.entrySet()) {
+            Path file = dir.resolve(secret.getKey());
+            Files.writeString(file, secret.getValue(), StandardCharsets.UTF_8);
+            try {
+                Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
+            } catch (IOException | UnsupportedOperationException e) {
+                // A filesystem with no posix bits is not a reason to fail a build; the directory is
+                // this run's own and goes away with it either way.
+            }
+        }
+        return dir;
+    }
+
+    private Path scratchRoot() throws IOException {
+        return Files.createDirectories(buildScratch);
+    }
+
+    /** Best effort: a scratch directory left behind is untidy, never a failed build. */
+    private static void deleteTree(Path dir) {
+        if (dir == null) {
+            return;
+        }
+        try (var walk = Files.walk(dir)) {
+            walk.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException e) {
+                    // Left behind, and said nothing: see above.
+                }
+            });
+        } catch (IOException e) {
+            // Same.
+        }
+    }
+
+    /** What a failure this program decided itself looks like, in the shape a command's would. */
+    private static ProcessResult failed(String message) {
+        return new ProcessResult(1, List.of(message), List.of(message), false, false);
+    }
+
+    private static void log(Consumer<String> out, String line) {
+        if (out != null) {
+            out.accept(line);
+        }
     }
 
     /**
@@ -544,7 +771,9 @@ public class Docker {
      * test and it does not survive a caller that trimmed — which is exactly what this class's own
      * {@code lines} helper does to every other command's output.
      * <p>
-     * Only names under {@link #BUILDER_PREFIX} are ours, and the one in use is never stale.
+     * Only names under {@link #BUILDER_PREFIX} are ours. {@code current} is what to leave alone,
+     * and it is EMPTY at every caller now: nothing creates a buildx builder any more, so every one
+     * of ours that is still on a host is a leftover of the buildx era.
      */
     public static List<String> staleBuilders(List<String> rows, String current) {
         List<String> stale = new ArrayList<>();

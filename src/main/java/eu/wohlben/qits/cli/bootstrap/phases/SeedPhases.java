@@ -188,7 +188,8 @@ public class SeedPhases {
                 throw new IllegalStateException("docker compose plugin missing");
             }
             ctx.log("  docker compose: present");
-            ctx.log("  bootstrap builders: enforced 9g memory and 4 cpu limits");
+            ctx.log("  " + Docker.BUILDKITD + " (" + Docker.BUILDKIT_IMAGE
+                    + "): enforced 9g memory and 4 cpu limits");
             // PRINTED, because it is derived and because getting it wrong stops the machine rather
             // than the boot: the builds it sizes run on the host daemon, outside every cgroup this
             // run sets.
@@ -860,15 +861,17 @@ public class SeedPhases {
     public Phase stepImage(String name) {
         return new Phase("step-image-" + name, "build qits/build-images/" + name + ":latest", ctx -> {
             Path oci = boot.state.repoDir("oci");
-            ProcessResult result = boot.docker.build(List.of(
-                    "-t", "qits/build-images/" + name + ":latest",
-                    "-f", oci.resolve(name).resolve("Dockerfile").toString(),
-                    oci.toString()), ctx::log);
+            // The Dockerfile is a file IN the context here, so it is named rather than rewritten in
+            // memory: no mirror prefix of a committed FROM has to change for a step image.
+            ProcessResult result = boot.docker.buildWithFile(
+                    "qits/build-images/" + name + ":latest",
+                    oci.resolve(name).resolve("Dockerfile"), oci, List.of(), ctx::log);
             Boot.must(result, "build of qits/build-images/" + name + " failed");
             // qits-ci resolves an unqualified qits/* step image against the registry host, so a run
-            // pulls registry.<env>.localhost/qits/build-images/<name>. The seed builds it --load as
-            // the bare tag and the fresh registry has not got it, so tag it under the registry host
-            // too: docker run then finds it locally, before any pull. This is the seed's pull+retag.
+            // pulls registry.<env>.localhost/qits/build-images/<name>. The seed loads it into the
+            // host daemon under the bare tag and the fresh registry has not got it, so tag it under
+            // the registry host too: docker run then finds it locally, before any pull. This is the
+            // seed's pull+retag.
             Boot.must(boot.docker.exec(ctx::log, "tag",
                     "qits/build-images/" + name + ":latest",
                     boot.config.registryVhost() + "/qits/build-images/" + name + ":latest"),
@@ -1502,14 +1505,14 @@ public class SeedPhases {
             String dockerfile = SeedDockerfile.read(repo.resolve("docker/Dockerfile.musl-builder"));
             // THE TARBALL URLS ARE THIS RUN'S, never the Dockerfile's default. That default names
             // registry.dev.localhost, an edge vhost — the domainless local spelling, and no edge
-            // exists this early in any boot. BuildKit resolves an ADD in the builder's own network
-            // context, and the bootstrap builder is network=host, so the ingress the seed builds
-            // already resolve maven through is exactly the address that works here too.
+            // exists this early in any boot. BuildKit resolves an ADD in the BUILDER's own network
+            // context, and the bootstrap's qits-buildkitd runs on the host network, so the ingress
+            // the seed builds already resolve maven through is exactly the address that works here
+            // too.
             List<String> tarballArgs = new ArrayList<>();
             for (MuslToolchain.Tarball tarball : MuslToolchain.read(
                     Files.readString(repo.resolve(MUSL_BUILDER_DOCKERFILE),
                             StandardCharsets.UTF_8))) {
-                tarballArgs.add("--build-arg");
                 tarballArgs.add(tarball.arg() + "=" + boot.seedMavenFile(tarball.storePath()));
                 ctx.log("  " + tarball.arg() + " -> "
                         + boot.seedMavenFilePublic(tarball.storePath()));

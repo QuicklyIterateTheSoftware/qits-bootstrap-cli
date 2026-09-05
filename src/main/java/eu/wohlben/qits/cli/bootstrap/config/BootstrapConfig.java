@@ -215,17 +215,19 @@ public interface BootstrapConfig {
     boolean shipMains();
 
     /**
-     * <b>1 = keep the bootstrap's buildx builder and its seed-only caches when the run ends.</b>
-     * {@code QITS_KEEP_BUILDER} in {@code .env}, off by default.
+     * <b>1 = keep the bootstrap's seed-only caches, and any legacy buildx builder, when the run
+     * ends.</b> {@code QITS_KEEP_BUILDER} in {@code .env}, off by default.
      * <p>
-     * The builder is BOOTSTRAP-TIME ONLY. Once the platform is up, every build runs on the host's
-     * default builder through qits-containers, and nothing asks for this one again — but its state
-     * volume keeps whatever the boot compiled into it, measured at 13.7 GB on wohlben.eu. So the
-     * last phase removes it, and {@code ensureBuilder} makes the next run a new one.
+     * The name is older than what it now guards. It used to keep a {@code qits-bootstrap-builder-v<n>}
+     * buildx builder alive, whose state volume measured 13.7 GB on wohlben.eu; the bootstrap builds
+     * through {@code qits-buildkitd} now, and THAT container is never removed by a run at all —
+     * it is the platform's from its first deployment on. What this flag decides is the seed's own
+     * caches, {@code qits-maven-seed} and {@code qits-maven-cache}, plus the sweep of whatever
+     * buildx era a host still carries.
      * <p>
      * <b>What saying yes buys, and what it costs.</b> The dev loop reruns the boot, so it wants the
-     * warm cache: a re-bootstrap without it rebuilds every seed image cold, which is ten to twenty
-     * minutes more. A server bootstraps once and then needs the disk, so it does not.
+     * warm caches: a re-bootstrap without them re-fetches the dependency world from Maven Central.
+     * A server bootstraps once and then needs the disk, so it does not.
      */
     @WithDefault("false")
     boolean keepBuilder();

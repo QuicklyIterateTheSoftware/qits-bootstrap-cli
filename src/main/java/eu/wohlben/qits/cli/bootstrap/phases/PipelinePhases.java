@@ -2455,7 +2455,7 @@ public class PipelinePhases {
     }
 
     /**
-     * <b>The seed-only volumes this run created, removed with the builder and for the same
+     * <b>The seed-only volumes this run created, removed with the legacy builders and for the same
      * reason.</b> {@code qits-maven-seed} is the temporary Maven repository the first-boot
      * dependency cycle is broken with, and the next bootstrap builds another one.
      * {@code qits-maven-cache} is the third-party download cache every seed build shares.
@@ -2470,20 +2470,28 @@ public class PipelinePhases {
     static final List<String> SEED_ONLY_VOLUMES = List.of("qits-maven-seed", "qits-maven-cache");
 
     /**
-     * <b>The builder is bootstrap-time only, and this is where the machine gets its disk back.</b>
-     * After this run every build on this host goes through qits-containers to the default builder;
-     * nothing asks for {@link Docker#BUILDER} again until the next bootstrap, whose
-     * {@code ensureBuilder} creates it anew. What it leaves behind is a container and the state
-     * volume {@code buildx_buildkit_<builder>0_state} — 13.7 GB measured on wohlben.eu, held by a
-     * builder no component of the platform will ever use.
+     * <b>Teardown of the bootstrap's BUILD PLANE, and {@link Docker#BUILDKITD} is deliberately not
+     * part of it.</b>
      * <p>
-     * {@code buildx rm} is what removes the volume: it is the only command that knows the name
-     * buildx gave it. A {@code volume rm} by hand needs that spelling to be guessed, and guessing
-     * at volume names is how someone's data goes.
+     * That container is the platform's, not this run's. The bootstrap only made it first — it has
+     * to build the seed images before any platform exists — and from its first deployment on
+     * qits-containers owns the same name, image and state volume, re-ensuring it onto qits-net so
+     * every CI build dials {@code tcp://qits-buildkitd:1234}. Removing it here would throw away the
+     * warm cache the next build wants and leave qits-containers to make it again cold. So this
+     * phase leaves the container and {@link Docker#BUILDKIT_STATE_VOLUME} standing.
      * <p>
-     * <b>THE COST IS A COLD RE-BOOTSTRAP</b>, ten to twenty minutes more: the seed images are then
-     * rebuilt with no layer cache and the seed's Maven containers re-fetch from Maven Central.
-     * {@code QITS_KEEP_BUILDER=1} is the dev loop's answer, and this phase is skipped whole.
+     * <b>What it does still reclaim is the buildx era.</b> The bootstrap used to create a
+     * {@code qits-bootstrap-builder-v<n>} buildx builder and bump its name whenever a driver-opt
+     * changed, and each bump stranded its predecessor's container and its multi-gigabyte state
+     * volume — 13.7 GB measured on wohlben.eu. Nothing creates one any more, so every builder under
+     * that prefix on this host is a leftover and all of them go. {@code buildx rm} is what removes
+     * the volume: it is the only command that knows the name buildx gave it
+     * ({@code buildx_buildkit_<builder>0_state}), and guessing at volume names is how someone's
+     * data goes.
+     * <p>
+     * The seed-only volumes go with them. <b>THE COST IS A COLDER RE-BOOTSTRAP</b>: the seed's
+     * Maven containers re-fetch from Maven Central. {@code QITS_KEEP_BUILDER=1} is the dev loop's
+     * answer, and this phase is skipped whole.
      * <p>
      * <b>It removes no images, and that absence is deliberate.</b> The bootstrap does rebuild
      * images under fixed tags — {@code qits/graalvmce-musl-builder:jdk-25} and the
@@ -2496,23 +2504,27 @@ public class PipelinePhases {
      */
     public Phase teardownBootstrapBuilder() {
         return new Phase("teardown-bootstrap-builder",
-                "reclaim the bootstrap's builder and its seed caches", ctx -> {
+                "reclaim the legacy buildx builders and the seed caches", ctx -> {
             if (boot.config.keepBuilder()) {
-                ctx.skip("QITS_KEEP_BUILDER=1 — the builder and its warm cache stay");
+                ctx.skip("QITS_KEEP_BUILDER=1 — the seed caches stay");
             }
             List<String> reclaimed = new ArrayList<>();
-            ctx.log("  removing " + Docker.BUILDER + " — bootstrap-time only, and the next boot "
-                    + "creates it again");
-            ProcessResult removed = boot.docker.removeBuilder(Docker.BUILDER, ctx::log);
-            if (removed.ok()) {
-                reclaimed.add(Docker.BUILDER);
-            } else if (Docker.alreadyGone(removed)) {
-                ctx.log("  " + Docker.BUILDER + " was not there — a run that built nothing, or a "
-                        + "second run of this phase");
-            } else {
-                ctx.warn("could not remove the builder " + Docker.BUILDER + ": "
-                        + removed.tailText(3) + ". Its state volume stays on this host — "
-                        + "`docker buildx rm " + Docker.BUILDER + "` by hand is the whole fix");
+            ctx.log("  " + Docker.BUILDKITD + " stays: the platform owns it from here, and its "
+                    + "cache volume with it");
+            // An empty "current": there is no builder of ours in use any more, so everything under
+            // the prefix is a leftover.
+            for (String stale : Docker.staleBuilders(boot.docker.builderRows(), "")) {
+                ctx.log("  removing the legacy buildx builder " + stale + " and its state volume");
+                ProcessResult removed = boot.docker.removeBuilder(stale, ctx::log);
+                if (removed.ok()) {
+                    reclaimed.add(stale);
+                } else if (Docker.alreadyGone(removed)) {
+                    ctx.log("  " + stale + " was gone by the time this asked");
+                } else {
+                    ctx.warn("could not remove the builder " + stale + ": "
+                            + removed.tailText(3) + ". Its state volume stays on this host — "
+                            + "`docker buildx rm " + stale + "` by hand is the whole fix");
+                }
             }
             // DANGLING IS THE WHOLE PERMISSION. A volume some container still holds is one this
             // run does not understand, whoever named it — the seed's own containers are gone by

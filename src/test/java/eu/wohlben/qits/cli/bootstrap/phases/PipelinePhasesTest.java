@@ -769,15 +769,26 @@ class PipelinePhasesTest {
         phase.action().run(ctx);
     }
 
+    /** The one buildx table these tests answer `buildx ls` with. */
+    private static final List<String> BUILDX_TABLE = List.of(
+            "NAME/NODE                     DRIVER/ENDPOINT      STATUS",
+            "qits-bootstrap-builder-v5*    docker-container",
+            " \\_ qits-bootstrap-builder-v50  \\_ unix:///var/run/docker.sock  running",
+            "default                       docker");
+
     /**
-     * <b>The builder goes, and buildx is what removes its state volume.</b> That volume is the
-     * whole reason for this phase — 13.7 GB on wohlben.eu — and {@code buildx rm} is the only
-     * command that knows the name buildx gave it.
+     * <b>The buildx era goes, and buildx is what removes its state volumes.</b> Those volumes are
+     * the whole reason this phase still sweeps them — 13.7 GB on wohlben.eu — and {@code buildx rm}
+     * is the only command that knows the name buildx gave one.
      */
     @Test
-    void theBuilderAndTheSeedOnlyVolumesAreReclaimed() throws Exception {
+    void theLegacyBuildersAndTheSeedOnlyVolumesAreReclaimed() throws Exception {
         ScriptedRunner runner = new ScriptedRunner(command -> {
-            if (String.join(" ", command).contains("volume ls")) {
+            String line = String.join(" ", command);
+            if (line.contains("buildx ls")) {
+                return ScriptedRunner.ok(BUILDX_TABLE.toArray(new String[0]));
+            }
+            if (line.contains("volume ls")) {
                 return ScriptedRunner.ok("qits-maven-seed", "qits-maven-cache",
                         "somebody-elses-volume");
             }
@@ -788,14 +799,37 @@ class PipelinePhasesTest {
         teardown(runner, Map.of(), ctx);
 
         assertThat(runner.lines()).contains(
-                "docker buildx rm " + Docker.BUILDER,
+                "docker buildx rm qits-bootstrap-builder-v5",
                 "docker volume ls -q -f dangling=true",
                 "docker volume rm qits-maven-seed",
                 "docker volume rm qits-maven-cache");
         // A volume this program did not create is not this program's to remove, dangling or not.
         assertThat(runner.lines()).noneMatch(line -> line.contains("somebody-elses-volume"));
-        assertThat(ctx.note).contains(Docker.BUILDER).contains("qits-maven-cache");
+        assertThat(ctx.note).contains("qits-bootstrap-builder-v5").contains("qits-maven-cache");
         assertThat(ctx.warnings).isEmpty();
+    }
+
+    /**
+     * <b>qits-buildkitd survives its own maker.</b> The bootstrap creates it because it has to
+     * build the seed images before any platform exists, but from the first deployment on it is
+     * qits-containers' container at the same name, image and state volume — and its cache is what
+     * every CI build after this run reads. Removing it here would be this program throwing away
+     * the platform's build cache on its way out.
+     */
+    @Test
+    void theOwnedBuildkitdAndItsCacheAreLeftStanding() throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command ->
+                String.join(" ", command).contains("volume ls")
+                        ? ScriptedRunner.ok("qits-maven-seed", Docker.BUILDKIT_STATE_VOLUME)
+                        : ScriptedRunner.ok());
+        Ctx ctx = new Ctx();
+
+        teardown(runner, Map.of(), ctx);
+
+        assertThat(runner.lines())
+                .noneMatch(line -> line.contains(Docker.BUILDKITD))
+                .noneMatch(line -> line.contains(Docker.BUILDKIT_STATE_VOLUME));
+        assertThat(ctx.lines).anyMatch(line -> line.contains(Docker.BUILDKITD));
     }
 
     /**
@@ -820,8 +854,8 @@ class PipelinePhasesTest {
 
     /**
      * <b>QITS_KEEP_BUILDER=1 is the dev loop's answer</b>, and the phase stays in the plan so the
-     * reason lands on the header line. A rerun without the warm cache rebuilds every seed image
-     * cold, which is ten to twenty minutes the dev loop pays on every iteration.
+     * reason lands on the header line. A rerun without the warm seed caches re-fetches the
+     * dependency world from Maven Central, which is minutes the dev loop pays every iteration.
      */
     @Test
     void theDevLoopKeepsTheWarmCacheAndNothingIsRemoved() {
@@ -834,23 +868,18 @@ class PipelinePhasesTest {
     }
 
     /**
-     * A run that built nothing, or a second run of this phase, has no builder to remove — and
-     * buildx says so on the error stream rather than with a status of its own. That is not a
-     * warning; the boot is not worse off for a machine that was already clean.
+     * A host that never ran the buildx era, or a second run of this phase, has no builder to
+     * remove. That is not a warning; the boot is not worse off for a machine that was already
+     * clean.
      */
     @Test
-    void aMissingBuilderIsNotAFailure() throws Exception {
-        ScriptedRunner runner = new ScriptedRunner(command -> {
-            String line = String.join(" ", command);
-            if (line.contains("buildx rm")) {
-                return ScriptedRunner.failed("ERROR: no builder \"" + Docker.BUILDER + "\" found");
-            }
-            return ScriptedRunner.ok();
-        });
+    void aHostWithNoLegacyBuilderIsNotAFailure() throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
         Ctx ctx = new Ctx();
 
         teardown(runner, Map.of(), ctx);
 
+        assertThat(runner.lines()).noneMatch(line -> line.contains("buildx rm"));
         assertThat(ctx.warnings).isEmpty();
         assertThat(ctx.note).isEqualTo("nothing to reclaim");
     }
@@ -858,27 +887,36 @@ class PipelinePhasesTest {
     /** A removal that failed for any other reason is a warning: that volume is still on the host. */
     @Test
     void aBuilderThatWillNotGoIsReported() throws Exception {
-        ScriptedRunner runner = new ScriptedRunner(command ->
-                String.join(" ", command).contains("buildx rm")
-                        ? ScriptedRunner.failed("Cannot connect to the Docker daemon")
-                        : ScriptedRunner.ok());
+        ScriptedRunner runner = new ScriptedRunner(command -> {
+            String line = String.join(" ", command);
+            if (line.contains("buildx ls")) {
+                return ScriptedRunner.ok(BUILDX_TABLE.toArray(new String[0]));
+            }
+            return line.contains("buildx rm")
+                    ? ScriptedRunner.failed("Cannot connect to the Docker daemon")
+                    : ScriptedRunner.ok();
+        });
         Ctx ctx = new Ctx();
 
         teardown(runner, Map.of(), ctx);
 
         assertThat(ctx.warnings).hasSize(1);
-        assertThat(ctx.warnings.getFirst()).contains("docker buildx rm " + Docker.BUILDER);
+        assertThat(ctx.warnings.getFirst())
+                .contains("docker buildx rm qits-bootstrap-builder-v5");
     }
 
     /**
-     * <b>Every earlier name of the builder, and NOT the node rows underneath them.</b> A
+     * <b>Every builder of the buildx era, and NOT the node rows underneath them.</b> A
      * docker-container builder names its node after itself with an index appended, so
      * {@code qits-bootstrap-builder-v40} in this table is the NODE of {@code -v4} — asking buildx
      * to remove it as a builder is a command that can only fail. The indent is what separates the
-     * two, and the current builder marks itself with a trailing star.
+     * two, and the last builder in use marked itself with a trailing star.
+     * <p>
+     * The "current" argument is empty at every caller now: nothing creates one of these any more,
+     * so there is none to spare.
      */
     @Test
-    void everyStrandedBuilderOfAnEarlierNameIsFoundAndTheNodesAreNot() {
+    void everyStrandedBuilderIsFoundAndTheNodesAreNot() {
         List<String> table = List.of(
                 "NAME/NODE                     DRIVER/ENDPOINT      STATUS",
                 "qits-bootstrap-builder        docker-container",
@@ -892,16 +930,16 @@ class PipelinePhasesTest {
                 "default                       docker",
                 " \\_ default                      \\_ default                     running");
 
-        assertThat(Docker.staleBuilders(table, Docker.BUILDER))
-                .containsExactly(
-                    "qits-bootstrap-builder", "qits-bootstrap-builder-v3", "qits-bootstrap-builder-v4");
+        assertThat(Docker.staleBuilders(table, ""))
+                .containsExactly("qits-bootstrap-builder", "qits-bootstrap-builder-v3",
+                        "qits-bootstrap-builder-v4", "qits-bootstrap-builder-v5");
     }
 
     /**
-     * <b>And the same table with the indent gone.</b> This class's own {@code lines} helper trims
-     * every row of every other docker command, so a reader that took that path would see each node
-     * at column zero and ask buildx to remove {@code qits-bootstrap-builder-v30} as a builder. The
-     * {@code \_} token is what still says node, and it is why the check is doubled.
+     * <b>And the same table with the indent gone.</b> The Docker facade's own {@code lines} helper
+     * trims every row of every other docker command, so a reader that took that path would see each
+     * node at column zero and ask buildx to remove {@code qits-bootstrap-builder-v30} as a builder.
+     * The {@code \_} token is what still says node, and it is why the check is doubled.
      */
     @Test
     void aNodeRowIsStillANodeRowWhenSomethingTrimmedIt() {
@@ -911,7 +949,7 @@ class PipelinePhasesTest {
                 "qits-bootstrap-builder-v4     docker-container",
                 "\\_ qits-bootstrap-builder-v40  \\_ unix:///var/run/docker.sock  running");
 
-        assertThat(Docker.staleBuilders(trimmed, Docker.BUILDER))
+        assertThat(Docker.staleBuilders(trimmed, ""))
                 .containsExactly("qits-bootstrap-builder-v3", "qits-bootstrap-builder-v4");
     }
 
@@ -919,10 +957,10 @@ class PipelinePhasesTest {
     @Test
     void aBuilderOutsideThePrefixIsNeverSwept() {
         assertThat(Docker.staleBuilders(List.of("someone-elses-builder  docker-container",
-                "default*  docker"), Docker.BUILDER)).isEmpty();
-        // And the one in use is not stale, star or no star.
-        assertThat(Docker.staleBuilders(List.of(Docker.BUILDER + "*  docker-container"),
-                Docker.BUILDER)).isEmpty();
+                "default*  docker"), "")).isEmpty();
+        // And a named current one is still spared, star or no star.
+        assertThat(Docker.staleBuilders(List.of("qits-bootstrap-builder-v5*  docker-container"),
+                "qits-bootstrap-builder-v5")).isEmpty();
     }
 
     // --- the two coordinates ----------------------------------------------------------------------

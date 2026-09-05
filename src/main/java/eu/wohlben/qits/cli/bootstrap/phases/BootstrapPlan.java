@@ -212,7 +212,7 @@ public final class BootstrapPlan {
         // BootstrapCommand prints it once the engine has run everything — so a phase below it still
         // reads before the closing text, and the reclaim is the run's own housekeeping rather than
         // part of what a person is told about the platform. It is also the only order in which the
-        // builder is provably finished with: nothing above may build after it.
+        // seed caches are provably finished with: nothing above may build after it.
         phases.add(pipeline.teardownBootstrapBuilder());
 
         return List.copyOf(phases);

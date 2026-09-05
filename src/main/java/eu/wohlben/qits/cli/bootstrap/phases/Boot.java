@@ -70,7 +70,13 @@ public class Boot {
         this.config = config;
         this.log = log;
         this.runner = runner;
-        this.docker = new Docker(runner).withBuildArgs(imageBuildArgs(config));
+        this.docker = new Docker(runner).withBuildArgs(imageBuildArgs(config))
+                // The buildctl client is a container, so a build's scratch directories have to sit
+                // where the HOST daemon can bind-mount them by the same name. The sources directory
+                // is mounted at its own path by the launcher and is this run's own to write in, so
+                // it is the one place that is true of.
+                .withBuildScratch(Path.of(config.src()).toAbsolutePath().normalize()
+                        .resolve(".buildkit"));
         this.git = new Git(runner);
         this.ingress = new BootstrapIngressLifecycle(this);
         this.artifacts = new ArtifactsApi(http, config.artifactsUrl());
@@ -92,11 +98,15 @@ public class Boot {
      * {@code ARG} answers a build argument with a warning, and the alternative is a per-image list
      * that a new image is added without.
      * <p>
+     * Each entry is a bare {@code NAME=value}. The flag in front of it belongs to whoever composes
+     * the command line, and that is buildctl's {@code --opt build-arg:} now rather than docker's
+     * {@code --build-arg}.
+     * <p>
      * See {@link BootstrapConfig#seedMavenRepositoryUrl()} for why the value cannot be left to the
      * Dockerfile's own default any more.
      */
     public static List<String> imageBuildArgs(BootstrapConfig config) {
-        return List.of("--build-arg", "QITS_MAVEN_REPOSITORY_URL=" + config.seedMavenRepositoryUrl());
+        return List.of("QITS_MAVEN_REPOSITORY_URL=" + config.seedMavenRepositoryUrl());
     }
 
     /** The seed maven repository as the ingress serves it, and the capability that opens it. */
