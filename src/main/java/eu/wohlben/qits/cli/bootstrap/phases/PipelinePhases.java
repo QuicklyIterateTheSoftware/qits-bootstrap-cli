@@ -811,7 +811,9 @@ public class PipelinePhases {
      * lagging pin resolves fine on a platform whose store holds every version ever released and
      * nowhere at all on a fresh one. So every version of this publisher that
      * {@link eu.wohlben.qits.cli.bootstrap.platform.PinnedVersions} finds still pinned is replayed
-     * too, oldest first and the newest last, on exactly the terms above.
+     * too, oldest first and the newest last, on exactly the terms above — except for a publisher
+     * that is also a {@link SeedPhases#SEED_LIBRARIES} entry, whose pinned versions the maven
+     * publishes of phases 18-25 have already put in the store.
      */
     public Phase releaseReplay(String name) {
         String repo = PlatformModel.repo(name);
@@ -835,11 +837,18 @@ public class PipelinePhases {
             // only version pinned: consumer poms lag, and a fresh platform's registry holds only
             // what this boot puts there. Each one is pushed and waited for exactly like the newest
             // — a tag the git host already has moves no ref, announces nothing and is passed over.
+            //
+            // NOT FOR A SEED LIBRARY, and that is the whole of the exclusion below. The maven
+            // publishes of phases 18-25 already put every pinned version of those five in the
+            // store, out of the same closure — so replaying their older tags here would buy the
+            // registry nothing and cost the boot one full ci run per tag.
             int replayed = 0;
-            for (String pinned : boot.pinnedVersions(ctx).extraVersions(name)) {
-                if (!pinned.equals(version) && replayTag(ctx, name, repo, src, storageId, mainSha,
-                        pinned)) {
-                    replayed++;
+            if (!SeedPhases.SEED_LIBRARIES.contains(name)) {
+                for (String pinned : boot.pinnedVersions(ctx).extraVersions(name)) {
+                    if (!pinned.equals(version) && replayTag(ctx, name, repo, src, storageId,
+                            mainSha, pinned)) {
+                        replayed++;
+                    }
                 }
             }
             // A replay whose run already went green has nothing left to publish, and re-running it

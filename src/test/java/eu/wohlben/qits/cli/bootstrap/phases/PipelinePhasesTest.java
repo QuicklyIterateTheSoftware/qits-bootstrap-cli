@@ -1128,4 +1128,23 @@ class PipelinePhasesTest {
         assertThat(ctx.lines).noneMatch(line -> line.contains("getent hosts"));
         assertThat(ctx.lines).noneMatch(line -> line.startsWith("passkeys:"));
     }
+
+    /**
+     * <b>Which publishers the pinned-tag replay is for.</b> Two of the seven are seed libraries,
+     * and the maven publishes of phases 18-25 already put every pinned version of those in the
+     * store out of the same closure — so replaying their older tags would cost a ci run per tag
+     * for bytes the registry has. The five below are the ones nothing else publishes.
+     */
+    @Test
+    void theSeedLibrariesAreExcludedFromThePinnedTagReplay() {
+        List<String> alsoSeeded = PlatformModel.RELEASE_PUBLISHERS.stream()
+                .filter(SeedPhases.SEED_LIBRARIES::contains)
+                .toList();
+
+        assertThat(alsoSeeded).containsExactlyInAnyOrder("integrations-quarkus", "eventstream");
+        assertThat(PlatformModel.RELEASE_PUBLISHERS)
+                .filteredOn(name -> !SeedPhases.SEED_LIBRARIES.contains(name))
+                .containsExactly("spa-ui-components", "integrations-angular", "oci-workspace",
+                        "workspace-daemon", "projects-daemon");
+    }
 }
