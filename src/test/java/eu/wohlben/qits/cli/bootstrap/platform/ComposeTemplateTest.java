@@ -2331,17 +2331,17 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>ci's catalogue is delivered with ci's own deployment and never on the seed.</b> Configured,
-     * it REPLACES the git host's listing — and qits-projects is deployed fourteen phases after the
-     * seed ci starts, so a seed holding the key would answer every event of the boot's first half
-     * with an empty candidate list. The release replays are exactly those events.
+     * <b>ci's catalogue is the same on the seed and on the deployment.</b> The seed once withheld
+     * it: qits-projects was said to arrive fourteen phases later. It is a seed service in the same
+     * stack now, and a seed ci without the key builds runs that carry no project — whose
+     * {@code QITS_CI_REPOSITORY_URL} is {@code /git/<storage uuid>}, from which the recipes'
+     * frontend-submodule clones derive a {@code /git/<name>} that 404s (trial boot 2026-09-05).
      */
     @Test
-    void theProjectsCatalogueIsInCisExtrasAndNotOnTheSeed() {
-        assertThat(extras("qits-ci"))
-                .contains("env.QITS_CI_PROJECTS_URL=http://" + ENV + "-qits-projects:8080");
-        // The KEY, not the word: the block's comment names it to say why it is absent.
+    void theProjectsCatalogueIsOnTheSeedAndInCisExtras() {
+        String url = "http://" + ENV + "-qits-projects:8080";
+        assertThat(extras("qits-ci")).contains("env.QITS_CI_PROJECTS_URL=" + url);
         assertThat(serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-ci"))
-                .doesNotContain("QITS_CI_PROJECTS_URL:");
+                .contains("QITS_CI_PROJECTS_URL: " + url);
     }
 }

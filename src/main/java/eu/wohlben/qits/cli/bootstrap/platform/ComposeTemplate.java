@@ -1110,15 +1110,20 @@ public final class ComposeTemplate {
                   QITS_CI_GIT_HOST_URL: http://${ENV_NAME}-qits-githost:8080
                   QITS_CI_CONTAINER_GIT_URL: http://githost.${ENV_NAME}.internal:8080
                   QITS_CI_CONTAINER_GIT_AUDIENCE: ${ENV_NAME}-qits-githost
-                  # NO QITS_CI_PROJECTS_URL HERE, AND THE ABSENCE IS LOAD-BEARING.
-                  # It names the catalogue ci enumerates event triggers over. Configured, that
-                  # catalogue REPLACES the git host's own listing — and qits-projects is deployed
-                  # fourteen phases after this container starts, so a seed ci holding the key would
-                  # answer every event of the boot's first half with an empty candidate list. The
-                  # release replays are exactly those events, and an empty list fails them. The seed
-                  # therefore walks the git host's listing, which is what it is for, and the key
-                  # arrives with ci's own deployment out of the extras — after qits-projects, whose
-                  # catalogue is by then the true one.
+                  # THE SAME CATALOGUE THE DEPLOYED ci READS, on the seed too — since 2026-09-05.
+                  # The seed used to withhold this key, on the argument that qits-projects was
+                  # deployed fourteen phases after this container and a configured catalogue REPLACES
+                  # the git host's listing, so the seed would have met every early event with an empty
+                  # candidate list. Both halves of that argument are stale: qits-projects is a SEED
+                  # service in this same stack, its catalogue is filled by the qits-project and
+                  # git-repos phases, and the first event ci ever sees is the release-train push that
+                  # follows them. What the id-only listing cost is measured, not argued: a run built
+                  # from it carries no project, so QITS_CI_REPOSITORY_URL is /git/<storage uuid> and
+                  # every recipe that derives a sibling from it — the frontend-submodule clones of
+                  # observability, platform-idp and configuration — asks for /git/<name> and gets a
+                  # 404 (2026-09-05 trial boot, deploy phases 60–62). The deployed ci never had that
+                  # problem because its extras carry this key; the seed now says the same thing.
+                  QITS_CI_PROJECTS_URL: http://${ENV_NAME}-qits-projects:8080
                   # The network step containers join. Still qits-net: it is the deployer's legacy network,
                   # the one every container on this host is on whatever plane it belongs to. It is
                   # ci's choice and travels in the workload spec; the orchestrator puts the container
