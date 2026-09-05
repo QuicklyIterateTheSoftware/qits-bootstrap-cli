@@ -1,0 +1,27 @@
+# THE ONE QA PIPELINE THIS REPOSITORY HAS, and it runs for a release request and nothing else.
+#
+# This repository had no CI at all until 2026-09-05: its releases passed the old gate's
+# settle-window arm, and when that arm was removed (the gate is met by a gating verdict alone,
+# by ruling) its requests waited forever. This file is what makes the repository releasable.
+# The suite is plain maven — no docker, no daemon, no platform services — so the gating half
+# is `./mvnw verify` and nothing else. Dependencies resolve from Maven Central through the
+# platform mirror when qits-ci injects QITS_MAVEN_PROXY_URL (see .qits-maven-settings.xml,
+# copied from the platform's lib repos; an empty value deactivates the profile and Central is
+# dialled directly).
+event: ReleaseRequestChanged
+
+when:
+  - repoName: { exact: qits-bootstrap-cli }
+
+checkout:
+  branch: backingBranch
+  sha: mergedSha
+
+steps:
+  - image: qits/build-images/maven-base:latest
+    user: build
+    timeout-seconds: 1800
+    script: |
+      set -eu
+      export QITS_MAVEN_CENTRAL_URL="${QITS_MAVEN_PROXY_URL:-}"
+      ./mvnw -B -ntp -s .qits-maven-settings.xml verify
