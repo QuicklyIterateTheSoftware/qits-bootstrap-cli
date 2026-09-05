@@ -1,16 +1,39 @@
 # THE ONE QA PIPELINE THIS REPOSITORY HAS, and it runs for a release request and nothing else.
 #
-# This repository had no CI at all until 2026-09-05: its releases passed the old gate's
-# settle-window arm, and when that arm was removed (the gate is met by a gating verdict alone,
-# by ruling) its requests waited forever. This file is what makes the repository releasable.
-# The suite is plain maven — no docker, no daemon, no platform services — so the gating half
-# is `./mvnw verify` and nothing else. Dependencies resolve from Maven Central through the
-# platform mirror when qits-ci injects QITS_MAVEN_PROXY_URL (see .qits-maven-settings.xml,
-# copied from the platform's lib repos; an empty value deactivates the profile and Central is
-# dialled directly).
+# THIS IS THE INTERIM GATE, and it is unit tests only. The real proof of this CLI is a cold
+# bootstrap on a fresh node — the phases that shell docker are deliberately not unit-tested
+# (see AGENTS.md "Tests": a fake docker daemon would only prove the fake works), so the suite
+# below leaves the most consequential half of the program untested. The full
+# bootstrap-on-a-fresh-node pipeline that would cover it is POSTPONED on purpose: it needs a
+# disposable machine with a docker daemon, which no step container is, and building that is a
+# campaign of its own. Until it exists, a release of this repository is gated on the clone-alone
+# suite and nothing more. Do not read a green run here as "the bootstrap works".
+#
+# WHY THERE IS A GATE AT ALL. Since "The gate gates" (qits-projects 2026.904.161524) a release
+# request releases on exactly one thing: a gating BuildSuccessful for its current fold. No verdict
+# is not a pass, and the old settle-window arm that used to carry this repository is gone — so
+# without this file the repository cannot release at all. It was the last of the 48 with no
+# .config/qits at all.
+#
+# WHAT HAPPENS AFTER A GREEN RUN. This repository declares NO deployments.yml, correctly: it ships
+# a CLI that people run, it deploys nothing, and there is no application for a deployer to move. So
+# the release has no deploy half to wait on — the released tag merges to main at the release, and
+# the request is done the moment this step is green.
+#
+# `verify` IS the unit suite here, not a wider phase: no *IT.java exists, the failsafe plugin is
+# declared with no executions bound, and the jar goal is turned off. `./mvnw clean verify` green on
+# a clone with no docker is the repository's own documented contract (AGENTS.md), so the gate runs
+# the command the repository already holds itself to rather than inventing a second one.
+#
+# DECIDE AT MAIN, BUILD AT THE FOLD, like every sibling's: this file is read at this repository's
+# main head, and the run checks out the fold. A pipeline fix therefore has to land at main to take
+# effect — pushing it to the release branch changes nothing.
 event: ReleaseRequestChanged
 
 when:
+  # repoName, not repoId: the git host's storage coordinate is an opaque UUID since the identity
+  # cutover, so a name match on repoId is not dependable. The event echoes the public name; a
+  # rename updates this line in the same campaign.
   - repoName: { exact: qits-bootstrap-cli }
 
 checkout:
@@ -19,9 +42,22 @@ checkout:
 
 steps:
   - image: qits/build-images/maven-base:latest
+    # Runs as the image's non-root build user (uid 1001, with a passwd entry) — kept as it runs
+    # green. Nothing here spawns a postgres or an initdb, the usual reason a sibling needs it; the
+    # suite writes only into the checkout and /tmp, both of which that user owns.
     user: build
+    # 550 tests in 1:02 with a warm maven cache, measured 2026-09-05. The ceiling is for the cold
+    # step container that downloads the whole Quarkus dependency set before a test executes, and
+    # for a run sharing a loaded host with the serial queue's other builds.
     timeout-seconds: 1800
     script: |
+      # The daemon runs this with `bash -c` and no -e, so without this a failed build is swallowed
+      # and the run reports SUCCESS — a green verdict for a red suite.
       set -eu
+      # Maven Central through qits-platform-mirror's in-network alias. EMPTY IS THE OFF SWITCH: an
+      # older qits-ci that injects nothing, or a deployment with the mirror plane off, leaves this
+      # empty, which deactivates the settings profile and Central is dialled directly. Nothing else
+      # is exported — this pom is parentless and has no qits dependency, so the platform registry
+      # is never consulted (see .qits-maven-settings.xml).
       export QITS_MAVEN_CENTRAL_URL="${QITS_MAVEN_PROXY_URL:-}"
       ./mvnw -B -ntp -s .qits-maven-settings.xml verify
