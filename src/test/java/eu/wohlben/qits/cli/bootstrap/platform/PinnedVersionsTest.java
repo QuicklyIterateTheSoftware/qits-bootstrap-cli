@@ -20,8 +20,11 @@ class PinnedVersionsTest {
     /** A checkout, as (name, ref, path) to file text. */
     private final Map<String, String> files = new LinkedHashMap<>();
 
-    /** The newest release tag of an image producer, which is also its image tag. */
+    /** The newest release tag of an image or npm producer, which is also its published version. */
     private final Map<String, String> releases = new LinkedHashMap<>();
+
+    /** The commit a submodule path is recorded at, by (name, ref, path). */
+    private final Map<String, String> gitlinks = new LinkedHashMap<>();
 
     private final PinnedVersions.Sources source = new PinnedVersions.Sources() {
 
@@ -39,6 +42,11 @@ class PinnedVersionsTest {
                     .filter(path -> path.endsWith("Dockerfile")
                             || path.contains("Dockerfile"))
                     .toList();
+        }
+
+        @Override
+        public String gitlink(String name, String ref, String path) {
+            return gitlinks.get(name + "@" + ref + ":" + path);
         }
 
         @Override
@@ -358,5 +366,117 @@ class PinnedVersionsTest {
         assertThat(pins.extraVersions("oci-workspace")).isEmpty();
         assertThat(pins.warnings()).singleElement().asString()
                 .contains("qits-workspace-oci").contains("2026.101.1");
+    }
+
+    // --- the npm versions a frontend's lockfile pins ----------------------------------------------
+
+    private static String lock(String version) {
+        return """
+                {"lockfileVersion":3,"packages":{
+                  "":{"name":"qits-githost-frontend"},
+                  "node_modules/@qits/ui-components":{"version":"%s",
+                    "resolved":"http://localhost:8081/artifacts/npm/npm/@qits/ui-components/-/x.tgz"}
+                }}""".formatted(version);
+    }
+
+    private void frontendPinning(String version) {
+        releases.put("spa-ui-components", "2026.905.91746");
+        files.put("githost@" + PinnedVersions.HEAD + ":.gitmodules", """
+                [submodule "qits-githost-frontend"]
+                	path = service/src/main/webui
+                	url = ../qits-githost-frontend.git
+                """);
+        gitlinks.put("githost@" + PinnedVersions.HEAD + ":service/src/main/webui", "052f94e3");
+        files.put("spa-githost@052f94e3:package-lock.json", lock(version));
+        files.put("spa-ui-components@" + version + ":package.json", "{}");
+    }
+
+    /**
+     * <b>The pin is in the FRONTEND's lock at the GITLINK, not in the deployable.</b> A restore
+     * stands a deployable at its release tag; that tag records a frontend commit; that commit's
+     * lock pins {@code @qits/ui-components} exactly, and {@code npm ci} obeys the lock rather than
+     * the caret in package.json. So the version its release build installs is weeks behind the
+     * publisher's newest tag — measured on 2026-09-05, where nine deployables wanted
+     * 2026.902.204627 and the registry held only 2026.905.91746.
+     */
+    @Test
+    void anNpmPinIsReadFromTheFrontendLockAtTheGitlink() {
+        frontendPinning("2026.902.204627");
+
+        PinnedVersions pins = PinnedVersions.read(List.of("githost"), source);
+
+        assertThat(pins.extraVersions("spa-ui-components")).containsExactly("2026.902.204627");
+        assertThat(pins.warnings()).isEmpty();
+    }
+
+    /** A lock pinning what the publisher's newest tag already is adds nothing to replay. */
+    @Test
+    void anNpmPinOnTheNewestReleaseIsNotAnExtra() {
+        frontendPinning("2026.905.91746");
+
+        assertThat(PinnedVersions.read(List.of("githost"), source)
+                .extraVersions("spa-ui-components")).isEmpty();
+    }
+
+    /**
+     * <b>A prerelease pin is warned about and skipped.</b> The registry holds
+     * {@code <calver>-main.g<sha>} builds, and no release tag names one — so there is nothing for a
+     * replay to push, and pretending otherwise would stop the boot on a tag that does not exist.
+     */
+    @Test
+    void aPrereleasePinIsSkippedWithAWarning() {
+        frontendPinning("2026.902.204627-main.geec9f2c");
+
+        PinnedVersions pins = PinnedVersions.read(List.of("githost"), source);
+
+        assertThat(pins.extraVersions("spa-ui-components")).isEmpty();
+        assertThat(pins.warnings()).singleElement().asString()
+                .contains("@qits/ui-components").contains("2026.902.204627-main.geec9f2c");
+    }
+
+    /**
+     * A gitlink the frontend's own clone does not hold is one WARN and no closure entry — the
+     * frontend follows main, and an old release tag can name a commit that is no longer on it.
+     */
+    @Test
+    void aGitlinkTheFrontendCloneLacksWarnsRatherThanStoppingTheBoot() {
+        frontendPinning("2026.902.204627");
+        files.remove("spa-githost@052f94e3:package-lock.json");
+
+        PinnedVersions pins = PinnedVersions.read(List.of("githost"), source);
+
+        assertThat(pins.extraVersions("spa-ui-components")).isEmpty();
+        assertThat(pins.warnings()).singleElement().asString()
+                .contains("qits-githost-frontend").contains("052f94e3");
+    }
+
+    /** Both lockfile shapes, and only the @qits packages out of them. */
+    @Test
+    void onlyTheQitsPackagesOfALockAreRead() {
+        List<String> warnings = new java.util.ArrayList<>();
+
+        assertThat(PinnedVersions.npmPinsIn("""
+                {"lockfileVersion":3,"packages":{
+                  "node_modules/@qits/ui-components":{"version":"2026.902.204627"},
+                  "node_modules/@angular/core":{"version":"21.0.1"},
+                  "node_modules/rxjs":{"version":"7.8.1"}}}""", warnings))
+                .containsExactly(entry("@qits/ui-components", "2026.902.204627"));
+        assertThat(warnings).isEmpty();
+        // The v1 shape, in case a frontend still carries one.
+        assertThat(PinnedVersions.npmPinsIn(
+                "{\"dependencies\":{\"@qits/angular\":{\"version\":\"2026.904.202810\"}}}",
+                warnings))
+                .containsExactly(entry("@qits/angular", "2026.904.202810"));
+    }
+
+    /** Every @qits package a lock could pin resolves to the publisher whose run publishes it. */
+    @Test
+    void everyQitsPackageNamesItsPublisher() {
+        assertThat(PinnedVersions.NPM_PRODUCERS)
+                .containsEntry("@qits/ui-components", "spa-ui-components")
+                .containsEntry("@qits/angular", "integrations-angular");
+        assertThat(PinnedVersions.NPM_PRODUCERS.values())
+                .allSatisfy(producer -> assertThat(PlatformModel.RELEASE_PUBLISHERS)
+                        .contains(producer));
     }
 }

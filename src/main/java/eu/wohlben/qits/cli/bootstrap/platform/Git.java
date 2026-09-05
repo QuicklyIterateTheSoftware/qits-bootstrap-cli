@@ -169,6 +169,25 @@ public class Git {
     }
 
     /**
+     * <b>The commit one submodule path is recorded at in a ref</b>, or null when the path is not a
+     * gitlink there. It is how a release tag's frontend commit is found: {@code ls-tree} prints
+     * {@code 160000 commit <sha>\t<path>} for one.
+     */
+    public String gitlinkAt(Path repo, String ref, String path) {
+        ProcessResult result = in(repo, null, "ls-tree", ref, path);
+        if (!result.ok()) {
+            return null;
+        }
+        for (String line : result.captured()) {
+            String[] parts = line.strip().split("\\s+");
+            if (parts.length >= 3 && "commit".equals(parts[1])) {
+                return parts[2];
+            }
+        }
+        return null;
+    }
+
+    /**
      * A second working tree of one ref, for copying somewhere the checkout itself cannot go. The
      * seed publishes several versions of a library per boot and each needs its own tree in the
      * maven container; the checkout holds one.

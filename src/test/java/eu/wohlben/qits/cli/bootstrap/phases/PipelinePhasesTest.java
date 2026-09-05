@@ -1317,9 +1317,12 @@ class PipelinePhasesTest {
                         PlatformModel.ReleasePackage.Kind.MAVEN, "qits-eventstream"));
         assertThat(PlatformModel.releasePackages("integrations-quarkus")).singleElement()
                 .extracting(PlatformModel.ReleasePackage::coordinate).isEqualTo("qits-auth-core");
-        // @qits/ui-components@0.0.4 is named by no function of the release tag.
-        assertThat(PlatformModel.releasePackages("spa-ui-components")).isEmpty();
-        assertThat(PlatformModel.releasePackages("integrations-angular")).isEmpty();
+        // The npm pair publishes one version per release tag, so they answer like the rest.
+        assertThat(PlatformModel.releasePackages("spa-ui-components")).singleElement()
+                .isEqualTo(new PlatformModel.ReleasePackage(
+                        PlatformModel.ReleasePackage.Kind.NPM, "@qits/ui-components"));
+        assertThat(PlatformModel.releasePackages("integrations-angular")).singleElement()
+                .extracting(PlatformModel.ReleasePackage::coordinate).isEqualTo("@qits/angular");
         // Every publisher the plan makes a phase for is answered one way or the other.
         assertThat(PlatformModel.RELEASE_PUBLISHERS)
                 .allSatisfy(name -> assertThat(PlatformModel.releasePackages(name)).isNotNull());
@@ -1339,5 +1342,32 @@ class PipelinePhasesTest {
         assertThat(new eu.wohlben.qits.cli.bootstrap.api.ArtifactsApi(
                 new Http(), "http://prod-qits-artifacts:8080/artifacts").registryBase())
                 .isEqualTo("http://prod-qits-artifacts:8080");
+    }
+
+    /**
+     * <b>An npm version is probed at its TARBALL</b> — the path {@code npm ci} fetches and the one
+     * a failing install's 404 names. This registry does not serve {@code <package>/<version>}
+     * (measured: 404 for a version its own packument lists), and the file name drops the scope.
+     */
+    @Test
+    void anNpmVersionIsAskedForAtTheTarballItsInstallWouldFetch() {
+        assertThat(eu.wohlben.qits.cli.bootstrap.api.ArtifactsApi.npmTarballUrl(
+                "http://prod-qits-artifacts:8080/artifacts", "@qits/ui-components",
+                "2026.902.204627"))
+                .isEqualTo("http://prod-qits-artifacts:8080/artifacts/npm/npm/@qits/ui-components"
+                        + "/-/ui-components-2026.902.204627.tgz");
+    }
+
+    /**
+     * The per-phase note says both numbers: a boot that replayed five npm versions and one that
+     * found all five already there did the same right thing and cost wildly different minutes.
+     */
+    @Test
+    void thePhaseSaysHowManyItReplayedAndHowManyWereAlreadyThere() {
+        assertThat(PipelinePhases.pinnedNote(0, 0)).isEmpty();
+        assertThat(PipelinePhases.pinnedNote(3, 2))
+                .isEqualTo(" (3 pinned replayed, 2 already held)");
+        assertThat(PipelinePhases.pinnedNote(0, 5))
+                .isEqualTo(" (0 pinned replayed, 5 already held)");
     }
 }

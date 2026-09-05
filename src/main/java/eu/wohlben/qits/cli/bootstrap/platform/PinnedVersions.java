@@ -1,5 +1,8 @@
 package eu.wohlben.qits.cli.bootstrap.platform;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import eu.wohlben.qits.cli.bootstrap.api.Json;
+
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -38,6 +41,14 @@ import java.util.regex.Pattern;
  * reads {@code Dockerfile*} at each checkout's root and under {@code docker/} as well, resolves the
  * ARG references a {@code FROM} names, and follows a pinned image tag into the producer's own
  * Dockerfiles at that tag.
+ * <p>
+ * <b>An npm pin is the same defect in a lockfile.</b> A restore stands a deployable at its release
+ * tag, and that tag's FRONTEND gitlink carries a {@code package-lock.json} pinning
+ * {@code @qits/ui-components} exactly — {@code npm ci} obeys the lock, not the caret beside it — so
+ * a release build installs whatever the frontend was pinned to when the release was cut. Nine
+ * deployables wanted 2026.902.204627 on 2026-09-05 while the registry held only the publisher's
+ * newest tag, and every one of their release builds died in {@code npm ci} with a 404. So the
+ * closure reads those locks too, at the gitlink each ref records.
  * <p>
  * <b>Read from the checkouts, never from the network.</b> Each version is a release tag in the
  * producer's own clone ({@code git show <version>:pom.xml}), which the sources phase has already
@@ -92,11 +103,14 @@ public final class PinnedVersions {
         List<String> dockerfiles(String name, String ref);
 
         /**
-         * The newest release tag reachable from main, or null. It is what an IMAGE producer's
-         * checkout publishes: those repositories carry no pom version to read, and the tag IS the
-         * image tag.
+         * The newest release tag reachable from main, or null. It is what an IMAGE or NPM
+         * producer's checkout publishes: those repositories carry no pom version to read, and the
+         * tag IS the published version.
          */
         String releaseVersion(String name);
+
+        /** The commit one submodule path is recorded at in a ref, or null when there is none. */
+        String gitlink(String name, String ref, String path);
     }
 
     /**
@@ -131,6 +145,15 @@ public final class PinnedVersions {
     /** A version this platform mints: CalVer, and never {@code latest}, {@code native} or a stage. */
     private static final Pattern CALVER = Pattern.compile("\\d{4}\\.\\d{1,4}\\.\\d+");
 
+    /** The lockfile {@code npm ci} obeys — the caret in package.json loses to it. */
+    static final String LOCK_FILE = "package-lock.json";
+
+    private static final Pattern SUBMODULE_SECTION =
+            Pattern.compile("^\\s*\\[submodule\\s+\"([^\"]+)\"\\]");
+
+    private static final Pattern SUBMODULE_PATH =
+            Pattern.compile("^\\s*path\\s*=\\s*(\\S+)\\s*$");
+
     private final Map<String, List<String>> extra;
     private final List<String> warnings;
 
@@ -158,7 +181,9 @@ public final class PinnedVersions {
         // AN IMAGE PRODUCER HAS NO POM VERSION TO READ. Its checkout publishes whatever its newest
         // release tag says, and that tag IS the image tag — see PlatformModel.releasePackages.
         Map<String, String> imageHead = new LinkedHashMap<>();
-        for (String producer : new LinkedHashSet<>(IMAGE_PRODUCERS.values())) {
+        Set<String> tagPublishers = new LinkedHashSet<>(IMAGE_PRODUCERS.values());
+        tagPublishers.addAll(NPM_PRODUCERS.values());
+        for (String producer : tagPublishers) {
             String version = sources.releaseVersion(producer);
             if (version != null && !version.isBlank()) {
                 imageHead.put(producer, version);
@@ -180,6 +205,8 @@ public final class PinnedVersions {
             }
             queueImages(imagePins(repository, HEAD, sources), imageHead, found, warnings, unknown,
                     pending, sources);
+            queueNpm(npmPins(repository, HEAD, sources, warnings), imageHead, found, warnings,
+                    unknown, sources);
         }
         while (!pending.isEmpty()) {
             String[] at = pending.removeFirst();
@@ -193,12 +220,14 @@ public final class PinnedVersions {
             // 2026.902.143920, which nothing newer names any more.
             queueImages(imagePins(at[0], at[1], sources), imageHead, found, warnings, unknown,
                     pending, sources);
+            queueNpm(npmPins(at[0], at[1], sources, warnings), imageHead, found, warnings, unknown,
+                    sources);
         }
 
         Map<String, List<String>> extra = new LinkedHashMap<>();
         found.forEach((producer, versions) -> extra.put(producer, List.copyOf(versions)));
         for (String name : unknown) {
-            warnings.add(name.startsWith("qits/")
+            warnings.add(name.startsWith("qits/") || name.startsWith("@qits/")
                     ? "no release publisher publishes " + name + " — pins of it are ignored"
                     : "no repository publishes qits-" + name + " — pins of it are ignored");
         }
@@ -308,6 +337,121 @@ public final class PinnedVersions {
             }
         }
         return Map.copyOf(byImage);
+    }
+
+    /**
+     * <b>Which repository publishes each {@code @qits} npm package</b>, derived from
+     * {@link PlatformModel#releasePackages} exactly as the image map is.
+     */
+    static final Map<String, String> NPM_PRODUCERS =
+            producersOfKind(PlatformModel.ReleasePackage.Kind.NPM);
+
+    private static Map<String, String> producersOfKind(PlatformModel.ReleasePackage.Kind kind) {
+        Map<String, String> byCoordinate = new LinkedHashMap<>();
+        for (String publisher : PlatformModel.RELEASE_PUBLISHERS) {
+            for (PlatformModel.ReleasePackage published : PlatformModel.releasePackages(publisher)) {
+                if (published.kind() == kind) {
+                    byCoordinate.put(published.coordinate(), publisher);
+                }
+            }
+        }
+        return Map.copyOf(byCoordinate);
+    }
+
+    /**
+     * <b>Every {@code @qits} version one ref's lockfiles pin</b> — the checkout's own, and each
+     * frontend submodule's lock AT THE GITLINK the ref records.
+     * <p>
+     * The gitlink is the point. A restore stands a deployable at its release tag, and that tag's
+     * frontend commit carries a lock that pins {@code @qits/ui-components} EXACTLY — {@code npm ci}
+     * reads the lock, not the caret in package.json — so the version its release build installs is
+     * whatever the frontend was pinned to when the release was cut, which is weeks behind the
+     * publisher's newest tag.
+     */
+    static Map<String, String> npmPins(String repository, String ref, Sources sources,
+                                       List<String> warnings) {
+        Map<String, String> pins = new LinkedHashMap<>(
+                npmPinsIn(sources.at(repository, ref, LOCK_FILE), warnings));
+        String gitmodules = sources.at(repository, ref, ".gitmodules");
+        if (gitmodules == null) {
+            return pins;
+        }
+        submodulesIn(gitmodules).forEach((submodule, path) -> {
+            String producer = PlatformModel.nameOf(submodule);
+            if (producer == null) {
+                return;
+            }
+            String commit = sources.gitlink(repository, ref, path);
+            if (commit == null || commit.isBlank()) {
+                return;
+            }
+            String lock = sources.at(producer, commit, LOCK_FILE);
+            if (lock == null) {
+                // The frontend clone is shallow-ish and follows main; a gitlink an old release tag
+                // records can be a commit it does not hold. Said once, and the boot goes on: the
+                // release build that needs it will fail with the version in the message.
+                warnings.add(PlatformModel.repo(producer) + " has no " + commit.substring(0,
+                        Math.min(8, commit.length())) + " in its checkout — the npm versions "
+                        + PlatformModel.repo(repository) + " " + ref + " pins through it are not "
+                        + "in the closure");
+                return;
+            }
+            pins.putAll(npmPinsIn(lock, warnings));
+        });
+        return pins;
+    }
+
+    /** {@code path} by submodule name, out of a {@code .gitmodules}. */
+    static Map<String, String> submodulesIn(String gitmodules) {
+        Map<String, String> paths = new LinkedHashMap<>();
+        String name = null;
+        for (String line : gitmodules.split("\n")) {
+            Matcher section = SUBMODULE_SECTION.matcher(line);
+            if (section.find()) {
+                name = section.group(1);
+                continue;
+            }
+            Matcher path = SUBMODULE_PATH.matcher(line);
+            if (name != null && path.find()) {
+                paths.put(name, path.group(1).strip());
+            }
+        }
+        return paths;
+    }
+
+    /**
+     * The {@code @qits} versions one lockfile pins. A version that is not a plain CalVer — the
+     * {@code <calver>-main.g<sha>} prereleases the registry also holds — is WARNED and skipped: no
+     * release tag names one, so there is nothing to replay.
+     */
+    static Map<String, String> npmPinsIn(String lock, List<String> warnings) {
+        Map<String, String> pins = new LinkedHashMap<>();
+        if (lock == null || lock.isBlank()) {
+            return pins;
+        }
+        JsonNode root = Json.parse(lock);
+        for (String section : List.of("packages", "dependencies")) {
+            root.path(section).properties().forEach(entry -> {
+                String key = entry.getKey();
+                String name = key.startsWith("node_modules/")
+                        ? key.substring("node_modules/".length()) : key;
+                if (!NPM_PRODUCERS.containsKey(name)) {
+                    return;
+                }
+                String version = entry.getValue().path("version").asText("");
+                if (version.isBlank()) {
+                    return;
+                }
+                if (!CALVER.matcher(version).matches()) {
+                    warnings.add(name + " is pinned at " + version + ", which no release tag names "
+                            + "— it is skipped, and a build that installs it needs the registry to "
+                            + "hold it already");
+                    return;
+                }
+                pins.put(name, version);
+            });
+        }
+        return pins;
     }
 
     /** Every qits image pinned at a CalVer by one ref's Dockerfiles: image repository to version. */
@@ -420,6 +564,40 @@ public final class PinnedVersions {
             }
             versions.add(version);
             pending.addLast(new String[]{producer, version});
+        });
+    }
+
+    /**
+     * <b>An npm pin needs no recursion.</b> A published package version is a tarball, not a build:
+     * nothing inside it names another {@code @qits} version this boot would have to publish first,
+     * so a pinned version is added and the walk ends there.
+     */
+    private static void queueNpm(Map<String, String> pins, Map<String, String> head,
+                                 Map<String, TreeSet<String>> found, List<String> warnings,
+                                 Set<String> unknown, Sources sources) {
+        pins.forEach((packageName, version) -> {
+            String producer = NPM_PRODUCERS.get(packageName);
+            if (producer == null) {
+                unknown.add(packageName);
+                return;
+            }
+            if (version.equals(head.get(producer))) {
+                return;
+            }
+            TreeSet<String> versions =
+                    found.computeIfAbsent(producer, p -> new TreeSet<>(VERSION_ORDER));
+            if (versions.contains(version)) {
+                return;
+            }
+            // The tag has to be in the producer's checkout: the replay pushes it, and a tag nothing
+            // has is a version nobody can build.
+            if (sources.at(producer, version, "package.json") == null) {
+                warnings.add(PlatformModel.repo(producer) + " has no " + version + " in its "
+                        + "checkout — the " + packageName + " pin is skipped, and a build that "
+                        + "installs it will fail");
+                return;
+            }
+            versions.add(version);
         });
     }
 

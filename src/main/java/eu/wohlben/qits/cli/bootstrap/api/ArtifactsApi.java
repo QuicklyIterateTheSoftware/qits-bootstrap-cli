@@ -69,6 +69,25 @@ public class ArtifactsApi {
                 Map.of("Accept", MANIFEST_TYPES)).ok();
     }
 
+    /**
+     * <b>Where one npm version's tarball lives</b> — which is the path {@code npm ci} fetches, and
+     * the one the 404 in a failing install names. The file name drops the scope:
+     * {@code @qits/ui-components} at 1.2.3 is {@code @qits/ui-components/-/ui-components-1.2.3.tgz}.
+     */
+    public static String npmTarballUrl(String base, String packageName, String version) {
+        String unscoped = packageName.substring(packageName.indexOf('/') + 1);
+        return base + "/npm/npm/" + packageName + "/-/" + unscoped + "-" + version + ".tgz";
+    }
+
+    /**
+     * Does the registry hold this npm version? Asked at the TARBALL rather than at
+     * {@code <package>/<version>}, which this registry does not serve — measured, 404 for a version
+     * its own packument lists. HEAD, so a probe moves no bytes.
+     */
+    public boolean npmPublished(String packageName, String version) {
+        return http.head(npmTarballUrl(base, packageName, version)).ok();
+    }
+
     /** Is this maven coordinate already published? */
     public boolean mavenPublished(String groupPath, String artifactId, String version, String extension) {
         String url = base + "/maven/maven/" + groupPath + "/" + artifactId + "/" + version + "/"

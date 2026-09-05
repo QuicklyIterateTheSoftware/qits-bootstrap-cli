@@ -340,11 +340,10 @@ public final class PlatformModel {
      * version.</b> It is the answer to "did that run actually publish anything", which a replay has
      * to ask before it decides a version needs no build.
      * <p>
-     * <b>Two of the seven answer nothing, and that is the honest answer rather than a gap.</b>
-     * {@code spa-ui-components} and {@code integrations-angular} publish npm packages whose
-     * versions are their own semver — {@code @qits/ui-components@0.0.4} — and no function of the
-     * release tag names them. A replay of those keeps the old rule: a tag on the git host is
-     * treated as a version somebody already published.
+     * <b>All seven answer, and the npm pair answers too.</b> {@code @qits/ui-components} publishes
+     * one version per release tag — the packument's keys are that repository's calvers — so a
+     * replay can ask the registry whether a version is there. The seed's own {@code 0.0.4} publish
+     * is a different thing: a pinned commit, not a release, and no release tag names it.
      * <p>
      * The image publishers tag with the release version itself, which is what makes them
      * answerable: {@code qits/workspace-base:2026.905.92439} is the coordinate the workspace
@@ -353,8 +352,8 @@ public final class PlatformModel {
      */
     public record ReleasePackage(Kind kind, String coordinate) {
 
-        /** How the coordinate is addressed: a maven artifactId, or an image repository. */
-        public enum Kind { MAVEN, OCI }
+        /** How the coordinate is addressed: a maven artifactId, an image repository, an npm name. */
+        public enum Kind { MAVEN, OCI, NPM }
     }
 
     /** The group every qits jar is published under. */
@@ -376,6 +375,12 @@ public final class PlatformModel {
             case "projects-daemon" -> List.of(
                     new ReleasePackage(ReleasePackage.Kind.OCI, "qits/projects-daemon"),
                     new ReleasePackage(ReleasePackage.Kind.OCI, "qits/project-agent"));
+            // The npm pair. Their package versions ARE the release tag — the packument's keys are
+            // the publisher's calvers — so they answer like the others.
+            case "spa-ui-components" ->
+                    List.of(new ReleasePackage(ReleasePackage.Kind.NPM, "@qits/ui-components"));
+            case "integrations-angular" ->
+                    List.of(new ReleasePackage(ReleasePackage.Kind.NPM, "@qits/angular"));
             default -> List.of();
         };
     }
@@ -681,6 +686,21 @@ public final class PlatformModel {
      */
     public static String application(String name) {
         return "qits-" + name;
+    }
+
+    /**
+     * <b>The model name a git-host repository belongs to</b> — the inverse of {@link #repo}, and
+     * null for a repository this boot does not clone. It is what turns a {@code .gitmodules} entry
+     * (which names the frontend REPOSITORY) into a checkout this run can read.
+     */
+    public static String nameOf(String repository) {
+        for (Map.Entry<String, String> entry : REPOSITORIES.entrySet()) {
+            if (entry.getValue().equals(repository)) {
+                return entry.getKey();
+            }
+        }
+        String bare = repository.startsWith("qits-") ? repository.substring("qits-".length()) : null;
+        return bare != null && platformRepos().contains(bare) ? bare : null;
     }
 
     /** The one project every platform repository belongs to, and the one qits-projects self-seeds. */

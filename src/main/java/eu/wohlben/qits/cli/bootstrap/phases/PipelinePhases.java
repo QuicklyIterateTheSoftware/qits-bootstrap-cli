@@ -852,11 +852,16 @@ public class PipelinePhases {
             // store, out of the same closure — so replaying their older tags here would buy the
             // registry nothing and cost the boot one full ci run per tag.
             int replayed = 0;
+            int held = 0;
             if (!SeedPhases.SEED_LIBRARIES.contains(name)) {
                 for (String pinned : boot.pinnedVersions(ctx).extraVersions(name)) {
-                    if (!pinned.equals(version)
-                            && replayTag(ctx, name, repo, src, storageId, pinned)) {
+                    if (pinned.equals(version)) {
+                        continue;
+                    }
+                    if (replayTag(ctx, name, repo, src, storageId, pinned)) {
                         replayed++;
+                    } else {
+                        held++;
                     }
                 }
             }
@@ -874,7 +879,7 @@ public class PipelinePhases {
             if (!mainSha.isBlank() && boot.ci.greenReleaseRunAt(storageId, mainSha)) {
                 ctx.skip("release " + version + " already ran green — the registry holds what "
                         + "this replay publishes"
-                        + (replayed == 0 ? "" : " (" + replayed + " pinned tags replayed above)"));
+                        + pinnedNote(replayed, held));
             }
             if (replayTag(ctx, name, repo, src, storageId, version)) {
                 replayed++;
@@ -883,10 +888,22 @@ public class PipelinePhases {
                 // nothing left for this phase to restore. A restore re-establishes SCM state, and
                 // this state stands.
                 ctx.skip(version + " is already on the git host and published"
-                        + (replayed == 0 ? "" : " (" + replayed + " pinned tags replayed above)"));
+                        + pinnedNote(replayed, held));
             }
-            ctx.note(replayed == 1 ? version : version + " + " + (replayed - 1) + " pinned");
+            ctx.note(version + pinnedNote(replayed - 1, held));
         });
+    }
+
+    /**
+     * What a phase says about the versions BESIDE the newest one: how many it replayed and how many
+     * the registry already held. Both numbers matter — a boot that replayed five npm versions and a
+     * boot that found all five there did the same right thing and cost wildly different minutes.
+     */
+    static String pinnedNote(int replayed, int held) {
+        if (replayed <= 0 && held <= 0) {
+            return "";
+        }
+        return " (" + replayed + " pinned replayed, " + held + " already held)";
     }
 
     /**
@@ -1001,6 +1018,7 @@ public class PipelinePhases {
                 case MAVEN -> boot.artifacts.mavenPublished(PlatformModel.MAVEN_GROUP_PATH,
                         published.coordinate(), version, "jar");
                 case OCI -> boot.artifacts.imagePublished(published.coordinate(), version);
+                case NPM -> boot.artifacts.npmPublished(published.coordinate(), version);
             };
             if (!held) {
                 missing.add(published.coordinate() + ":" + version);

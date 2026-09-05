@@ -214,6 +214,11 @@ public class Boot {
             }
 
             @Override
+            public String gitlink(String name, String ref, String path) {
+                return git.gitlinkAt(state.repoDir(name), ref, path);
+            }
+
+            @Override
             public String releaseVersion(String name) {
                 return PlatformModel.newestRelease(
                         git.tagsNewestFirst(state.repoDir(name), "main"));
