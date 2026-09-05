@@ -72,8 +72,9 @@ public final class DomainTokens {
         values.put("EDGE_TLS",
                 domain.map(value -> edgeTls(value, mode, email, secret, additional)).orElse(""));
         values.put("EDGE_TLS_NOTE", domain.isPresent() ? EDGE_TLS_NOTE : "");
-        values.put("EDGE_TLS_ARGS",
-                domain.map(value -> edgeTlsArgs(value, mode, email, additional)).orElse(""));
+        values.put("EDGE_TLS_ARGS", domain
+                .map(value -> edgeTlsArgs(value, mode, email, hetznerToken, additional))
+                .orElse(""));
         return values;
     }
 
@@ -163,9 +164,24 @@ public final class DomainTokens {
             + "# missing from them is a cutover that quietly takes 443 and the certificate away\n"
             + "# while health goes on passing on 8080. The volume is what carries the PEMs across the\n"
             + "# cutover. DNS-01 is performed directly against Hetzner's API and needs no public\n"
-            + "# challenge or management listener.\n";
+            + "# challenge or management listener.\n"
+            + "#\n"
+            + "# THE TOKEN IS THE PART THAT WAS MISSING, and it is here as a VALUE rather than as a\n"
+            + "# file. The seed block mounts it as a swarm secret and reads it through\n"
+            + "# QITS_EDGE_ACME_HETZNER_TOKEN_FILE; the deployer mounts no swarm secrets, so the\n"
+            + "# successor found no file, every reconciliation failed on NoSuchFileException, and the\n"
+            + "# platform ended on the self-signed placeholder — measured 2026-09-05. The FILE form\n"
+            + "# WINS over the value when both are set, so the deployed edge must be handed the\n"
+            + "# value and no file at all.\n";
 
-    private static String edgeTlsArgs(String domain, String mode, String email,
+    /**
+     * <b>The deployed edge's TLS wiring, token included.</b> It carries
+     * {@code QITS_EDGE_ACME_HETZNER_TOKEN} and deliberately NOT the {@code _FILE} spelling the seed
+     * block uses: the edge prefers the file when it is set, and nothing mounts one on a deployed
+     * service — the deployer has no swarm-secret support, and the edge's own deployments.yml
+     * declares none.
+     */
+    private static String edgeTlsArgs(String domain, String mode, String email, String hetznerToken,
             String additionalNames) {
         return "\n" + EDGE + "publishes[1]=443:8443"
                     + "\n" + EDGE + "mounts[0]=volume:qits-edge-letsencrypt:/work/.letsencrypt"
@@ -178,9 +194,38 @@ public final class DomainTokens {
                     + "\n" + EDGE + "env.QITS_EDGE_ACME_MODE=" + mode
                     + "\n" + EDGE + "env.QITS_EDGE_ACME_DOMAIN=" + domain
                     + "\n" + EDGE + "env.QITS_EDGE_ACME_EMAIL=" + email
-                    + "\n" + EDGE
-                    + "env.QITS_EDGE_ACME_HETZNER_TOKEN_FILE=/run/secrets/qits-dns-hetzner-token"
+                    + "\n" + EDGE + "env.QITS_EDGE_ACME_HETZNER_TOKEN=" + hetznerToken
                     + acmeAdditionalNames(additionalNames, EDGE + "env.", "=");
+    }
+
+    /**
+     * <b>Why a swarm-secret-only configuration is refused.</b> {@code QITS_DNS_HETZNER_SECRET} names
+     * a secret this program can create and the SEED edge can mount; the DEPLOYED edge cannot. The
+     * deployer starts its successor from the extras, which carry env, mounts, publishes and aliases
+     * and no swarm secrets at all — so the token has to be a value the CLI can read, and a run that
+     * holds only a secret name has nothing to hand over.
+     * <p>
+     * <b>Refused at preflight rather than discovered at the cutover.</b> The seed edge serves TLS
+     * from the mounted secret for the whole boot; the failure arrives an hour later, as a deployed
+     * edge on the self-signed placeholder logging {@code NoSuchFileException} once a minute, which
+     * is what happened on 2026-09-05. The option stays because the secret is the direction; the
+     * deployer's gap is what blocks it.
+     *
+     * @return the refusal, or null when this run can hand the deployed edge a token
+     */
+    public static String hetznerTokenRefusal(boolean domain, boolean acmeEnabled, String token,
+            String secret) {
+        boolean haveToken = token != null && !token.isBlank();
+        boolean haveSecret = secret != null && !secret.isBlank();
+        if (!domain || !acmeEnabled || haveToken || !haveSecret) {
+            return null;
+        }
+        return "QITS_DNS_HETZNER_SECRET names a swarm secret and QITS_DNS_HETZNER_TOKEN is unset, "
+                + "so this run cannot hand the DEPLOYED edge its DNS-01 credential: the deployer "
+                + "starts a successor from the extras, which carry env and mounts and no swarm "
+                + "secrets, so the edge would find no token, fail every certificate order and end "
+                + "on the self-signed placeholder. Set QITS_DNS_HETZNER_TOKEN to the token's value "
+                + "and rerun; the seed edge keeps using the secret either way.";
     }
 
     public static String secretName(String token) {

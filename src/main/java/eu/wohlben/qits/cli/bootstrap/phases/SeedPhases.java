@@ -243,6 +243,14 @@ public class SeedPhases {
                     domain -> ctx.log("  domain: " + domain + "  (its dns records are held "
                             + "outside this platform)"),
                     () -> ctx.log("  domain: none — the edge stays on plain HTTP"));
+            // REFUSED HERE RATHER THAN DISCOVERED AT THE CUTOVER. See DomainTokens.
+            String refusal = DomainTokens.hetznerTokenRefusal(DomainName.of(boot.config).isPresent(),
+                    Acme.mode(boot.config) != Acme.Mode.OFF,
+                    boot.config.dnsHetznerToken().orElse(null),
+                    boot.config.dnsHetznerSecret().orElse(null));
+            if (refusal != null) {
+                throw new IllegalStateException(refusal);
+            }
 
             long local = PlatformModel.platformRepos().stream()
                     .filter(name -> boot.git.isCheckout(boot.state.wrapperCheckout(name)))
@@ -2159,7 +2167,12 @@ public class SeedPhases {
                     .mask(orEmpty(boot.state.pgArtifactsPassword))
                     .mask(orEmpty(boot.state.pgPlatformMirrorPassword))
                     .mask(orEmpty(boot.state.pgGithostPassword))
-                    .mask(orEmpty(boot.state.pgGithostEventstreamPassword));
+                    .mask(orEmpty(boot.state.pgGithostEventstreamPassword))
+                    // The Hetzner DNS token, which the deployed edge is handed as a VALUE: the
+                    // deployer mounts no swarm secrets, so the file form the seed uses would name
+                    // nothing on the successor. Same masking every other credential in this file
+                    // gets.
+                    .mask(orEmpty(boot.config.dnsHetznerToken().orElse(null)));
             // EVERY IDP CLIENT SECRET, and the loop is what keeps the list honest. ci's used to be
             // the one spelled here, because ci's was the one value in the file. It is not: the
             // idp's own block carries a secret per client, and ci now carries the ARTIFACTS
@@ -2360,8 +2373,8 @@ public class SeedPhases {
      * files are missing fails startup — so on a cold boot the volume has to hold something before
      * compose starts the edge with that configuration. This writes it. It is a placeholder in the
      * only sense that matters: browsers reject it, and the real PEMs land in the same two filenames
-     * later in this same run — the {@code edge-acme} phase orders them once the name resolves — after
-     * which the TLS registry reloads. It is also what the edge keeps when that order does not go
+     * later in this same run: the deployed edge orders them itself over DNS-01 once it is up, and the
+     * TLS registry reloads. It is also what the edge keeps when that order does not go
      * through, which is why the placeholder is still written on every path rather than only on the
      * paths that end without a certificate.
      * <p>
