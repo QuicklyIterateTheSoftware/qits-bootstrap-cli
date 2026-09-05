@@ -161,13 +161,54 @@ public class Boot {
      */
     public PinnedVersions pinnedVersions(PhaseContext ctx) {
         if (pinned == null) {
-            pinned = PinnedVersions.read(PlatformModel.platformRepos(),
-                    (name, ref, path) -> git.fileAt(state.repoDir(name), ref, path));
+            pinned = PinnedVersions.read(PlatformModel.platformRepos(), checkouts());
             pinned.all().forEach((producer, versions) ->
                     ctx.log("  " + PlatformModel.repo(producer) + " is still pinned at " + versions));
             pinned.warnings().forEach(ctx::warn);
         }
         return pinned;
+    }
+
+    /**
+     * <b>The checkouts, as the pin closure reads them.</b> Three questions and no more: one file at
+     * a ref, the Dockerfiles of a ref, and what a repository's newest release tag is — the last
+     * because an image producer carries no pom version, and its release tag IS its image tag.
+     * <p>
+     * The Dockerfile listing is deliberately narrow: the root and {@code docker/}, which is where
+     * every repository of this estate keeps them. A recursive listing would read a whole tree to
+     * find two files, and past the capture limit it would read a truncated one.
+     */
+    private PinnedVersions.Sources checkouts() {
+        return new PinnedVersions.Sources() {
+
+            @Override
+            public String at(String name, String ref, String path) {
+                return git.fileAt(state.repoDir(name), ref, path);
+            }
+
+            @Override
+            public List<String> dockerfiles(String name, String ref) {
+                Path repo = state.repoDir(name);
+                List<String> paths = new ArrayList<>();
+                for (String file : git.namesAt(repo, ref, "")) {
+                    if (file.startsWith("Dockerfile")) {
+                        paths.add(file);
+                    }
+                }
+                for (String file : git.namesAt(repo, ref, "docker")) {
+                    if (file.startsWith("Dockerfile")) {
+                        paths.add("docker/" + file);
+                    }
+                }
+                return paths;
+            }
+
+            @Override
+            public String releaseVersion(String name) {
+                return PlatformModel.newestRelease(
+                        git.tagsNewestFirst(state.repoDir(name), "main"));
+            }
+        };
     }
 
     /**
