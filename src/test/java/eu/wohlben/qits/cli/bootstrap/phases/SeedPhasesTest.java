@@ -814,4 +814,24 @@ class SeedPhasesTest {
         assertThat(SeedPhases.ipv6LoopbackScript(9090)).contains("--dport 9090")
                 .contains("nc -w 2 ::1 9090").doesNotContain("8080");
     }
+
+    /**
+     * <b>The whole certificate volume belongs to the edge, because the edge WRITES to it.</b> It
+     * orders its real certificate itself and installs it as a new directory under
+     * {@code versions/} — so a {@code versions/} left root-owned by {@code mkdir -p} is an
+     * {@code AccessDeniedException} once a minute and a platform that never leaves the placeholder.
+     * Chowning the two files was the half that only let it read.
+     */
+    @Test
+    void theEdgeOwnsEveryDirectoryOfItsCertificateVolume() {
+        String script = SeedPhases.placeholderCertificateScript("wohlben.dev");
+
+        assertThat(script).contains("chown -R 1001:0 /cert\n");
+        // The narrow pair that left versions/ behind is gone.
+        assertThat(script).doesNotContain("chown 1001:0 /cert\n")
+                .doesNotContain("chown -R 1001:0 /cert/versions/placeholder");
+        // And the recursive chown is after the files exist, or it owns nothing.
+        assertThat(script.indexOf("openssl req")).isLessThan(script.indexOf("chown -R"));
+        assertThat(script).contains("subjectAltName=DNS:wohlben.dev,DNS:*.wohlben.dev");
+    }
 }

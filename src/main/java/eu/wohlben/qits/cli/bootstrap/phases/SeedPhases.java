@@ -2389,14 +2389,17 @@ public class SeedPhases {
      * the qits service images have no openssl binary either. {@code apk add} is what the two npm
      * publish phases already do, so it adds no dependency the boot did not have.
      * <p>
-     * {@code chown 1001:0} for the same reason the extras write has it: the edge runs as that
-     * unprivileged uid and cannot read a root-owned key.
+     * <b>{@code chown -R 1001:0 /cert}: the WHOLE volume, because the edge writes to it.</b> It is
+     * not only about reading a root-owned key. The edge orders its real certificate itself and
+     * installs it by creating a directory beside this one under {@code versions/} — so a
+     * {@code versions/} left root-owned by {@code mkdir -p} is an
+     * {@code AccessDeniedException: /work/.letsencrypt/versions/<id>} once a minute and a platform
+     * that keeps the placeholder for ever, which is what 2026-09-05 measured. The whole tree is
+     * the edge's; chowning the two files was the half that only let it read.
      */
-    public Phase placeholderCertificate(String domain) {
-        return new Phase("edge-cert", "seed a placeholder certificate for " + domain
-                + " on the edge's volume", ctx -> {
-            boot.docker.ensureVolume("qits-edge-letsencrypt", ctx::log);
-            String script = """
+    /** The script, in one place, so the ownership the edge needs is provable without a daemon. */
+    static String placeholderCertificateScript(String domain) {
+        return """
                     set -eu
                     if [ -f /cert/current/lets-encrypt.crt ]; then
                       echo "a certificate is already there — leaving it alone"
@@ -2409,12 +2412,18 @@ public class SeedPhases {
                       -keyout /cert/versions/placeholder/lets-encrypt.key \\
                       -out /cert/versions/placeholder/lets-encrypt.crt 2>/dev/null
                     ln -s versions/placeholder /cert/current
-                    chown 1001:0 /cert
-                    chown -R 1001:0 /cert/versions/placeholder
+                    chown -R 1001:0 /cert
                     chmod 644 /cert/versions/placeholder/lets-encrypt.crt
                     chmod 640 /cert/versions/placeholder/lets-encrypt.key
                     echo "placeholder certificate written for %1$s"
                     """.formatted(domain);
+    }
+
+    public Phase placeholderCertificate(String domain) {
+        return new Phase("edge-cert", "seed a placeholder certificate for " + domain
+                + " on the edge's volume", ctx -> {
+            boot.docker.ensureVolume("qits-edge-letsencrypt", ctx::log);
+            String script = placeholderCertificateScript(domain);
             ProcessResult result = boot.docker.run(Cmd.of(List.of(
                     "docker", "run", "--rm",
                     "-v", "qits-edge-letsencrypt:/cert",
