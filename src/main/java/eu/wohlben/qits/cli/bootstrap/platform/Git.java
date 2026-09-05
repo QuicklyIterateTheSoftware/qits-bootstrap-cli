@@ -68,9 +68,31 @@ public class Git {
         return in(repo, out, "checkout", "-f", "--detach", ref);
     }
 
+    /**
+     * <b>Stand every nested checkout exactly at its gitlink, whatever {@code .gitmodules} asks for
+     * and whatever was there before.</b> Every service repository declares {@code update = merge}
+     * for its {@code service/src/main/webui} frontend, which is right for a person following a
+     * branch and wrong for a seed build: on a rerun whose checkout moved to another release tag,
+     * git tried to MERGE the new gitlink into the previous shallow clone and died on
+     * {@code refusing to merge unrelated histories} — two shallow trees have none in common —
+     * taking {@code seed-image-githost} with it at exit 128, measured on 2026-09-05.
+     * <p>
+     * So {@code --checkout} overrides the declared strategy and {@code --force} discards whatever
+     * the nested tree holds. Nothing of this run's is lost by either: the seed writes its SPA
+     * placeholder into {@code dist/} AFTER this, and that path is untracked, so a forced checkout
+     * leaves it alone — measured too. {@code --depth 1} still reaches a gitlink that is no longer a
+     * branch tip: git asks the remote for the sha itself, which GitHub answers for any reachable
+     * commit.
+     */
     public ProcessResult submodulesShallow(Path repo, Consumer<String> out) {
-        return runner.run(Cmd.of(List.of("git", "-C", repo.toString(), "submodule", "update",
-                "--init", "--depth", "1")).timeout(Duration.ofMinutes(30)), out);
+        return runner.run(Cmd.of(submodulesShallowCommand(repo))
+                .timeout(Duration.ofMinutes(30)), out);
+    }
+
+    /** The command, in one place, so the flags that make a rerun survivable are provable. */
+    static List<String> submodulesShallowCommand(Path repo) {
+        return List.of("git", "-C", repo.toString(), "submodule", "update",
+                "--init", "--checkout", "--force", "--depth", "1");
     }
 
     public String head(Path repo) {
