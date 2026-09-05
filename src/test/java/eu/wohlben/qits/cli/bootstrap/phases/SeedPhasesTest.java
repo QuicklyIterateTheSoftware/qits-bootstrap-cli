@@ -213,7 +213,7 @@ class SeedPhasesTest {
     @Test
     void theSeedLibrariesAreEveryJarASeedImageResolves() {
         assertThat(SeedPhases.SEED_LIBRARIES).containsExactly(
-                "integrations-quarkus", "registries", "eventstream", "githost",
+                "userflows", "integrations-quarkus", "registries", "eventstream", "githost",
                 "containers");
         // Dependency order, and every pair is forced by a pom: the blob store is written against
         // qits-db-core (a module of qits-integrations-quarkus) since its DbRetry release,
@@ -234,6 +234,12 @@ class SeedPhasesTest {
         // qits-containers-client — the last thing this phase publishes, so its presence is the one
         // honest answer for the whole set.
         assertThat(SeedPhases.SEED_LIBRARIES).endsWith("containers");
+        // <b>qits-userflows resolves nothing of ours and seventeen root poms resolve it.</b> It is
+        // TEST-scoped in every one of them, which buys a store nothing: `mvn package -DskipTests`
+        // resolves test-scoped dependencies too, so a cold boot's first seed image build died on
+        // qits-userflows:pom (absent) while the repository was seeded but never published. First,
+        // because the skip probe asks for the LAST entry.
+        assertThat(SeedPhases.SEED_LIBRARIES).startsWith("userflows");
     }
 
     /**
@@ -249,6 +255,9 @@ class SeedPhasesTest {
         // Whole, and that is what carries the blob store: it is a module of this reactor.
         assertThat(SeedPhases.mavenModuleArgs("registries")).isEmpty();
         assertThat(SeedPhases.mavenModuleArgs("integrations-quarkus")).isEmpty();
+        // Whole too: a parent pom with one module, and consumers need both — the parent's pom is
+        // what the module's own pom names.
+        assertThat(SeedPhases.mavenModuleArgs("userflows")).isEmpty();
     }
 
     /**

@@ -57,6 +57,9 @@ class BootstrapPlanTest {
                 // DbRetry release, and qits-eventstream since 2026-08-11 — one of their three
                 // modules either way. The blob store has no publish of its own since 2026-08-30:
                 // its jar is a module of the qits-registries reactor, which is deployed whole.
+                // qits-userflows first: it resolves nothing of ours, and every service build on
+                // this platform resolves it — test-scoped, which a -DskipTests build still needs.
+                "publish-qits-userflows",
                 "publish-qits-auth-core",
                 "publish-qits-registries-oci",
                 "publish-qits-eventstream",

@@ -100,6 +100,13 @@ public class SeedPhases {
      *   <li>qits-githost-events is written against qits-eventstream and follows it.
      *   <li>qits-containers' two libraries are written against qits-db-core and qits-eventstream,
      *       so the orchestrator is last.
+     *   <li><b>qits-userflows is FIRST and depends on nothing of ours</b> — playwright, jackson,
+     *       rest-assured, junit. It is here at all because seventeen root poms pin it and every one
+     *       of those builds resolves it: it is TEST-scoped, and {@code mvn package -DskipTests}
+     *       resolves test-scoped dependencies all the same. It was in {@code SEEDED_REPOS} and
+     *       nowhere else, so a cold boot's first seed image build died on
+     *       {@code qits-userflows:pom:2026.904.223009 (absent)} — 2026-09-05, phase 9. First
+     *       rather than last because the phase's own skip probe asks for the LAST entry.
      * </ul>
      * <b>githost and containers name SERVICE repositories and publish modules of them</b> — the git
      * host's event vocabulary, and the orchestrator's core and client. {@link
@@ -114,7 +121,7 @@ public class SeedPhases {
      * versions this same container has already deployed.
      */
     static final List<String> SEED_LIBRARIES = List.of(
-            "integrations-quarkus", "registries", "eventstream", "githost",
+            "userflows", "integrations-quarkus", "registries", "eventstream", "githost",
             "containers");
 
     /**

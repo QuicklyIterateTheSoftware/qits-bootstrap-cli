@@ -78,7 +78,13 @@ public final class BootstrapPlan {
             // not a slow publish but a failed one.
             phases.add(seed.seedMirrorStart());
             phases.add(seed.seedArtifactsStart());
-            // The integrations FIRST: the blob store is written against qits-db-core — one of this
+            // The userflows library FIRST, because it resolves nothing of ours and seventeen root
+            // poms resolve IT. Its scope is test, which changes nothing: `mvn package -DskipTests`
+            // still resolves test-scoped dependencies, so a store without it fails every service
+            // build on this platform.
+            phases.add(seed.mavenPublish("userflows", "qits-userflows",
+                    "publish qits-userflows into seed artifacts"));
+            // The integrations next: the blob store is written against qits-db-core — one of this
             // repository's three modules — since its DbRetry release (2026-08-13), and
             // qits-eventstream since 2026-08-11. A publish resolves its qits half from the store it
             // is deploying into, so the order here is the same order the maven seed runs in and for
