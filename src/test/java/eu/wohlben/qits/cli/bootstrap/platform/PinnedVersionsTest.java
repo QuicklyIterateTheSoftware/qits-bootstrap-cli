@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.entry;
 
 /**
  * The pin closure, over poms written here rather than over a platform. What it decides is how many
@@ -16,18 +17,46 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class PinnedVersionsTest {
 
-    /** A checkout, as (name, ref, path) to pom text. */
-    private final Map<String, String> poms = new LinkedHashMap<>();
+    /** A checkout, as (name, ref, path) to file text. */
+    private final Map<String, String> files = new LinkedHashMap<>();
 
-    private final PinnedVersions.Poms source = (name, ref, path) ->
-            poms.get(name + "@" + ref + ":" + path);
+    /** The newest release tag of an image producer, which is also its image tag. */
+    private final Map<String, String> releases = new LinkedHashMap<>();
+
+    private final PinnedVersions.Sources source = new PinnedVersions.Sources() {
+
+        @Override
+        public String at(String name, String ref, String path) {
+            return files.get(name + "@" + ref + ":" + path);
+        }
+
+        @Override
+        public List<String> dockerfiles(String name, String ref) {
+            String prefix = name + "@" + ref + ":";
+            return files.keySet().stream()
+                    .filter(key -> key.startsWith(prefix))
+                    .map(key -> key.substring(prefix.length()))
+                    .filter(path -> path.endsWith("Dockerfile")
+                            || path.contains("Dockerfile"))
+                    .toList();
+        }
+
+        @Override
+        public String releaseVersion(String name) {
+            return releases.get(name);
+        }
+    };
 
     private void pom(String name, String ref, String text) {
-        poms.put(name + "@" + ref + ":pom.xml", text);
+        files.put(name + "@" + ref + ":pom.xml", text);
     }
 
     private void module(String name, String ref, String module, String text) {
-        poms.put(name + "@" + ref + ":" + module + "/pom.xml", text);
+        files.put(name + "@" + ref + ":" + module + "/pom.xml", text);
+    }
+
+    private void dockerfile(String name, String ref, String path, String text) {
+        files.put(name + "@" + ref + ":" + path, text);
     }
 
     private static String library(String version, String... pins) {
@@ -204,5 +233,130 @@ class PinnedVersionsTest {
                 "<project><parent><version>3.2.1</version></parent>"
                         + "<version>2026.905.1</version></project>"))
                 .isEqualTo("2026.905.1");
+    }
+
+    // --- the images a Dockerfile pins -------------------------------------------------------------
+
+    /**
+     * <b>The three shapes this estate actually writes</b>, taken from the mains of 2026-09-05: an
+     * ARG default with the registry host in front of it, the same without, and a {@code FROM} that
+     * names an ARG above it. All three are the coordinate a build pulls, and a boot that publishes
+     * only the newest tag leaves every one of them unresolvable.
+     */
+    @Test
+    void anImagePinIsReadFromAnArgDefaultOrAFromLine() {
+        assertThat(PinnedVersions.imagePinsIn("""
+                ARG WORKSPACE_BASE=registry.dev.localhost:8080/qits/workspace-base:2026.904.223651
+                FROM ${WORKSPACE_BASE}
+                """))
+                .containsExactly(entry("qits/workspace-base", "2026.904.223651"));
+        // The same image without a registry host, which is how qits-projects-daemon spells it.
+        assertThat(PinnedVersions.imagePinsIn("ARG BASE=qits/workspace-base:2026.904.223651\n"))
+                .containsExactly(entry("qits/workspace-base", "2026.904.223651"));
+        // Only the FROM names it, and the ARG above resolves it.
+        assertThat(PinnedVersions.imagePinsIn("""
+                ARG WORKSPACE_IMAGE=registry.dev.localhost:8080/qits/workspace:2026.904.223250
+                FROM ${WORKSPACE_IMAGE}
+                """))
+                .containsExactly(entry("qits/workspace", "2026.904.223250"));
+    }
+
+    /**
+     * <b>An ARG that resolves to something this platform never minted is not a pin.</b>
+     * {@code qits/projects-daemon:${DAEMON_VERSION}} with {@code DAEMON_VERSION=latest} is a build
+     * that follows the newest tag by design, and a replay of "latest" is not a thing.
+     */
+    @Test
+    void onlyAVersionThisPlatformMintsCounts() {
+        assertThat(PinnedVersions.imagePinsIn("""
+                ARG DAEMON_VERSION=latest
+                ARG DAEMON_IMAGE=qits/projects-daemon:${DAEMON_VERSION}
+                FROM ${DAEMON_IMAGE} AS daemon
+                FROM qits/workspace:latest
+                FROM qits/workspace:native
+                FROM qits/workspace-editor:local
+                FROM qits/projects-daemon:<version>
+                FROM ${NEVER_DECLARED}
+                FROM mirror.dev.localhost:8080/quay/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25
+                """))
+                .isEmpty();
+    }
+
+    /** The image half of the closure follows the same recursion the jars do. */
+    @Test
+    void anImagePinnedByAnotherImagesTagIsFollowedThrough() {
+        releases.put("oci-workspace", "2026.905.92439");
+        releases.put("workspace-daemon", "2026.905.92112");
+        // The daemon's main pins a base four releases back...
+        dockerfile("workspace-daemon", PinnedVersions.HEAD, "docker/Dockerfile",
+                "ARG WORKSPACE_BASE=registry.dev.localhost:8080/qits/workspace-base:2026.904.223651\n"
+                        + "FROM ${WORKSPACE_BASE}\n");
+        // ...and the daemon release something else pins names an older base still.
+        dockerfile("workspace-daemon", "2026.904.223250", "docker/Dockerfile",
+                "ARG WORKSPACE_BASE=qits/workspace-base:2026.902.143920\nFROM ${WORKSPACE_BASE}\n");
+        dockerfile("oci-workspace", "2026.904.223651", "Dockerfile", "FROM debian:13\n");
+        dockerfile("oci-workspace", "2026.902.143920", "Dockerfile", "FROM debian:13\n");
+        // A repository that pins the older daemon — this is the hop that reaches the older base.
+        dockerfile("editor", PinnedVersions.HEAD, "Dockerfile",
+                "ARG WORKSPACE_IMAGE=registry.dev.localhost:8080/qits/workspace:2026.904.223250\n"
+                        + "FROM ${WORKSPACE_IMAGE}\n");
+
+        PinnedVersions pins = PinnedVersions.read(
+                List.of("editor", "workspace-daemon", "oci-workspace"), source);
+
+        assertThat(pins.extraVersions("workspace-daemon")).containsExactly("2026.904.223250");
+        // Oldest first, which is the order they are replayed in.
+        assertThat(pins.extraVersions("oci-workspace"))
+                .containsExactly("2026.902.143920", "2026.904.223651");
+        assertThat(pins.warnings()).isEmpty();
+    }
+
+    /** A pin naming the producer's own newest release adds nothing: the replay publishes it anyway. */
+    @Test
+    void anImagePinOnTheNewestReleaseIsNotAnExtra() {
+        releases.put("oci-workspace", "2026.905.92439");
+        dockerfile("workspace-daemon", PinnedVersions.HEAD, "docker/Dockerfile",
+                "FROM qits/workspace-base:2026.905.92439\n");
+
+        assertThat(PinnedVersions.read(List.of("workspace-daemon"), source)
+                .extraVersions("oci-workspace")).isEmpty();
+    }
+
+    /** Every qits image the estate pins resolves to the publisher whose run pushes it. */
+    @Test
+    void everyQitsImageNamesItsPublisher() {
+        assertThat(PinnedVersions.IMAGE_PRODUCERS)
+                .containsEntry("qits/workspace-base", "oci-workspace")
+                .containsEntry("qits/workspace", "workspace-daemon")
+                .containsEntry("qits/projects-daemon", "projects-daemon")
+                .containsEntry("qits/project-agent", "projects-daemon");
+        // Derived from releasePackages, so a publisher that grows an image says so in one place.
+        assertThat(PinnedVersions.IMAGE_PRODUCERS.values())
+                .allSatisfy(producer -> assertThat(PlatformModel.RELEASE_PUBLISHERS)
+                        .contains(producer));
+    }
+
+    /** An image nothing in the plan publishes is said once rather than chased. */
+    @Test
+    void anImageNoPublisherPushesIsWarnedAbout() {
+        dockerfile("ci", PinnedVersions.HEAD, "docker/Dockerfile",
+                "FROM qits/nothing-publishes-this:2026.905.1\n");
+
+        assertThat(PinnedVersions.read(List.of("ci"), source).warnings())
+                .singleElement().asString().contains("qits/nothing-publishes-this");
+    }
+
+    /** A pinned image tag no checkout has warns and is dropped, exactly as a jar's would be. */
+    @Test
+    void anImageTagThatIsNotInTheCheckoutWarnsInsteadOfStoppingTheBoot() {
+        releases.put("oci-workspace", "2026.905.92439");
+        dockerfile("workspace-daemon", PinnedVersions.HEAD, "docker/Dockerfile",
+                "FROM qits/workspace-base:2026.101.1\n");
+
+        PinnedVersions pins = PinnedVersions.read(List.of("workspace-daemon"), source);
+
+        assertThat(pins.extraVersions("oci-workspace")).isEmpty();
+        assertThat(pins.warnings()).singleElement().asString()
+                .contains("qits-workspace-oci").contains("2026.101.1");
     }
 }

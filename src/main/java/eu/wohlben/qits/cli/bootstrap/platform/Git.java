@@ -130,6 +130,23 @@ public class Git {
     }
 
     /**
+     * <b>The names directly inside one directory of a ref</b>, empty when the directory is not
+     * there. Two small listings beat one recursive one: a repository's whole tree overruns the
+     * capture limit, and what the pin closure wants is the Dockerfiles at the root and under
+     * {@code docker/} and nothing else.
+     *
+     * @param directory the directory inside the ref, or empty for the root
+     */
+    public List<String> namesAt(Path repo, String ref, String directory) {
+        String target = directory == null || directory.isBlank() ? ref : ref + ":" + directory;
+        ProcessResult result = in(repo, null, "ls-tree", "--name-only", target);
+        return result.ok()
+                ? result.captured().stream().map(String::strip).filter(line -> !line.isBlank())
+                        .toList()
+                : List.of();
+    }
+
+    /**
      * A second working tree of one ref, for copying somewhere the checkout itself cannot go. The
      * seed publishes several versions of a library per boot and each needs its own tree in the
      * maven container; the checkout holds one.

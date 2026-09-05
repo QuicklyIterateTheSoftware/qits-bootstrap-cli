@@ -30,6 +30,15 @@ import java.util.regex.Pattern;
  * So the seed publishes a SET per library: the checkout's own version plus every version anything
  * still pins, and every version those pinned poms pin in turn — a pinned pom is a consumer too.
  * <p>
+ * <b>An image pin is the same defect in another file.</b> A Dockerfile pins the image it is built
+ * FROM — {@code ARG WORKSPACE_BASE=…/qits/workspace-base:2026.904.223651} — and those pins lag for
+ * the same reason poms do. A boot that replayed only each publisher's newest tag left
+ * qits-workspace-daemon's release run failing at its first line with
+ * {@code qits/workspace-base:2026.904.223651: not found}, measured on 2026-09-05. So the closure
+ * reads {@code Dockerfile*} at each checkout's root and under {@code docker/} as well, resolves the
+ * ARG references a {@code FROM} names, and follows a pinned image tag into the producer's own
+ * Dockerfiles at that tag.
+ * <p>
  * <b>Read from the checkouts, never from the network.</b> Each version is a release tag in the
  * producer's own clone ({@code git show <version>:pom.xml}), which the sources phase has already
  * fetched: clones are {@code --branch main --single-branch}, which brings the tags reachable from
@@ -73,9 +82,21 @@ public final class PinnedVersions {
             Map.entry("containers-core", "containers"),
             Map.entry("userflows", "userflows"));
 
-    /** One file out of one ref of one checkout, or null when the ref or the file is not there. */
-    public interface Poms {
+    /** What the closure reads: the checkouts, by (repository, ref). */
+    public interface Sources {
+
+        /** One file out of one ref, or null when the ref or the file is not there. */
         String at(String name, String ref, String path);
+
+        /** The Dockerfiles of one ref — the root's and {@code docker/}'s — as paths. */
+        List<String> dockerfiles(String name, String ref);
+
+        /**
+         * The newest release tag reachable from main, or null. It is what an IMAGE producer's
+         * checkout publishes: those repositories carry no pom version to read, and the tag IS the
+         * image tag.
+         */
+        String releaseVersion(String name);
     }
 
     /**
@@ -95,6 +116,21 @@ public final class PinnedVersions {
 
     private static final Pattern ARTIFACT = Pattern.compile("<artifactId>\\s*([^<\\s]+)\\s*</artifactId>");
 
+    /** {@code ARG NAME=value} and {@code ARG NAME}, in Dockerfile syntax. */
+    private static final Pattern DOCKER_ARG =
+            Pattern.compile("^\\s*ARG\\s+([A-Za-z_][A-Za-z0-9_]*)(?:=(.*))?$");
+
+    /** {@code FROM <ref>} with whatever follows it — a stage name, a platform flag. */
+    private static final Pattern DOCKER_FROM =
+            Pattern.compile("^\\s*FROM\\s+(?:--\\S+\\s+)*(\\S+)");
+
+    /** {@code ${NAME}} or {@code $NAME}, which a Dockerfile resolves from the ARGs above it. */
+    private static final Pattern DOCKER_REFERENCE =
+            Pattern.compile("\\$\\{([A-Za-z_][A-Za-z0-9_]*)}|\\$([A-Za-z_][A-Za-z0-9_]*)");
+
+    /** A version this platform mints: CalVer, and never {@code latest}, {@code native} or a stage. */
+    private static final Pattern CALVER = Pattern.compile("\\d{4}\\.\\d{1,4}\\.\\d+");
+
     private final Map<String, List<String>> extra;
     private final List<String> warnings;
 
@@ -109,13 +145,23 @@ public final class PinnedVersions {
      * @param repositories the model names whose HEAD poms are the consumers to start from
      * @param poms         the checkouts, read by (name, ref, path)
      */
-    public static PinnedVersions read(List<String> repositories, Poms poms) {
+    public static PinnedVersions read(List<String> repositories, Sources sources) {
         Map<String, String> head = new LinkedHashMap<>();
         for (String producer : new LinkedHashSet<>(PRODUCERS.values())) {
-            String pom = poms.at(producer, HEAD, ROOT_POM);
+            String pom = sources.at(producer, HEAD, ROOT_POM);
             String version = pom == null ? null : versionIn(pom);
             if (version != null) {
                 head.put(producer, version);
+            }
+        }
+
+        // AN IMAGE PRODUCER HAS NO POM VERSION TO READ. Its checkout publishes whatever its newest
+        // release tag says, and that tag IS the image tag — see PlatformModel.releasePackages.
+        Map<String, String> imageHead = new LinkedHashMap<>();
+        for (String producer : new LinkedHashSet<>(IMAGE_PRODUCERS.values())) {
+            String version = sources.releaseVersion(producer);
+            if (version != null && !version.isBlank()) {
+                imageHead.put(producer, version);
             }
         }
 
@@ -126,33 +172,42 @@ public final class PinnedVersions {
         Deque<String[]> pending = new ArrayDeque<>();
 
         for (String repository : repositories) {
-            String pom = poms.at(repository, HEAD, ROOT_POM);
+            String pom = sources.at(repository, HEAD, ROOT_POM);
             if (pom != null) {
                 // A CONSUMER AT HEAD IS BUILT WHOLE — that is what ci does with it — so every pin
                 // its root pom carries is a coordinate some module of it resolves.
-                queue(pinsIn(pom), head, found, warnings, unknown, pending, poms);
+                queue(pinsIn(pom), head, found, warnings, unknown, pending, sources);
             }
+            queueImages(imagePins(repository, HEAD, sources), imageHead, found, warnings, unknown,
+                    pending, sources);
         }
         while (!pending.isEmpty()) {
             String[] at = pending.removeFirst();
-            String pom = poms.at(at[0], at[1], ROOT_POM);
-            if (pom == null) {
-                continue;
+            String pom = sources.at(at[0], at[1], ROOT_POM);
+            if (pom != null) {
+                queue(pinsUsed(at[0], at[1], pom, sources), head, found, warnings, unknown, pending,
+                        sources);
             }
-            queue(pinsUsed(at[0], at[1], pom, poms), head, found, warnings, unknown, pending, poms);
+            // A pinned image build reads its OWN Dockerfiles at that tag, so what they pin is the
+            // next hop: qits/workspace at 2026.904.223250 is FROM qits/workspace-base
+            // 2026.902.143920, which nothing newer names any more.
+            queueImages(imagePins(at[0], at[1], sources), imageHead, found, warnings, unknown,
+                    pending, sources);
         }
 
         Map<String, List<String>> extra = new LinkedHashMap<>();
         found.forEach((producer, versions) -> extra.put(producer, List.copyOf(versions)));
         for (String name : unknown) {
-            warnings.add("no repository publishes qits-" + name + " — pins of it are ignored");
+            warnings.add(name.startsWith("qits/")
+                    ? "no release publisher publishes " + name + " — pins of it are ignored"
+                    : "no repository publishes qits-" + name + " — pins of it are ignored");
         }
         return new PinnedVersions(extra, warnings);
     }
 
     private static void queue(Map<String, String> pins, Map<String, String> head,
                               Map<String, TreeSet<String>> found, List<String> warnings,
-                              Set<String> unknown, Deque<String[]> pending, Poms poms) {
+                              Set<String> unknown, Deque<String[]> pending, Sources sources) {
         pins.forEach((key, version) -> {
             String producer = PRODUCERS.get(key);
             if (producer == null) {
@@ -167,7 +222,7 @@ public final class PinnedVersions {
             if (versions.contains(version)) {
                 return;
             }
-            if (poms.at(producer, version, ROOT_POM) == null) {
+            if (sources.at(producer, version, ROOT_POM) == null) {
                 // The over-approximation this reader is allowed to make. qits-githost's root pom
                 // carries <qits.blobstore.version>2026.814.71936 at tag 2026.820.65553, and that
                 // tag lives in the retired standalone blobstore repository — it is in no checkout
@@ -198,7 +253,7 @@ public final class PinnedVersions {
      * So a pin survives when a built module names its property outright, or when the root's
      * dependency management maps the property to an artifact a built module depends on.
      */
-    static Map<String, String> pinsUsed(String producer, String version, String rootPom, Poms poms) {
+    static Map<String, String> pinsUsed(String producer, String version, String rootPom, Sources sources) {
         Map<String, String> pins = pinsIn(rootPom);
         String modules = PlatformModel.mavenModule(producer);
         if (modules.isEmpty()) {
@@ -208,7 +263,7 @@ public final class PinnedVersions {
         Set<String> declared = new LinkedHashSet<>();
         StringBuilder texts = new StringBuilder();
         for (String module : modules.split(",")) {
-            String pom = poms.at(producer, version, module.strip() + "/" + ROOT_POM);
+            String pom = sources.at(producer, version, module.strip() + "/" + ROOT_POM);
             if (pom == null) {
                 // A module the seed names and the tag does not have: nothing to filter on, so keep
                 // every pin rather than silently publishing too little.
@@ -233,6 +288,139 @@ public final class PinnedVersions {
             });
         });
         return used;
+    }
+
+    /**
+     * <b>Which repository publishes each qits IMAGE</b> — the inverse of
+     * {@link PlatformModel#releasePackages}' OCI half, so the two cannot disagree. It is derived
+     * rather than written: a publisher that grows an image gets an entry by saying so once, in the
+     * place that already says what its release publishes.
+     */
+    static final Map<String, String> IMAGE_PRODUCERS = imageProducers();
+
+    private static Map<String, String> imageProducers() {
+        Map<String, String> byImage = new LinkedHashMap<>();
+        for (String publisher : PlatformModel.RELEASE_PUBLISHERS) {
+            for (PlatformModel.ReleasePackage published : PlatformModel.releasePackages(publisher)) {
+                if (published.kind() == PlatformModel.ReleasePackage.Kind.OCI) {
+                    byImage.put(published.coordinate(), publisher);
+                }
+            }
+        }
+        return Map.copyOf(byImage);
+    }
+
+    /** Every qits image pinned at a CalVer by one ref's Dockerfiles: image repository to version. */
+    static Map<String, String> imagePins(String repository, String ref, Sources sources) {
+        Map<String, String> pins = new LinkedHashMap<>();
+        for (String path : sources.dockerfiles(repository, ref)) {
+            String dockerfile = sources.at(repository, ref, path);
+            if (dockerfile != null) {
+                pins.putAll(imagePinsIn(dockerfile));
+            }
+        }
+        return pins;
+    }
+
+    /**
+     * <b>The qits images one Dockerfile pins at a version this platform mints.</b>
+     * <p>
+     * Two places name one: an {@code ARG} default, which is the override seam every image build of
+     * this estate uses, and a {@code FROM} line, which is usually a reference to such an ARG. So
+     * the ARGs are resolved as the file goes — {@code FROM ${WORKSPACE_BASE}} means whatever the
+     * ARG above it said — and every value either place produces is tested for a coordinate.
+     * <p>
+     * <b>Only CalVer counts.</b> {@code qits/workspace:latest}, {@code :native}, {@code :local},
+     * {@code :<version>} and an unresolved {@code ${…}} are not versions this boot can replay, and
+     * a pin whose ARG resolves to {@code latest} is a build that follows the newest tag by design.
+     * A registry host in front of the repository is stripped: {@code registry.dev.localhost:8080/}
+     * is where a running platform serves the same image, and this run's own address is a different
+     * string for the same coordinate.
+     */
+    static Map<String, String> imagePinsIn(String dockerfile) {
+        Map<String, String> pins = new LinkedHashMap<>();
+        Map<String, String> args = new LinkedHashMap<>();
+        for (String line : dockerfile.split("\n")) {
+            Matcher arg = DOCKER_ARG.matcher(line);
+            if (arg.find()) {
+                String value = arg.group(2) == null ? "" : resolve(arg.group(2).strip(), args);
+                args.put(arg.group(1), value);
+                pin(value, pins);
+                continue;
+            }
+            Matcher from = DOCKER_FROM.matcher(line);
+            if (from.find()) {
+                pin(resolve(from.group(1).strip(), args), pins);
+            }
+        }
+        return pins;
+    }
+
+    /** {@code ${NAME}} and {@code $NAME} from the ARGs declared above this line, once. */
+    private static String resolve(String value, Map<String, String> args) {
+        Matcher matcher = DOCKER_REFERENCE.matcher(value);
+        StringBuilder resolved = new StringBuilder();
+        while (matcher.find()) {
+            String name = matcher.group(1) == null ? matcher.group(2) : matcher.group(1);
+            matcher.appendReplacement(resolved,
+                    Matcher.quoteReplacement(args.getOrDefault(name, matcher.group())));
+        }
+        matcher.appendTail(resolved);
+        return resolved.toString();
+    }
+
+    /** One image reference, kept only when it is a qits image at a CalVer. */
+    private static void pin(String reference, Map<String, String> pins) {
+        String value = reference.replaceAll("^[\"']|[\"']$", "");
+        int slash = value.lastIndexOf('/');
+        int colon = value.indexOf(':', slash + 1);
+        if (colon < 0) {
+            return;
+        }
+        String repository = value.substring(0, colon);
+        String version = value.substring(colon + 1);
+        int host = repository.indexOf('/');
+        if (host > 0) {
+            String first = repository.substring(0, host);
+            // Docker's own rule for "is this first segment a registry": it has a dot or a port.
+            if (first.indexOf('.') >= 0 || first.indexOf(':') >= 0) {
+                repository = repository.substring(host + 1);
+            }
+        }
+        if (repository.startsWith("qits/") && CALVER.matcher(version).matches()) {
+            pins.put(repository, version);
+        }
+    }
+
+    private static void queueImages(Map<String, String> pins, Map<String, String> head,
+                                    Map<String, TreeSet<String>> found, List<String> warnings,
+                                    Set<String> unknown, Deque<String[]> pending, Sources sources) {
+        pins.forEach((image, version) -> {
+            String producer = IMAGE_PRODUCERS.get(image);
+            if (producer == null) {
+                unknown.add(image);
+                return;
+            }
+            if (version.equals(head.get(producer))) {
+                return;
+            }
+            TreeSet<String> versions =
+                    found.computeIfAbsent(producer, p -> new TreeSet<>(VERSION_ORDER));
+            if (versions.contains(version)) {
+                return;
+            }
+            // The producer's own checkout has to hold the tag, exactly as for a jar: the replay
+            // pushes that tag, and a tag nothing has is a version nobody can build.
+            if (sources.at(producer, version, ROOT_POM) == null
+                    && sources.dockerfiles(producer, version).isEmpty()) {
+                warnings.add(PlatformModel.repo(producer) + " has no " + version + " in its "
+                        + "checkout — the " + image + " pin is skipped, and a build that pulls it "
+                        + "will fail");
+                return;
+            }
+            versions.add(version);
+            pending.addLast(new String[]{producer, version});
+        });
     }
 
     /** {@code <qits.<key>.version>} properties with a literal value, by key. */
