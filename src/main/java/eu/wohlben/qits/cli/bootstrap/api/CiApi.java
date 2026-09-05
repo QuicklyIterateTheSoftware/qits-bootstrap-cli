@@ -42,15 +42,18 @@ public class CiApi {
      * returns and names them, and 503 means NOTHING was accepted, so a retry loses nothing. The
      * door demands the one project=* client, the same identity the git host announces pushes with.
      * <p>
-     * <b>It is back, and what it is used for is the opposite of what it was used for.</b> The
-     * release REPLAYS used to present a hand-built {@code SCMRelease} per publisher — novelty
-     * announced by a restore, which woke a release train against a half-deployed platform — and
-     * they push the release tag and nothing else since. A DEPLOYABLE is the other case: its release
-     * recipe selects {@code SCMRelease} rather than {@code SCMPublishTag}, so a tag alone starts
-     * nothing, and there is no other pipeline left that publishes {@code qits/<app>:<version>} —
-     * which is the only coordinate qits-deployments deploys. The bring-up therefore says the one
-     * word that starts a release build, and says it only for the version the checkout is already
-     * standing at.
+     * <b>Every release build of a bring-up starts here now.</b> A release recipe selects
+     * {@code SCMRelease}, so a pushed tag starts nothing: the deployables have needed this door
+     * since their recipes moved, and the release REPLAYS joined them on 2026-09-04 when the last
+     * {@code SCMPublishTag} recipe went. Nothing else publishes {@code qits/<app>:<version>} or a
+     * released library, and those are the only coordinates a restore can deploy or resolve.
+     * <p>
+     * <b>The objection that once kept the replays away from this door is gone.</b> A hand-built
+     * SCMRelease used to wake the release train — a bump run in every consumer, each calling a
+     * qits-workspaces that a bring-up has not deployed yet. This endpoint publishes NOTHING on the
+     * bus: it evaluates recipes and records runs. And no recipe on the estate selects
+     * SoftwareRelease any more, so there is no train left to wake. It is still said only for the
+     * version the checkout is already standing at, or one the platform still pins.
      * <p>
      * <b>A hand-supplied SCMRelease closes qits-ci's release join by construction</b> — the event
      * that caused the run IS the release announcement, so the green run announces its {@code
@@ -106,10 +109,10 @@ public class CiApi {
      * them apart, and it is the fact to ask by: every event run is recorded at main's head, so the
      * sha collides — measured, fourth proving run, where a name-and-sha match skipped a replay
      * whose images were never published. The trigger NAME is no answer either. It collided
-     * outright while release recipes fired on SCMRelease, which is the event a bump watches too;
-     * they select on SCMPublishTag now, and the collision is gone with it — but which event
-     * selects a recipe is the recipe's own business and has changed once already, while the file
-     * that ran is what the run IS.
+     * outright while release recipes fired on SCMRelease, which is the event a bump watches too —
+     * and they select SCMRelease again since 2026-09-04. Which event selects a recipe is the
+     * recipe's own business and has changed twice already, while the file that ran is what the run
+     * IS.
      */
     public List<String[]> finishedEventRuns(String repoId) {
         Http.Response response = http.get(base + "/api/runs/finished?limit=20", SYSTEM_HEADERS);

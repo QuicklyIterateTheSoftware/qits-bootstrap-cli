@@ -1,5 +1,7 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
+import eu.wohlben.qits.cli.bootstrap.api.CiApi;
+import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.config.Acme;
 import eu.wohlben.qits.cli.bootstrap.config.TestConfig;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
@@ -190,6 +192,36 @@ class PipelinePhasesTest {
     void theAnnouncedReleaseNamesNoBranch() {
         assertThat(PipelinePhases.releaseEvent("qits-stt-service", "2026.901.90000"))
                 .doesNotContain("branch");
+    }
+
+    /**
+     * <b>A release replay says exactly what a deploy says.</b> Both go through the same helper
+     * since 2026-09-04, when the last release recipe moved off {@code SCMPublishTag} and a pushed
+     * tag stopped starting anything. It is the GIT-HOST repository the payload names — a recipe is
+     * a file in that repository — never the application the platform answers to.
+     */
+    @Test
+    void aPublisherIsAnnouncedByItsRepositoryName() {
+        assertThat(PipelinePhases.releaseEvent(PlatformModel.repo("eventstream"),
+                "2026.905.25646"))
+                .isEqualTo("{\"name\":\"SCMRelease\",\"payload\":{"
+                        + "\"repository\":\"qits-eventstream-javalib\","
+                        + "\"repositoryName\":\"qits-eventstream-javalib\","
+                        + "\"version\":\"2026.905.25646\"}}");
+    }
+
+    /**
+     * <b>The door names the runs it started, and an empty list is the answer that WARNS.</b> No
+     * recipe selected the event, so nothing will publish this version — said once and loudly rather
+     * than waited out, which is what the whole release-timeout budget used to be spent on.
+     */
+    @Test
+    void anAnswerWithNoRunsIsARepositoryWithNoReleaseRecipe() {
+        assertThat(CiApi.triggeredRunIds(new Http.Response(200, "{\"runIds\":[]}"))).isEmpty();
+        assertThat(CiApi.triggeredRunIds(new Http.Response(200, "{\"runIds\":[\"r-1\",\"r-2\"]}")))
+                .containsExactly("r-1", "r-2");
+        // A refusal is not "no recipe": the caller retries it and then stops the boot.
+        assertThat(CiApi.triggeredRunIds(new Http.Response(503, ""))).isEmpty();
     }
 
     // --- what a rerun deploys ----------------------------------------------------------------------

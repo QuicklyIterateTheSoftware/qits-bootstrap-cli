@@ -779,25 +779,32 @@ public class PipelinePhases {
     }
 
     /**
-     * The RELEASED artifacts, restored by re-establishing ONE SCM fact: the release tag. The
-     * wrapper builds install RELEASED versions, and a clean version only ever comes from a repo's
-     * ci-event-release.yml; a post-receive publish on main produces a prerelease nothing pins. That
-     * file declares {@code event: SCMPublishTag}, so pushing the tag is what starts the publish run
-     * — this phase pushes it and waits, and asks the platform for nothing else.
+     * The RELEASED artifacts, restored by re-establishing ONE SCM fact — the release tag — and then
+     * asking qits-ci for the build that publishes it. The wrapper builds install RELEASED versions,
+     * and a clean version only ever comes from a repo's ci-event-release.yml; a post-receive
+     * publish on main produces a prerelease nothing pins.
      * <p>
-     * <b>It used to fabricate an SCMRelease</b> through qits-ci's manual trigger door, and that was
-     * harmful rather than merely indirect. SCMRelease means "a version is NEW": qits-ci announced
-     * SoftwareRelease per artifact and the release train woke up — a bump run in every consumer,
-     * each ending in a release call against qits-workspaces, which does not exist yet. Only the
-     * seed stack serves here; qits-workspaces is deployed by the phases below, minutes later. So
-     * every bootstrap left the same red maintenance-branch runs behind. A replay has no novelty to
-     * announce: the release happened once, long ago, and what a restore owes the platform is the
-     * SCM state it derives its artifacts from. Announcing novelty is qits-workspaces' job, on a
-     * real release.
+     * <b>The tag alone stopped being a trigger on 2026-09-04.</b> Every publisher's
+     * ci-event-release.yml declared {@code event: SCMPublishTag} when this phase was written, so
+     * the push WAS the trigger; all seven select {@code SCMRelease} now, and a pushed tag announces
+     * SCMPublishTag, which nothing selects any more. The phase waited its whole budget out for a
+     * run that was never going to exist. So it pushes the tag and then says the one word that
+     * starts the recipe, through qits-ci's manual door — the same call, the same event and the same
+     * helper the deploy phases below use.
      * <p>
-     * The recipe a tag selects is read from MAIN on the git host, which is why {@code preseed}
+     * <b>That door announces nothing on the bus, which is what makes this safe now.</b> The
+     * objection this phase was written around was real: a fabricated SCMRelease used to wake the
+     * release train — a bump run in every consumer, each ending in a release call against a
+     * qits-workspaces that is still minutes from being deployed — and every bootstrap left the same
+     * red maintenance-branch runs behind. Two things closed that. qits-ci's trigger endpoint
+     * evaluates recipes and records runs and publishes nothing, so the bus never carries this
+     * event; and the upstream trains are retired — no recipe anywhere selects SoftwareRelease. The
+     * bus SCMRelease qits-maintenance listens for is the one qits-workspaces publishes on a REAL
+     * release, and this door does not emit it.
+     * <p>
+     * The recipe an event selects is read from MAIN on the git host, which is why {@code preseed}
      * pushes main before any of these phases run: a repository with no main there matches no
-     * trigger file, and the tag would start nothing.
+     * trigger file, and the announcement would start nothing.
      * <p>
      * <b>The version replayed is the last release tag reachable from main</b>, and a repository
      * carrying none STOPS THE BOOT. That is right rather than harsh, and it is right for the image
@@ -835,8 +842,8 @@ public class PipelinePhases {
             // THE OLDER VERSIONS SOMETHING STILL PINS, oldest first and the newest below them.
             // A pin is only as good as the registry behind it, and the newest release is not the
             // only version pinned: consumer poms lag, and a fresh platform's registry holds only
-            // what this boot puts there. Each one is pushed and waited for exactly like the newest
-            // — a tag the git host already has moves no ref, announces nothing and is passed over.
+            // what this boot puts there. Each one is pushed and asked for exactly like the newest
+            // — a tag the git host already has moves no ref and is passed over.
             //
             // NOT FOR A SEED LIBRARY, and that is the whole of the exclusion below. The maven
             // publishes of phases 18-25 already put every pinned version of those five in the
@@ -845,8 +852,8 @@ public class PipelinePhases {
             int replayed = 0;
             if (!SeedPhases.SEED_LIBRARIES.contains(name)) {
                 for (String pinned : boot.pinnedVersions(ctx).extraVersions(name)) {
-                    if (!pinned.equals(version) && replayTag(ctx, name, repo, src, storageId,
-                            mainSha, pinned)) {
+                    if (!pinned.equals(version)
+                            && replayTag(ctx, name, repo, src, storageId, pinned)) {
                         replayed++;
                     }
                 }
@@ -867,19 +874,15 @@ public class PipelinePhases {
                         + "this replay publishes"
                         + (replayed == 0 ? "" : " (" + replayed + " pinned tags replayed above)"));
             }
-            if (replayTag(ctx, name, repo, src, storageId, mainSha, version)) {
+            if (replayTag(ctx, name, repo, src, storageId, version)) {
                 replayed++;
             } else {
-                // The tag is already here, so no ref moved, so nothing was announced and no run is
-                // coming — and there is no second door to knock on, which is the design rather
-                // than a gap: a restore re-establishes SCM state, and this state stands. The
-                // registry holds this version from the boot whose push first announced it.
-                //
-                // If THAT run went red the pin is missing, and the deployable that pins it says so
-                // a few phases later. Asking for the publish again is a person's move then, and
-                // both doors are theirs: qits-ci's manual trigger, or deleting the tag on the git
-                // host and pushing it again.
-                ctx.skip(version + " is already on the git host — no ref moved, nothing announced"
+                // The tag is already here, so no ref moved: an earlier boot pushed it and asked for
+                // its build, and the check above says that build is not green on THIS platform. A
+                // restore re-establishes SCM state, and this state stands; asking for the publish
+                // again is a person's move, through qits-ci's manual trigger or by deleting the tag
+                // on the git host and pushing it back.
+                ctx.skip(version + " is already on the git host — no ref moved"
                         + (replayed == 0 ? "" : " (" + replayed + " pinned tags replayed above)"));
             }
             ctx.note(replayed == 1 ? version : version + " + " + (replayed - 1) + " pinned");
@@ -887,70 +890,76 @@ public class PipelinePhases {
     }
 
     /**
-     * <b>ONE version replayed: push its tag, then wait for the run that push starts.</b> The newest
-     * release and every older version something still pins go through here, so both are restored
-     * the same way and neither can drift into a second recipe.
+     * <b>ONE version replayed: push its tag, ask qits-ci for the release build, wait for the run.</b>
+     * The newest release and every older version something still pins go through here, so both are
+     * restored the same way and neither can drift into a second recipe.
      *
-     * @return whether a ref actually moved. A tag the git host already has announces nothing, so
-     *         there is no run to wait for and nothing to fail on — the registry holds that version
-     *         from the boot whose push first announced it.
+     * @return whether a ref actually moved. A version whose tag the git host already has is passed
+     *         over: an earlier boot pushed it and asked for its build, and there is no cheap
+     *         per-version question to ask instead — a publisher's artifact is a jar, an npm package
+     *         or a docker image depending on which publisher it is.
      */
     private boolean replayTag(PhaseContext ctx, String name, String repo, Path src,
-                              String storageId, String mainSha, String version) throws Exception {
-        // The newest finished run BEFORE the tag lands is a previous attempt's, and must not be
-        // read as this one's outcome. Null when the repo never ran.
-        String baselineRun = boot.ci.finishedEventRun(storageId).map(r -> r[0]).orElse(null);
-        // THE PUSH IS THE WHOLE TRIGGER. qits-githost turns every ACCEPTED ref of a push into
-        // an event, so this one tag ref becomes one SCMPublishTag, which is the event the
-        // release recipe declares. `qits.no-ci` stays and suppresses nothing here: it is a
-        // fact on the COMMIT event and this push moves no branch — one refspec, one tag.
+                              String storageId, String version) throws Exception {
+        // THE TAG FIRST, because the build checks it out. `qits.no-ci` stays and suppresses
+        // nothing here: it is a fact on the COMMIT event and this push moves no branch — one
+        // refspec, one tag.
         ProcessResult push = boot.push(ctx, repo + " " + version, src,
                 boot.gitUrl(name),
                 List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
                 "refs/tags/" + version);
         if (upToDate(push)) {
-            ctx.log("  " + version + " is already on the git host — no ref moved, nothing "
-                    + "announced");
+            // No ref moved, so this version's tag was pushed by an earlier boot and the release
+            // build it asked for is that boot's business. There is no cheap per-version question
+            // to ask instead — a publisher's artifact is a jar here, an npm package there and a
+            // docker image in three more places — so this stays what it has always been: a
+            // version whose tag stands is passed over. The caller's green-run check is what
+            // catches the NEWEST version of a platform that has been rebuilt since.
+            ctx.log("  " + version + " is already on the git host — no ref moved");
             return false;
         }
-        ctx.log("  " + version + " pushed — the tag is what starts the release run");
+        ctx.log("  " + version + " pushed");
+
+        // AND THEN THE WORD THAT STARTS THE BUILD. The push used to be the whole trigger: the
+        // release recipes selected `SCMPublishTag`, which a pushed tag announces by itself. Every
+        // one of them selects `SCMRelease` since 2026-09-04, so the tag alone now starts nothing
+        // and this phase waited its whole budget out for a run that was never going to exist.
+        List<String> runs = announceRelease(ctx, repo, version);
+        if (runs.isEmpty()) {
+            // Nothing selected the event, so nothing will publish this version. A warning rather
+            // than a stop, exactly as the deploy phase treats the same answer: the publishers
+            // behind this one still deserve their turn, and the pin that named this version will
+            // say so when a build cannot resolve it.
+            ctx.warn(repo + " has no release pipeline that selects its own SCMRelease, so nothing"
+                    + " will publish " + version);
+            return true;
+        }
+        String runId = runs.getFirst();
 
         // The same relay the deploy wait uses. A release run is a build too, and it was as
         // silent as the other one.
         CiLogStream ciLog = new CiLogStream(boot.ci, ctx);
-        // The run is waited for by ROW, not by anything this phase was handed: the push
-        // returns as soon as the git host has the tag, and the event, the trigger evaluation
-        // and the run all happen behind it.
-        //
-        // "An EVENT run of this repository" is not "the release run": an upstream's
-        // SoftwareRelease fires this repository's own follow-up bump, also an EVENT run — a
-        // 1-second quiet-exit that landed NEWEST during the first bus-only bootstrap and hid
-        // the wait's real target. The release run is the one that EXECUTED the release
-        // pipeline file, at main's head — where an event-triggered run is cloned and recorded;
-        // the tag checkout is its script's own business. The config path is the fact that
-        // identifies it, and it stays the one to ask by: every event run records main's head,
-        // so the sha collides, and the trigger name is no protection either — it collided
-        // outright while releases were SCMRelease-fired, and a recipe is free to move to
-        // another event again.
+        // BY RUN ID, which the door handed back. The old wait scanned the finished EVENT runs of
+        // this repository for one at main's head that had executed the release file, because a
+        // push-triggered run is nothing this phase holds a handle on. The door names the run it
+        // started, so there is nothing left to identify it by guesswork.
         String status = Waiter.await(ctx, repo + "'s " + version + " release run",
                 boot.config.releaseTimeout(),
                 boot.config.pollInterval(), () -> {
-                    boot.ci.newestRun(storageId)
-                            .map(run -> Json.text(run, "id"))
-                            .filter(id -> !id.equals(baselineRun))
-                            .ifPresent(ciLog::follow);
-                    for (String[] run : boot.ci.finishedEventRuns(storageId)) {
-                        if (!run[0].equals(baselineRun)
-                                && eu.wohlben.qits.cli.bootstrap.api.CiApi.RELEASE_CONFIG
-                                        .equals(run[2])
-                                && mainSha.equals(run[3])) {
-                            return Waiter.Poll.done(run[1], run[1]);
-                        }
+                    ciLog.follow(runId);
+                    String runStatus =
+                            boot.ci.run(runId).map(run -> Json.text(run, "status")).orElse("");
+                    if ("SUCCESS".equals(runStatus) || isRedRunStatus(runStatus)) {
+                        return Waiter.Poll.done(runStatus, runStatus);
                     }
-                    return Waiter.Poll.pending("no finished release run for " + version
-                            + " yet");
+                    return Waiter.Poll.pending("release run "
+                            + (runStatus.isBlank() ? "starting" : runStatus));
                 });
         if (!"SUCCESS".equals(status)) {
+            boot.ci.failedStepOutput(runId).ifPresent(output -> {
+                ctx.log("  the step that stopped the run said:");
+                output.lines().forEach(line -> ctx.log("    " + line));
+            });
             throw new IllegalStateException(repo + " release run ended " + status
                     + " — the registry never got its package");
         }
@@ -1267,7 +1276,20 @@ public class PipelinePhases {
                         + " is already green — qits/" + application + ":" + version
                         + " is published, so this asks the deployer for it directly");
             } else {
-                runId = announceRelease(ctx, repo, application, version);
+                List<String> runs = announceRelease(ctx, repo, version);
+                if (runs.isEmpty()) {
+                    // No release recipe selected it, so nothing is going to publish the image. Said
+                    // once and loudly: the deployer is still asked below, because a version this
+                    // platform already holds deploys perfectly well, and an IMAGE_MISSING row
+                    // minutes from now is a better answer than an hour of waiting for a build
+                    // nobody started.
+                    ctx.warn(repo + " has no release pipeline that selects its own SCMRelease, so"
+                            + " nothing will publish qits/" + application + ":" + version
+                            + ". Asking the deployer for the version the registry may already"
+                            + " hold");
+                } else {
+                    runId = runs.getFirst();
+                }
             }
             if (runId == null) {
                 postSoftwareReleased(ctx, name, application, version);
@@ -1286,14 +1308,18 @@ public class PipelinePhases {
      * to cut — it restores tags that were minted long ago — but the artifact the restore needs is
      * an IMAGE at the released version, and the release recipe is the only pipeline that publishes
      * one. So this hands qits-ci the event the recipe selects and nothing else: no new tag, no new
-     * version, no release request. The RELEASE REPLAYS beside this phase still say nothing —
-     * their recipes select {@code SCMPublishTag}, so their push is the whole trigger.
+     * version, no release request. The RELEASE REPLAYS above say the same word for the same reason
+     * since 2026-09-04, which is why this is one helper and not two.
      * <p>
      * <b>Both spellings of the name, because a real one carries both.</b> {@code repository} is the
      * row id and {@code repositoryName} the stable name, and a trigger file may match either; a
      * condition on the id path is evaluated against the name field whenever the payload has one.
      * The replay that omitted the second evaluated clean against nineteen repositories and matched
      * none — 200 with an empty run list, measured, third bus-only proving run.
+     * <p>
+     * <b>The run ids come back rather than one of them</b>, because the two callers say different
+     * things when no recipe selected the event: a deployable asks the deployer for the version
+     * anyway, a release publisher has nothing to fall back on.
      * <p>
      * <b>A refusal stops the boot.</b> The trigger evaluates on the request thread, so 200 means
      * the runs exist as the call returns and 503 means nothing was accepted — qits-ci's own
@@ -1302,8 +1328,7 @@ public class PipelinePhases {
      * discovering it eighteen times over eighteen timeouts is an hour each; the boot stops with
      * qits-ci's own words instead.
      */
-    private String announceRelease(PhaseContext ctx, String repo, String application,
-            String version) {
+    private List<String> announceRelease(PhaseContext ctx, String repo, String version) {
         String event = releaseEvent(repo, version);
         // The door demands the one project=* client — the same identity the git host announces
         // pushes with, because this stands in for an announcement the platform makes itself.
@@ -1326,19 +1351,11 @@ public class PipelinePhases {
                     + (answer == null ? "no answer" : answer.describe()));
         }
         List<String> runs = CiApi.triggeredRunIds(answer);
-        if (runs.isEmpty()) {
-            // No release recipe selected it, so nothing is going to publish the image. Said once
-            // and loudly: the deployer is still asked below, because a version this platform
-            // already holds deploys perfectly well, and an IMAGE_MISSING row minutes from now is a
-            // better answer than an hour of waiting for a build nobody started.
-            ctx.warn(repo + " has no release pipeline that selects its own SCMRelease, so nothing"
-                    + " will publish qits/" + application + ":" + version
-                    + ". Asking the deployer for the version the registry may already hold");
-            return null;
+        if (!runs.isEmpty()) {
+            ctx.log("  release run " + String.join(", ", runs) + " started — a cold native build, "
+                    + "be patient");
         }
-        ctx.log("  release run " + String.join(", ", runs) + " started — a cold native build, be "
-                + "patient");
-        return runs.get(0);
+        return runs;
     }
 
     /**
