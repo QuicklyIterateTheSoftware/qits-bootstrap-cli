@@ -688,6 +688,10 @@ public class Docker {
                     // die on name resolution before its first request. Measured on the platform's
                     // first converted release run (there against the qits-net namespace; the
                     // failure mode is the worker's, not the network's).
+                    // The default unix socket rides beside the tcp listen: qits-containers' gc
+                    // sweep prunes this cache with `docker exec buildctl`, which knows no tcp
+                    // address — measured missing on the platform builder's first live dry-run.
+                    "--addr", "unix:///run/buildkit/buildkitd.sock",
                     "--addr", BUILDKIT_LISTEN, "--oci-worker-net=host")), out);
         }
         buildkitdReady = ready.ok();
