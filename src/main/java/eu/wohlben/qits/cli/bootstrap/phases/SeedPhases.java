@@ -15,6 +15,7 @@ import eu.wohlben.qits.cli.bootstrap.platform.CiConcurrency;
 import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.DomainTokens;
+import eu.wohlben.qits.cli.bootstrap.platform.MuslToolchain;
 import eu.wohlben.qits.cli.bootstrap.platform.PgAdmin;
 import eu.wohlben.qits.cli.bootstrap.platform.PinnedVersions;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
@@ -1343,13 +1344,115 @@ public class SeedPhases {
      * source in and the binary out. container-build is off because we are already in the container
      * it would otherwise launch.
      */
+    /** Where qits-ci-daemon keeps the Dockerfile whose two tarballs this run has to seed. */
+    static final String MUSL_BUILDER_DOCKERFILE = "docker/Dockerfile.musl-builder";
+
+    /**
+     * <b>The musl toolchain and the zlib source, into the store, before the builder image asks for
+     * them.</b>
+     * <p>
+     * qits-ci-daemon's builder image stopped fetching those two tarballs from the internet on
+     * 2026-09-05 and reads them out of the platform's own Maven store instead — which is the right
+     * answer for a platform that has one, and a hole in a bootstrap: nothing in the estate uploads
+     * them, so a fresh host's store has neither and the {@code ADD} fails. This phase is what makes
+     * the store's copy true on the first boot as well as the tenth.
+     * <p>
+     * <b>Downloaded, checked against the consuming repository's own pin, and only then published.</b>
+     * {@link MuslToolchain} reads the size and the sha256 out of the Dockerfile that consumes the
+     * bytes, because that is where they belong; this phase refuses to upload anything that does not
+     * hash to them. Ninety megabytes from a community host is exactly the fetch a checksum is for.
+     * <p>
+     * <b>Published the way every other Maven artifact of this boot is</b> — {@code deploy:deploy-file}
+     * in a maven container with the seed's own settings — so the store gets the same shape a hand
+     * upload left on the live platform: the tarball, its {@code .sha1} and {@code .md5}, a generated
+     * pom and the metadata. A coordinate the store already holds is skipped, one file at a time.
+     */
+    public Phase toolchainSeed() {
+        return new Phase("seed-toolchain",
+                "seed the musl toolchain tarballs the ci-daemon builder image reads", ctx -> {
+                    Path repo = boot.state.repoDir("ci-daemon");
+                    List<MuslToolchain.Tarball> declared = MuslToolchain.read(
+                            Files.readString(repo.resolve(MUSL_BUILDER_DOCKERFILE),
+                                    StandardCharsets.UTF_8));
+                    List<MuslToolchain.Tarball> missing = declared.stream()
+                            .filter(tarball -> !boot.artifacts.mavenPublished(tarball.groupPath(),
+                                    tarball.artifactId(), tarball.version(), tarball.extension()))
+                            .toList();
+                    for (MuslToolchain.Tarball tarball : declared) {
+                        ctx.log("  " + tarball.storePath()
+                                + (missing.contains(tarball) ? " — seeding from " + tarball.upstream()
+                                        : " — already in the store"));
+                    }
+                    if (missing.isEmpty()) {
+                        ctx.skip("the store holds both toolchain tarballs");
+                    }
+                    boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
+                    ctx.status("downloading and publishing " + missing.size() + " tarball(s)");
+                    String cid = create(ctx, List.of(
+                            "docker", "create", "--network", Boot.NETWORK, "--user", "root",
+                            "--entrypoint", "sh", "-v", MAVEN_CACHE_MOUNT,
+                            "maven:3.9-eclipse-temurin-25",
+                            "-c", toolchainScript(missing)));
+                    startAndReap(ctx, cid, "seeding the musl toolchain failed");
+                    ctx.note(missing.size() + " tarball(s) seeded");
+                });
+    }
+
+    /**
+     * Download, verify, deploy — one block per tarball, in one container.
+     * <p>
+     * The deploy plugin is PINNED rather than resolved as {@code deploy:deploy-file} would: a
+     * prefix goal asks the registry which version is newest, and a cold boot's answer to that is
+     * whatever the mirror happened to cache. {@code -DgeneratePom} is left at its default so the
+     * store gets the pom and the checksums a Maven client expects beside an artifact.
+     */
+    String toolchainScript(List<MuslToolchain.Tarball> tarballs) {
+        StringBuilder script = new StringBuilder("set -eu\n").append(mavenSettings());
+        for (MuslToolchain.Tarball tarball : tarballs) {
+            script.append("echo \"downloading ").append(tarball.fileName()).append(" from ")
+                    .append(tarball.upstream()).append("\"\n")
+                    .append("curl -fsSL --retry 3 --retry-delay 5 -o /tmp/")
+                    .append(tarball.fileName()).append(" '").append(tarball.upstream()).append("'\n")
+                    // The pin is the consuming repository's, and it is checked before anything is
+                    // uploaded: a store is forever, and a truncated download from a slow community
+                    // host would be a builder image that fails for everyone afterwards.
+                    .append("echo \"").append(tarball.sha256()).append("  /tmp/")
+                    .append(tarball.fileName()).append("\" | sha256sum -c -\n")
+                    .append("mvn -B -ntp -s /root/.m2/settings.xml")
+                    .append(" org.apache.maven.plugins:maven-deploy-plugin:3.1.2:deploy-file")
+                    .append(" -Dfile=/tmp/").append(tarball.fileName())
+                    .append(" -DgroupId=").append(tarball.groupId())
+                    .append(" -DartifactId=").append(tarball.artifactId())
+                    .append(" -Dversion=").append(tarball.version())
+                    .append(" -Dpackaging=").append(tarball.extension())
+                    .append(" -DrepositoryId=qits -Durl=")
+                    .append(boot.config.artifactsUrl()).append("/maven/maven")
+                    .append(MAVEN_REPO_LOCAL).append("\n");
+        }
+        return script.toString();
+    }
+
     public Phase ciDaemon() {
         return new Phase("ci-daemon", "build the qits-ci-daemon binary (musl static native)", ctx -> {
             Path repo = boot.state.repoDir("ci-daemon");
             String dockerfile = SeedDockerfile.read(repo.resolve("docker/Dockerfile.musl-builder"));
+            // THE TARBALL URLS ARE THIS RUN'S, never the Dockerfile's default. That default names
+            // registry.dev.localhost, an edge vhost — the domainless local spelling, and no edge
+            // exists this early in any boot. BuildKit resolves an ADD in the builder's own network
+            // context, and the bootstrap builder is network=host, so the ingress the seed builds
+            // already resolve maven through is exactly the address that works here too.
+            List<String> tarballArgs = new ArrayList<>();
+            for (MuslToolchain.Tarball tarball : MuslToolchain.read(
+                    Files.readString(repo.resolve(MUSL_BUILDER_DOCKERFILE),
+                            StandardCharsets.UTF_8))) {
+                tarballArgs.add("--build-arg");
+                tarballArgs.add(tarball.arg() + "=" + boot.seedMavenFile(tarball.storePath()));
+                ctx.log("  " + tarball.arg() + " -> "
+                        + boot.seedMavenFilePublic(tarball.storePath()));
+            }
             ctx.status("building the musl builder image");
             Boot.must(boot.docker.buildFromStdin("qits/graalvmce-musl-builder:jdk-25", dockerfile,
-                            repo.resolve("docker"), List.of(), ctx::log),
+                            repo.resolve("docker"), tarballArgs, ctx::log),
                     "the musl builder image failed to build");
 
             // --entrypoint: the builder image entrypoints to native-image itself.

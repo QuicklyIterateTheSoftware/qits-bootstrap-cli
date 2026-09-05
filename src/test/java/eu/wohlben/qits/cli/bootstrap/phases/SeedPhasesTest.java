@@ -1,6 +1,7 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
 import eu.wohlben.qits.cli.bootstrap.config.TestConfig;
+import eu.wohlben.qits.cli.bootstrap.platform.MuslToolchain;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
 import org.junit.jupiter.api.Test;
@@ -397,6 +398,93 @@ class SeedPhasesTest {
         assertThat(script.split("rm -rf /cache/repository", -1)).hasSize(2);
         // And the container's exit code is the FIRST failure's, not the last build's.
         assertThat(script).startsWith("set -eu\n");
+    }
+
+    // --- the toolchain the ci-daemon builder image is made of ------------------------------------
+
+    private static final String MUSL_DOCKERFILE = """
+            #   x86_64-linux-musl-native.tgz  89080066 B  sha256 eb1db6f0f3c2bdbdbfb993d7ef7e2eeef82ac1259f6a6e1757c33a97dbcef3ad
+            #   zlib-1.3.1.tar.gz              1512791 B  sha256 9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23
+            #   docker build --build-arg MUSL_URL=https://more.musl.cc/11.2.1/x86_64-linux-musl/x86_64-linux-musl-native.tgz \\
+            #                --build-arg ZLIB_URL=https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz \\
+            ARG MUSL_URL=http://registry.dev.localhost:8080/artifacts/maven/maven/eu/wohlben/qits/toolchain/x86_64-linux-musl-native/11.2.1/x86_64-linux-musl-native-11.2.1.tgz
+            ARG ZLIB_URL=http://registry.dev.localhost:8080/artifacts/maven/maven/eu/wohlben/qits/toolchain/zlib/1.3.1/zlib-1.3.1.tar.gz
+            """;
+
+    /**
+     * <b>Downloaded, CHECKED, and only then published.</b> The pin comes from the repository that
+     * consumes the bytes, and it is verified before the upload rather than after: a store is
+     * forever, and a truncated ninety-megabyte download from a community host would be a builder
+     * image that fails for everyone afterwards.
+     */
+    @Test
+    void theToolchainSeedVerifiesEachTarballBeforeItPublishesIt() {
+        SeedPhases phases = new SeedPhases(
+                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+
+        String script = phases.toolchainScript(MuslToolchain.read(MUSL_DOCKERFILE));
+
+        assertThat(script).startsWith("set -eu\n");
+        assertThat(script).contains(
+                "curl -fsSL --retry 3 --retry-delay 5 -o /tmp/x86_64-linux-musl-native-11.2.1.tgz"
+                        + " 'https://more.musl.cc/11.2.1/x86_64-linux-musl/"
+                        + "x86_64-linux-musl-native.tgz'");
+        assertThat(script).contains(
+                "echo \"eb1db6f0f3c2bdbdbfb993d7ef7e2eeef82ac1259f6a6e1757c33a97dbcef3ad  "
+                        + "/tmp/x86_64-linux-musl-native-11.2.1.tgz\" | sha256sum -c -");
+        // The check is BEFORE the deploy for every tarball, not once at the end.
+        assertThat(script.indexOf("sha256sum -c -"))
+                .isLessThan(script.indexOf("deploy-file"));
+    }
+
+    /**
+     * The coordinates are the ARG default's, so the file lands exactly where the Dockerfile's own
+     * {@code ADD} would have looked for it — and the plugin is pinned rather than resolved by
+     * prefix, because a cold boot's answer to "which version is newest" is whatever the mirror
+     * happened to cache.
+     */
+    @Test
+    void theToolchainIsDeployedAtTheCoordinateTheDockerfileReads() {
+        SeedPhases phases = new SeedPhases(
+                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+
+        String script = phases.toolchainScript(MuslToolchain.read(MUSL_DOCKERFILE));
+
+        assertThat(script).contains("org.apache.maven.plugins:maven-deploy-plugin:3.1.2:deploy-file")
+                .contains("-DgroupId=eu.wohlben.qits.toolchain")
+                .contains("-DartifactId=x86_64-linux-musl-native -Dversion=11.2.1 -Dpackaging=tgz")
+                .contains("-DartifactId=zlib -Dversion=1.3.1 -Dpackaging=tar.gz")
+                .contains("-DrepositoryId=qits -Durl=http://prod-qits-artifacts:8080/artifacts"
+                        + "/maven/maven")
+                .contains("-Dmaven.repo.local=/cache/repository");
+        // Only what is missing is fetched: the caller filters, so an empty list is an empty script.
+        assertThat(phases.toolchainScript(List.of())).doesNotContain("curl");
+    }
+
+    /**
+     * <b>The builder image is told THIS RUN's address for the tarballs.</b> The Dockerfile's own
+     * default names `registry.dev.localhost`, an edge vhost — and no edge exists at phase 37 of any
+     * boot. BuildKit resolves an ADD itself, so it cannot be handed the capability as a secret the
+     * way every RUN is: the credential goes in the url, and the public spelling is what gets
+     * printed.
+     */
+    @Test
+    void theBuilderImageFetchesTheTarballsThroughThisRunsOwnDoor() {
+        Boot boot = new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log")));
+        String path = MuslToolchain.read(MUSL_DOCKERFILE).getFirst().storePath();
+
+        // With no ingress capability yet, the configured seed repository answers as it stands.
+        assertThat(boot.seedMavenFile(path)).isEqualTo("http://localhost:8081/artifacts/maven/maven/"
+                + "eu/wohlben/qits/toolchain/x86_64-linux-musl-native/11.2.1/"
+                + "x86_64-linux-musl-native-11.2.1.tgz");
+
+        boot.useBootstrapMavenRepository("http://wohlben.dev/artifacts/maven/maven", "cap-abc");
+
+        assertThat(boot.seedMavenFile(path))
+                .isEqualTo("http://bootstrap:cap-abc@wohlben.dev/artifacts/maven/maven/" + path);
+        assertThat(boot.seedMavenFilePublic(path))
+                .isEqualTo("http://wohlben.dev/artifacts/maven/maven/" + path)
+                .doesNotContain("cap-abc");
     }
 
     /**

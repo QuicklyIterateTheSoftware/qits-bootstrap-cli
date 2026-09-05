@@ -99,9 +99,55 @@ public class Boot {
         return List.of("--build-arg", "QITS_MAVEN_REPOSITORY_URL=" + config.seedMavenRepositoryUrl());
     }
 
+    /** The seed maven repository as the ingress serves it, and the capability that opens it. */
+    private String seedMavenUrl;
+    private String seedMavenCapability;
+
     /** The edge replaces the seed port before the first seed image is built. */
     public void useBootstrapMavenRepository(String url, String capability) {
+        this.seedMavenUrl = url;
+        this.seedMavenCapability = capability;
         docker.withBootstrapMavenRepository(url, "bootstrap", capability);
+    }
+
+    /**
+     * <b>One file in the seed maven repository, as a url a Dockerfile's {@code ADD} can fetch —
+     * credentials and all.</b>
+     * <p>
+     * Every other build of this run reaches the repository from a {@code RUN}, which is handed the
+     * capability as a BuildKit secret. An {@code ADD <url>} cannot be: BuildKit resolves it itself,
+     * outside any step, so a secret mount never reaches it and the credential has to be in the url.
+     * The ingress's maven route demands HTTP Basic, so an anonymous url is a 401 rather than a
+     * download.
+     * <p>
+     * <b>That is not the leak it looks like.</b> The capability is masked out of the log by
+     * {@code Cmd.mask}, which every build of this run already carries, and it does not reach the
+     * image: the fetch happens in a {@code scratch} stage the final image discards, and BuildKit
+     * records no build argument in an image's config — measured, {@code docker history} and
+     * {@code docker inspect} both show nothing. It expires with the run either way.
+     */
+    public String seedMavenFile(String path) {
+        String base = seedMavenUrl == null ? config.seedMavenRepositoryUrl() : seedMavenUrl;
+        return withCredentials(base, seedMavenCapability) + "/" + path;
+    }
+
+    /** The same url without the credential, which is the one that may be printed. */
+    public String seedMavenFilePublic(String path) {
+        return (seedMavenUrl == null ? config.seedMavenRepositoryUrl() : seedMavenUrl) + "/" + path;
+    }
+
+    /**
+     * {@code http://host/x} plus {@code bootstrap:<capability>}, or the url unchanged when this run
+     * has no capability. The capability is base64url, so it carries no character a userinfo field
+     * would have to escape.
+     */
+    static String withCredentials(String url, String capability) {
+        int scheme = url.indexOf("://");
+        if (capability == null || capability.isBlank() || scheme < 0) {
+            return url;
+        }
+        return url.substring(0, scheme + 3) + "bootstrap:" + capability
+                + "@" + url.substring(scheme + 3);
     }
 
     /**

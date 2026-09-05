@@ -136,6 +136,9 @@ public final class BootstrapPlan {
                     "node-docker-base")) {
                 phases.add(seed.stepImage(image));
             }
+            // BEFORE the daemon build, because the builder image it starts with reads two
+            // tarballs out of the store and a cold platform's store has neither.
+            phases.add(seed.toolchainSeed());
             phases.add(seed.ciDaemon());
         }
 
