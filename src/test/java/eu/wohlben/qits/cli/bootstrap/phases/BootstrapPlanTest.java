@@ -241,6 +241,10 @@ class BootstrapPlanTest {
      * The image publishers, and the one order among them that is not a preference: the workspace
      * base's replay is what puts qits/workspace-base in the registry, and both daemon builds PULL
      * it at a pinned version. Replaying a daemon first builds against a tag nothing has pushed.
+     * <p>
+     * The editor is one link further down the same chain — its Dockerfile is
+     * {@code FROM ${WORKSPACE_IMAGE}} with a committed qits/workspace pin — so the daemon that
+     * publishes that image has to precede it for exactly the same reason.
      */
     @Test
     void theWorkspaceBaseIsReplayedBeforeEverythingThatLayersOnIt() {
@@ -248,6 +252,8 @@ class BootstrapPlanTest {
 
         assertThat(ids).containsSubsequence("release-oci-workspace", "release-workspace-daemon");
         assertThat(ids).containsSubsequence("release-oci-workspace", "release-projects-daemon");
+        assertThat(ids).containsSubsequence("release-workspace-daemon",
+                "release-oci-workspace-editor");
         // Still before the deployables: qits-workspaces and qits-projects pin these images, and a
         // pin with nothing behind it fails at the first workspace launch rather than at deploy.
         assertThat(ids).containsSubsequence("release-projects-daemon", "environment",

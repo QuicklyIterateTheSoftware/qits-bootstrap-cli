@@ -258,6 +258,12 @@ public final class PlatformModel {
      * deployments.yml and no health endpoint. They need the repository, the history and the release
      * replay below, and nothing else.
      * <p>
+     * <b>qits-workspace-editor-oci is the fourth, on 2026-09-06, and it is here for the same
+     * reason.</b> It publishes qits/workspace-editor, which qits-workspaces pins as the editor a
+     * workspace opens with — and a fresh registry that has never seen that image is a workspace
+     * whose editor cannot start. It runs as nobody's container either, so it is a repository, a
+     * history and a release replay and nothing more.
+     * <p>
      * <b>qits-registries joined on 2026-08-10</b>, and it is the byte plane's own library: one
      * Maven module per registry format, and since 2026-08-30 the content-addressed blob store as
      * one more module of the same reactor. Three services build against it — qits-artifacts,
@@ -299,7 +305,7 @@ public final class PlatformModel {
             "spa-ci", "spa-githost", "spa-configuration", "platform-spa-idp",
             "platform-spa-mirror", "platform-spa-orchestrator", "platform-spa-maintenance",
             "platform-spa-system",
-            "oci-workspace", "workspace-daemon", "projects-daemon");
+            "oci-workspace", "oci-workspace-editor", "workspace-daemon", "projects-daemon");
 
     /**
      * The publishers whose released versions the platform pins, replayed on a fresh platform because
@@ -307,7 +313,7 @@ public final class PlatformModel {
      * list is where that order lives — {@code BootstrapPlan} makes one phase per entry, in this
      * sequence.
      * <p>
-     * The first four are the Maven and npm packages the wrapper's builds install. The last three are
+     * The first four are the Maven and npm packages the wrapper's builds install. The last four are
      * DOCKER IMAGES, added on 2026-08-10 after a fresh registry was measured to hold no
      * qits/workspace-base at all, which fails every workspace launch:
      * <ul>
@@ -318,8 +324,12 @@ public final class PlatformModel {
      *       {@code docker/Dockerfile} carries {@code ARG WORKSPACE_BASE=…/qits/workspace-base:<pin>}
      *       and its build PULLS that image through the registry — which the base's own replay is what
      *       fills. The other order builds against a tag the registry has never seen.
-     *   <li><b>qits-projects-daemon last</b>, and for the same reason: its layered
-     *       {@code qits/project-agent} build reads the pin out of
+     *   <li><b>qits-workspace-editor-oci strictly after qits-workspace-daemon</b>, one link further
+     *       down the same chain: its {@code Dockerfile} is {@code FROM ${WORKSPACE_IMAGE}} with a
+     *       committed default of {@code …/qits/workspace:<pin>}, so its build pulls the image the
+     *       daemon's own replay is what publishes.
+     *   <li><b>qits-projects-daemon last</b>, and for the same reason as the first image pair: its
+     *       layered {@code qits/project-agent} build reads the pin out of
      *       {@code .config/qits/workspace-base.version} and passes it as {@code --build-arg BASE}.
      *       It is independent of qits-workspace-daemon; only the base has to precede it.
      * </ul>
@@ -333,14 +343,15 @@ public final class PlatformModel {
     public static final List<String> RELEASE_PUBLISHERS =
             List.of("spa-ui-components", "integrations-angular", "integrations-quarkus",
                     "eventstream",
-                    "oci-workspace", "workspace-daemon", "projects-daemon");
+                    "oci-workspace", "workspace-daemon", "oci-workspace-editor",
+                    "projects-daemon");
 
     /**
      * <b>What a release publisher's green run leaves in a registry, addressed by the RELEASE
      * version.</b> It is the answer to "did that run actually publish anything", which a replay has
      * to ask before it decides a version needs no build.
      * <p>
-     * <b>All seven answer, and the npm pair answers too.</b> {@code @qits/ui-components} publishes
+     * <b>All eight answer, and the npm pair answers too.</b> {@code @qits/ui-components} publishes
      * one version per release tag — the packument's keys are that repository's calvers — so a
      * replay can ask the registry whether a version is there. The seed's own {@code 0.0.4} publish
      * is a different thing: a pinned commit, not a release, and no release tag names it.
@@ -371,6 +382,8 @@ public final class PlatformModel {
                     List.of(new ReleasePackage(ReleasePackage.Kind.OCI, "qits/workspace-base"));
             case "workspace-daemon" ->
                     List.of(new ReleasePackage(ReleasePackage.Kind.OCI, "qits/workspace"));
+            case "oci-workspace-editor" ->
+                    List.of(new ReleasePackage(ReleasePackage.Kind.OCI, "qits/workspace-editor"));
             // Two images from one run, and a replay that found either one missing has to ask again.
             case "projects-daemon" -> List.of(
                     new ReleasePackage(ReleasePackage.Kind.OCI, "qits/projects-daemon"),
@@ -422,7 +435,8 @@ public final class PlatformModel {
     public static String repoPath(String name) {
         return switch (name) {
             case "ci-daemon", "workspace-daemon", "projects-daemon" -> "daemons/" + repo(name);
-            case "oci", "oci-postgresql", "oci-workspace" -> "images/" + repo(name);
+            case "oci", "oci-postgresql", "oci-workspace", "oci-workspace-editor" ->
+                    "images/" + repo(name);
             // Framework glue is shared code, so the integrations sit in libs/ like any other lib —
             // and so does the byte plane's own, a library by the same test: three services consume
             // it and it is not deployed.
@@ -498,9 +512,11 @@ public final class PlatformModel {
     /**
      * The names that are image builds today, and are none of them spelled so. Their renamed
      * repositories — {@code qits-build-images-oci}, {@code qits-database-oci},
-     * {@code qits-workspace-oci} — answer through the {@code -oci} arm above.
+     * {@code qits-workspace-oci}, {@code qits-workspace-editor-oci} — answer through the
+     * {@code -oci} arm above.
      */
-    private static final List<String> IMAGE_NAMES = List.of("oci", "oci-postgresql", "oci-workspace");
+    private static final List<String> IMAGE_NAMES =
+            List.of("oci", "oci-postgresql", "oci-workspace", "oci-workspace-editor");
 
     private static String archetypeOfName(String name) {
         // The grammar the renames land on. It is asked first so a renamed repository needs no
@@ -615,6 +631,7 @@ public final class PlatformModel {
             Map.entry("oci", "qits-build-images-oci"),
             Map.entry("oci-postgresql", "qits-database-oci"),
             Map.entry("oci-workspace", "qits-workspace-oci"),
+            Map.entry("oci-workspace-editor", "qits-workspace-editor-oci"),
             Map.entry("eventstream", "qits-eventstream-javalib"),
             Map.entry("registries", "qits-registries-javalib"),
             Map.entry("userflows", "qits-userflows-javalib"),

@@ -674,7 +674,13 @@ class ComposeTemplateTest {
                         + "http://prod-qits-containers:8080")
                 .contains("env.QITS_ORCHESTRATOR_TARGETS_CI_URL=http://prod-qits-ci:8080")
                 .contains("env.QITS_ORCHESTRATOR_TARGETS_DEPLOYMENTS_URL="
-                        + "http://qits-deployments:8080");
+                        + "http://qits-deployments:8080")
+                // WHERE THE IMAGE PINS ARE READ FROM, and the target whose absence was silent: the
+                // image's own default is the bare qits-configuration, a platform-tier spelling of
+                // an environment-tier service, so every gc run's pins.images read failed with a
+                // connect error and the sweep was skipped rather than refused.
+                .contains("env.QITS_ORCHESTRATOR_TARGETS_CONFIGURATION_URL="
+                        + "http://" + PlatformModel.wireAlias("configuration", ENV) + ":8080");
         // Four clients, and the AUDIENCE is what makes them four: each peer validates its own, so
         // one client with one audience would be a run whose every step but one is a 401.
         assertThat(orchestrator)

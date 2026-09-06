@@ -788,7 +788,7 @@ public class PipelinePhases {
      * <p>
      * <b>The tag alone stopped being a trigger on 2026-09-04.</b> Every publisher's
      * ci-event-release.yml declared {@code event: SCMPublishTag} when this phase was written, so
-     * the push WAS the trigger; all seven select {@code SCMRelease} now, and a pushed tag announces
+     * the push WAS the trigger; all eight select {@code SCMRelease} now, and a pushed tag announces
      * SCMPublishTag, which nothing selects any more. The phase waited its whole budget out for a
      * run that was never going to exist. So it pushes the tag and then says the one word that
      * starts the recipe, through qits-ci's manual door — the same call, the same event and the same
@@ -1964,17 +1964,24 @@ public class PipelinePhases {
     public Phase configurationImport() {
         return new Phase("configuration-import",
                 "import the deployment extras into qits-configuration", ctx -> {
-            // The rendered extras, PLUS the two deployment values the release train does not restore
-            // on its own: the image versions each daemon starts sandboxes from. They are the calvers
-            // qits-projects-daemon and qits-workspace-daemon were released at this boot — read the
-            // same way releaseReplay reads them, so the seeds and the pins cannot disagree. Seeded
-            // here, before qits-projects and qits-workspaces deploy a few phases below, they give
-            // each service the right version on its FIRST boot instead of leaving the first sandbox
-            // to wait on the durable SoftwareRelease event to be consumed.
-            String properties = withImageVersions(
-                    ComposeTemplate.extras(new SeedPhases(boot).tokens()),
-                    boot.git.describeTag(boot.state.repoDir("projects-daemon"), "main"),
-                    boot.git.describeTag(boot.state.repoDir("workspace-daemon"), "main"));
+            // The rendered extras, PLUS the deployment values the release train does not restore on
+            // its own: the image versions each service starts a sandbox from. They are the calvers
+            // the publishers were released at this boot — read the same way releaseReplay reads
+            // them, so the seeds and the pins cannot disagree. Seeded here, before qits-projects and
+            // qits-workspaces deploy a few phases below, they give each service the right version on
+            // its FIRST boot instead of leaving the first sandbox to wait on the durable
+            // SoftwareRelease event to be consumed.
+            //
+            // ONE READ PER PUBLISHER, derived from the pin list rather than spelled beside it: two
+            // of the four pins are moved by the same release of qits/workspace, and a second read of
+            // the same checkout is a second answer that could differ.
+            Map<String, String> released = new LinkedHashMap<>();
+            for (ImagePin pin : IMAGE_PINS) {
+                released.computeIfAbsent(pin.publisher(),
+                        publisher -> boot.git.describeTag(boot.state.repoDir(publisher), "main"));
+            }
+            String properties =
+                    withImageVersions(ComposeTemplate.extras(new SeedPhases(boot).tokens()), released);
             boot.awaitHealth(ctx, "qits-configuration at " + boot.config.configurationUrl(),
                     () -> boot.configuration.health());
             Http.Response answer = boot.configuration.importProperties(properties);
@@ -1991,66 +1998,80 @@ public class PipelinePhases {
     }
 
     /**
-     * The imported extras with every daemon's image version seeded onto the service that deploys
-     * from it: the project-agent version on qits-projects, the workspace version on qits-workspaces.
-     * Each is guarded independently — a blank version appends nothing — so a boot that released one
-     * daemon but not the other still seeds the one it can.
+     * <b>One image pin: which image, which application is told its version, under which key, and
+     * which publisher's release IS that version.</b>
+     *
+     * @param image       the registry coordinate, for the comment the seed line carries
+     * @param application the model name of the service the deployer injects the value into
+     * @param key         the environment variable that service reads the version from
+     * @param publisher   the model name whose newest release tag is the version
      */
-    static String withImageVersions(String extras, String projectsAgentVersion,
-            String workspaceVersion) {
-        return withWorkspaceImageVersion(
-                withProjectsAgentVersion(extras, projectsAgentVersion),
-                workspaceVersion);
+    record ImagePin(String image, String application, String key, String publisher) {
     }
 
     /**
-     * The imported extras with the project-agent image version appended as an env entry on
-     * qits-projects. A blank version — a projects-daemon that has never released — leaves the
-     * extras untouched: releaseReplay stops the boot before this phase in that case, and an empty
-     * value would be a worse seed than none, since qits-projects carries its own fallback default.
+     * <b>THE PIN LIST, and the master copy of it is qits-configuration's own
+     * {@code control/ImagePins.AUTHORED}.</b> That service owns which image moves which key on
+     * which application, and it keeps the four in sync from the SoftwareRelease event for the whole
+     * life of the platform. This is a COPY, for the one window it cannot cover: the CLI builds cold
+     * from Maven Central before any platform exists, so it can depend on nothing of that repository
+     * — and {@code GET /configuration/api/pins} OMITS a mapping nothing has set, so a fresh
+     * platform cannot be asked for the map either. The test beside this list spells the four
+     * triples verbatim and is the tripwire that fails when the two repositories disagree.
      * <p>
-     * One source for the version: {@code releaseReplay} restores the tag, this line seeds it, and a
-     * new SoftwareRelease listener in qits-configuration keeps it in sync afterwards — so the value
-     * the deployer injects tracks the pin the release train moves.
+     * <b>Two entries name the same image, and that is the pin list's own ruling rather than a
+     * duplicate.</b> One release of {@code qits/workspace} moves qits-workspaces' workspace version
+     * AND qits-projects' refinement version — a refinement runs in the same image a workspace does
+     * — so one version read writes two keys. A fresh node with only the first seeded refused every
+     * refinement start with IMAGE_MISSING, because qits-projects fell back to the default committed
+     * in its own image.
      */
-    static String withProjectsAgentVersion(String extras, String version) {
-        if (version.isBlank()) {
-            return extras;
-        }
-        return extras.stripTrailing() + "\n"
-                + "# The project-agent image version, seeded so qits-projects' first deploy pins\n"
-                + "# the release this boot cut rather than waiting on the SoftwareRelease event.\n"
-                + projectsAgentImageVersionSeed(version) + "\n";
-    }
-
-    /** The seed line: qits-projects' {@code QITS_PROJECTS_AGENT_IMAGE_VERSION} deployment env. */
-    static String projectsAgentImageVersionSeed(String version) {
-        return "qits.platform.deployments.extras." + PlatformModel.application("projects")
-                + ".env.QITS_PROJECTS_AGENT_IMAGE_VERSION=" + version;
-    }
+    static final List<ImagePin> IMAGE_PINS = List.of(
+            new ImagePin("qits/project-agent", "projects",
+                    "QITS_PROJECTS_AGENT_IMAGE_VERSION", "projects-daemon"),
+            new ImagePin("qits/workspace", "workspaces",
+                    "QITS_WORKSPACE_IMAGE_VERSION", "workspace-daemon"),
+            new ImagePin("qits/workspace", "projects",
+                    "QITS_PROJECTS_REFINEMENT_IMAGE_VERSION", "workspace-daemon"),
+            new ImagePin("qits/workspace-editor", "workspaces",
+                    "QITS_EDITOR_IMAGE_VERSION", "oci-workspace-editor"));
 
     /**
-     * The imported extras with the workspace image version appended as an env entry on
-     * qits-workspaces. The {@code qits/workspace} image is published by the workspace-daemon release
-     * pipeline, so the version is the calver qits-workspace-daemon was released at this boot — read
-     * the same way {@code releaseReplay} reads it, so the seed and the pin cannot disagree. A blank
-     * version — a workspace-daemon that has never released — leaves the extras untouched, since an
-     * empty value would be a worse seed than the fallback default qits-workspaces carries.
+     * The imported extras with every pin above seeded onto the application that deploys from it.
+     * <p>
+     * Each pin is guarded on its own — a publisher with a blank version appends nothing — so a boot
+     * that released one publisher but not another still seeds the ones it can. A blank is the
+     * honest answer for a repository that has never released: {@code releaseReplay} stops the boot
+     * before this phase in that case, and an empty value would be a worse seed than none, since
+     * each service carries a fallback default of its own.
+     * <p>
+     * One source for every version: {@code releaseReplay} restores the tag, these lines seed it,
+     * and qits-configuration's SoftwareRelease listener keeps them in sync afterwards — so the
+     * value the deployer injects tracks the pin the release train moves.
+     *
+     * @param released the newest release tag per PUBLISHER model name
      */
-    static String withWorkspaceImageVersion(String extras, String version) {
-        if (version.isBlank()) {
-            return extras;
+    static String withImageVersions(String extras, Map<String, String> released) {
+        String seeded = extras;
+        for (ImagePin pin : IMAGE_PINS) {
+            String version = released.getOrDefault(pin.publisher(), "");
+            if (version == null || version.isBlank()) {
+                continue;
+            }
+            seeded = seeded.stripTrailing() + "\n"
+                    + "# The " + pin.image() + " version, seeded so the first deploy of "
+                    + PlatformModel.application(pin.application()) + " pins\n"
+                    + "# the release this boot cut rather than waiting on the SoftwareRelease "
+                    + "event.\n"
+                    + imageVersionSeed(pin, version) + "\n";
         }
-        return extras.stripTrailing() + "\n"
-                + "# The workspace image version, seeded so qits-workspaces' first deploy pins\n"
-                + "# the release this boot cut rather than waiting on the SoftwareRelease event.\n"
-                + workspaceImageVersionSeed(version) + "\n";
+        return seeded;
     }
 
-    /** The seed line: qits-workspaces' {@code QITS_WORKSPACE_IMAGE_VERSION} deployment env. */
-    static String workspaceImageVersionSeed(String version) {
-        return "qits.platform.deployments.extras." + PlatformModel.application("workspaces")
-                + ".env.QITS_WORKSPACE_IMAGE_VERSION=" + version;
+    /** The seed line: one pin's key in the deployment extras of the application that reads it. */
+    static String imageVersionSeed(ImagePin pin, String version) {
+        return "qits.platform.deployments.extras." + PlatformModel.application(pin.application())
+                + ".env." + pin.key() + "=" + version;
     }
 
     /**

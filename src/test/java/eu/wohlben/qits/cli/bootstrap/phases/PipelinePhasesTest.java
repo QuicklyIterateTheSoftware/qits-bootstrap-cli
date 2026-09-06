@@ -24,6 +24,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 /**
  * The two sentences these phases read machine output by. The phases that shell docker and git are
@@ -686,96 +687,58 @@ class PipelinePhasesTest {
         assertThat(PipelinePhases.flipEnv(renderedExtras(), "qits-configuration")).isEmpty();
     }
 
-    // --- the project-agent image version seed ------------------------------------------------------
+    // --- the image version seeds -------------------------------------------------------------------
 
     private static final String AGENT_VERSION = "2026.820.154053";
 
-    /**
-     * The version qits-projects-daemon released this boot is seeded into the imported extras as an
-     * env entry on qits-projects, so its first deploy pins the right project-agent image before the
-     * SoftwareRelease event is consumed.
-     */
-    @Test
-    void theProjectsAgentVersionIsSeededOntoQitsProjects() {
-        String seeded = PipelinePhases.withProjectsAgentVersion(renderedExtras(), AGENT_VERSION);
-
-        assertThat(seeded).contains(
-                "qits.platform.deployments.extras.qits-projects.env."
-                        + "QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION);
-        // The whole import is still there — the seed is appended, not a replacement.
-        assertThat(seeded).startsWith(renderedExtras().stripTrailing());
-    }
-
-    /** The exact key the deployer injects, on qits-projects and nothing else. */
-    @Test
-    void theSeedLineNamesTheProjectsApplicationKey() {
-        assertThat(PipelinePhases.projectsAgentImageVersionSeed(AGENT_VERSION)).isEqualTo(
-                "qits.platform.deployments.extras.qits-projects.env."
-                        + "QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION);
-    }
-
-    /**
-     * A projects-daemon that has never released seeds nothing — releaseReplay stops the boot first,
-     * and an empty value would be a worse seed than the fallback default qits-projects carries.
-     */
-    @Test
-    void aBlankVersionSeedsNothing() {
-        String extras = renderedExtras();
-
-        assertThat(PipelinePhases.withProjectsAgentVersion(extras, "")).isEqualTo(extras);
-        assertThat(PipelinePhases.withProjectsAgentVersion(extras, ""))
-                .doesNotContain("QITS_PROJECTS_AGENT_IMAGE_VERSION");
-    }
-
-    // --- the workspace image version seed ----------------------------------------------------------
-
     private static final String WORKSPACE_VERSION = "2026.821.101530";
 
-    /**
-     * The version qits-workspace-daemon released this boot is seeded into the imported extras as an
-     * env entry on qits-workspaces, so its first deploy pins the right qits/workspace image before
-     * the SoftwareRelease event is consumed.
-     */
-    @Test
-    void theWorkspaceVersionIsSeededOntoQitsWorkspaces() {
-        String seeded = PipelinePhases.withWorkspaceImageVersion(renderedExtras(), WORKSPACE_VERSION);
+    private static final String EDITOR_VERSION = "2026.906.34347";
 
-        assertThat(seeded).contains(
-                "qits.platform.deployments.extras.qits-workspaces.env."
-                        + "QITS_WORKSPACE_IMAGE_VERSION=" + WORKSPACE_VERSION);
-        // The whole import is still there — the seed is appended, not a replacement.
-        assertThat(seeded).startsWith(renderedExtras().stripTrailing());
-    }
-
-    /** The exact key the deployer injects, on qits-workspaces and nothing else. */
-    @Test
-    void theSeedLineNamesTheWorkspacesApplicationKey() {
-        assertThat(PipelinePhases.workspaceImageVersionSeed(WORKSPACE_VERSION)).isEqualTo(
-                "qits.platform.deployments.extras.qits-workspaces.env."
-                        + "QITS_WORKSPACE_IMAGE_VERSION=" + WORKSPACE_VERSION);
+    /** Every publisher released, which is what a green boot hands the renderer. */
+    private static Map<String, String> allReleased() {
+        return Map.of("projects-daemon", AGENT_VERSION,
+                "workspace-daemon", WORKSPACE_VERSION,
+                "oci-workspace-editor", EDITOR_VERSION);
     }
 
     /**
-     * A workspace-daemon that has never released seeds nothing — the same guard as the agent seed,
-     * since an empty value would be a worse seed than the fallback default qits-workspaces carries.
+     * <b>THE TRIPWIRE. The master list is qits-configuration's {@code control/ImagePins.AUTHORED},
+     * and the four triples below are spelled the way that class has them.</b> This copy exists
+     * because the CLI builds cold from Maven Central before any platform exists, and because
+     * {@code GET /configuration/api/pins} omits a mapping nothing has set — so the boot can neither
+     * depend on that repository nor ask a fresh platform for the map. The two change together, and
+     * this is the assertion that fails on the day they do not.
      */
     @Test
-    void aBlankWorkspaceVersionSeedsNothing() {
-        String extras = renderedExtras();
-
-        assertThat(PipelinePhases.withWorkspaceImageVersion(extras, "")).isEqualTo(extras);
-        assertThat(PipelinePhases.withWorkspaceImageVersion(extras, ""))
-                .doesNotContain("QITS_WORKSPACE_IMAGE_VERSION");
+    void theFourPinsAreTheOnesQitsConfigurationAuthored() {
+        assertThat(PipelinePhases.IMAGE_PINS)
+                .extracting(PipelinePhases.ImagePin::image,
+                        pin -> PlatformModel.application(pin.application()),
+                        pin -> "env." + pin.key())
+                .containsExactly(
+                        tuple("qits/project-agent", "qits-projects",
+                                "env.QITS_PROJECTS_AGENT_IMAGE_VERSION"),
+                        tuple("qits/workspace", "qits-workspaces",
+                                "env.QITS_WORKSPACE_IMAGE_VERSION"),
+                        tuple("qits/workspace", "qits-projects",
+                                "env.QITS_PROJECTS_REFINEMENT_IMAGE_VERSION"),
+                        tuple("qits/workspace-editor", "qits-workspaces",
+                                "env.QITS_EDITOR_IMAGE_VERSION"));
+        // And every publisher named is one the plan replays a release of, or the version read
+        // would be the tag of a repository this boot never restores.
+        assertThat(PipelinePhases.IMAGE_PINS)
+                .allSatisfy(pin -> assertThat(PlatformModel.RELEASE_PUBLISHERS)
+                        .as(pin.image()).contains(pin.publisher()));
     }
 
     /**
-     * Both daemon versions are seeded together onto their own services: the project-agent version on
-     * qits-projects, the workspace version on qits-workspaces, and each is guarded independently.
+     * All four pins are seeded into the imported extras, each onto the application that reads it, so
+     * a first deploy pins the release this boot cut instead of waiting on the SoftwareRelease event.
      */
     @Test
-    void bothImageVersionsAreSeededOntoTheirServices() {
-        String seeded =
-                PipelinePhases.withImageVersions(renderedExtras(), AGENT_VERSION, WORKSPACE_VERSION);
+    void everyPinIsSeededOntoTheApplicationThatReadsIt() {
+        String seeded = PipelinePhases.withImageVersions(renderedExtras(), allReleased());
 
         assertThat(seeded).contains(
                 "qits.platform.deployments.extras.qits-projects.env."
@@ -783,12 +746,66 @@ class PipelinePhasesTest {
         assertThat(seeded).contains(
                 "qits.platform.deployments.extras.qits-workspaces.env."
                         + "QITS_WORKSPACE_IMAGE_VERSION=" + WORKSPACE_VERSION);
+        assertThat(seeded).contains(
+                "qits.platform.deployments.extras.qits-projects.env."
+                        + "QITS_PROJECTS_REFINEMENT_IMAGE_VERSION=" + WORKSPACE_VERSION);
+        assertThat(seeded).contains(
+                "qits.platform.deployments.extras.qits-workspaces.env."
+                        + "QITS_EDITOR_IMAGE_VERSION=" + EDITOR_VERSION);
+        // The whole import is still there — the seeds are appended, not a replacement.
         assertThat(seeded).startsWith(renderedExtras().stripTrailing());
+    }
 
-        // Each version is guarded on its own — a blank workspace version still seeds the agent.
-        String agentOnly = PipelinePhases.withImageVersions(renderedExtras(), AGENT_VERSION, "");
-        assertThat(agentOnly).contains("QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION);
-        assertThat(agentOnly).doesNotContain("QITS_WORKSPACE_IMAGE_VERSION");
+    /**
+     * <b>ONE RELEASE OF qits/workspace MOVES TWO KEYS</b> — the workspace a session opens and the
+     * image a refinement runs in are the same image, which is what qits-configuration's pin list
+     * says. So one version read is written to both, and they cannot drift apart.
+     */
+    @Test
+    void theWorkspaceReleaseSeedsBothTheWorkspaceAndTheRefinementKey() {
+        String seeded = PipelinePhases.withImageVersions(renderedExtras(),
+                Map.of("workspace-daemon", WORKSPACE_VERSION));
+
+        assertThat(seeded).contains("QITS_WORKSPACE_IMAGE_VERSION=" + WORKSPACE_VERSION)
+                .contains("QITS_PROJECTS_REFINEMENT_IMAGE_VERSION=" + WORKSPACE_VERSION);
+    }
+
+    /** The exact key the deployer injects, on the application that reads it and nothing else. */
+    @Test
+    void theSeedLineNamesTheApplicationsOwnKey() {
+        assertThat(PipelinePhases.imageVersionSeed(PipelinePhases.IMAGE_PINS.get(0), AGENT_VERSION))
+                .isEqualTo("qits.platform.deployments.extras.qits-projects.env."
+                        + "QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION);
+        assertThat(PipelinePhases.imageVersionSeed(PipelinePhases.IMAGE_PINS.get(3), EDITOR_VERSION))
+                .isEqualTo("qits.platform.deployments.extras.qits-workspaces.env."
+                        + "QITS_EDITOR_IMAGE_VERSION=" + EDITOR_VERSION);
+    }
+
+    /**
+     * A publisher that has never released seeds nothing — releaseReplay stops the boot first, and an
+     * empty value would be a worse seed than the fallback default each service carries. The guard is
+     * per PIN, so a boot that released one publisher still seeds what it can.
+     */
+    @Test
+    void aBlankVersionSeedsOnlyItsOwnPinAway() {
+        String extras = renderedExtras();
+
+        assertThat(PipelinePhases.withImageVersions(extras, Map.of())).isEqualTo(extras);
+
+        String noEditor = PipelinePhases.withImageVersions(extras,
+                Map.of("projects-daemon", AGENT_VERSION,
+                        "workspace-daemon", WORKSPACE_VERSION,
+                        "oci-workspace-editor", ""));
+        assertThat(noEditor).contains("QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION)
+                .contains("QITS_WORKSPACE_IMAGE_VERSION=" + WORKSPACE_VERSION)
+                .doesNotContain("QITS_EDITOR_IMAGE_VERSION");
+
+        // A blank workspace release takes BOTH of its keys with it and leaves the agent's alone.
+        String noWorkspace = PipelinePhases.withImageVersions(extras,
+                Map.of("projects-daemon", AGENT_VERSION));
+        assertThat(noWorkspace).contains("QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION)
+                .doesNotContain("QITS_WORKSPACE_IMAGE_VERSION")
+                .doesNotContain("QITS_PROJECTS_REFINEMENT_IMAGE_VERSION");
     }
 
     // --- the reclaim, and what it is allowed to touch ----------------------------------------------
@@ -1256,10 +1273,10 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>Which publishers the pinned-tag replay is for.</b> Two of the seven are seed libraries,
+     * <b>Which publishers the pinned-tag replay is for.</b> Two of the eight are seed libraries,
      * and the maven publishes of phases 18-25 already put every pinned version of those in the
      * store out of the same closure — so replaying their older tags would cost a ci run per tag
-     * for bytes the registry has. The five below are the ones nothing else publishes.
+     * for bytes the registry has. The six below are the ones nothing else publishes.
      */
     @Test
     void theSeedLibrariesAreExcludedFromThePinnedTagReplay() {
@@ -1271,7 +1288,7 @@ class PipelinePhasesTest {
         assertThat(PlatformModel.RELEASE_PUBLISHERS)
                 .filteredOn(name -> !SeedPhases.SEED_LIBRARIES.contains(name))
                 .containsExactly("spa-ui-components", "integrations-angular", "oci-workspace",
-                        "workspace-daemon", "projects-daemon");
+                        "workspace-daemon", "oci-workspace-editor", "projects-daemon");
     }
 
     // --- when a tag that already stands still needs its build ------------------------------------
@@ -1309,6 +1326,9 @@ class PipelinePhasesTest {
         assertThat(PlatformModel.releasePackages("workspace-daemon")).singleElement()
                 .isEqualTo(new PlatformModel.ReleasePackage(
                         PlatformModel.ReleasePackage.Kind.OCI, "qits/workspace"));
+        assertThat(PlatformModel.releasePackages("oci-workspace-editor")).singleElement()
+                .isEqualTo(new PlatformModel.ReleasePackage(
+                        PlatformModel.ReleasePackage.Kind.OCI, "qits/workspace-editor"));
         // Two images from one run, so either one missing is a run to ask for again.
         assertThat(PlatformModel.releasePackages("projects-daemon")).hasSize(2)
                 .extracting(PlatformModel.ReleasePackage::coordinate)
