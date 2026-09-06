@@ -1428,11 +1428,47 @@ public class PipelinePhases {
                     + (answer == null ? "no answer" : answer.describe()));
         }
         List<String> runs = CiApi.triggeredRunIds(answer);
+        // ZERO RUNS FROM A RECIPE THAT PLAINLY SELECTS THE EVENT IS A RACE, NOT AN ANSWER. Measured
+        // on the 2026-09-05 cold run: qits-containers' main had reached the git host ten seconds
+        // earlier and dev-qits-githost had just been cut over, qits-ci answered 200 with no run and
+        // logged nothing for the event — its trigger-file read met the service mid-cutover — and
+        // the boot took that as "no release pipeline" for good, so the deploy ended IMAGE_MISSING.
+        // The checkout beside this program holds the recipe, so it can tell the two apart: when the
+        // file selects SCMRelease, the announcement is repeated a few times before the empty
+        // answer is believed. A recipe that really selects nothing still gets one call.
+        for (int again = 1; runs.isEmpty() && again <= 5 && selectsRelease(src); again++) {
+            ctx.log("  " + repo + "'s recipe selects SCMRelease but qits-ci started no run — "
+                    + "asking again (" + again + "/5)");
+            sleep(10_000);
+            answer = boot.ci.trigger(event, token);
+            if (answer.ok()) {
+                runs = CiApi.triggeredRunIds(answer);
+            } else {
+                ctx.log("  release announcement refused: " + answer.describe());
+            }
+        }
         if (!runs.isEmpty()) {
             ctx.log("  release run " + String.join(", ", runs) + " started — a cold native build, "
                     + "be patient");
         }
         return runs;
+    }
+
+    /**
+     * Does the checkout's release recipe select {@code SCMRelease}? Read from the file the seed
+     * pushed, which is the file qits-ci reads from main's head: a match means the event has a
+     * pipeline, and an empty answer from the door is a read that failed, not a recipe that is absent.
+     */
+    static boolean selectsRelease(Path src) {
+        Path recipe = src.resolve(CiApi.RELEASE_CONFIG);
+        try {
+            return Files.exists(recipe)
+                    && Files.readString(recipe).lines()
+                    .map(String::strip)
+                    .anyMatch(line -> line.matches("event:\\s*['\"]?SCMRelease['\"]?\\s*(#.*)?"));
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     /**

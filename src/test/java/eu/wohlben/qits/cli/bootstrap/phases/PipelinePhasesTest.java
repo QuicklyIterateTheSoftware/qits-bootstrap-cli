@@ -16,6 +16,7 @@ import eu.wohlben.qits.cli.bootstrap.proc.ScriptedRunner;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -1369,5 +1370,16 @@ class PipelinePhasesTest {
                 .isEqualTo(" (3 pinned replayed, 2 already held)");
         assertThat(PipelinePhases.pinnedNote(0, 5))
                 .isEqualTo(" (0 pinned replayed, 5 already held)");
+    }
+
+    @Test
+    void aRecipeSelectingSCMReleaseIsRecognised(@org.junit.jupiter.api.io.TempDir Path src) throws Exception {
+        Path recipe = src.resolve(eu.wohlben.qits.cli.bootstrap.api.CiApi.RELEASE_CONFIG);
+        Files.createDirectories(recipe.getParent());
+        assertThat(PipelinePhases.selectsRelease(src)).isFalse();
+        Files.writeString(recipe, "name: release\nevent: SCMPublishTag\n");
+        assertThat(PipelinePhases.selectsRelease(src)).isFalse();
+        Files.writeString(recipe, "name: release\nevent: SCMRelease   # since 2026-09-04\nwhen:\n");
+        assertThat(PipelinePhases.selectsRelease(src)).isTrue();
     }
 }
