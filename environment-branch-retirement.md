@@ -123,7 +123,7 @@ Poll the request until its `state` is `RELEASED` and its `version` is set, then 
 row appear:
 
 ```sh
-curl -fsS -H 'X-Qits-User: qits-bootstrap' -H 'X-Qits-Roles: qits-platform:admin' \
+curl -fsS -H 'X-Qits-User: qits-bootstrap' -H 'X-Qits-Roles: qits:admin' \
   'http://dev-qits-deployments:8080/platform-deployments/api/deployments?environmentId=<id>'
 ```
 

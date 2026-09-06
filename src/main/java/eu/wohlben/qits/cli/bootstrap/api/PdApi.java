@@ -21,7 +21,7 @@ public class PdApi {
     /** Identity asserted on the private qits-net hop to the deployer's authorized read API. */
     private static final Map<String, String> ADMIN_HEADERS = Map.of(
             "X-Qits-User", "qits-bootstrap",
-            "X-Qits-Roles", "qits-platform:admin");
+            "X-Qits-Roles", "qits:admin");
 
     private final Http http;
     private final String base;
