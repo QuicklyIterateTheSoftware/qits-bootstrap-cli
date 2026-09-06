@@ -66,6 +66,11 @@ class PlatformModelTest {
         // application name the model is keyed by.
         assertThat(PlatformModel.repoPath("oci")).isEqualTo("images/qits-build-images-oci");
         assertThat(PlatformModel.repoPath("oci-workspace")).isEqualTo("images/qits-workspace-oci");
+        // The editor is an image build like the rest, and its model name is the one that does NOT
+        // end in -oci — the default arm would put it under services/ and clone the org's copy.
+        assertThat(PlatformModel.repoPath("oci-workspace-editor"))
+                .isEqualTo("images/qits-workspace-editor-oci");
+        assertThat(PlatformModel.archetype("oci-workspace-editor")).isEqualTo("IMAGE");
         // An image repository, not a service: the default arm would clone services/ from GitHub.
         assertThat(PlatformModel.repoPath("oci-postgresql")).isEqualTo("images/qits-database-oci");
         assertThat(PlatformModel.repoPath("eventstream"))
@@ -189,6 +194,7 @@ class PlatformModelTest {
         expected.put("oci", "qits-build-images-oci");
         expected.put("oci-postgresql", "qits-database-oci");
         expected.put("oci-workspace", "qits-workspace-oci");
+        expected.put("oci-workspace-editor", "qits-workspace-editor-oci");
         // The three that keep the name they have: the daemons, already in the grammar.
         expected.put("ci-daemon", "qits-ci-daemon");
         expected.put("projects-daemon", "qits-projects-daemon");

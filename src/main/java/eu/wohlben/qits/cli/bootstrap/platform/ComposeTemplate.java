@@ -1819,6 +1819,14 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_DEPLOYMENTS_URL=http://${ALIAS_DEPLOYMENTS}:8080
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_PROJECTS_URL=http://${ALIAS_PROJECTS}:8080
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_WORKSPACES_URL=http://${ALIAS_WORKSPACES}:8080
+            # THE SEVENTH TARGET, and the one whose absence was silent. qits-configuration holds the
+            # image pins, and a gc run asks it for them before it decides what a sweep may delete.
+            # The image's own default is the bare `http://qits-configuration:8080` — a platform-tier
+            # spelling of an ENVIRONMENT-tier service, so it is a name nothing on qits-net answers
+            # to. Unspelled here, every gc run's pins.images read failed with a connect error and the
+            # run skipped artifacts.plan and artifacts.sweep: registry retention had never once run
+            # on the fresh node, diagnosed 2026-09-06.
+            qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_CONFIGURATION_URL=http://${ALIAS_CONFIGURATION}:8080
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_ARTIFACTS_CLIENT_ENABLED=${MACHINE_CLIENT}
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_ARTIFACTS_AUTH_SERVER_URL=${IDP}
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_ARTIFACTS_CLIENT_ID=${ALIAS_PLATFORM_ORCHESTRATOR}
