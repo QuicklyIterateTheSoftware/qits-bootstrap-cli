@@ -3,6 +3,7 @@ package eu.wohlben.qits.cli.bootstrap.platform;
 import eu.wohlben.qits.cli.bootstrap.phases.SeedPhases;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -10,6 +11,25 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+/**
+ * <b>What is left here is what a golden file cannot say.</b> The extras a deployment starts with are
+ * content, and one application's block is now checked in whole under
+ * {@code src/test/resources/compose-golden/extras} — see {@link ComposeTemplateGoldenTest}, and its
+ * README for the arguments the folded tests carried. Three kinds of question stayed:
+ * <ul>
+ *   <li><b>The two files agree.</b> A deployer setting is spelled on the seed stack AND in the
+ *       extras on purpose, because the update argv {@code --env-rm}s what the extras do not state.
+ *       A golden of one file cannot say the other file matches it.
+ *   <li><b>A second rendering.</b> A domain, a second environment name, a two-build host — the
+ *       goldens are one platform, and everything that has to change with the tokens is proved by
+ *       rendering twice and comparing.
+ *   <li><b>A question asked across every block at once.</b> Which applications publish a port, hold
+ *       the socket, pin a store, claim a vhost. A golden proves one block; only a sweep can say
+ *       that no OTHER block answers yes.
+ * </ul>
+ * {@link ExtrasWiringGuardTest} is the fourth kind and lives on its own: not what a block holds, but
+ * what a block is allowed to hold at all.
+ */
 class ComposeTemplateTest {
 
     private static final String ENV = "prod";
@@ -127,6 +147,24 @@ class ComposeTemplateTest {
                 && line.endsWith(":");
     }
 
+    /**
+     * Every service the stack file starts, and nothing else. The same two-space shape names a
+     * network and a volume as well, so the top-level {@code services:} key is what is followed
+     * rather than the indentation alone.
+     */
+    private static List<String> serviceKeys(String stack) {
+        List<String> keys = new ArrayList<>();
+        boolean inServices = false;
+        for (String line : stack.lines().toList()) {
+            if (!line.isBlank() && !line.startsWith(" ") && !line.startsWith("#")) {
+                inServices = line.equals("services:");
+            } else if (inServices && isServiceKey(line)) {
+                keys.add(line.strip().substring(0, line.strip().length() - 1));
+            }
+        }
+        return keys;
+    }
+
     private static final String EXTRAS = "qits.platform.deployments.extras.";
 
     /** Every generated extras key, without the comments that explain them. */
@@ -137,6 +175,22 @@ class ComposeTemplateTest {
     private static List<String> extrasKeys(Map<String, String> values) {
         return ComposeTemplate.extras(values).lines()
                 .filter(line -> line.startsWith(EXTRAS))
+                .toList();
+    }
+
+    /**
+     * The applications whose own generated lines carry a fragment, in name order.
+     * <p>
+     * This is the shape of question the goldens deliberately do not answer. A golden says what one
+     * block holds; only a sweep over every block at once can say WHICH applications hold a thing
+     * and, more to the point, that no other one does.
+     */
+    private static List<String> applicationsWith(String fragment) {
+        return extrasKeys().stream()
+                .filter(line -> line.contains(fragment))
+                .map(line -> line.substring(EXTRAS.length(), line.indexOf('.', EXTRAS.length())))
+                .distinct()
+                .sorted()
                 .toList();
     }
 
@@ -211,6 +265,16 @@ class ComposeTemplateTest {
         for (String name : PlatformModel.CORE) {
             assertThat(compose).contains("\n  " + PlatformModel.wireAlias(name, ENV) + ":\n");
         }
+        // THE SEED IS EXACTLY CORE, and the negative half is the rule rather than a list of names.
+        // qits-platform-orchestrator, qits-platform-maintenance and qits-platform-system are
+        // deployed through the pipeline like every other ordinary application: nothing calls them
+        // during the seed window, so nothing waits on them — and a seed block for one of them
+        // would be a service standing beside its own deployed container, which no `depends_on`
+        // and no rerun ever recovers from.
+        assertThat(serviceKeys(compose)).containsExactlyInAnyOrderElementsOf(
+                PlatformModel.CORE.stream()
+                        .map(name -> PlatformModel.wireAlias(name, ENV))
+                        .toList());
         // One component replaced both: neither ancestor is in the seed any more.
         assertThat(compose).doesNotContain("\n  qits-cd:\n")
                 .doesNotContain("\n  qits-serviceregistry:\n");
@@ -556,39 +620,6 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>qits-configuration is a PLATFORM service with a gate and nothing else.</b> Its image ships
-     * the bare {@code qits-configuration} as the audience, and since the plane move that is the
-     * right name rather than merely an un-tiered one — the line stays spelled because the idp is
-     * seeded from the same derivation and an address nobody states is an address nobody notices
-     * moving.
-     * <p>
-     * No mount, no publish and no datasource: {@code resources: postgresql:db} in its own
-     * deployments.yml is what provisions its store, and a triple here would be an operator pin that
-     * outlives the deployer's next rotation. One network alias, and it is transitional: the old
-     * env-prefixed name kept answering for the callers that are still holding it.
-     */
-    @Test
-    void theConfigurationServiceIsGatedAndOtherwisePlain() {
-        String configuration = extras("qits-configuration");
-
-        assertThat(configuration)
-                .contains("env.QITS_AUTH_MACHINE_REQUIRED=true")
-                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=qits-configuration")
-                .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp")
-                .contains("env.QITS_OBSERVABILITY_URL=http://prod-qits-observability:8080");
-        // THE OLD NAME, STILL ANSWERING. The live deployer and the live orchestrator hold
-        // prod-qits-configuration in their running environments and only take the new one at their
-        // next deploy — so the container claims both names until the cutover feature drops this.
-        assertThat(configuration).contains(".aliases[0]=prod-qits-configuration");
-        assertThat(configuration).doesNotContain(".mounts[")
-                .doesNotContain(".publishes[")
-                .doesNotContain(".groups[")
-                .doesNotContain("QITS_RESOURCE_DB_")
-                // It validates and mints nothing, so it holds no oidc client of its own.
-                .doesNotContain("QUARKUS_OIDC_CLIENT_");
-    }
-
-    /**
      * <b>THE FLIP, stated as configuration so it survives.</b> The boot also applies these values to
      * the RUNNING deployer, and that alone would be reverted by the deployer's own next deployment
      * — which is precisely the failure class qits-configuration exists to kill. These lines are what
@@ -665,84 +696,6 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>The technical processes service, and the four credentials one process needs.</b> Its gc
-     * run asks the deployer and ci for the pins, hands them to qits-artifacts, and tells
-     * qits-containers what to reclaim — four peers behind four different audiences, so four named
-     * oidc clients rather than one reused token. All four present this service's own id, and the
-     * targets are wire aliases in both shapes: the environment services carry the tier, the
-     * deployer and the configuration store carry none. qits-configuration was in the first set
-     * until it moved plane on 2026-09-07, which is exactly the kind of move a spelled name would
-     * not have followed.
-     */
-    @Test
-    void theOrchestratorHoldsAClientPerPeerAndDialsEachOneByItsAlias() {
-        String orchestrator = extras("qits-platform-orchestrator");
-
-        // Its own gate. The audience is the bare alias: it is a platform service, so there is no
-        // tier in the name a peer would validate against.
-        assertThat(orchestrator)
-                .contains("env.QITS_AUTH_MACHINE_REQUIRED=true")
-                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=qits-platform-orchestrator")
-                .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp")
-                .contains("env.QITS_OBSERVABILITY_URL=http://prod-qits-observability:8080");
-        // Where each step goes. The deployer's is the one with no tier in it.
-        assertThat(orchestrator)
-                .contains("env.QITS_ORCHESTRATOR_TARGETS_ARTIFACTS_URL="
-                        + "http://prod-qits-artifacts:8080")
-                .contains("env.QITS_ORCHESTRATOR_TARGETS_CONTAINERS_URL="
-                        + "http://prod-qits-containers:8080")
-                .contains("env.QITS_ORCHESTRATOR_TARGETS_CI_URL=http://prod-qits-ci:8080")
-                .contains("env.QITS_ORCHESTRATOR_TARGETS_DEPLOYMENTS_URL="
-                        + "http://qits-deployments:8080")
-                // WHERE THE IMAGE PINS ARE READ FROM, and the target whose absence was silent: the
-                // image's own default is the bare qits-configuration, which was a name nothing on
-                // qits-net answered to while the store was a tier's — every gc run's pins.images
-                // read failed with a connect error and the sweep was skipped rather than refused.
-                // The plane move made the default correct; the line is stated anyway, and derived,
-                // which is why this expectation needed no editing when the name changed under it.
-                .contains("env.QITS_ORCHESTRATOR_TARGETS_CONFIGURATION_URL="
-                        + "http://" + PlatformModel.wireAlias("configuration", ENV) + ":8080")
-                .contains("env.QITS_ORCHESTRATOR_TARGETS_CONFIGURATION_URL="
-                        + "http://qits-configuration:8080");
-        // Four clients, and the AUDIENCE is what makes them four: each peer validates its own, so
-        // one client with one audience would be a run whose every step but one is a 401.
-        assertThat(orchestrator)
-                .contains("env.QUARKUS_OIDC_CLIENT_ARTIFACTS_GRANT_OPTIONS_CLIENT_AUDIENCE="
-                        + "prod-qits-artifacts")
-                .contains("env.QUARKUS_OIDC_CLIENT_CONTAINERS_GRANT_OPTIONS_CLIENT_AUDIENCE="
-                        + "prod-qits-containers")
-                .contains("env.QUARKUS_OIDC_CLIENT_CI_GRANT_OPTIONS_CLIENT_AUDIENCE="
-                        + "prod-qits-ci")
-                .contains("env.QUARKUS_OIDC_CLIENT_DEPLOYMENTS_GRANT_OPTIONS_CLIENT_AUDIENCE="
-                        + "qits-deployments");
-        for (String client : List.of("ARTIFACTS", "CONTAINERS", "CI", "DEPLOYMENTS")) {
-            assertThat(orchestrator).as("the %s client", client)
-                    .contains("env.QUARKUS_OIDC_CLIENT_" + client + "_CLIENT_ENABLED=true")
-                    .contains("env.QUARKUS_OIDC_CLIENT_" + client + "_AUTH_SERVER_URL="
-                            + "http://qits-platform-idp:8080/idp")
-                    // This service's OWN id, never a borrowed one: a refused step has to name the
-                    // service that was refused.
-                    .contains("env.QUARKUS_OIDC_CLIENT_" + client + "_CLIENT_ID="
-                            + "qits-platform-orchestrator")
-                    .contains("env.QUARKUS_OIDC_CLIENT_" + client + "_CREDENTIALS_SECRET="
-                            + "secret-qits-platform-orchestrator");
-        }
-        // The DEFAULT unnamed client stays off: the extension creates it whether or not anything
-        // injects it, and an enabled client with no auth-server-url fails the boot.
-        assertThat(orchestrator).doesNotContain("env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED");
-        // It starts no container and holds no store of anyone else's: no socket, no group, no
-        // publish, and its own run history is declared in its deployments.yml rather than pinned.
-        assertThat(orchestrator).doesNotContain(".mounts[")
-                .doesNotContain(".publishes[")
-                .doesNotContain(".groups[")
-                .doesNotContain("QITS_RESOURCE_DB_");
-        // And no seed service either: it is deployed through the pipeline like every other
-        // ordinary application, near the end of the train.
-        assertThat(ComposeTemplate.compose(tokens()))
-                .doesNotContain("\n  qits-platform-orchestrator:\n");
-    }
-
-    /**
      * <b>The orchestrator's client carries BOTH planes' system roles, and its process is why.</b>
      * The gc routes of qits-artifacts, qits-containers and qits-ci are {@code qits:system}; the
      * deployer's pin union at {@code /platform-deployments/api/pins} is {@code qits-platform:system}.
@@ -771,88 +724,6 @@ class ComposeTemplateTest {
         assertThat(PlatformModel.idpAudiences(ENV)).contains("prod-qits-artifacts")
                 .contains("prod-qits-containers").contains("prod-qits-ci")
                 .contains("qits-deployments");
-    }
-
-    /**
-     * <b>The dependency inventory, and the three credentials one scan-and-bump needs.</b> It reads
-     * the catalog from qits-projects, the manifests from qits-githost and asks qits-ci to apply a
-     * bump — three peers behind three different audiences, so three named oidc clients rather than
-     * one reused token. The registries it reads versions from are unguarded on qits-net, so it
-     * holds no client for them and this file emits none.
-     */
-    @Test
-    void theMaintenanceServiceHoldsAClientPerGuardedPeerAndReadsBothRegistriesBare() {
-        String maintenance = extras("qits-platform-maintenance");
-
-        // Its own gate. The audience is the bare alias: it is a platform service, so there is no
-        // tier in the name a peer would validate against.
-        assertThat(maintenance)
-                .contains("env.QITS_AUTH_MACHINE_REQUIRED=true")
-                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=qits-platform-maintenance")
-                .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp")
-                .contains("env.QITS_OBSERVABILITY_URL=http://prod-qits-observability:8080");
-        // What it reads and what it asks. All three are this tier's wire aliases.
-        assertThat(maintenance)
-                .contains("env.QITS_MAINTENANCE_TARGETS_PROJECTS_URL="
-                        + "http://prod-qits-projects:8080")
-                .contains("env.QITS_MAINTENANCE_TARGETS_GITHOST_URL="
-                        + "http://prod-qits-githost:8080")
-                .contains("env.QITS_MAINTENANCE_TARGETS_CI_URL=http://prod-qits-ci:8080");
-        // Where a version comes from: the hosted registries for an internal dependency, the
-        // mirror's pull-through caches for an external one. The store carries the tier, the mirror
-        // does not — one cache per machine.
-        assertThat(maintenance)
-                .contains("env.QITS_MAINTENANCE_REGISTRIES_MAVEN_URL="
-                        + "http://prod-qits-artifacts:8080/artifacts/maven/maven")
-                .contains("env.QITS_MAINTENANCE_REGISTRIES_NPM_URL="
-                        + "http://prod-qits-artifacts:8080/artifacts/npm/npm")
-                .contains("env.QITS_MAINTENANCE_REGISTRIES_OCI_URL="
-                        + "http://prod-qits-artifacts:8080/v2")
-                .contains("env.QITS_MAINTENANCE_MIRROR_MAVEN_URL="
-                        + "http://qits-platform-mirror:8080/artifacts/maven/central")
-                .contains("env.QITS_MAINTENANCE_MIRROR_NPM_URL="
-                        + "http://qits-platform-mirror:8080/artifacts/npm/npmjs");
-        // WHICH ENVIRONMENT A BUMP RAN IN, recorded on every bump row. It is not QITS_ENVIRONMENT:
-        // this service belongs to no tier, and the test below asserts it is told none.
-        assertThat(maintenance).contains("env.QITS_MAINTENANCE_ENVIRONMENT=prod");
-        // Three clients, and the AUDIENCE is what makes them three: each peer validates its own.
-        assertThat(maintenance)
-                .contains("env.QUARKUS_OIDC_CLIENT_PROJECTS_GRANT_OPTIONS_CLIENT_AUDIENCE="
-                        + "prod-qits-projects")
-                .contains("env.QUARKUS_OIDC_CLIENT_GITHOST_GRANT_OPTIONS_CLIENT_AUDIENCE="
-                        + "prod-qits-githost")
-                .contains("env.QUARKUS_OIDC_CLIENT_CI_GRANT_OPTIONS_CLIENT_AUDIENCE="
-                        + "prod-qits-ci");
-        for (String client : List.of("PROJECTS", "GITHOST", "CI")) {
-            assertThat(maintenance).as("the %s client", client)
-                    .contains("env.QUARKUS_OIDC_CLIENT_" + client + "_CLIENT_ENABLED=true")
-                    .contains("env.QUARKUS_OIDC_CLIENT_" + client + "_AUTH_SERVER_URL="
-                            + "http://qits-platform-idp:8080/idp")
-                    // This service's OWN id, never a borrowed one: a refused read has to name the
-                    // service that was refused.
-                    .contains("env.QUARKUS_OIDC_CLIENT_" + client + "_CLIENT_ID="
-                            + "qits-platform-maintenance")
-                    .contains("env.QUARKUS_OIDC_CLIENT_" + client + "_CREDENTIALS_SECRET="
-                            + "secret-qits-platform-maintenance");
-        }
-        // The two registry clients stay OFF, and the service ships them disabled: the registry
-        // routes and the mirror's proxies are unguarded on qits-net, so enabling them here would
-        // be a token nothing asks for against an audience nothing validates.
-        assertThat(maintenance).doesNotContain("env.QUARKUS_OIDC_CLIENT_ARTIFACTS_")
-                .doesNotContain("env.QUARKUS_OIDC_CLIENT_MIRROR_");
-        // The DEFAULT unnamed client stays off for the orchestrator's reason: the extension creates
-        // it either way, and an enabled client with no auth-server-url fails the boot.
-        assertThat(maintenance).doesNotContain("env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED");
-        // It starts no container and holds no store of anyone else's: no socket, no group, no
-        // publish, and its own inventory is declared in its deployments.yml rather than pinned.
-        assertThat(maintenance).doesNotContain(".mounts[")
-                .doesNotContain(".publishes[")
-                .doesNotContain(".groups[")
-                .doesNotContain("QITS_RESOURCE_DB_");
-        // And no seed service: nothing calls it, so nothing waits on it. It is deployed through
-        // the pipeline like every other ordinary application, late in the train.
-        assertThat(ComposeTemplate.compose(tokens()))
-                .doesNotContain("\n  qits-platform-maintenance:\n");
     }
 
     /**
@@ -891,56 +762,6 @@ class ComposeTemplateTest {
                 .contains("prod-qits-githost").contains("prod-qits-ci");
         // And the client itself is named, or the idp answers invalid_client to a secret it holds.
         assertThat(PlatformModel.idpClients(ENV)).contains("qits-platform-maintenance");
-    }
-
-    /**
-     * <b>The base system panels are the THIRD holder of the host's docker socket</b>, after the
-     * container orchestrator and the deployer, and this block is the deliberate act of granting it.
-     * The alternative was an exec endpoint on qits-containers' machine API, which would put a shell
-     * into any container behind a credential every service on qits-net can mint; the power stays in
-     * one admin console behind qits:admin instead, and a console that owns the PTYs has to hold the
-     * socket itself.
-     */
-    @Test
-    void theSystemConsoleGetsTheSocketTheSocketGroupAndItsMirrorCredential() {
-        String system = extras("qits-platform-system");
-
-        // The socket, and the group that makes it usable by a container running as uid 1001. The
-        // mount says `bind` rather than leaving the kind to a leading slash: a mistyped path that
-        // fell back to a named volume would be a console with no daemon and no error.
-        assertThat(system)
-                .contains(".mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock")
-                .contains(".groups[0]=988");
-        // The credential mount and the variable that makes the docker CLI look at it — the
-        // container has no home, so DOCKER_CONFIG is the whole reason the file is read.
-        assertThat(system)
-                .contains(".mounts[1]=volume:qits-platform-system-config:/work/config")
-                .contains("env.DOCKER_CONFIG=/work/config");
-        // Its own gate. The audience is the bare alias: it is a platform service, so there is no
-        // tier in the name a peer would validate against.
-        assertThat(system)
-                .contains("env.QITS_AUTH_MACHINE_REQUIRED=true")
-                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=qits-platform-system")
-                .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp")
-                .contains("env.QITS_OBSERVABILITY_URL=http://prod-qits-observability:8080");
-        // THE GLANCES IMAGE: a repo and a version, so a bump is one value. `hub/` is the mirror's
-        // docker.io upstream, the prefix every committed Dockerfile uses, and the tag is pinned to
-        // the `-full` variant — the one carrying the docker plugin glances lists containers with.
-        assertThat(system)
-                .contains("env.QITS_SYSTEM_GLANCES_IMAGE_REPO="
-                        + "mirror.prod.localhost:8080/hub/nicolargo/glances")
-                .contains("env.QITS_SYSTEM_GLANCES_IMAGE_VERSION=4.5.6-full");
-        assertThat(system).doesNotContain("glances:latest");
-        // It calls no peer, so it mints nothing: no named oidc client, and not the default one
-        // either — the extension creates that regardless, and an enabled client with no
-        // auth-server-url fails the boot.
-        assertThat(system).doesNotContain("env.QUARKUS_OIDC_CLIENT_");
-        // Stateless: every answer is read live from the daemon, and the terminal registry is in
-        // memory. No store to inject and no port of its own — it is behind the edge like the rest.
-        assertThat(system).doesNotContain("QITS_RESOURCE_").doesNotContain(".publishes[");
-        // Not a seed service: nothing calls it, so nothing waits on it.
-        assertThat(ComposeTemplate.compose(tokens()))
-                .doesNotContain("\n  qits-platform-system:\n");
     }
 
     /**
@@ -1712,64 +1533,50 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>The release executor's two addresses and its third client.</b> qits-projects refuses to
-     * release at all while it cannot name a git host, and both keys ship unset — a tier that does
-     * not release never learns one. This platform releases, so both are spelled, and the ci client
-     * is what lets the release gate read qits-ci's active runs and cancel what it supersedes.
+     * <b>NOTHING RELEASES DURING THE SEED WINDOW, so the seed drives no release.</b> The release
+     * executor's addresses and its three named clients are the DEPLOYED qits-projects' — the pair
+     * that lets it tag through the git host and cancel the ci runs it supersedes, and the third
+     * address that enriches an announcement with the repositories downstream of the one being
+     * released. That third one switches nothing on and is best-effort by construction: unset,
+     * unreachable, refused or 404 and the event simply carries no such key, so a platform without
+     * it releases exactly as well.
+     * <p>
+     * The seed carries none of it, and this is the side of that fact a golden cannot hold: the
+     * blocks are in {@code compose-golden/extras/qits-projects.properties}, the ABSENCE is here,
+     * because it is an absence from the other file.
      */
     @Test
-    void projectsIsToldWhereToDriveAReleaseAndWithWhichCredential() {
-        String projects = extras("qits-projects");
+    void theSeedProjectsServiceDrivesNoRelease() {
+        String seeded = serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-projects");
 
-        assertThat(projects)
-                .contains("env.QITS_PROJECTS_RELEASE_REQUESTS_GITHOST_URL=http://prod-qits-githost:8080")
-                .contains("env.QITS_PROJECTS_RELEASE_REQUESTS_CI_URL=http://prod-qits-ci:8080")
-                .contains("env.QUARKUS_OIDC_CLIENT_CI_CLIENT_ID=prod-qits-projects")
-                .contains("env.QUARKUS_OIDC_CLIENT_CI_GRANT_OPTIONS_CLIENT_AUDIENCE=prod-qits-ci")
-                .contains("env.QUARKUS_OIDC_CLIENT_CI_CREDENTIALS_SECRET=");
-        // The retired address: it named qits-workspaces' release door, which is gone.
-        assertThat(projects).doesNotContain("RELEASE_REQUESTS_WORKSPACES_URL");
+        assertThat(seeded).doesNotContain("RELEASE_REQUESTS_GITHOST_URL")
+                .doesNotContain("RELEASE_REQUESTS_CI_URL")
+                .doesNotContain("RELEASE_REQUESTS_MAINTENANCE_URL")
+                .doesNotContain("QUARKUS_OIDC_CLIENT_CI_")
+                .doesNotContain("QUARKUS_OIDC_CLIENT_MAINTENANCE_");
+        // The retired address, which named qits-workspaces' release door: that door is gone, and a
+        // generated line naming a key nothing reads outlives its reader and reads like
+        // configuration for years.
+        assertThat(ComposeTemplate.extras(tokens())).doesNotContain("RELEASE_REQUESTS_WORKSPACES_URL");
     }
 
     /**
-     * <b>The third address enriches an announcement and switches nothing on.</b> A fold reads the
-     * repositories downstream of the one being released out of the maintenance catalog and puts
-     * them on its event, which is what lets qits-ci order its queue by them. It is best-effort by
-     * construction — unset, unreachable, refused or 404 and the event simply carries no such key —
-     * so a platform without it releases exactly as well, and the SEED carries it no more than it
-     * carries the pair.
+     * <b>The golden directory is the checked-in list of what this file configures.</b> The array
+     * that used to stand here was a second list to keep in step, and it had already drifted — it
+     * named fifteen applications where the file renders nineteen. The files under
+     * {@code src/test/resources/compose-golden/extras} cannot drift:
+     * {@link ComposeTemplateGoldenTest} fails on a file with no application AND on an application
+     * with no file, so an application that leaves this file leaves through a DELETED golden,
+     * reviewed as the decision it is rather than as a line nobody noticed.
      */
-    @Test
-    void projectsIsToldWhereToReadTheDownstreamClosureAndWithWhichCredential() {
-        String projects = extras("qits-projects");
-
-        assertThat(projects)
-                .contains("env.QITS_PROJECTS_RELEASE_REQUESTS_MAINTENANCE_URL="
-                        + "http://qits-platform-maintenance:8080")
-                // The fourth named client, and the audience is what makes it a fourth: the catalog
-                // refuses a bearer minted for ci or for the git host.
-                .contains("env.QUARKUS_OIDC_CLIENT_MAINTENANCE_CLIENT_ENABLED=true")
-                .contains("env.QUARKUS_OIDC_CLIENT_MAINTENANCE_CLIENT_ID=prod-qits-projects")
-                .contains("env.QUARKUS_OIDC_CLIENT_MAINTENANCE_GRANT_OPTIONS_CLIENT_AUDIENCE="
-                        + "qits-platform-maintenance")
-                .contains("env.QUARKUS_OIDC_CLIENT_MAINTENANCE_CREDENTIALS_SECRET=")
-                .contains("env.QUARKUS_OIDC_CLIENT_MAINTENANCE_AUTH_SERVER_URL=");
-        // Nothing releases during the seed window, so there is no announcement to enrich.
-        String seeded = serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-projects");
-        assertThat(seeded).doesNotContain("RELEASE_REQUESTS_MAINTENANCE_URL")
-                .doesNotContain("QUARKUS_OIDC_CLIENT_MAINTENANCE_");
-    }
-
     @Test
     void theExtrasCoverEveryApplicationThatNeedsMoreThanItsImage() {
         String properties = ComposeTemplate.extras(tokens());
 
-        for (String application : new String[]{"qits-platform-edge",
-                "qits-artifacts", "qits-platform-mirror", "qits-githost", "qits-containers",
-                "qits-ci", "qits-deployments", "qits-platform-idp",
-                "qits-stt", "qits-projects", "qits-workspaces", "qits-events",
-                "qits-docs", "qits-observability", "qits-oci-postgresql"}) {
-            assertThat(properties).contains(EXTRAS + application + ".");
+        assertThat(ComposeTemplateGoldenTest.goldenApplications()).isNotEmpty();
+        for (String application : ComposeTemplateGoldenTest.goldenApplications()) {
+            assertThat(properties).as("extras of %s", application)
+                    .contains(EXTRAS + application + ".");
         }
         // The free-form predecessor is gone from the KEYS — the header names it once, to say that a
         // deployment still carrying it configures nothing.
@@ -1889,33 +1696,6 @@ class ComposeTemplateTest {
                 .filter(line -> line.strip().startsWith("QITS_"))
                 .toList())
                 .allSatisfy(line -> assertThat(line).doesNotContain("QITS_CI_INTAKE_URL"));
-    }
-
-    @Test
-    void theDeployersOwnDeploymentInheritsItsConfigVolume() {
-        // The self-update handoff: without this mount the successor comes up with no configuration
-        // at all and every later deployment loses its volumes and its datasource env.
-        String deployer = extras("qits-deployments");
-
-        assertThat(deployer).contains(".mounts[0]=volume:qits-deployments-config:/work/config");
-        assertThat(deployer).contains(".mounts[1]=bind:/var/run/docker.sock:/var/run/docker.sock");
-        assertThat(deployer).contains("env.QITS_RESOURCE_DB_URL="
-                + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_deployments");
-        assertThat(deployer).contains("env.QITS_RESOURCE_DB_USERNAME=qits_deployments");
-        assertThat(deployer).contains("env.QITS_RESOURCE_DB_PASSWORD=fedcba9876543210");
-        assertThat(deployer).doesNotContain("QITS_ENVIRONMENT");
-        assertThat(deployer).contains(
-                "env.QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD=0123456789abcdef");
-        // The bus, and the ONLY thing the deployer's bus membership adds to this line: the wire
-        // name. A subscriber pointed at the pre-rename qits-events:8080 receives nothing.
-        assertThat(deployer).contains("env.QITS_EVENTS_URL=http://qits-events:8080");
-        // ONE TRIPLE, NOT TWO. The outbox is declared in the deployer's own deployments.yml, so a
-        // running deployer provisions it for its successor and injects the triple from the registry
-        // row that holds the current password — pinning it here would outlive the next rotation.
-        assertThat(deployer).doesNotContain("QITS_RESOURCE_EVENTSTREAM_");
-        // The store moved off the file H2, and its volume went with it: /data held nothing else.
-        assertThat(deployer).doesNotContain("QUARKUS_DATASOURCE_PLATFORMDEPLOYMENTS_JDBC_URL=")
-                .doesNotContain("qits-deployments-data:/data");
     }
 
     /**
@@ -2058,58 +1838,58 @@ class ComposeTemplateTest {
     }
 
     /**
-     * THE GUARD ON THE WHOLE MOVE. Every service that flipped to postgres declares its store in its
-     * own deployments.yml, so the deployer injects the triple and a datasource line here would be an
-     * operator pin that outlives the next password rotation.
+     * THE GUARD ON THE WHOLE MOVE, and it is one rule rather than a negative per application. Every
+     * service that flipped to postgres declares its store in its own deployments.yml, so the
+     * deployer injects the triple, its injection comes first and the last assignment of a key wins
+     * — a triple pinned here would win and never be rotated again.
      * <p>
      * NO FILE STORE IS LEFT EITHER. qits-artifacts was the last file database and the git host the
-     * last blob directory, so the whole byte plane deploys stateless and the only mounts in this
-     * file are qits-projects' and qits-workspaces' trees of files.
+     * last blob directory, so the whole byte plane deploys stateless.
+     * <p>
+     * The per-application negatives this used to spell one block at a time are the goldens' now: a
+     * block compared whole says what it does not carry as exactly as what it does. What is left
+     * here is the part no single block can state — WHICH applications, out of all of them, are
+     * allowed to answer yes.
      */
     @Test
     void noDeploymentCarriesAFileDatabase() {
-        assertThat(extrasKeys().stream().filter(line -> line.contains("jdbc:h2")).toList())
-                .isEmpty();
+        assertThat(extrasKeys()).allSatisfy(line -> assertThat(line)
+                .doesNotContain("jdbc:h2")
+                .doesNotContain("QITS_ARTIFACTS_BLOBS_DIR"));
 
-        // The hosted store is stateless: one database holds the catalog and the blob bytes both, so
-        // there is no mount and no blobs directory — and no triple either, because the deployer
-        // injects it from `resources: postgresql:db`.
-        assertThat(extras("qits-artifacts")).doesNotContain("QITS_RESOURCE_")
-                .doesNotContain(".mounts[")
-                .doesNotContain("QITS_ARTIFACTS_BLOBS_DIR");
-        // The cache half, on exactly the same terms.
-        assertThat(extras("qits-platform-mirror")).doesNotContain("QITS_RESOURCE_")
-                .doesNotContain(".mounts[")
-                .doesNotContain("QITS_ARTIFACTS_BLOBS_DIR");
-        // The git host, the last of the three to move: packs and reftables are rows in qits_githost,
-        // so it has no mount either. Its two triples stay declared rather than pinned.
-        assertThat(extras("qits-githost")).doesNotContain("QITS_RESOURCE_")
-                .doesNotContain(".mounts[")
-                .doesNotContain("QITS_ARTIFACTS_BLOBS_DIR");
-        // No application anywhere is told where to put blobs any more: not one store is a directory.
-        assertThat(ComposeTemplate.extras(tokens())).doesNotContain("QITS_ARTIFACTS_BLOBS_DIR");
+        // The deployer is the one application that may pin its own store, because it is what does
+        // the injecting and nothing injects into it. Every other name appearing here would be a
+        // password this bootstrap issued outliving the rotation that replaces it.
+        assertThat(applicationsWith("env.QITS_RESOURCE_")).containsExactly("qits-deployments");
 
-        // No application pins a resource triple either: the deployer's injection comes first and
-        // the last assignment of a key wins, so a pin here would win and never be rotated.
-        assertThat(ComposeTemplate.extras(tokens())).doesNotContain("env.QITS_RESOURCE_DB_URL=jdbc:"
-                + "postgresql://prod-qits-oci-postgresql:5432/qits_ci");
-        assertThat(extras("qits-ci")).doesNotContain("QITS_RESOURCE_")
-                .doesNotContain(".mounts[");
-        assertThat(extras("qits-events")).doesNotContain("QITS_RESOURCE_")
-                .doesNotContain(".mounts[");
-        // The orchestrator declares two stores and keeps no volume: the socket is the only thing
-        // it mounts.
-        assertThat(extras("qits-containers")).doesNotContain("QITS_RESOURCE_")
-                .doesNotContain("qits-containers-data");
-        // THE COUNTER-EXAMPLE, and the only mounts left in this file: /data is these two services'
-        // own tree of files, which no database replaced. They are what proves the sweep above took
-        // the byte plane on purpose rather than every mount it could reach.
-        assertThat(extras("qits-projects")).contains(".mounts[0]=volume:qits-projects-data:/data")
-                .contains("env.QITS_PROJECTS_DATA_DIR=/data/mirrors")
-                .doesNotContain("QITS_RESOURCE_");
-        assertThat(extras("qits-workspaces"))
-                .contains(".mounts[0]=volume:qits-workspaces-data:/data")
-                .doesNotContain("QITS_RESOURCE_");
+        // THE COUNTER-EXAMPLE, and it is what proves the sweep took the byte plane on purpose
+        // rather than every mount it could reach: a `-data` volume is a service's own tree of files,
+        // which no database replaced. qits-containers is absent from it and was not: its registry
+        // of rows is in the postgres beside it now.
+        assertThat(applicationsWith("-data:/")).containsExactly(
+                "qits-oci-postgresql", "qits-projects", "qits-stt", "qits-workspaces");
+    }
+
+    /**
+     * <b>THE HOST'S DOCKER SOCKET IS GRANTED TO THREE APPLICATIONS, and each grant is a block
+     * somebody wrote on purpose.</b> qits-containers starts every workload on the host,
+     * qits-deployments is a deployer, and qits-platform-system owns the admin console's terminals.
+     * A fourth is a decision and not a mount: it needs the bind AND {@code groups[0]}, which is what
+     * makes the socket usable by a container running as uid 1001, plus a comment saying why the
+     * power belongs there rather than behind an endpoint on one of the three.
+     * <p>
+     * This is the assertion the goldens cannot make. Each of the three blocks holds its own mount
+     * and its own group, and a golden proves each of them; only a question asked across every block
+     * at once can say that there are three of them.
+     */
+    @Test
+    void theHostsSocketIsGrantedToExactlyThreeApplications() {
+        assertThat(applicationsWith("/var/run/docker.sock")).containsExactly(
+                "qits-containers", "qits-deployments", "qits-platform-system");
+        // The group is the other half, and either one without the other is a container that cannot
+        // use what it was given — so the two lists are the same three names.
+        assertThat(applicationsWith(".groups[")).containsExactly(
+                "qits-containers", "qits-deployments", "qits-platform-system");
     }
 
     /**
