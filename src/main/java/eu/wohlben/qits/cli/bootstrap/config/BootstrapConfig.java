@@ -170,14 +170,19 @@ public interface BootstrapConfig {
      * <b>Names the edge's certificate must carry beyond the wildcards it derives</b>, separated by
      * commas or whitespace and written whole or relative to the domain.
      * <p>
-     * The edge orders the apex, {@code *.<domain>} and {@code *.<env>.<domain>}, which is every
-     * depth its Host reading has. A wildcard covers ONE label, so nothing it orders reaches
-     * {@code editor.<project>.<domain>} — the web editor's origin, one per project. Those names go
-     * here, one per project: {@code QITS_ACME_EXTRA_SANS=editor.acme,editor.gizmo}.
+     * The edge derives the apex, {@code *.<domain>}, {@code *.<env>.<domain>} per environment and
+     * {@code *.<project>.<domain>} plus {@code *.<project>.<env>.<domain>} per project — every
+     * depth its Host reading has, the project tier included. A wildcard covers ONE label, so what
+     * belongs here is a name at some OTHER shape:
+     * {@code QITS_ACME_EXTRA_SANS=status.support,legacy.acme.eu-west}.
+     * <p>
+     * <b>Not one per project any more.</b> That was the debt: the project wildcards are derived
+     * live from qits-projects' events now, so a project created after this boot reaches the
+     * certificate on its own. The knob is empty on an ordinary platform.
      * <p>
      * Generic on purpose. It says "put these names on the certificate" and knows nothing about
      * editors or projects; {@link ExtraSans} is where the shape and the refusals live, and the
-     * closing report is where a project whose name is missing is named.
+     * closing report prints what a run resolved, against the 100-name cap.
      * <p>
      * Ignored with no domain, because there is nothing to issue for.
      */

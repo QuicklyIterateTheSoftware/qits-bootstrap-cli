@@ -499,13 +499,20 @@ public final class ComposeTemplate {
                   QITS_EDGE_APPS_GITHOST_HOST_PATTERN: "{env}-qits-githost"
                   QITS_EDGE_APPS_GITHOST_AUDIENCE_PATTERN: "{env}-qits-githost"
                   # A FOURTH NAME, AND IT IS READ AT A DIFFERENT DEPTH. The three above are
-                  # <app>.<env>.<domain>; the web editor is editor.<project>.<domain>, one origin
-                  # per PROJECT. The edge needs no code for it: it reads at most the first two
-                  # labels, `editor` is a configured app and `<project>` is not a known environment,
-                  # so the name falls to the <app>.<domain> reading and lands on the DEFAULT
-                  # environment. That is why {env} below always resolves to ${ENV_NAME} here, and
-                  # why a project slug that spells an environment name would break it — the label
-                  # would be read as a tier and the editor would be served out of the wrong one.
+                  # <app>.<env>.<domain>; the web editor is editor.<project>.<env>.<domain>, one
+                  # origin per PROJECT per environment. The edge needs no code for it: it reads at
+                  # most the first three labels, `editor` is a configured app, `<project>` is the
+                  # project tier and the environment is spelled by the name itself — position 2 —
+                  # so {env} resolves out of the HOST rather than out of a default. The short
+                  # editor.<project>.<domain> form is retired with the generic <app>.<domain>
+                  # fallthrough: every public name spells its environment now, and only the bare
+                  # apex still serves the default one.
+                  #
+                  # A PROJECT SLUG THAT SPELLS AN ENVIRONMENT NAME STILL BREAKS THIS, which is why
+                  # the reserved slugs stay. The edge asks position 1 whether it is an environment
+                  # before it reads it as a project, so a project called `prod` would make
+                  # editor.prod.<env>.<domain> parse as the app `editor` in the tier `prod` over an
+                  # apex of `<env>.<domain>` — the wrong tier and a domain that is not the domain.
                   # qits-projects refuses those slugs (QITS_PROJECTS_RESERVED_SLUGS) and the
                   # `environment` phase refuses the mirror image of the same collision.
                   #
@@ -1019,13 +1026,15 @@ public final class ComposeTemplate {
                   # by alias and nothing is cloned.
                   QITS_STARTUP_SEED_RECONCILE_REPOSITORIES: "false"
                   # THE SLUGS NO PROJECT MAY TAKE, and the list is this platform's environment
-                  # names. A project slug is the SECOND label of editor.<project>.<domain>, which
-                  # is the position the edge reads an environment at — so a project called `prod`
-                  # would make editor.prod.<domain> parse as the app `editor` in the tier `prod`
-                  # rather than as that project's editor, and the same collision would take
-                  # <app>.<project>.<domain> for every other app with it. qits-projects refuses
-                  # these slugs; the `environment` phase refuses the mirror image, an environment
-                  # named after a project that already exists.
+                  # names. A project slug is the SECOND label of editor.<project>.<env>.<domain>,
+                  # and that is the position the edge reads an environment at in the shorter
+                  # <app>.<env>.<domain> shape — it asks "is this an environment" before it asks
+                  # "is this a project". So a project called `prod` would make
+                  # editor.prod.<env>.<domain> parse as the app `editor` in the tier `prod` over an
+                  # apex of `<env>.<domain>`, and the same collision would take
+                  # <app>.<project>.<env>.<domain> for every other app with it. qits-projects
+                  # refuses these slugs; the `environment` phase refuses the mirror image, an
+                  # environment named after a project that already exists.
                   QITS_PROJECTS_RESERVED_SLUGS: ${ENV_NAME}
                   # Where its own git mirrors go. The image defaults it under ${user.home}, which is
                   # the literal "?" for this passwd-less uid — the same trap the deployment extras
@@ -1506,11 +1515,12 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN=qits-platform-mirror
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_AUDIENCE_PATTERN={env}-qits-githost
-            # THE EDITOR VHOST, editor.<project>.<domain>, onto qits-workspaces. Same generic app
-            # alias as the three above and no edge code: the edge reads two labels, so a project
-            # slug in position 1 is not an environment and the name resolves in the DEFAULT tier.
-            # The audience is spelled rather than defaulted — an unspelled one is the REGISTRY's,
-            # which would let a docker pull token open a project's editor.
+            # THE EDITOR VHOST, editor.<project>.<env>.<domain>, onto qits-workspaces. Same generic
+            # app alias as the three above and no edge code: the edge reads three labels, so the
+            # project sits in position 1 and the environment the editor is served out of is the
+            # host's OWN label at position 2 — not a default. The audience is spelled rather than
+            # defaulted — an unspelled one is the REGISTRY's, which would let a docker pull token
+            # open a project's editor.
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_EDITOR_HOST_PATTERN={env}-qits-workspaces
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_EDITOR_AUDIENCE_PATTERN={env}-qits-workspaces
             # USER SESSIONS ARE ENFORCED at the public environment vhost; IdP routes remain the
@@ -2228,9 +2238,10 @@ public final class ComposeTemplate {
             # seed window, so there is no consumed branch and no workspace to resolve.
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RELEASE_REQUESTS_WORKSPACES_URL=http://${ENV_NAME}-qits-workspaces:8080
             # THE SLUGS NO PROJECT MAY TAKE: this platform's environment names, because a project
-            # slug sits at the label the edge reads a tier at — editor.<project>.<domain>. Spelled
-            # here as well as on the seed, or the first self-deploy drops it: the update argv
-            # --env-rm's what the extras do not state.
+            # slug sits at the label the edge reads a tier at — position 1 of
+            # editor.<project>.<env>.<domain>, which is where <app>.<env>.<domain> spells its
+            # environment. Spelled here as well as on the seed, or the first self-deploy drops it:
+            # the update argv --env-rm's what the extras do not state.
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RESERVED_SLUGS=${ENV_NAME}
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_DATA_DIR=/data/mirrors
             qits.platform.deployments.extras.qits-projects.env.QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080

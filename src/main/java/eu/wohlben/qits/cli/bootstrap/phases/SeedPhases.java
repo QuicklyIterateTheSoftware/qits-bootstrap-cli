@@ -2445,18 +2445,23 @@ public class SeedPhases {
     }
 
     /**
-     * <b>Every name this platform answers for, as three A records.</b> Derived from the shapes the
-     * edge routes by rather than from a list of today's environments and applications, which is what
-     * makes it a set that never needs revisiting.
+     * <b>Every name this platform answers for, as four A records.</b> Derived from the shapes the
+     * edge routes by rather than from a list of today's environments, applications and projects,
+     * which is what makes it a set that never needs revisiting.
      * <p>
      * <b>This platform serves no dns.</b> The set is what the domain's own provider has to hold, and
-     * the closing report prints it — nothing here writes a record.
+     * the closing report prints it — nothing here writes a record. At Hetzner they are typed in by
+     * hand, once.
      * <p>
-     * The edge reads at most the first two labels of a Host header: {@code <env>.<domain>} is an
-     * environment's gateway, {@code <app>.<env>.<domain>} is one of its applications — its UI and
-     * its wire routes both, registry, mirror and githost among them — and everything else, the apex
-     * included, falls through to the default environment's gateway. So the durable answer is a
-     * wildcard per DEPTH, not a record per name:
+     * The edge reads at most the first THREE labels of a Host header, and every public name spells
+     * its environment: {@code <env>.<domain>} is an environment's gateway,
+     * {@code <app>.<env>.<domain>} is one of its applications — its UI and its wire routes both,
+     * registry, mirror and githost among them — and {@code <app>.<project>.<env>.<domain>} is the
+     * PROJECT tier, one origin per project per environment, the web editor above all. Only the bare
+     * apex still falls through to the default environment; the short {@code <app>.<domain>} reading
+     * and the short {@code <app>.<project>.<domain>} reading are both retired, so a name says which
+     * tier it wants or it is not served. The durable answer is a wildcard per DEPTH, not a record
+     * per name:
      * <ul>
      * <li>{@code @} — the apex, and it is not decoration. A wildcard never matches the apex, and the
      *     apex is the address a person types, so without this record the front door has no answer.
@@ -2466,19 +2471,28 @@ public class SeedPhases {
      *     edge gains a vhost for, which is now every application there is. Adding an environment or
      *     an app is then a deploy and no dns step, which is the whole reason this is a wildcard —
      *     the per-service hosts needed no record of their own.
+     * <li>{@code *.*.*} — every three-label name: {@code <app>.<project>.<env>.<domain>}, the
+     *     project tier. A project is created by a person on a running platform, so this is the one
+     *     depth where a record per name would mean a dns edit per project. The wildcard is what
+     *     makes creating a project a platform act with no operator step behind it.
      * </ul>
      * Every value is the same address, because every one of these names is this one host: the edge
      * is a single front door and the routing is by Host header behind it.
      * <p>
-     * Depth three and beyond is deliberately left to answer NXDOMAIN, and no shape this platform
-     * serves is that deep.
+     * Depth five and beyond is deliberately left to answer NXDOMAIN. The edge stops reading after
+     * three labels, so a deeper name could only be served by the reading it already has with a
+     * label thrown away — and answering it would put a name on the internet that this platform
+     * cannot say the meaning of.
      */
     public static List<ZoneRecord> zoneRecords(String domain, String publicIp) {
         return List.of(
                 new ZoneRecord("@", publicIp, "the apex — the browser door, and no wildcard covers it"),
                 new ZoneRecord("*", publicIp, "every <env>." + domain + " gateway"),
                 new ZoneRecord("*.*", publicIp,
-                        "every <app>.<env>." + domain + " host — each service's UI and its wire routes"));
+                        "every <app>.<env>." + domain + " host — each service's UI and its wire routes"),
+                new ZoneRecord("*.*.*", publicIp,
+                        "every <app>.<project>.<env>." + domain
+                                + " host — the project tier, the web editor above all"));
     }
 
     /**
@@ -2772,9 +2786,10 @@ public class SeedPhases {
         values.putAll(DomainTokens.of(DomainName.of(boot.config), Acme.mode(boot.config).word(),
                 DomainName.of(boot.config).map(domain -> Acme.email(boot.config, domain)).orElse(""),
                 boot.config.dnsHetznerToken().orElse(""), boot.config.dnsHetznerSecret(),
-                // The names the derived wildcards cannot reach — editor.<project>.<domain> above
-                // all, which is depth three under a label that is not an environment. Checked
-                // here, where a refusal is a message about a knob rather than a failed order.
+                // The names the derived wildcards cannot reach, and there are usually none: the
+                // edge works the per-environment AND per-project wildcards out for itself, so
+                // this is ad-hoc names only. Checked here, where a refusal is a message about a
+                // knob rather than a failed order.
                 ExtraSans.of(boot.config, DomainName.of(boot.config))));
         // While the disposable edge owns the public domain, the seed edge remains an internal
         // service. The deployment extras deliberately keep 80/443 so the real edge can take them

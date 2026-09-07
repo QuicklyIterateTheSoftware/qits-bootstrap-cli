@@ -109,10 +109,16 @@ class SeedPhasesTest {
     // --- the records the domain needs -------------------------------------------------------------
 
     /**
-     * <b>Three A records, and the shapes are the edge's rather than a list of today's names.</b> The
-     * edge reads at most the first two labels of a Host header, so one wildcard per DEPTH answers
-     * every environment and every application vhost there will ever be — adding either is then a
-     * deploy with no dns step. The apex is written out because no wildcard matches it.
+     * <b>Four A records, and the shapes are the edge's rather than a list of today's names.</b> The
+     * edge reads at most the first three labels of a Host header, so one wildcard per DEPTH answers
+     * every environment, every application vhost and every PROJECT there will ever be — adding any
+     * of them is then a platform act with no dns step. The apex is written out because no wildcard
+     * matches it.
+     * <p>
+     * <b>{@code *.*.*} is the record this change is about.</b> An environment and an app arrive with
+     * a deploy, which an operator is already present for; a project is created by a person on a
+     * running platform, so a record per project would be a dns edit per project — at Hetzner, by
+     * hand. The wildcard is what makes the project tier cost nobody anything.
      * <p>
      * The nameserver's own record went with qits-platform-dns: this platform serves no dns, so there
      * is nothing to delegate to and no glue record to answer for.
@@ -123,10 +129,19 @@ class SeedPhasesTest {
                 SeedPhases.zoneRecords("qits-dev.eu", "203.0.113.7");
 
         assertThat(records).extracting(SeedPhases.ZoneRecord::name)
-                .containsExactly("@", "*", "*.*");
+                .containsExactly("@", "*", "*.*", "*.*.*");
         // Every name is this one host: the edge is a single front door and routes by Host behind it.
         assertThat(records).extracting(SeedPhases.ZoneRecord::value)
                 .containsOnly("203.0.113.7");
+        // And each one says which shape it is there for, because the person typing them in at the
+        // provider is reading this list and nothing else.
+        assertThat(records).extracting(SeedPhases.ZoneRecord::why)
+                .anySatisfy(why -> assertThat(why).contains("apex"))
+                .anySatisfy(why -> assertThat(why).contains("<env>.qits-dev.eu gateway"))
+                .anySatisfy(why -> assertThat(why).contains("<app>.<env>.qits-dev.eu"))
+                .anySatisfy(why -> assertThat(why)
+                        .contains("<app>.<project>.<env>.qits-dev.eu")
+                        .contains("editor"));
     }
 
     /**

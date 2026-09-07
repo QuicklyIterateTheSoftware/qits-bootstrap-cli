@@ -106,18 +106,19 @@ public final class DomainTokens {
      * The extra SANs, as one env line or as nothing.
      * <p>
      * <b>The certificate the edge derives is a wildcard set, and a wildcard covers ONE label.</b>
-     * {@code *.<domain>} answers for {@code editor.<domain>} and for nothing under it, and
-     * {@code *.<env>.<domain>} only holds for a label the edge routes as an environment. The web
-     * editor's origin is {@code editor.<project>.<domain>} — depth three under a label that is a
-     * PROJECT — so no wildcard this platform orders can reach it and each one has to be named.
+     * The set is the apex, {@code *.<domain>}, {@code *.<env>.<domain>} per environment and
+     * {@code *.<project>.<domain>} plus {@code *.<project>.<env>.<domain>} per project — every
+     * depth the edge's Host reading has, the project tier included. This key is what carries a name
+     * of some OTHER shape.
+     * <p>
+     * <b>The web editor is no longer one of them.</b> {@code editor.<project>.<env>.<domain>} sits
+     * inside the derived per-project wildcards, which the edge works out LIVE from qits-projects'
+     * ProjectCreated events — so a project created after this file was written reaches the
+     * certificate at the edge's next order, which its own creation event triggers. That is the
+     * whole of what this key used to be filled with, and it is gone.
      * <p>
      * <b>Generic on purpose.</b> The key says "also these names" and nothing about what serves
-     * them. The editor is today's reason for it and will not be the last.
-     * <p>
-     * <b>A name added here is not on the certificate until the edge re-orders</b>, which its
-     * renewal does within the day, or a restart does at once. So a project created after this file
-     * was written has an editor host that answers on a certificate it is not named in until then,
-     * and browsers refuse it. The closing report says which projects are in that state.
+     * them. It is empty on an ordinary platform, and an empty list spells no key at all.
      *
      * @param names already checked and joined with commas, or empty for the ordinary platform
      */

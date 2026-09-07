@@ -196,10 +196,13 @@ there and points at `unwrap`. Moving the plane on a live platform is a PATCH on 
 `pd_environment.platform`, with the undeploy and redeploy that implies, and nothing here does it.
 
 **An environment may not be named after a project, and a project may not be named after an
-environment.** They are read at the same place: the edge takes the first two labels of a host and
-reads position 1 as an environment when it is one, so `editor.<project>.<domain>` — the web editor's
-origin, one per project — is the same shape as `<app>.<env>.<domain>`. A tier called after a project
-would take that project's own names for itself. Creating a new environment into that collision is
+environment.** They are read at the same place. The edge takes at most the first three labels of a
+host — `<env>.<domain>` is a gateway, `<app>.<env>.<domain>` is one of its applications, and
+`<app>.<project>.<env>.<domain>` is the project tier — and it asks the label after the application
+whether it names an environment BEFORE it reads it as a project. So a project called after a tier
+loses that label: `editor.<slug>.<env>.<domain>` is read as the app `editor` in the tier `<slug>`,
+over an apex of `<env>.<domain>`, which is the wrong environment at a domain that is not the domain.
+Creating a new environment into that collision is
 refused here, on the create arm only, because an environment row that already stands is a platform
 already running under that name and refusing its rerun would strand rather than repair it. The other
 direction is closed at the source: qits-projects is handed the environment names as
@@ -216,13 +219,18 @@ an address is refused, and so is an address without a domain.
     @        the apex — the browser door, and no wildcard covers it
     *        every <env>.<domain> gateway
     *.*      every <app>.<env>.<domain> vhost
+    *.*.*    every <app>.<project>.<env>.<domain> host — the project tier, the web editor above all
 
 A wildcard per depth rather than a record per name, which is what the edge's routing actually needs:
-it reads at most the first two labels of a Host header, so `<env>.<domain>` and
-`<app>.<env>.<domain>` are covered for every environment and every app there will ever be, and adding
-either needs no dns step. The apex is written out because no wildcard matches an apex. Do it first,
-because the certificate order is answered over the public name — and the closing report prints the
-same set back with the address filled in.
+it reads at most the first three labels of a Host header, so `<env>.<domain>`,
+`<app>.<env>.<domain>` and `<app>.<project>.<env>.<domain>` are covered for every environment, every
+app and every project there will ever be, and adding any of them needs no dns step. The last record
+is the one that matters most in practice: a project is created by a person on a running platform, so
+without it every new project would be a dns edit. The apex is written out because no wildcard matches
+an apex, and depth five and beyond is left to answer NXDOMAIN — the edge stops reading after three
+labels and will not serve a name it cannot say the meaning of. Do it first, because the certificate
+order is answered over the public name — and the closing report prints the same set back with the
+address filled in.
 
 The run then **orders the certificate**. The edge is not an ACME client — the Quarkus TLS extension gives
 it a challenge route on the main listener and, on the unpublished management port, one slot to fill
@@ -245,28 +253,36 @@ the name that matters: it is the browser's door and the passkey's relying party.
 wants a wildcard, a wildcard wants DNS-01, and DNS-01 wants a TXT record written at the dns provider
 mid-order — so it needs a provider API this program has no hook for yet.
 
-**A wildcard covers ONE label, and `QITS_ACME_EXTRA_SANS` is what covers the rest.** The name set the
-edge derives is the apex, `*.<domain>` and `*.<env>.<domain>` per environment, which is every depth
-its Host reading has. `*.<domain>` therefore answers for `editor.<domain>` and for nothing under it,
-and `*.<env>.<domain>` only holds where that middle label is an environment. The web editor is served
-at `editor.<project>.<domain>` — one origin per project, at a depth under a label that is a project —
-so no wildcard this platform orders can reach it. Those names are written down, one per project:
+**A wildcard covers ONE label, and the edge derives one per depth it routes at.** The name set is the
+apex, `*.<domain>`, `*.<env>.<domain>` per environment, and `*.<project>.<domain>` plus
+`*.<project>.<env>.<domain>` per project — every depth its Host reading has, the project tier
+included. **The per-project half is a LIVE read now**: the edge learns the projects from
+qits-projects' own `ProjectCreated` events, so a project created after this boot reaches the
+certificate at the edge's next order — which its creation event triggers. There is no bootstrap step
+behind it, no restart, and no name to write down. The web editor at
+`editor.<project>.<env>.<domain>` is covered by construction.
 
-    QITS_ACME_EXTRA_SANS=editor.acme,editor.gizmo    # or --acme-extra-san, repeatable
+**`QITS_ACME_EXTRA_SANS` is what covers names outside those shapes, and nothing else.**
 
-Whole or relative to the domain; `editor.acme` is `editor.acme.<domain>`. The knob is a list of
-NAMES and knows nothing about editors — the editor is today's reason for it and will not be the last.
-It reaches the edge as `QITS_EDGE_ACME_ADDITIONAL_NAMES`, on the seed stack and on the extras both,
-and an empty list spells no key at all.
+    QITS_ACME_EXTRA_SANS=status.support    # or --acme-extra-san, repeatable
 
-**The source of that list is configuration, deliberately.** Both generated files are written before
-qits-projects has answered anything — the seed stack is what starts it — so a list derived from the
-platform's own projects would be empty on every cold boot and one boot stale on every warm one, and
-it would make the rendered extras depend on data that changes without a bootstrap. **So a project
-created later is not on the certificate until its name is added here and the edge re-orders**, which
-its renewal does on its own schedule and a restart does at once; until then its editor host answers
-on a certificate it is not named in and browsers refuse it. The closing report prints every project's
-editor host beside the records and marks the ones the certificate does not cover.
+Whole or relative to the domain; `status.support` is `status.support.<domain>`. The knob is a list of
+NAMES and knows nothing about what serves them. It reaches the edge as
+`QITS_EDGE_ACME_ADDITIONAL_NAMES`, on the seed stack and on the extras both, and an empty list spells
+no key at all — which is what an ordinary platform has.
+
+**It used to hold one name per project, and that debt is what the live read retired.** Both generated
+files are written before qits-projects has answered anything — the seed stack is what starts it — so
+a list derived here from the platform's own projects would have been empty on every cold boot and one
+boot stale on every warm one. The cost was a platform where a project created later was not on the
+certificate until somebody added its name and the edge re-ordered, and until then its editor host
+answered on a certificate it was not named in. The edge reads the events instead, so nothing about a
+new project reaches this file.
+
+**The 100-name cap is the live set's own cost.** A certificate carries `2 + E + P + P*E + extras`
+names — the apex and `*.<domain>`, one per environment, one per project, one per project AND
+environment — and Let's Encrypt allows 100. An order over the cap fails whole, taking the names that
+would have worked with it, so the closing report prints where this platform stands against it.
 
 A name outside the domain is refused before the run: the edge answers its challenges in this domain's
 own zone, and one name that cannot be validated fails the whole order.

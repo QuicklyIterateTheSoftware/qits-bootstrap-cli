@@ -11,9 +11,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * The names the edge's certificate carries beyond the wildcards it derives.
  * <p>
- * The whole reason this knob exists is that a wildcard covers ONE label: {@code *.<domain>} answers
- * for {@code editor.<domain>} and for nothing under it, so {@code editor.<project>.<domain>} — the
- * web editor's origin, one per project — is reachable by no wildcard this platform orders.
+ * A wildcard covers ONE label, and the edge derives one per depth it routes at: the apex,
+ * {@code *.<domain>}, {@code *.<env>.<domain>} per environment, and {@code *.<project>.<domain>}
+ * plus {@code *.<project>.<env>.<domain>} per project. This knob is what carries a name of some
+ * OTHER shape, and it is empty on an ordinary platform.
+ * <p>
+ * <b>It used to hold one name per project</b>, because no derived wildcard could reach
+ * {@code editor.<project>.<domain>}. The per-project half is a live read off qits-projects' events
+ * now, so that debt is retired — the names below are still spelled {@code editor.<something>} where
+ * the case under test is about parsing rather than about what the name is for, because those are
+ * the values this knob was written against and the parse did not change.
  */
 class ExtraSansTest {
 
@@ -98,9 +105,10 @@ class ExtraSansTest {
     }
 
     /**
-     * A wildcard is refused too. The edge already orders the apex, {@code *.<domain>} and
-     * {@code *.<env>.<domain>}, so one written by hand either repeats a name it has or asks for a
-     * depth its Host reading does not serve.
+     * A wildcard is refused too. The edge derives its own — the apex, {@code *.<domain>},
+     * {@code *.<env>.<domain>} per environment and {@code *.<project>.<domain>} plus
+     * {@code *.<project>.<env>.<domain>} per project — so one written by hand either repeats a name
+     * it has or asks for a depth its Host reading does not serve.
      */
     @Test
     void aWildcardIsNotAnExtraName() {
@@ -119,12 +127,20 @@ class ExtraSansTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
-    /** The one spelling of an editor origin, so the report and the knob cannot disagree. */
+    /**
+     * <b>The editor origin is not this knob's business any more.</b> {@code editorHost} lived here
+     * so the closing report and the value a person wrote could not disagree about one project's
+     * name. The edge derives the per-project wildcards from qits-projects' events now, so there is
+     * no per-project name to write and nothing for a second spelling to contradict — the helper is
+     * gone rather than left for the next reader to fill the knob from.
+     * <p>
+     * The PARSE is unchanged, and that is what this asserts: any name a person writes still resolves
+     * against the domain the same way.
+     */
     @Test
-    void oneSpellingOfAnEditorOrigin() {
-        assertThat(ExtraSans.editorHost("acme", DOMAIN)).isEqualTo("editor.acme." + DOMAIN);
-        assertThat(ExtraSans.of("editor.acme", DOMAIN))
-                .containsExactly(ExtraSans.editorHost("acme", DOMAIN));
+    void anAdHocNameIsParsedTheSameWayTheEditorNamesWere() {
+        assertThat(ExtraSans.of("status.support", DOMAIN))
+                .containsExactly("status.support." + DOMAIN);
     }
 
     /** Answerable for one run, and a blank answer leaves {@code .env} alone. */

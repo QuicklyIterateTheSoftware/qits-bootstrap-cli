@@ -273,10 +273,11 @@ class ComposeTemplateTest {
 
     /**
      * <b>The web editor is a fourth app alias and nothing more.</b> {@code
-     * editor.<project>.<domain>} is one origin per project, but the edge reads two labels: a
-     * project slug is not a known environment, so the name takes the {@code <app>.<domain>}
-     * reading and lands in the DEFAULT tier. The entry is therefore the same shape the byte plane
-     * uses, and {@code {env}} in it always resolves to the default environment.
+     * editor.<project>.<env>.<domain>} is one origin per project per environment, and the edge
+     * reads three labels: the project sits at position 1 and the environment the editor is served
+     * out of is the host's OWN label at position 2 — not a default and not a fallthrough. The entry
+     * is therefore the same shape the byte plane uses, and {@code {env}} in it resolves out of the
+     * name the browser arrived at.
      * <p>
      * <b>The audience is the assertion that matters.</b> An app entry that names none inherits the
      * REGISTRY audience, so an unspelled editor entry would let a token bought for {@code docker
@@ -303,10 +304,12 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>A project slug sits where the edge reads a tier, so the environment names are reserved.</b>
-     * {@code editor.<project>.<domain>} and {@code <app>.<env>.<domain>} are one shape: a project
-     * called after this platform's environment would be read as that environment and its editor
-     * would be served out of the wrong one. The list is seeded from the environments this
+     * <b>A project slug sits where the edge reads a tier, so the environment names are reserved —
+     * and the project tier did not change that.</b> Position 1 of
+     * {@code editor.<project>.<env>.<domain>} is the label {@code <app>.<env>.<domain>} spells its
+     * environment at, and the edge asks "is this an environment" before it asks "is this a
+     * project". A project called after this platform's environment would be read as that
+     * environment, over an apex that is not the apex. The list is seeded from the environments this
      * bootstrap knows, which is the one it names.
      */
     @Test
@@ -323,23 +326,24 @@ class ComposeTemplateTest {
 
     /**
      * <b>The extra SANs reach the edge as one generic key, in both files.</b> The edge derives the
-     * apex, {@code *.<domain>} and {@code *.<env>.<domain>} for itself, and a wildcard covers one
-     * label — so {@code editor.<project>.<domain>} is reachable by none of them and has to be
-     * named. The key says nothing about editors: it is a list of names, and the editor is today's
-     * reason for it.
+     * apex, {@code *.<domain>}, {@code *.<env>.<domain>} per environment and
+     * {@code *.<project>.<domain>} plus {@code *.<project>.<env>.<domain>} per project for itself —
+     * so this key is for a name at some OTHER shape. It used to carry the editor hosts, one per
+     * project; the per-project wildcards are a live read off qits-projects' events now, and the key
+     * says nothing about editors either way — it is a list of names.
      */
     @Test
     void theExtraSansReachTheEdgeAsAdditionalCertificateNames() {
         Map<String, String> values = tokens(DOMAIN,
-                List.of("editor.acme." + DOMAIN, "editor.gizmo." + DOMAIN));
+                List.of("status.support." + DOMAIN, "legacy.acme." + DOMAIN));
         String edge = serviceBlock(ComposeTemplate.compose(values), "qits-platform-edge");
 
-        assertThat(edge).contains("QITS_EDGE_ACME_ADDITIONAL_NAMES: editor.acme." + DOMAIN
-                + ",editor.gizmo." + DOMAIN);
+        assertThat(edge).contains("QITS_EDGE_ACME_ADDITIONAL_NAMES: status.support." + DOMAIN
+                + ",legacy.acme." + DOMAIN);
         // On the extras too, or the edge's first self-deploy orders a certificate without them.
         assertThat(extras("qits-platform-edge", values))
-                .contains("env.QITS_EDGE_ACME_ADDITIONAL_NAMES=editor.acme." + DOMAIN
-                        + ",editor.gizmo." + DOMAIN);
+                .contains("env.QITS_EDGE_ACME_ADDITIONAL_NAMES=status.support." + DOMAIN
+                        + ",legacy.acme." + DOMAIN);
     }
 
     /**

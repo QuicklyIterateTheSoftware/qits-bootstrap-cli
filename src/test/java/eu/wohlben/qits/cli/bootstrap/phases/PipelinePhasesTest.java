@@ -421,7 +421,7 @@ class PipelinePhasesTest {
 
     private static String domainReport(Acme.Mode mode, String certificate,
             List<String> projectSlugs, List<String> extraSans) {
-        return String.join("\n", PipelinePhases.domainLines("qits-dev.eu", "203.0.113.7", mode,
+        return String.join("\n", PipelinePhases.domainLines("qits-dev.eu", ENV, "203.0.113.7", mode,
                 "hostmaster@qits-dev.eu", certificate, projectSlugs, extraSans));
     }
 
@@ -434,8 +434,10 @@ class PipelinePhasesTest {
     void theRecordsAreListedWithTheAddressTheyAllCarry() {
         String report = domainReport(Acme.Mode.STAGING, "staging");
 
-        assertThat(report).contains("@").contains("*").contains("*.*");
+        assertThat(report).contains("@").contains("*").contains("*.*").contains("*.*.*");
         assertThat(report).contains("203.0.113.7");
+        // The reading they follow, so the person typing them in knows why there are four.
+        assertThat(report).contains("first three");
     }
 
     /**
@@ -515,18 +517,19 @@ class PipelinePhasesTest {
     // --- an environment may not be called after a project -----------------------------------------
 
     /**
-     * <b>An environment name and a project slug are read at the same place.</b> The edge takes the
-     * first two labels of a host and reads position 1 as an environment when it is one, so
-     * {@code editor.<project>.<domain>} — the web editor's own origin — is the same shape as
-     * {@code <app>.<env>.<domain>}. A new environment named after an existing project would take
-     * that project's names for its own tier.
+     * <b>An environment name and a project slug are read at the same place, and the project tier
+     * did not change that.</b> The edge takes at most the first three labels of a host and asks the
+     * label after the application whether it names an ENVIRONMENT before it reads it as a PROJECT —
+     * so a project called after a tier loses that label: {@code editor.acme.<env>.<domain>} is read
+     * as the app {@code editor} in the tier {@code acme}, over an apex that is not the apex. A new
+     * environment named after an existing project would take that project's names for its own tier.
      */
     @Test
     void anEnvironmentNamedAfterAProjectIsRefusedAndTheMessageSaysWhy() {
         assertThat(PipelinePhases.environmentNameRefusal("acme", List.of("qits", "acme")))
                 .get(org.assertj.core.api.InstanceOfAssertFactories.STRING)
                 .contains("acme")
-                .contains("editor.acme.<domain>")
+                .contains("editor.acme.<env>.<domain>")
                 .contains("--platform-env");
     }
 
@@ -547,64 +550,93 @@ class PipelinePhasesTest {
         assertThat(PipelinePhases.environmentNameRefusal("acme", List.of())).isEmpty();
     }
 
-    // --- the editor hosts, beside the records ------------------------------------------------------
+    // --- the project tier, beside the records ------------------------------------------------------
 
     /**
-     * <b>The records cover the editor hosts and the certificate does not, and that is the whole
-     * reason this block is printed.</b> {@code editor.<project>.<domain>} is the {@code *.*} depth,
-     * so dns needs no step per project — while a wildcard covers ONE label, so every one of those
-     * names is a SAN of its own.
+     * <b>The editor host is the project tier's, and both halves of it are answered without an
+     * operator.</b> {@code editor.<project>.<env>.<domain>} is the {@code *.*.*} depth, so dns
+     * needs no step per project, and the edge derives the per-project wildcards from
+     * qits-projects' events, so the certificate needs none either.
      */
     @Test
-    void everyProjectsEditorHostIsPrintedWithWhetherTheCertificateCarriesIt() {
+    void everyProjectsEditorHostIsPrintedAtTheProjectTiersDepth() {
         String report = domainReport(Acme.Mode.PRODUCTION, "production",
-                List.of("qits", "acme"), List.of("editor.qits.qits-dev.eu"));
+                List.of("qits", "acme"), List.of());
 
-        assertThat(report).contains("editor.qits.qits-dev.eu   on the certificate");
-        assertThat(report).contains("editor.acme.qits-dev.eu   NOT on the certificate");
-        // What to do about the one that is missing, spelled as the value rather than as a shape.
-        assertThat(report).contains("QITS_ACME_EXTRA_SANS=editor.acme");
+        assertThat(report).contains("editor.qits.prod.qits-dev.eu");
+        assertThat(report).contains("editor.acme.prod.qits-dev.eu");
+        assertThat(report).contains("ProjectCreated");
     }
 
     /**
-     * A platform whose certificate carries every project says so by having nothing to add: no
-     * instruction is printed, because there is nothing to do.
+     * <b>The covered / NOT-covered column is gone, and its instruction with it.</b> Every project
+     * is covered by construction now, so a per-project verdict would be a column that always says
+     * one thing — and the old advice, "add QITS_ACME_EXTRA_SANS=editor.<slug> and rerun", would
+     * send a person to spend a SAN on a name the edge already derives.
      */
     @Test
-    void aFullyCoveredPlatformIsToldToDoNothing() {
-        String report = domainReport(Acme.Mode.PRODUCTION, "production", List.of("qits"),
-                List.of("editor.qits.qits-dev.eu"));
+    void noProjectIsPrintedAsMissingFromTheCertificateAnyMore() {
+        String report = domainReport(Acme.Mode.PRODUCTION, "production",
+                List.of("qits", "acme"), List.of());
 
-        assertThat(report).contains("editor.qits.qits-dev.eu   on the certificate")
-                .doesNotContain("NOT on the certificate")
+        assertThat(report).doesNotContain("NOT on the certificate")
+                .doesNotContain("on the certificate")
                 .doesNotContain("QITS_ACME_EXTRA_SANS=editor");
     }
 
     /**
-     * <b>A name reaches the certificate at the next ORDER, not at the next deploy</b>, and the
-     * report says which act that is: a project created after the certificate was issued has a
-     * working host serving a certificate it is not named in.
+     * <b>A project created later needs nothing done to it, and the report says which act covers
+     * it</b>: the creation event triggers the edge's next order. It is not a rerun of this boot and
+     * not a restart of the edge, which is exactly what the retired advice used to ask for.
      */
     @Test
-    void theReportSaysANewProjectNeedsAReorderRatherThanADeploy() {
+    void theReportSaysANewProjectIsCoveredByItsOwnCreationEvent() {
         String report = domainReport(Acme.Mode.PRODUCTION, "production", List.of("acme"),
                 List.of());
 
-        assertThat(report).contains("renewal or a restart, not a deploy")
-                .contains("browser refuses");
+        assertThat(report).contains("COVERED TOO")
+                .contains("triggers the edge's next order")
+                .doesNotContain("renewal or a restart, not a deploy")
+                .doesNotContain("browser refuses");
     }
 
     /**
-     * The listing is a courtesy read and may not answer. The block then states the shape rather
-     * than a table it cannot fill, and no boot fails over a report.
+     * The listing is a courtesy read and may not answer. The block then says so and says that
+     * nothing turns on it — the certificate follows the events, not this report — and no boot fails
+     * over a report.
      */
     @Test
-    void withNoProjectListTheShapeIsPrintedInstead() {
+    void withNoProjectListTheReportSaysNothingTurnsOnIt() {
         String report = domainReport(Acme.Mode.PRODUCTION, "production");
 
-        assertThat(report).contains("editor.<project>.qits-dev.eu")
-                .contains("QITS_ACME_EXTRA_SANS=editor.<project>")
-                .doesNotContain("on the certificate");
+        assertThat(report).contains("editor.<project>.prod.qits-dev.eu")
+                .contains("No project list was read")
+                .contains("follows the events");
+    }
+
+    /**
+     * <b>The 100-name cap is the live set's cost, and the report is where an operator meets it.</b>
+     * The derived set grows with the projects — {@code 2 + E + P + P*E + extras} — so the arithmetic
+     * is printed beside the count, because the arithmetic is what says which term moves.
+     */
+    @Test
+    void theSanBudgetIsPrintedWithTheArithmeticAndTheCount() {
+        String report = domainReport(Acme.Mode.PRODUCTION, "production",
+                List.of("qits", "acme"), List.of("status.support.qits-dev.eu"));
+
+        assertThat(report).contains("2 + E + P + P*E + extras").contains("100");
+        // 2 + 1 environment + 2 projects + 2 project-environments + 1 extra.
+        assertThat(report).contains("E=1 and P=2 with 1 extra, so 8 of 100");
+        assertThat(report).contains("status.support.qits-dev.eu");
+    }
+
+    /** No extras is the ordinary platform, and the knob says what it is FOR rather than nothing. */
+    @Test
+    void theExtraSansKnobIsPrintedAsAdHocNamesOnly() {
+        String report = domainReport(Acme.Mode.PRODUCTION, "production", List.of("qits"),
+                List.of());
+
+        assertThat(report).contains("AD-HOC NAMES ONLY").contains("This run resolved: nothing");
     }
 
     /** The slug, not the name: the slug is the label that reaches DNS. */
