@@ -437,6 +437,10 @@ class ComposeTemplateTest {
         // And the bus, the other application that moved plane on the same day.
         assertThat(serviceBlock(compose, "qits-events")).doesNotContain("QITS_ENVIRONMENT");
         assertThat(extras("qits-events")).doesNotContain("QITS_ENVIRONMENT");
+        // And the configuration store, which moved on 2026-09-07 — the newest member, and the one
+        // whose blocks a hand-written QITS_ENVIRONMENT would have been most tempting on: what it
+        // stores IS env-keyed. The keying is in the rows, never in the container's own tier.
+        assertThat(extras("qits-configuration")).doesNotContain("QITS_ENVIRONMENT");
         // Not a platform service anywhere in either file, which is the rule rather than two names.
         // The stack file is asked only about the seed, because that is all it holds:
         // qits-platform-orchestrator is deployed near the end of the train and has no seed block.
@@ -552,14 +556,16 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>qits-configuration is an ordinary environment application with a gate and nothing else.</b>
-     * Its image ships the bare {@code qits-configuration} as the audience, deliberately — an
-     * environment-qualified default would bake one tier into an image every tier shares — so the
-     * alias has to be spelled here or every bearer the deployer mints is refused.
+     * <b>qits-configuration is a PLATFORM service with a gate and nothing else.</b> Its image ships
+     * the bare {@code qits-configuration} as the audience, and since the plane move that is the
+     * right name rather than merely an un-tiered one — the line stays spelled because the idp is
+     * seeded from the same derivation and an address nobody states is an address nobody notices
+     * moving.
      * <p>
      * No mount, no publish and no datasource: {@code resources: postgresql:db} in its own
      * deployments.yml is what provisions its store, and a triple here would be an operator pin that
-     * outlives the deployer's next rotation.
+     * outlives the deployer's next rotation. One network alias, and it is transitional: the old
+     * env-prefixed name kept answering for the callers that are still holding it.
      */
     @Test
     void theConfigurationServiceIsGatedAndOtherwisePlain() {
@@ -567,9 +573,13 @@ class ComposeTemplateTest {
 
         assertThat(configuration)
                 .contains("env.QITS_AUTH_MACHINE_REQUIRED=true")
-                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-configuration")
+                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=qits-configuration")
                 .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp")
                 .contains("env.QITS_OBSERVABILITY_URL=http://prod-qits-observability:8080");
+        // THE OLD NAME, STILL ANSWERING. The live deployer and the live orchestrator hold
+        // prod-qits-configuration in their running environments and only take the new one at their
+        // next deploy — so the container claims both names until the cutover feature drops this.
+        assertThat(configuration).contains(".aliases[0]=prod-qits-configuration");
         assertThat(configuration).doesNotContain(".mounts[")
                 .doesNotContain(".publishes[")
                 .doesNotContain(".groups[")
@@ -589,9 +599,10 @@ class ComposeTemplateTest {
         String deployer = extras("qits-deployments");
 
         assertThat(deployer).contains("env.QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL="
-                + "http://prod-qits-configuration:8080");
-        // The credential that read presents: the deployer's OWN client, and a tier-qualified
-        // audience the image deliberately does not default.
+                + "http://qits-configuration:8080");
+        // The credential that read presents: the deployer's OWN client, and an audience that is
+        // bare on both sides since the store moved plane — the pair used to be asymmetric, one
+        // plane's id asking for another plane's name.
         assertThat(deployer)
                 .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ENABLED=true")
                 .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_AUTH_SERVER_URL="
@@ -600,7 +611,7 @@ class ComposeTemplateTest {
                 .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CREDENTIALS_SECRET="
                         + "secret-qits-deployments")
                 .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_GRANT_OPTIONS_CLIENT_AUDIENCE="
-                        + "prod-qits-configuration");
+                        + "qits-configuration");
         // The DEFAULT unnamed client stays off: the extension creates it whether or not anything
         // injects it, and an enabled client with no auth-server-url fails the deployer's boot.
         assertThat(deployer).doesNotContain("env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED");
@@ -619,9 +630,12 @@ class ComposeTemplateTest {
         assertThat(serviceBlock(compose, "qits-deployments"))
                 .doesNotContain("QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL")
                 .doesNotContain("QUARKUS_OIDC_CLIENT_CONFIGURATION_");
-        // And there is no seed service for it either: it is deployed through the pipeline like every
-        // other ordinary environment application.
-        assertThat(compose).doesNotContain("\n  " + ENV + "-qits-configuration:\n");
+        // And there is no seed service for it either, under EITHER spelling: it is deployed through
+        // the pipeline like every other application, and the plane move changed which name a seed
+        // block would have carried rather than whether there is one. Both are asserted because the
+        // old name is the one a stale block would still be written under.
+        assertThat(compose).doesNotContain("\n  " + ENV + "-qits-configuration:\n")
+                .doesNotContain("\n  qits-configuration:\n");
         assertThat(PlatformModel.CORE).doesNotContain("configuration");
     }
 
@@ -644,7 +658,10 @@ class ComposeTemplateTest {
         assertThat(extras("qits-platform-idp"))
                 .contains("env.QITS_IDP_CLIENT_QITS_DEPLOYMENTS_AUDIENCES="
                         + PlatformModel.idpAudiences(ENV));
-        assertThat(PlatformModel.idpAudiences(ENV)).contains("prod-qits-configuration");
+        // Bare since the store moved plane, and asserted as a whole element rather than as a
+        // substring: "prod-qits-configuration" contains "qits-configuration" too, so a split is
+        // what tells the two answers apart.
+        assertThat(PlatformModel.idpAudiences(ENV).split(",")).contains("qits-configuration");
     }
 
     /**
@@ -652,8 +669,10 @@ class ComposeTemplateTest {
      * run asks the deployer and ci for the pins, hands them to qits-artifacts, and tells
      * qits-containers what to reclaim — four peers behind four different audiences, so four named
      * oidc clients rather than one reused token. All four present this service's own id, and the
-     * targets are wire aliases in both shapes: the three environment services carry the tier, the
-     * deployer carries none.
+     * targets are wire aliases in both shapes: the environment services carry the tier, the
+     * deployer and the configuration store carry none. qits-configuration was in the first set
+     * until it moved plane on 2026-09-07, which is exactly the kind of move a spelled name would
+     * not have followed.
      */
     @Test
     void theOrchestratorHoldsAClientPerPeerAndDialsEachOneByItsAlias() {
@@ -676,11 +695,15 @@ class ComposeTemplateTest {
                 .contains("env.QITS_ORCHESTRATOR_TARGETS_DEPLOYMENTS_URL="
                         + "http://qits-deployments:8080")
                 // WHERE THE IMAGE PINS ARE READ FROM, and the target whose absence was silent: the
-                // image's own default is the bare qits-configuration, a platform-tier spelling of
-                // an environment-tier service, so every gc run's pins.images read failed with a
-                // connect error and the sweep was skipped rather than refused.
+                // image's own default is the bare qits-configuration, which was a name nothing on
+                // qits-net answered to while the store was a tier's — every gc run's pins.images
+                // read failed with a connect error and the sweep was skipped rather than refused.
+                // The plane move made the default correct; the line is stated anyway, and derived,
+                // which is why this expectation needed no editing when the name changed under it.
                 .contains("env.QITS_ORCHESTRATOR_TARGETS_CONFIGURATION_URL="
-                        + "http://" + PlatformModel.wireAlias("configuration", ENV) + ":8080");
+                        + "http://" + PlatformModel.wireAlias("configuration", ENV) + ":8080")
+                .contains("env.QITS_ORCHESTRATOR_TARGETS_CONFIGURATION_URL="
+                        + "http://qits-configuration:8080");
         // Four clients, and the AUDIENCE is what makes them four: each peer validates its own, so
         // one client with one audience would be a run whose every step but one is a 401.
         assertThat(orchestrator)
@@ -1410,10 +1433,15 @@ class ComposeTemplateTest {
                 .contains(".aliases[0]=registry.prod.localhost")
                 .contains(".aliases[1]=mirror.prod.localhost")
                 .contains(".aliases[2]=githost.prod.localhost");
-        // Nobody else claims a vhost: two containers holding one name is a lookup that answers
-        // whichever of them the DNS server picked.
+        // Nobody else claims a VHOST: two containers holding one name is a lookup that answers
+        // whichever of them the DNS server picked. The rule is about the name, not about the key —
+        // qits-configuration claims one alias of its own since the 2026-09-07 plane move, and it is
+        // the name that service ITSELF answered to the day before, which no other container has
+        // ever held. That entry goes at the epic's cutover.
         assertThat(extrasKeys()).filteredOn(line -> line.contains(".aliases["))
-                .allSatisfy(line -> assertThat(line).startsWith(EXTRAS + "qits-platform-edge."));
+                .allSatisfy(line -> assertThat(line).startsWith(EXTRAS)
+                        .containsAnyOf(EXTRAS + "qits-platform-edge.",
+                                EXTRAS + "qits-configuration.aliases[0]=prod-qits-configuration"));
     }
 
     /**
@@ -1503,7 +1531,7 @@ class ComposeTemplateTest {
         assertThat(deployer).doesNotContain("QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL")
                 .doesNotContain("QUARKUS_OIDC_CLIENT_CONFIGURATION_");
         assertThat(extras)
-                .contains("env.QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://prod-qits-configuration:8080");
+                .contains("env.QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://qits-configuration:8080");
     }
 
     @Test
@@ -2327,6 +2355,12 @@ class ComposeTemplateTest {
                 // The bus is a PLATFORM service, so this one address does NOT carry the tier —
                 // which is the whole point of deriving it rather than spelling the environment in.
                 .contains("env.QITS_EVENTS_URL=http://qits-events:8080")
+                // Nor does the configuration store since 2026-09-07, and its two lines are what
+                // the tier does and does not reach: the address the deployer is given is bare, and
+                // the transitional alias is env-prefixed BECAUSE it is the name this tier's
+                // callers still hold.
+                .contains("env.QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://qits-configuration:8080")
+                .contains("qits-configuration.aliases[0]=preprod-qits-configuration")
                 .doesNotContain("QITS_GATEWAY_PROXY_HOSTS")
                 .contains("env.QITS_OBSERVABILITY_URL=http://preprod-qits-observability:8080");
     }

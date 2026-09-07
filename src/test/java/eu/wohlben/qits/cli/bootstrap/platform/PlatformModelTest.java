@@ -412,15 +412,18 @@ class PlatformModelTest {
 
     @Test
     void thePlatformPlaneIsWhatCannotBePerTier() {
-        // Eight: the nameserver left with qits-platform-dns, the deployer and the bus joined on
+        // Nine: the nameserver left with qits-platform-dns, the deployer and the bus joined on
         // 2026-08-17, the technical processes service on 2026-08-21, the dependency inventory on
-        // 2026-08-22 and the base system panels on 2026-08-23. A cross-environment hierarchy
-        // cannot live inside one tier's deployer, which broker a service dials WAS the bus's only
-        // scoping, what a deletion run reclaims is one machine's however many tiers share it, what
-        // an inventory inventories is one catalog's, and a NODE has no per-tier half at all.
+        // 2026-08-22, the base system panels on 2026-08-23 and the configuration store on
+        // 2026-09-07. A cross-environment hierarchy cannot live inside one tier's deployer, which
+        // broker a service dials WAS the bus's only scoping, what a deletion run reclaims is one
+        // machine's however many tiers share it, what an inventory inventories is one catalog's, a
+        // NODE has no per-tier half at all — and a configuration entry is keyed by the environment
+        // it belongs to, so one store holds every tier without a tier being able to read another's.
         assertThat(PlatformModel.PLATFORM_SERVICES).containsExactlyInAnyOrder(
                 "platform-edge", "platform-idp", "platform-mirror", "deployments", "events",
-                "platform-orchestrator", "platform-maintenance", "platform-system");
+                "platform-orchestrator", "platform-maintenance", "platform-system",
+                "configuration");
         // The byte-plane split settled the pair that used to be here: the caches were the only
         // reason either could not be per-tier, and they are qits-platform-mirror now.
         assertThat(PlatformModel.isPlatformService("artifacts")).isFalse();
@@ -432,11 +435,14 @@ class PlatformModelTest {
                 .filteredOn(name -> !PlatformModel.isPlatformService(name))
                 .containsExactlyInAnyOrder("observability", "stt", "projects",
                         "workspaces", "ci", "containers",
-                        "artifacts", "githost", "docs", "configuration");
-        // And qits-configuration is one of them rather than a platform service, which is the whole
-        // point of it: two tiers sharing one configuration store would make an edit in dev an edit
-        // in prod.
-        assertThat(PlatformModel.isPlatformService("configuration")).isFalse();
+                        "artifacts", "githost", "docs");
+        // And qits-configuration is NOT one of them since 2026-09-07. The argument that kept it
+        // here was that two tiers sharing one store makes an edit in dev an edit in prod — which
+        // stopped holding when an entry became env-keyed, with the environment a path segment on
+        // the service's own API. What one store gives that a tier's copy cannot is the reason it
+        // moved: what a key holds across every environment at once, and defaults a joining
+        // environment starts from rather than has hand-seeded into it.
+        assertThat(PlatformModel.isPlatformService("configuration")).isTrue();
         // postgres is neither a platform service nor a deployable — it is the seed database.
         assertThat(PlatformModel.isPlatformService("oci-postgresql")).isFalse();
     }
@@ -679,13 +685,18 @@ class PlatformModelTest {
      */
     @Test
     void theConfigurationServiceIsAnAudienceTheDeployerMayAskFor() {
-        assertThat(PlatformModel.idpAudiences("prod")).contains("prod-qits-configuration");
-        assertThat(PlatformModel.idpClients("prod")).doesNotContain("prod-qits-configuration");
-        // It follows the environment name like every other id here, which is why the deployer's
-        // audience is spelled from the same derivation rather than defaulted in an image.
-        assertThat(PlatformModel.idpAudiences("preprod")).contains("preprod-qits-configuration");
-        assertThat(PlatformModel.wireAlias("configuration", "prod"))
-                .isEqualTo("prod-qits-configuration");
+        assertThat(PlatformModel.idpAudiences("prod").split(",")).contains("qits-configuration");
+        assertThat(PlatformModel.idpClients("prod")).doesNotContain("qits-configuration");
+        // AND IT NO LONGER FOLLOWS THE ENVIRONMENT NAME, since the plane move on 2026-09-07: one
+        // store serves every tier, so its audience is the same value whichever tier is asking.
+        // That is what makes deriving it load-bearing rather than tidy — the deployer's spelled
+        // audience moved with the alias and nothing had to be found and edited.
+        assertThat(PlatformModel.idpAudiences("preprod").split(",")).contains("qits-configuration");
+        assertThat(PlatformModel.wireAlias("configuration", "prod")).isEqualTo("qits-configuration");
+        assertThat(PlatformModel.wireAlias("configuration", "preprod"))
+                .isEqualTo("qits-configuration");
+        // The REPOSITORY is untouched by any of that: the plane is decided in PLATFORM_SERVICES and
+        // said by no name until the rename wave, exactly as the deployer's and the bus's were.
         assertThat(PlatformModel.repoPath("configuration"))
                 .isEqualTo("services/qits-configuration-service");
     }
@@ -912,13 +923,16 @@ class PlatformModelTest {
                 "prod-qits-containers", "prod-qits-edge", "qits-platform-orchestrator",
                 "qits-platform-maintenance", "qits-platform-system");
         // The clients, then the receive-only applications: the git host, which validates and mints
-        // nothing, and qits-configuration, which the deployer asks for on every deployment.
+        // nothing, and qits-configuration, which the deployer asks for on every deployment. The
+        // pair is one of each shape now — the git host is a tier's, the configuration store moved
+        // to the platform plane on 2026-09-07 — so this string is where a plane move that did not
+        // reach the idp's own seeded list would show up as an invalid_target nobody could explain.
         assertThat(PlatformModel.idpAudiences("prod")).isEqualTo(
                 "prod-qits-bootstrap,prod-qits-ci,prod-qits-artifacts,prod-qits-workspaces,"
                         + "prod-qits-projects,qits-deployments,prod-qits-containers,"
                         + "prod-qits-edge,qits-platform-orchestrator,qits-platform-maintenance,"
                         + "qits-platform-system,"
-                        + "prod-qits-githost,prod-qits-configuration");
+                        + "prod-qits-githost,qits-configuration");
         // Every one of them follows the environment now: the artifacts client was the one platform
         // id in this list, and the byte-plane split made that service a tier's again.
         // Every one but the deployer's, whose service belongs to no tier and so takes no name from

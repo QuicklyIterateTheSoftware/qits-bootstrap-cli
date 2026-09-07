@@ -25,13 +25,21 @@ public class ConfigurationApi {
 
     private final Http http;
     private final String base;
+    private final String envName;
 
-    /** @param configurationUrl scheme, host and port with no path — the deployer is told the same */
-    public ConfigurationApi(Http http, String configurationUrl) {
+    /**
+     * @param configurationUrl scheme, host and port with no path — the deployer is told the same
+     * @param envName which environment this boot's import asserts values FOR. It is not derivable
+     *                from the url any more: the service moved to the platform plane on 2026-09-07,
+     *                so one instance holds every tier's rows and the address says nothing about
+     *                which tier a caller means.
+     */
+    public ConfigurationApi(Http http, String configurationUrl, String envName) {
         this.http = http;
         this.base = configurationUrl.endsWith("/")
                 ? configurationUrl.substring(0, configurationUrl.length() - 1)
                 : configurationUrl;
+        this.envName = envName;
     }
 
     /**
@@ -47,12 +55,25 @@ public class ConfigurationApi {
      * The bulk import, idempotent by construction: a line whose value is already stored writes no
      * revision, so a boot that re-imports the file it just rendered costs one request and leaves the
      * history a record of changes rather than of runs.
+     * <p>
+     * <b>THE IMPORT NAMES THE ENV IT ASSERTS.</b> One store holds every tier's rows since the plane
+     * move, so which environment a properties file is for is a fact of the CALLER and not of the
+     * address it dialled. The query parameter is what states it. An absent one means the store's
+     * own legacy environment, which is right for a caller that predates the parameter and wrong for
+     * this one: a bootstrap is bringing ONE tier up and knows which.
      */
     public Http.Response importProperties(String properties) {
-        return http.postText(base + "/configuration/api/import", properties, ADMIN_HEADERS);
+        return http.postText(base + "/configuration/api/import?env=" + envName, properties,
+                ADMIN_HEADERS);
     }
 
-    /** One application as the DEPLOYER will read it — the same document, at the same url. */
+    /**
+     * One application as the DEPLOYER will read it — the same document, at the same url.
+     * <p>
+     * Still the env-less route, like {@link #health()}: this is the read the deployer makes, and
+     * asking it differently would stop it proving what it is here to prove. It moves to the
+     * env-addressed route in the epic's cutover feature, with the deployer's own read.
+     */
     public Http.Response resolved(String application) {
         return http.get(base + "/configuration/api/applications/" + application + "/resolved",
                 ADMIN_HEADERS);

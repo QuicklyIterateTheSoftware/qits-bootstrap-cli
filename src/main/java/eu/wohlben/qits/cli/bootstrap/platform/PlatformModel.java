@@ -237,10 +237,21 @@ public final class PlatformModel {
      * daemon, however many tiers run on it — there is no per-tier half of a node. Two copies would
      * be two services holding the same socket and two boot sweeps deleting each other's terminal
      * containers, which is why the sweep is scoped by an owner label even with one.
+     * <p>
+     * <b>qits-configuration joined on 2026-09-07, and it is the one entry that OVERTURNS the
+     * argument that kept it out.</b> The argument was that two tiers sharing one configuration
+     * store makes an edit in dev an edit in prod — and that stopped being true when an entry became
+     * ENV-KEYED. A value is stored under the environment it belongs to, {@code env} is a path
+     * segment on the service's own API, and a read for prod cannot see dev's row however many tiers
+     * the store holds. What is left of the sharing is the part that was always wanted: deployment
+     * configuration is platform state in the same sense the deployer's topology is, one store can
+     * answer what a key holds in EVERY environment at once, and a JOINING environment starts from
+     * the defaults already there rather than from a hand-seeded copy of somebody else's tier. One
+     * per tier could give neither answer — it could only be asked one tier at a time.
      */
     public static final List<String> PLATFORM_SERVICES = List.of(
             "platform-edge", "platform-idp", "platform-mirror", "deployments", "events",
-            "platform-orchestrator", "platform-maintenance", "platform-system");
+            "platform-orchestrator", "platform-maintenance", "platform-system", "configuration");
 
     /**
      * Repositories that need a repository on the platform git host and a main push, but are not
@@ -952,9 +963,14 @@ public final class PlatformModel {
      * <p>
      * <b>qits-configuration joined on 2026-08-17</b>, and it is the shape this list was kept for.
      * It validates the deployer's bearer on every read of an application's configuration and mints
-     * nothing at all, so it holds no client — but the deployer asks for {@code
-     * <env>-qits-configuration} as an audience, and an audience no client may ask for is
-     * {@code invalid_target} rather than a call that reaches the service's own gate.
+     * nothing at all, so it holds no client — but the deployer asks for {@code qits-configuration}
+     * as an audience, and an audience no client may ask for is {@code invalid_target} rather than a
+     * call that reaches the service's own gate.
+     * <p>
+     * That audience lost its tier segment on 2026-09-07, when the service moved to the platform
+     * plane: it is the wire alias, so it says what the alias says. Membership here did not change
+     * and could not — an application is an audience because it VALIDATES and mints nothing, which
+     * is a property of the service and not of the plane it runs on.
      */
     public static final List<String> RECEIVE_ONLY_APPS = List.of("githost", "configuration");
 

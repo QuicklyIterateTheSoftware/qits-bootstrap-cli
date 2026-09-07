@@ -84,7 +84,8 @@ public class Boot {
         this.ci = new CiApi(http, config.ciUrl());
         this.pd = new PdApi(http, config.platformDeploymentsUrl());
         this.idp = new IdpApi(http, config.idpIssuer());
-        this.configuration = new ConfigurationApi(http, config.configurationUrl());
+        this.configuration = new ConfigurationApi(http, config.configurationUrl(),
+                config.envName());
         this.projects = new ProjectsApi(http, config.projectsUrl());
     }
 

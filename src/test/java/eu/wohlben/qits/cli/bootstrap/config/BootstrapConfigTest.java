@@ -149,13 +149,18 @@ class BootstrapConfigTest {
         assertThat(config.mirrorUrl()).isEqualTo("http://qits-platform-mirror:8080");
         // Seed services are reached at fixed aliases before deployment endpoints are projected.
         assertThat(config.ciUrl()).isEqualTo("http://preprod-qits-ci:8080/ci");
-        // THE TWO THAT DO NOT CARRY THE TIER, and they are the reason both are derived from
+        // THE THREE THAT DO NOT CARRY THE TIER, and they are the reason each is derived from
         // PlatformModel rather than concatenated here: the deployer and the bus moved to the
         // platform plane on 2026-08-17, and a hardcoded environment prefix would have sent every
         // topology write and every bus health poll of this run to a name nothing answers to.
         assertThat(config.platformDeploymentsUrl())
                 .isEqualTo("http://qits-deployments:8080/platform-deployments");
         assertThat(config.eventsUrl()).isEqualTo("http://qits-events:8080/events");
+        // The configuration store is the third, since 2026-09-07 — and it was the one whose
+        // concatenation cost the most: this exact string is also handed to the deployer as
+        // QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL, which REFUSES a deployment it cannot resolve
+        // rather than falling back to the file. Still no path, because that reader appends its own.
+        assertThat(config.configurationUrl()).isEqualTo("http://qits-configuration:8080");
         // The issuer is a value consumers validate as well as an address this program dials.
         assertThat(config.idpIssuer()).isEqualTo("http://qits-platform-idp:8080/idp");
     }

@@ -540,9 +540,17 @@ public interface BootstrapConfig {
      * to the deployer — and the edge strips client-supplied identity headers from every request it
      * proxies, which is exactly the property that makes it safe as a public door. Sending this
      * through it would put the write behind a header the door is built to throw away.
+     * <p>
+     * <b>The hostname is DERIVED, and the 2026-09-07 plane move is what that cost.</b> This method
+     * spelled {@code <env>-qits-configuration} and so did not follow
+     * {@link PlatformModel#PLATFORM_SERVICES}: the moment the store moved plane, the import phase's
+     * health wait and its POST would both have gone to a name nothing answers to — and the same
+     * string is handed to the deployer as {@code QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL}, which
+     * refuses a deployment it cannot resolve rather than falling back to the file. Neither the
+     * no-path shape above nor the not-the-edge argument changed with the plane; only the host did.
      */
     default String configurationUrl() {
-        return "http://" + envName() + "-qits-configuration:8080";
+        return "http://" + PlatformModel.wireAlias("configuration", envName()) + ":8080";
     }
 
     /**

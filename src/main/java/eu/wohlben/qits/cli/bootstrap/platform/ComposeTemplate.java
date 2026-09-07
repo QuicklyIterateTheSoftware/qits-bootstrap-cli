@@ -1767,25 +1767,43 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-containers.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
             qits.platform.deployments.extras.qits-containers.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
             qits.platform.deployments.extras.qits-containers.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
-            # DEPLOYMENT CONFIGURATION AS PLATFORM STATE, and the service the block below reads. It
-            # is an ordinary environment application: no mount, no publish, and no datasource env —
-            # `resources: postgresql:db` in its own deployments.yml is what gets it a store, and the
-            # deployer injects QITS_RESOURCE_DB_* before the successor starts.
+            # DEPLOYMENT CONFIGURATION AS PLATFORM STATE, and the service the block below reads. A
+            # PLATFORM service since 2026-09-07, so its key is the bare repository name and no tier
+            # qualifies it: an entry in this store is ENV-KEYED and `env` is a path segment on its
+            # API, so one instance holds every tier's values without a tier being able to read
+            # another's. What one per tier could never answer is what moved it: what a key holds in
+            # EVERY environment at once, and what a JOINING environment starts from. Still no mount,
+            # no publish and no datasource env — `resources: postgresql:db` in its own
+            # deployments.yml is what gets it a store, and the deployer injects QITS_RESOURCE_DB_*
+            # before the successor starts.
             #
             # THE THREE VARIABLES ARE ITS GATE. The image ships the bare qits-configuration as its
-            # audience, because an environment-qualified default would bake one tier into an image
-            # every tier shares — so the alias has to be spelled here or every bearer the deployer
-            # mints is refused. QITS_AUTH_MACHINE_REQUIRED carries the platform's own switch: off,
-            # the service starts no OIDC tenant and the deployer's read arrives on forward-auth
-            # headers alone, which is the supported posture of a platform with the gate down.
+            # audience — which the plane move made CORRECT rather than merely un-tiered, so this
+            # line now restates the shipped default. It stays spelled because both sides come out
+            # of the one derivation and a value nobody states is a value nobody notices moving.
+            # QITS_AUTH_MACHINE_REQUIRED carries the platform's own switch: off, the service starts
+            # no OIDC tenant and the deployer's read arrives on forward-auth headers alone, which is
+            # the supported posture of a platform with the gate down.
             #
             # THIS IS CREDENTIAL-BEARING INFRASTRUCTURE. What it stores is what every deployment's
             # environment is read from, so its write surface carries the sensitivity of the
             # qits-deployments-config volume it replaces. There is no anonymous route on it.
             qits.platform.deployments.extras.qits-configuration.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
-            qits.platform.deployments.extras.qits-configuration.env.QITS_AUTH_MACHINE_AUDIENCE=${ENV_NAME}-qits-configuration
+            qits.platform.deployments.extras.qits-configuration.env.QITS_AUTH_MACHINE_AUDIENCE=${ALIAS_CONFIGURATION}
             qits.platform.deployments.extras.qits-configuration.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
             qits.platform.deployments.extras.qits-configuration.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # THE OLD NAME, KEPT ANSWERING FOR ONE MIGRATION — added 2026-09-07 with the plane move
+            # and removed by the epic's cutover feature. Docker's embedded DNS answers a container's
+            # aliases, so this is what keeps a caller that still holds `<env>-qits-configuration`
+            # reaching the same service: the LIVE deployer and the LIVE orchestrator both hold the
+            # env-prefixed url in their own running environment and only take the new one at their
+            # next deploy, which is phases away from this one. Without it the plane move is a
+            # connect error on the deployer's very next resolved read.
+            #
+            # ONE entry because this platform has one environment. A multi-env estate adds
+            # aliases[1..n] — one per tier that ever dialled the old name — as OPERATOR entries in
+            # the store, not here: this file knows only the environment it is bootstrapping.
+            qits.platform.deployments.extras.qits-configuration.aliases[0]=${ENV_NAME}-qits-configuration
             # THE TECHNICAL PROCESSES SERVICE, and the one component that holds a credential for
             # every peer it drives. A process here is nothing but calls: the first one is the
             # platform's unified deletion run, which asks the deployer and ci for the pins, hands
@@ -1821,11 +1839,14 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_WORKSPACES_URL=http://${ALIAS_WORKSPACES}:8080
             # THE SEVENTH TARGET, and the one whose absence was silent. qits-configuration holds the
             # image pins, and a gc run asks it for them before it decides what a sweep may delete.
-            # The image's own default is the bare `http://qits-configuration:8080` — a platform-tier
-            # spelling of an ENVIRONMENT-tier service, so it is a name nothing on qits-net answers
-            # to. Unspelled here, every gc run's pins.images read failed with a connect error and the
-            # run skipped artifacts.plan and artifacts.sweep: registry retention had never once run
-            # on the fresh node, diagnosed 2026-09-06.
+            # The image's own default is the bare `http://qits-configuration:8080`, and since the
+            # plane move on 2026-09-07 that is the RIGHT name — this line is a plain restatement of
+            # the default now, where the day before it was the correction for it. It stays for the
+            # reason every other address in this file stays: stated, it moves with the derivation;
+            # inherited, it moves without anybody seeing. What its absence cost is on the record —
+            # while the service was a tier's, every gc run's pins.images read failed with a connect
+            # error and the run skipped artifacts.plan and artifacts.sweep, so registry retention
+            # had never once run on the fresh node, diagnosed 2026-09-06.
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_CONFIGURATION_URL=http://${ALIAS_CONFIGURATION}:8080
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_ARTIFACTS_CLIENT_ENABLED=${MACHINE_CLIENT}
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_CLIENT_ARTIFACTS_AUTH_SERVER_URL=${IDP}
@@ -1959,21 +1980,22 @@ public final class ComposeTemplate {
             # url before qits-configuration is deployed and imported refuses every deployment,
             # qits-configuration's own included. The seed deployer is therefore started WITHOUT it
             # (the seed stack spells none of these) and the boot flips it after the import phase.
-            qits.platform.deployments.extras.qits-deployments.env.QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://${ENV_NAME}-qits-configuration:8080
+            qits.platform.deployments.extras.qits-deployments.env.QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://${ALIAS_CONFIGURATION}:8080
             # THE CREDENTIAL THAT READ PRESENTS, as the NAMED oidc client `configuration` — the
             # deployer's one guarded peer. The client id is this deployer's own idp client, never a
-            # borrowed one: a read that is refused has to name the service that was refused — and that
-            # id lost its tier segment with the plane move, while qits-configuration it reads is still
-            # one tier's. The audience is therefore the TIER's, and the image deliberately defaults it
-            # to nothing, because an environment-qualified default would bake one tier into an image
-            # every tier shares.
+            # borrowed one: a read that is refused has to name the service that was refused. The
+            # asymmetry this pair used to carry is gone — the deployer's id lost its tier on
+            # 2026-08-17 and the peer's lost it on 2026-09-07, so both sides are bare now and both
+            # come out of the same derivation. The audience is still spelled rather than left to the
+            # image, because the idp is seeded with the very same value and a mint for a name no
+            # client may ask for is invalid_target, not a call the service ever sees.
             # Enabled by the platform's machine switch: with the gate down the client stays off and
             # the read goes out on forward-auth headers alone, which qits-configuration accepts.
             qits.platform.deployments.extras.qits-deployments.env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ENABLED=${MACHINE_CLIENT}
             qits.platform.deployments.extras.qits-deployments.env.QUARKUS_OIDC_CLIENT_CONFIGURATION_AUTH_SERVER_URL=${IDP}
             qits.platform.deployments.extras.qits-deployments.env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ID=${ALIAS_DEPLOYMENTS}
             qits.platform.deployments.extras.qits-deployments.env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CREDENTIALS_SECRET=${IDP_SECRET_DEPLOYMENTS}
-            qits.platform.deployments.extras.qits-deployments.env.QUARKUS_OIDC_CLIENT_CONFIGURATION_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-configuration
+            qits.platform.deployments.extras.qits-deployments.env.QUARKUS_OIDC_CLIENT_CONFIGURATION_GRANT_OPTIONS_CLIENT_AUDIENCE=${ALIAS_CONFIGURATION}
             qits.platform.deployments.extras.qits-deployments.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The idp's own deployment. NO DATASOURCE ENV AND NO VOLUME: `resources: postgresql:db` in its
             # deployments.yml is what gets it a store, and the deployer injects the triple from the

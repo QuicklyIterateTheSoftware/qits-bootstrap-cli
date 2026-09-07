@@ -654,16 +654,17 @@ class PipelinePhasesTest {
         List<String> env = PipelinePhases.flipEnv(renderedExtras(), "qits-deployments");
 
         assertThat(env).containsExactlyInAnyOrder(
-                "QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://prod-qits-configuration:8080",
+                "QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://qits-configuration:8080",
                 "QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ENABLED=true",
                 "QUARKUS_OIDC_CLIENT_CONFIGURATION_AUTH_SERVER_URL="
                         + "http://qits-platform-idp:8080/idp",
-                // The deployer's own client id, which lost the tier when it moved plane, while
-                // qits-configuration it reads is still one tier's — so the pair is asymmetric.
+                // The deployer's own client id, which lost the tier when it moved plane on
+                // 2026-08-17 — and the peer it reads lost it on 2026-09-07, so what used to be an
+                // asymmetric pair is two bare names out of the one derivation.
                 "QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ID=qits-deployments",
                 "QUARKUS_OIDC_CLIENT_CONFIGURATION_CREDENTIALS_SECRET=s3cr3t",
                 "QUARKUS_OIDC_CLIENT_CONFIGURATION_GRANT_OPTIONS_CLIENT_AUDIENCE="
-                        + "prod-qits-configuration");
+                        + "qits-configuration");
     }
 
     /**
