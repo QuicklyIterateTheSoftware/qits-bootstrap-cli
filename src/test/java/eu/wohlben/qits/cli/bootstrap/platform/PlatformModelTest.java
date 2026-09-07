@@ -1032,6 +1032,71 @@ class PlatformModelTest {
     }
 
     /**
+     * <b>The label an application is reached at, which is its name without the two prefixes.</b>
+     * The plane says where a service RUNS and never where it is answered: there is one idp for the
+     * platform and it is {@code idp.<env>.<domain>}. The same derivation qits-deployments makes in
+     * {@code DeployService.browserHost}, asked from the outside.
+     */
+    @Test
+    void aBrowserLabelIsTheApplicationNameWithoutItsPrefixes() {
+        assertThat(PlatformModel.browserLabel("ci")).isEqualTo("ci");
+        assertThat(PlatformModel.browserLabel("platform-idp")).isEqualTo("idp");
+        assertThat(PlatformModel.browserLabel("platform-edge")).isEqualTo("edge");
+        assertThat(PlatformModel.browserLabel("platform-orchestrator")).isEqualTo("orchestrator");
+        assertThat(PlatformModel.browserLabel("oci-postgresql")).isEqualTo("oci-postgresql");
+    }
+
+    /**
+     * <b>THE ACCEPTANCE PIN: the whole value a dev platform renders</b>, spelled out rather than
+     * derived a second time, because what this list has to match is a live platform's
+     * {@code QITS_PROJECTS_RESERVED_SLUGS} — hand-widened on 2026-09-07 and re-imported by every
+     * bootstrap since. A derivation asserted against itself would pass while the platform and the
+     * template disagreed.
+     * <p>
+     * Twenty-one entries: the environment, the eighteen deployables' browser labels, and the two
+     * edge app labels no application name spells ({@code registry} is qits-artifacts,
+     * {@code editor} is qits-workspaces). {@code idp} and {@code edge} are in it twice over — from
+     * {@link PlatformModel#DEPLOYABLES} and by name — and appear once.
+     */
+    @Test
+    void theReservedSlugsAreTheEnvironmentAndEveryServiceLabel() {
+        assertThat(PlatformModel.reservedSlugs("dev")).isEqualTo("dev,"
+                + "artifacts,ci,configuration,containers,deployments,docs,edge,editor,events,"
+                + "githost,idp,maintenance,mirror,observability,orchestrator,projects,registry,"
+                + "stt,system,workspaces");
+    }
+
+    /**
+     * <b>A tier called after a service reserves that label once</b>, not twice — the environment is
+     * always first, and the label set drops what it already says. The rerun invariant is the whole
+     * reason this value has a fixed order at all: it is imported into qits-configuration on every
+     * boot, so a list that reshuffled itself would make the store and the template disagree for
+     * nothing.
+     */
+    @Test
+    void anEnvironmentNamedAfterAServiceIsReservedOnce() {
+        List<String> slugs = PlatformModel.reservedSlugList("docs");
+
+        assertThat(slugs).startsWith("docs").containsOnlyOnce("docs");
+        assertThat(slugs).isEqualTo(PlatformModel.reservedSlugList("docs"));
+    }
+
+    /**
+     * <b>An application this bootstrap gains reserves its own label, with nobody editing a list.</b>
+     * That is what makes the value derived rather than written: the four the edge configures are a
+     * list because two of them ({@code registry}, {@code editor}) are no application's name, and
+     * every other label comes off the deployables themselves.
+     */
+    @Test
+    void everyDeployableAndEveryEdgeAppReservesItsLabel() {
+        List<String> slugs = PlatformModel.reservedSlugList("dev");
+
+        assertThat(PlatformModel.DEPLOYABLES).allSatisfy(name ->
+                assertThat(slugs).contains(PlatformModel.browserLabel(name)));
+        assertThat(slugs).containsAll(PlatformModel.EDGE_APPS);
+    }
+
+    /**
      * WHICH TAG IS THE RELEASE, asked by the boot twice — the commit each checkout stands at and
      * the commit the deploy ref is moved to. git sorted the list newest-version-first; this picks
      * the newest that is a version.

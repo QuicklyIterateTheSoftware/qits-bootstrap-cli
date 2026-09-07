@@ -1207,10 +1207,15 @@ public class PipelinePhases {
      * of the name is taken for an apex, and the editor is served out of the wrong tier at a domain
      * that is not the domain.
      * <p>
-     * <b>The other direction is closed at the source.</b> qits-projects is handed the environment
-     * names as {@code QITS_PROJECTS_RESERVED_SLUGS} and refuses them, so a project cannot be
-     * created into this collision. This is what closes the direction that service cannot see: an
-     * environment named after a project that is already there.
+     * <b>The other direction is closed at the source.</b> qits-projects is handed
+     * {@code QITS_PROJECTS_RESERVED_SLUGS} and refuses every name on it, so a project cannot be
+     * created into this collision. That list is wider than this phase's question: it carries the
+     * environment names AND every label the platform publishes ({@code registry}, {@code editor},
+     * {@code idp} and the rest — see {@link PlatformModel#reservedSlugs}), because a project slug
+     * shadows a SERVICE label at position 0 as readily as it collides with a tier at position 1.
+     * This phase closes the one direction that service cannot see: an environment named after a
+     * project that is already there. Nothing here reserves a service label, and nothing needs to —
+     * an environment is not read at position 0.
      * <p>
      * <b>It refuses rather than renames</b>, for the same reason the platform-environment check
      * beside it does — the name is inside every wire alias, every container name and every recorded

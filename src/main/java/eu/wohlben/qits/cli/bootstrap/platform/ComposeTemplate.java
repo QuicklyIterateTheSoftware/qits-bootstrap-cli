@@ -516,6 +516,14 @@ public final class ComposeTemplate {
                   # qits-projects refuses those slugs (QITS_PROJECTS_RESERVED_SLUGS) and the
                   # `environment` phase refuses the mirror image of the same collision.
                   #
+                  # A PROJECT SLUG THAT SPELLS AN APP LABEL BREAKS NOTHING AND IS RESERVED ANYWAY.
+                  # `editor` is matched here, at position 0, before any project is read — so a
+                  # project called `editor` or `registry` cannot take the name from the app; the
+                  # app wins, silently and for ever. What the project loses is every address of its
+                  # own, at every depth. So the same reserved list carries the four app labels
+                  # above and every label the deployer projects: shadowing is not a routing bug to
+                  # fix here, it is a name to refuse before it is handed out.
+                  #
                   # No port key: 8080 is the edge's default for an app, the same silence the three
                   # above keep.
                   QITS_EDGE_APPS_EDITOR_HOST_PATTERN: "{env}-qits-workspaces"
@@ -1025,17 +1033,35 @@ public final class ComposeTemplate {
                   # the first time on the DEPLOYED container — where every entry now matches a row
                   # by alias and nothing is cloned.
                   QITS_STARTUP_SEED_RECONCILE_REPOSITORIES: "false"
-                  # THE SLUGS NO PROJECT MAY TAKE, and the list is this platform's environment
-                  # names. A project slug is the SECOND label of editor.<project>.<env>.<domain>,
-                  # and that is the position the edge reads an environment at in the shorter
-                  # <app>.<env>.<domain> shape — it asks "is this an environment" before it asks
-                  # "is this a project". So a project called `prod` would make
-                  # editor.prod.<env>.<domain> parse as the app `editor` in the tier `prod` over an
-                  # apex of `<env>.<domain>`, and the same collision would take
+                  # THE SLUGS NO PROJECT MAY TAKE, AND THERE ARE TWO KINDS OF THEM: this platform's
+                  # environment name, and every LABEL this platform already publishes.
+                  #
+                  # THE ENVIRONMENT NAME closes a real misroute. A project slug is the SECOND label
+                  # of editor.<project>.<env>.<domain>, and that is the position the edge reads an
+                  # environment at in the shorter <app>.<env>.<domain> shape — it asks "is this an
+                  # environment" before it asks "is this a project". So a project called `prod`
+                  # would make editor.prod.<env>.<domain> parse as the app `editor` in the tier
+                  # `prod` over an apex of `<env>.<domain>`, and the same collision would take
                   # <app>.<project>.<env>.<domain> for every other app with it. qits-projects
                   # refuses these slugs; the `environment` phase refuses the mirror image, an
                   # environment named after a project that already exists.
-                  QITS_PROJECTS_RESERVED_SLUGS: ${ENV_NAME}
+                  #
+                  # THE SERVICE LABELS close a shadowing instead, at position 0, and they joined
+                  # this list with the project tier. `registry`, `editor`, `idp`, `ci` and the rest
+                  # are what the edge's configured apps and the deployer's projected hosts answer
+                  # at, and a matched app entry wins before any project is looked at — so a project
+                  # called `registry` can never claim registry.<env>.<domain>. Nothing misroutes:
+                  # the service simply keeps its own name, for ever, and the project holds a slug
+                  # that is unreachable at every depth. The edge's routing javadoc points here for
+                  # exactly this reason. Refusing the slug is the only moment the name can still be
+                  # changed.
+                  #
+                  # DERIVED, NOT WRITTEN — PlatformModel.reservedSlugs builds it from the
+                  # deployables' own browser labels plus the edge's four app entries, so an
+                  # application this bootstrap gains reserves its label without anybody editing a
+                  # list. Environment first, then the labels sorted, so a rerun writes what the
+                  # last run wrote.
+                  QITS_PROJECTS_RESERVED_SLUGS: ${RESERVED_SLUGS}
                   # Where its own git mirrors go. The image defaults it under ${user.home}, which is
                   # the literal "?" for this passwd-less uid — the same trap the deployment extras
                   # spell it out for.
@@ -2259,12 +2285,23 @@ public final class ComposeTemplate {
             # The seed spells it no more than it spells the three above: nothing releases during the
             # seed window, so there is no consumed branch and no workspace to resolve.
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RELEASE_REQUESTS_WORKSPACES_URL=http://${ENV_NAME}-qits-workspaces:8080
-            # THE SLUGS NO PROJECT MAY TAKE: this platform's environment names, because a project
-            # slug sits at the label the edge reads a tier at — position 1 of
-            # editor.<project>.<env>.<domain>, which is where <app>.<env>.<domain> spells its
-            # environment. Spelled here as well as on the seed, or the first self-deploy drops it:
-            # the update argv --env-rm's what the extras do not state.
-            qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RESERVED_SLUGS=${ENV_NAME}
+            # THE SLUGS NO PROJECT MAY TAKE: this platform's environment name and every label it
+            # publishes. The environment name because a project slug sits at the label the edge
+            # reads a tier at — position 1 of editor.<project>.<env>.<domain>, which is where
+            # <app>.<env>.<domain> spells its environment, and a project there is a genuine
+            # misroute. The SERVICE labels because position 0 is already taken: a matched app entry
+            # wins before any project is read, so a project called `registry` or `editor` keeps a
+            # slug it can never be reached at. The seed block says both at length.
+            #
+            # The value is PlatformModel.reservedSlugs — the deployables' browser labels plus the
+            # edge's four app entries, environment first and the rest sorted — so it is the same
+            # string on both files and the same string on the next rerun. That last part is what
+            # this key needs most: it is imported into qits-configuration, and a hand-widened entry
+            # there is reset by the next bootstrap to whatever this template renders.
+            #
+            # Spelled here as well as on the seed, or the first self-deploy drops it: the update
+            # argv --env-rm's what the extras do not state.
+            qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RESERVED_SLUGS=${RESERVED_SLUGS}
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_DATA_DIR=/data/mirrors
             qits.platform.deployments.extras.qits-projects.env.QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080
             qits.platform.deployments.extras.qits-projects.env.QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN}

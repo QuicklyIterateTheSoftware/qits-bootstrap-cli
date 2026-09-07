@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.SortedSet;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -807,6 +809,105 @@ public final class PlatformModel {
     }
 
     /**
+     * <b>The label an application publishes itself at</b> — position 0 of
+     * {@code <app>.<env>.<domain>} and of {@code <app>.<project>.<env>.<domain>}. It is the
+     * application name with the {@code qits-} and {@code platform-} prefixes stripped, so
+     * {@code platform-idp} is reached at {@code idp.<env>.<domain>} and {@code ci} at
+     * {@code ci.<env>.<domain>}.
+     * <p>
+     * <b>The derivation is qits-deployments', restated.</b> {@code DeployService.browserHost} builds
+     * the host the deployer projects for an application and strips exactly these two prefixes; this
+     * is the same rule asked from the outside, because the bootstrap has to know which labels the
+     * platform occupies before a single deployment exists. If the deployer's rule ever moves, this
+     * one moves with it — a label the two disagree on is a name one side publishes and the other
+     * side hands out as a project slug.
+     * <p>
+     * The plane prefix goes because it is a fact about where a service RUNS, not about where it is
+     * reached: there is one idp for the platform and it answers at {@code idp.<env>}, not at
+     * {@code platform-idp.<env>}.
+     */
+    public static String browserLabel(String name) {
+        String label = application(name);
+        if (label.startsWith("qits-")) {
+            label = label.substring("qits-".length());
+        }
+        if (label.startsWith("platform-")) {
+            label = label.substring("platform-".length());
+        }
+        return label;
+    }
+
+    /**
+     * <b>The labels the EDGE publishes that no application name spells</b> — the four
+     * {@code QITS_EDGE_APPS_<name>_HOST_PATTERN} entries {@link ComposeTemplate} renders, keyed by
+     * the label rather than by the service behind it.
+     * <p>
+     * Two of them are derivable and two are not, which is the whole reason this list exists.
+     * {@code mirror} and {@code githost} are {@link #browserLabel}s of qits-platform-mirror and
+     * qits-githost; {@code registry} is qits-artifacts under a name a docker client understands, and
+     * {@code editor} is qits-workspaces under a name a person understands. Nothing derives those
+     * two from any application name, so they are written here once — beside the entries in the
+     * template they mirror — rather than being pasted into the value that has to hold them.
+     * <p>
+     * All four are in {@link #reservedSlugs} for the same reason every other label is: a project may
+     * not take a name the edge already answers at.
+     */
+    public static final List<String> EDGE_APPS =
+            List.of("registry", "mirror", "githost", "editor");
+
+    /**
+     * <b>The slugs no project may take</b> — {@code QITS_PROJECTS_RESERVED_SLUGS}, rendered into
+     * both generated files, and the reason a project slug is not free-form on this platform.
+     * <p>
+     * <b>Two collisions, one list.</b> A project slug is position 1 of
+     * {@code <app>.<project>.<env>.<domain>}, and the edge asks that label whether it names an
+     * ENVIRONMENT before it reads it as a project — so a project called after a tier is read as that
+     * tier, over an apex that is not the apex. That is the collision the environment names close,
+     * and it is a real misroute. The SERVICE labels close a second one at position 0: a project
+     * called {@code registry} can never claim {@code registry.<env>.<domain>}, because the edge
+     * matches its configured app entry first and the service wins every time. Nothing misroutes
+     * there — but the project owns a name it can never be reached at, and every link anybody builds
+     * to it lands on the registry instead. Refusing the slug says so at the one moment it can still
+     * be changed.
+     * <p>
+     * <b>Derived, never copied.</b> The labels are the {@link #browserLabel}s of everything this
+     * bootstrap deploys ({@link #DEPLOYABLES}, which contains every {@link #PLATFORM_SERVICES}
+     * entry) plus the edge's own four ({@link #EDGE_APPS}). {@code idp} and {@code edge} are named
+     * again below because the platform is not reachable without them — the login host and the
+     * gateway itself — and a list that lost them to a refactor of the deployables would hand the
+     * login name to a project. They are already derived; the restatement costs a deduplication and
+     * buys the guarantee.
+     * <p>
+     * <b>The order is the environment first and then the labels sorted</b>, and it is deterministic
+     * because a bootstrap RERUN has to write the value it wrote last time. This entry is imported
+     * into qits-configuration and re-imported on every run, so a value that reordered itself would
+     * make the store disagree with the template for no reason anybody could see.
+     * <p>
+     * The environment name is dropped from the label set rather than repeated: a platform whose tier
+     * is called {@code docs} reserves {@code docs} once.
+     */
+    public static String reservedSlugs(String envName) {
+        return String.join(",", reservedSlugList(envName));
+    }
+
+    /** The same list unjoined, so a test can name one entry. */
+    public static List<String> reservedSlugList(String envName) {
+        SortedSet<String> labels = new TreeSet<>();
+        DEPLOYABLES.forEach(app -> labels.add(browserLabel(app)));
+        PLATFORM_SERVICES.forEach(app -> labels.add(browserLabel(app)));
+        labels.addAll(EDGE_APPS);
+        // The login host and the door. Both are already above; naming them is what stops a
+        // refactor of the deployables from quietly handing either one to a project.
+        labels.add(browserLabel("platform-idp"));
+        labels.add(browserLabel("platform-edge"));
+        labels.remove(envName);
+        List<String> slugs = new ArrayList<>();
+        slugs.add(envName);
+        slugs.addAll(labels);
+        return List.copyOf(slugs);
+    }
+
+    /**
      * The placeholder SPA bundle a seed build needs, or empty when the service has no client.
      * Seed services only need their APIs, but their Dockerfiles consume an already-built SPA — and
      * a clean checkout has no dist directory while the hosted npm registry does not exist yet. The
@@ -988,7 +1089,7 @@ public final class PlatformModel {
      * application moves plane, so the templates carry placeholders and this method answers them —
      * which is what makes {@link #PLATFORM_SERVICES} the one place a plane is decided.
      * <p>
-     * Three families, every one keyed by the APPLICATION because that name never moves:
+     * Three families keyed by the APPLICATION, because that name never moves:
      * <ul>
      *   <li>{@code ALIAS_<APP>} — the address peers dial.
      *   <li>{@code CLIENT_KEY_<APP>} — the env-var infix the idp's per-client keys are built from
@@ -996,6 +1097,14 @@ public final class PlatformModel {
      *   <li>{@code TIER_ENV_<APP>} and {@code TIER_ENV_EXTRAS_<APP>} — the {@code QITS_ENVIRONMENT}
      *       line in the stack file's words and in the extras', or NOTHING at all. See
      *       {@link #tierEnv}.
+     * </ul>
+     * And one that is keyed by nothing because it is a statement about the platform as a whole:
+     * <ul>
+     *   <li>{@code RESERVED_SLUGS} — the names no project may take, which is this environment plus
+     *       every label the platform already publishes. See {@link #reservedSlugs}. It is here
+     *       rather than in {@code SeedPhases.tokens} for the reason the three above are: it is
+     *       derived from {@link #DEPLOYABLES} and {@link #PLATFORM_SERVICES}, so an application
+     *       added to either has to reserve its own label without anybody remembering to.
      * </ul>
      * <p>
      * It replaced a single {@code ENV_KEY} token the templates pasted a repository name after —
@@ -1018,6 +1127,7 @@ public final class PlatformModel {
         for (String app : IDP_CLIENT_APPS) {
             tokens.put("CLIENT_KEY_" + clientKey(app), clientKey(wireAlias(app, envName)));
         }
+        tokens.put("RESERVED_SLUGS", reservedSlugs(envName));
         return tokens;
     }
 

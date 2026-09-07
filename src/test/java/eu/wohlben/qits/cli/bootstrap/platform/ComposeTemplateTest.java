@@ -371,24 +371,29 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>A project slug sits where the edge reads a tier, so the environment names are reserved —
-     * and the project tier did not change that.</b> Position 1 of
-     * {@code editor.<project>.<env>.<domain>} is the label {@code <app>.<env>.<domain>} spells its
-     * environment at, and the edge asks "is this an environment" before it asks "is this a
-     * project". A project called after this platform's environment would be read as that
-     * environment, over an apex that is not the apex. The list is seeded from the environments this
-     * bootstrap knows, which is the one it names.
+     * <b>A project slug sits where the edge reads a tier AND where it reads an app, so both are
+     * reserved.</b> Position 1 of {@code editor.<project>.<env>.<domain>} is the label
+     * {@code <app>.<env>.<domain>} spells its environment at, and the edge asks "is this an
+     * environment" before it asks "is this a project" — a project called after this platform's
+     * environment would be read as that environment, over an apex that is not the apex. Position 0
+     * is the app label, matched before any project is read, so a project called {@code registry}
+     * simply never reaches its own name.
+     * <p>
+     * The value is the one string in both files, and the assertion is whole rather than a
+     * {@code contains} of the environment: a list that gained the labels but not on the extras is
+     * a first self-deploy that drops them, since the update argv {@code --env-rm}s what the extras
+     * do not state.
      */
     @Test
-    void qitsProjectsIsToldWhichSlugsAreTheEnvironmentNames() {
+    void qitsProjectsIsToldWhichSlugsAreReserved() {
+        String reserved = PlatformModel.reservedSlugs(ENV);
         String projects = serviceBlock(ComposeTemplate.compose(tokens()),
                 ENV + "-qits-projects");
 
-        assertThat(projects).contains("QITS_PROJECTS_RESERVED_SLUGS: " + ENV);
-        // On the extras too, or the first self-deploy drops it: the update argv --env-rm's what
-        // the extras do not state.
+        assertThat(reserved).startsWith(ENV + ",").contains(",registry,").contains(",editor,");
+        assertThat(projects).contains("QITS_PROJECTS_RESERVED_SLUGS: " + reserved);
         assertThat(extras("qits-projects"))
-                .contains("env.QITS_PROJECTS_RESERVED_SLUGS=" + ENV);
+                .contains("env.QITS_PROJECTS_RESERVED_SLUGS=" + reserved);
     }
 
     /**

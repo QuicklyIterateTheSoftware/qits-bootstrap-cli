@@ -205,8 +205,18 @@ over an apex of `<env>.<domain>`, which is the wrong environment at a domain tha
 Creating a new environment into that collision is
 refused here, on the create arm only, because an environment row that already stands is a platform
 already running under that name and refusing its rerun would strand rather than repair it. The other
-direction is closed at the source: qits-projects is handed the environment names as
-`QITS_PROJECTS_RESERVED_SLUGS` and refuses them as slugs.
+direction is closed at the source: qits-projects is handed `QITS_PROJECTS_RESERVED_SLUGS` and
+refuses every name on it.
+
+**That list is the environment name plus every label this platform publishes** — `registry`,
+`editor`, `idp`, `edge`, `ci`, `artifacts` and the rest, derived by `PlatformModel.reservedSlugs`
+from the deployables' own browser labels and the edge's four configured apps, environment first and
+the labels sorted. The service labels are there for a second collision, at position 0 rather than
+position 1: an app entry is matched before any project is read, so a project called `registry`
+cannot take `registry.<env>.<domain>` from the registry — the service wins, silently, and the
+project is left holding a name it is unreachable at. Nothing misroutes; the slug is refused because
+the moment it is created is the last moment it can be changed. Both generated files carry the value,
+and it is derived rather than written so an application this bootstrap gains reserves its own label.
 
 `--domain <domain>` and `--public-ip <ipv4>` are checked before the payload image is built, because
 both values leave this machine: they become a certificate request to Let's Encrypt and the records a
