@@ -2371,12 +2371,13 @@ public class PipelinePhases {
             // THE LOGIN IS A SERVICE HOST NOW, like every other. The door serves no /idp path.
             String idp = boot.config.idpOrigin();
             String authority = boot.config.envAuthority();
-            // THE ENVIRONMENT LABEL IS OPTIONAL FOR THE DEFAULT TIER on a domain platform:
-            // <app>.<domain> and <app>.<env>.<domain> are the same host, and the short one is what
-            // a person types. Locally there is no apex to shorten to — the door carries the
-            // environment's name, so an app host is <app>.<env>.localhost:<port> and nothing else.
+            // EVERY PUBLIC NAME SPELLS ITS ENVIRONMENT, on both kinds of platform. The short
+            // <app>.<domain> form is retired with the project tier: the edge used to give an
+            // unrecognised first label to the default environment, and that fallthrough is gone —
+            // only the bare apex still serves the default tier. So an app host is <app>. of the
+            // ENVIRONMENT AUTHORITY and nothing else, which is what it always was locally.
             String apex = DomainName.of(boot.config).orElse(null);
-            String appHost = apex == null ? "http://<app>." + authority : "https://<app>." + apex;
+            String appHost = (apex == null ? "http://<app>." : "https://<app>.") + authority;
             String returns = apex == null ? "*." + authority : "*." + apex + " and *." + authority;
             report.add("edge:      " + door + "/  — the host's one HTTP port, in front of every "
                     + "environment. The");
@@ -2395,10 +2396,11 @@ public class PipelinePhases {
                     + "deployments, system, and the");
             report.add("           three above.");
             if (apex != null) {
-                report.add("           The environment label is optional for " + env
-                        + ", the default tier: <app>." + apex);
-                report.add("           and <app>." + authority + " are the same host. Another "
-                        + "tier spells its own label.");
+                report.add("           EVERY NAME SPELLS ITS TIER: <app>." + apex + " is retired "
+                        + "and serves nothing — only");
+                report.add("           the apex still answers for " + env + ". A project's hosts "
+                        + "go one label deeper again:");
+                report.add("           <app>.<project>." + authority + ".");
             }
             report.add("           ONE LOGIN COVERS THEM ALL: the session cookie is scoped to "
                     + boot.config.browserSsoCookieDomain() + " and the");

@@ -77,11 +77,14 @@ class ComposeTemplateTest {
     static Map<String, String> tokens(String domain) {
         Map<String, String> values = tokens();
         // The binding follows the address a browser arrives at, which a domain moves to TLS. The
-        // login is idp. of the APEX, because the environment label is optional for the default tier.
+        // login is idp. of the ENVIRONMENT AUTHORITY on both kinds of platform: every public name
+        // spells its environment, and the short idp.<domain> form no longer routes. The RP ID stays
+        // the bare apex — a credential asserts on it and its children, and moving it would
+        // invalidate every passkey.
         values.put("WEBAUTHN_RP_ID", domain);
-        values.put("WEBAUTHN_ORIGINS", "https://idp." + domain);
+        values.put("WEBAUTHN_ORIGINS", "https://idp." + ENV + "." + domain);
         values.put("PUBLIC_ORIGIN", "https://" + domain);
-        values.put("IDP_ORIGIN", "https://idp." + domain);
+        values.put("IDP_ORIGIN", "https://idp." + ENV + "." + domain);
         values.put("BROWSER_HOSTS", domain + "," + ENV + "." + domain
                 + ",*." + domain + ",*." + ENV + "." + domain);
         values.put("SESSION_COOKIE_DOMAIN", domain);
@@ -1252,10 +1255,10 @@ class ComposeTemplateTest {
         String withDomain = serviceBlock(ComposeTemplate.compose(tokens(DOMAIN)),
                 "qits-platform-idp");
         assertThat(withDomain).contains("QITS_IDP_WEBAUTHN_RP_ID: " + DOMAIN)
-                .contains("QITS_IDP_WEBAUTHN_ORIGINS: \"https://idp." + DOMAIN + "\"");
+                .contains("QITS_IDP_WEBAUTHN_ORIGINS: \"https://idp." + ENV + "." + DOMAIN + "\"");
         assertThat(ComposeTemplate.extras(tokens(DOMAIN)))
                 .contains("env.QITS_IDP_WEBAUTHN_RP_ID=" + DOMAIN)
-                .contains("env.QITS_IDP_WEBAUTHN_ORIGINS=https://idp." + DOMAIN);
+                .contains("env.QITS_IDP_WEBAUTHN_ORIGINS=https://idp." + ENV + "." + DOMAIN);
     }
 
     /**
@@ -1280,12 +1283,15 @@ class ComposeTemplateTest {
                 .contains("QITS_EDGE_SESSIONS_BROWSER_HOSTS: "
                         + "\"prod.localhost:8080,*.prod.localhost:8080\"");
 
-        // Four shapes with a domain: the environment label is optional for the default tier, so
-        // <app>.<domain> and <app>.<env>.<domain> are one host and both wildcards are named.
+        // Four shapes with a domain, and *.<domain> is the wider one rather than a second spelling
+        // of one host. The environment label used to be optional for the default tier, so
+        // <app>.<domain> and <app>.<env>.<domain> were one host; that fallthrough is retired with
+        // the project tier. The entry stays because an allow-list is not a router — an entry for a
+        // name the edge does not serve admits nobody — and *.<env>.<domain> is what admits the idp.
         String hosts = DOMAIN + ",prod." + DOMAIN + ",*." + DOMAIN + ",*.prod." + DOMAIN;
         String domain = ComposeTemplate.compose(tokens(DOMAIN));
         assertThat(serviceBlock(domain, "qits-platform-idp"))
-                .contains("QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN: https://idp." + DOMAIN)
+                .contains("QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN: https://idp." + ENV + "." + DOMAIN)
                 .contains("QITS_IDP_BROWSER_SSO_BROWSER_HOSTS: \"" + hosts + "\"")
                 .contains("QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN: \"" + DOMAIN + "\"");
         assertThat(serviceBlock(domain, "qits-platform-edge"))
@@ -1303,7 +1309,7 @@ class ComposeTemplateTest {
                         + "QITS_EDGE_SESSIONS_CANONICAL_ORIGIN=http://prod.localhost:8080");
         assertThat(ComposeTemplate.extras(tokens(DOMAIN)))
                 .contains("qits.platform.deployments.extras.qits-platform-idp.env."
-                        + "QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN=https://idp." + DOMAIN)
+                        + "QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN=https://idp." + ENV + "." + DOMAIN)
                 .contains("qits.platform.deployments.extras.qits-platform-edge.env."
                         + "QITS_EDGE_SESSIONS_CANONICAL_ORIGIN=https://" + DOMAIN);
     }
@@ -2262,13 +2268,13 @@ class ComposeTemplateTest {
         // browser arrives at, so a domain replaces both values instead of appending to a line.
         // Put back, so that what is left to compare is everything else.
         // The idp's own host first, because it is the longer spelling of the same name.
-        compose = compose.replace("https://idp." + DOMAIN, "http://idp.prod.localhost:8080")
+        compose = compose.replace("https://idp." + ENV + "." + DOMAIN, "http://idp.prod.localhost:8080")
                 .replace("https://" + DOMAIN, "http://prod.localhost:8080")
                 .replace("RP_ID: " + DOMAIN, "RP_ID: prod.localhost")
                 .replace(DOMAIN + ",prod." + DOMAIN + ",*." + DOMAIN + ",*.prod." + DOMAIN,
                         "prod.localhost:8080,*.prod.localhost:8080")
                 .replace("COOKIE_DOMAIN: \"" + DOMAIN + "\"", "COOKIE_DOMAIN: \"prod.localhost\"");
-        extras = extras.replace("https://idp." + DOMAIN, "http://idp.prod.localhost:8080")
+        extras = extras.replace("https://idp." + ENV + "." + DOMAIN, "http://idp.prod.localhost:8080")
                 .replace("https://" + DOMAIN, "http://prod.localhost:8080")
                 .replace("RP_ID=" + DOMAIN, "RP_ID=prod.localhost")
                 .replace(DOMAIN + ",prod." + DOMAIN + ",*." + DOMAIN + ",*.prod." + DOMAIN,

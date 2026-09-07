@@ -1275,13 +1275,16 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>A domain platform prints the SHORT app host</b>, because the environment label is optional
-     * for the default tier: {@code ci.<domain>} and {@code ci.<env>.<domain>} are one host, and the
-     * short one is what a person types. The local blocks — the resolver check and the dead passkey —
-     * belong to a platform with no domain and are not printed here.
+     * <b>A domain platform prints the ENV-EXPLICIT app host, and says the short one is retired.</b>
+     * {@code ci.<domain>} and {@code ci.<env>.<domain>} used to be one host — the environment label
+     * was optional for the default tier — and that fallthrough went with the project tier: every
+     * public name spells its environment, and only the bare apex still serves the default one. The
+     * login host moved with the same rule, from {@code idp.<domain>} to {@code idp.<env>.<domain>}.
+     * The local blocks — the resolver check and the dead passkey — belong to a platform with no
+     * domain and are not printed here.
      */
     @Test
-    void theReportPrintsTheShortAppHostOnADomainPlatform(@TempDir Path temp) throws Exception {
+    void theReportPrintsTheEnvExplicitAppHostOnADomainPlatform(@TempDir Path temp) throws Exception {
         ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
         Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev", "QITS_PORT", "8080",
                 "QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7")),
@@ -1293,10 +1296,17 @@ class PipelinePhasesTest {
 
         assertThat(ctx.lines).anyMatch(line -> line.startsWith("edge:      https://qits-dev.eu/"));
         assertThat(ctx.lines).anyMatch(line ->
-                line.startsWith("sign in:   https://idp.qits-dev.eu/idp/login"));
-        assertThat(ctx.lines).anyMatch(line -> line.contains("https://<app>.qits-dev.eu/"));
-        assertThat(ctx.lines).anyMatch(line -> line.contains("<app>.dev.qits-dev.eu are the same host"));
-        // Both wildcards, because both depths are addresses of the same service.
+                line.startsWith("sign in:   https://idp.dev.qits-dev.eu/idp/login"));
+        assertThat(ctx.lines).anyMatch(line -> line.contains("https://<app>.dev.qits-dev.eu/"));
+        // The short form is named as RETIRED rather than left out: a person who knew the old
+        // platform will type it, and a report that says nothing about it reads as a broken edge.
+        assertThat(ctx.lines).anyMatch(line ->
+                line.contains("<app>.qits-dev.eu is retired and serves nothing"));
+        assertThat(ctx.lines).noneMatch(line -> line.contains("are the same host"));
+        // The project tier is one label deeper again, and the report says where.
+        assertThat(ctx.lines).anyMatch(line ->
+                line.contains("<app>.<project>.dev.qits-dev.eu"));
+        // Both wildcards are still on the idp's return list: it is an allow-list, not a router.
         assertThat(ctx.lines).anyMatch(line ->
                 line.contains("*.qits-dev.eu and *.dev.qits-dev.eu"));
         // Nothing local: no hosts-file fallback and no passkey warning.

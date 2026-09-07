@@ -395,14 +395,21 @@ that, each measured on this host rather than assumed:
   `psql` goes in through `docker exec`. No publish binds loopback — neither mode has an ip field.
 - **User sessions use canonical SSO, and one session covers every service host.** Both generated
   formats seed the edge's own IdP client (`<env>-qits-edge`) and enable the session gate. They
-  configure the idp's one WebAuthn/login origin — its OWN host, `http://idp.<env>.localhost:<port>`
-  locally or `https://idp.<domain>` in domain mode, because the door serves no `/idp/...` path any
-  more — plus the return-host allow-list: the environment authority and `*.` of it, exactly one
-  extra label on the same port. The edge's canonical origin stays the door: it derives the apex
-  from it and reads the login host out of the deployment projection. Domain mode names four shapes
-  (`<domain>,<env>.<domain>,*.<domain>,*.<env>.<domain>`), because the environment label is
-  optional for the default tier: `ci.<domain>` and `ci.<env>.<domain>` are the same host. Those
-  wildcards are what carry a login onto every app host, where each service serves its own UI. The cookie is scoped to the parent both sides share — the domain, or
+  configure the idp's one WebAuthn/login origin — its OWN host, `idp.` of the environment authority
+  on both kinds of platform: `http://idp.<env>.localhost:<port>` locally, `https://idp.<env>.<domain>`
+  in domain mode, because the door serves no `/idp/...` path any more and the short `idp.<domain>`
+  form no longer routes — plus the return-host allow-list: the environment authority and `*.` of it,
+  exactly one extra label on the same port. The edge's canonical origin stays the door: it derives
+  the apex from it and reads the login host out of the deployment projection. Domain mode still names
+  four shapes (`<domain>,<env>.<domain>,*.<domain>,*.<env>.<domain>`), but `*.<domain>` is the wider
+  entry now rather than a second spelling of one host: the environment label used to be optional for
+  the default tier, so `ci.<domain>` and `ci.<env>.<domain>` were the same host, and that
+  fallthrough is retired — every public name spells its environment and only the bare apex serves
+  the default one. The short shape is left on the list because an allow-list is not a router: an
+  entry for a name the edge does not serve admits nobody. `*.<env>.<domain>` is what carries a login
+  onto every app host, where each service serves its own UI. **The WebAuthn relying party does not
+  move with any of this**: it is the bare apex, a credential asserts on the rp id and its children,
+  and changing it would invalidate every passkey. The cookie is scoped to the parent both sides share — the domain, or
   `<env>.localhost` locally, because bare `localhost` is a public suffix and a cookie scoped to it
   is dropped. The edge strips that named cookie before proxying to a machine's own routes. The boot
   mints the one-time token the first account registers with, and a passkey made on an older local

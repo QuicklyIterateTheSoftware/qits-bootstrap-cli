@@ -577,11 +577,18 @@ class SeedPhasesTest {
     }
 
     /**
-     * A domain platform's login host is {@code idp.<domain>} — {@code idp.} of the APEX, not of the
-     * environment authority, because the environment label is optional for the default tier.
+     * <b>A domain platform's login host is {@code idp.} of the ENVIRONMENT AUTHORITY</b>, the same
+     * shape a local platform always had. It was {@code idp.} of the apex, because the environment
+     * label was optional for the default tier; that fallthrough is retired with the project tier,
+     * so the short name would be a login page nobody can reach.
+     * <p>
+     * <b>The rp id does NOT move with it.</b> A passkey is bound to the rp id and asserts on it and
+     * its children, so the bare apex covers {@code idp.<env>.<domain>} exactly as it covered
+     * {@code idp.<domain>} — and changing it would invalidate every passkey this platform ever
+     * registered.
      */
     @Test
-    void aDomainPlatformsLoginHostIsIdpOfTheApex() {
+    void aDomainPlatformsLoginHostIsIdpOfTheEnvironmentAuthority() {
         Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev",
                 "QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7")),
                 new RunLog(temp.resolve("run.log")));
@@ -589,8 +596,8 @@ class SeedPhasesTest {
         Map<String, String> tokens = new SeedPhases(boot).tokens();
 
         assertThat(tokens).containsEntry("PUBLIC_ORIGIN", "https://qits-dev.eu")
-                .containsEntry("IDP_ORIGIN", "https://idp.qits-dev.eu")
-                .containsEntry("WEBAUTHN_ORIGINS", "https://idp.qits-dev.eu")
+                .containsEntry("IDP_ORIGIN", "https://idp.dev.qits-dev.eu")
+                .containsEntry("WEBAUTHN_ORIGINS", "https://idp.dev.qits-dev.eu")
                 // The rp id stays the apex: a credential asserts on it and every label under it.
                 .containsEntry("WEBAUTHN_RP_ID", "qits-dev.eu");
         // No entry of its own is needed for the idp host — the wildcards already admit it.
