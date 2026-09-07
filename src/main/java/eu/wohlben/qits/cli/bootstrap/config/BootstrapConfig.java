@@ -170,14 +170,19 @@ public interface BootstrapConfig {
      * <b>Names the edge's certificate must carry beyond the wildcards it derives</b>, separated by
      * commas or whitespace and written whole or relative to the domain.
      * <p>
-     * The edge orders the apex, {@code *.<domain>} and {@code *.<env>.<domain>}, which is every
-     * depth its Host reading has. A wildcard covers ONE label, so nothing it orders reaches
-     * {@code editor.<project>.<domain>} — the web editor's origin, one per project. Those names go
-     * here, one per project: {@code QITS_ACME_EXTRA_SANS=editor.acme,editor.gizmo}.
+     * The edge derives the apex, {@code *.<domain>}, {@code *.<env>.<domain>} per environment and
+     * {@code *.<project>.<domain>} plus {@code *.<project>.<env>.<domain>} per project — every
+     * depth its Host reading has, the project tier included. A wildcard covers ONE label, so what
+     * belongs here is a name at some OTHER shape:
+     * {@code QITS_ACME_EXTRA_SANS=status.support,legacy.acme.eu-west}.
+     * <p>
+     * <b>Not one per project any more.</b> That was the debt: the project wildcards are derived
+     * live from qits-projects' events now, so a project created after this boot reaches the
+     * certificate on its own. The knob is empty on an ordinary platform.
      * <p>
      * Generic on purpose. It says "put these names on the certificate" and knows nothing about
      * editors or projects; {@link ExtraSans} is where the shape and the refusals live, and the
-     * closing report is where a project whose name is missing is named.
+     * closing report prints what a run resolved, against the 100-name cap.
      * <p>
      * Ignored with no domain, because there is nothing to issue for.
      */
@@ -649,17 +654,29 @@ public interface BootstrapConfig {
     }
 
     /**
-     * <b>Where a person logs in</b>, and a service host like every other: {@code idp.<domain>} on a
-     * domain platform, {@code idp.<env>.localhost:<port>} locally. The login page is
-     * {@code <idpOrigin>/idp/login}.
+     * <b>Where a person logs in</b>, and a service host like every other, which now means
+     * {@code idp.} of {@link #envAuthority()} on both kinds of platform:
+     * {@code idp.<env>.<domain>} with a domain, {@code idp.<env>.localhost:<port>} locally. The
+     * login page is {@code <idpOrigin>/idp/login}.
      * <p>
      * It is the idp's canonical browser origin and the one origin a WebAuthn ceremony is accepted
      * from. The door serves no {@code /idp/...} path any more, so an address built on
      * {@link #publicOrigin()} would be a 404.
+     * <p>
+     * <b>It was {@code idp.<domain>}, and the environment label is not decoration.</b> The short
+     * form reached the default tier by fallthrough — the edge read two labels and gave an
+     * unrecognised first one to the default environment — and that reading is retired with the
+     * project tier: every public name spells its environment now, and only the bare apex still
+     * serves the default one. The short name would be a login page nobody can reach.
+     * <p>
+     * <b>This does NOT move {@link #webauthnRpId()}, and moving it would be the expensive
+     * mistake.</b> A passkey is bound to the rp id, which stays the bare apex; a credential asserts
+     * on the rp id AND its children, so {@code idp.<env>.<domain>} is covered by {@code <domain>}
+     * exactly as {@code idp.<domain>} was. Changing the rp id invalidates every passkey ever
+     * registered against this platform.
      */
     default String idpOrigin() {
-        return DomainName.of(this).map(domain -> "https://idp." + domain)
-                .orElse("http://idp." + envAuthority());
+        return (DomainName.of(this).isPresent() ? "https://idp." : "http://idp.") + envAuthority();
     }
 
     /**
@@ -703,8 +720,8 @@ public interface BootstrapConfig {
      * one, because every short host is a child of it.
      * <p>
      * <b>The idp host needs no entry of its own.</b> {@link #idpOrigin()} is {@code idp.} of the
-     * apex or of the environment authority, so the wildcards below already admit it — one extra
-     * label, same port.
+     * environment authority on both kinds of platform, so {@code *.<env>.<domain>} — or
+     * {@code *.<env>.localhost:<port>} — already admits it: one extra label, same port.
      * <p>
      * <b>The wildcard is exactly one extra label and the port must match</b> — the edge and the idp
      * both read it that way, so {@code *.dev.localhost:8080} admits {@code ci.dev.localhost:8080}
@@ -712,11 +729,16 @@ public interface BootstrapConfig {
      * registry, mirror and git host are on this list now too, since a service's own host serves its
      * SPA as well as its wire routes.
      * <p>
-     * <b>A domain platform names FOUR shapes, because the environment label is optional for the
-     * default tier</b>: {@code <app>.<domain>} and {@code <app>.<env>.<domain>} are the same host,
-     * so both wildcards have to be on the list — the short one is what a person types and the long
-     * one is what another tier spells. Locally there is no apex to shorten to: the door itself
-     * carries the environment's name, so there are two shapes and not four.
+     * <b>A domain platform still names FOUR shapes, and {@code *.<domain>} is now the wider of
+     * them rather than the shorter spelling of one host.</b> It used to be the pair: the
+     * environment label was optional for the default tier, so {@code ci.<domain>} and
+     * {@code ci.<env>.<domain>} were one host and both wildcards had to be listed. That
+     * fallthrough is retired — every public name spells its environment, and only the bare apex
+     * still serves the default one — so the short shape routes nowhere and admits nothing. It is
+     * left on the list because this is an ALLOW-LIST and not a router: an entry for a name the
+     * edge does not serve lets nobody in, and trimming it is a change to make with the idp's own
+     * reading rather than beside the router's. What it does still carry is the apex's other
+     * children, {@code <env>.<domain>} among them.
      */
     default String browserSsoHosts() {
         String environment = envAuthority();

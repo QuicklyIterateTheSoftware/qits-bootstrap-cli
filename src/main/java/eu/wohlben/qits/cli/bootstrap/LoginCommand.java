@@ -34,15 +34,20 @@ public class LoginCommand implements Callable<Integer> {
 
     @Override
     public Integer call() throws Exception {
-        // EVERY SERVICE HAS A HOST OF ITS OWN, the idp and the git host included: idp.<domain> and
-        // githost.<domain> with a domain, idp.<env>.localhost and githost.<env>.localhost without
-        // one. The door serves neither — it redirects / to the projects host and 404s every path —
-        // so both defaults name the service host directly.
+        // EVERY SERVICE HAS A HOST OF ITS OWN, the idp and the git host included, and EVERY PUBLIC
+        // NAME SPELLS ITS ENVIRONMENT: idp.<env>.<domain> and githost.<env>.<domain> with a domain,
+        // idp.<env>.localhost and githost.<env>.localhost without one. The door serves neither — it
+        // redirects / to the projects host and 404s every path — so both defaults name the service
+        // host directly.
         //
         // QITS_DOMAIN is read the same way QITS_ENV_NAME is: set, this workstation talks to a
         // domain platform over TLS; unset, to the local one on the edge's port.
-        String environment = env("QITS_ENV_NAME", "prod");
         String domain = env("QITS_DOMAIN", "");
+        String environment = environmentName(domain, System.getenv("QITS_ENV_NAME"));
+        if (environment == null) {
+            System.err.println(environmentRefusal(domain));
+            return 2;
+        }
         String idpHost = serviceHost("idp", domain, environment);
         String gitHostDefault = serviceHost("githost", domain, environment);
         String resolvedIdp = TokenClient.trim(idpUrl == null ? env("QITS_IDP_URL", idpHost + "/idp") : idpUrl);
@@ -78,13 +83,56 @@ public class LoginCommand implements Callable<Integer> {
     }
 
     /**
-     * One service's public origin: {@code https://<app>.<domain>} when {@code QITS_DOMAIN} is set,
+     * One service's public origin, and <b>both arms spell the environment</b>:
+     * {@code https://<app>.<env>.<domain>} when {@code QITS_DOMAIN} is set,
      * {@code http://<app>.<env>.localhost:8080} otherwise.
+     * <p>
+     * The short {@code <app>.<domain>} form is retired. It used to reach the default environment by
+     * fallthrough — the edge read two labels and gave an unrecognised one to the default tier — and
+     * that reading is gone with the project tier: every public name says which environment it wants,
+     * and only the bare apex still serves the default one.
      */
     static String serviceHost(String app, String domain, String environment) {
         return domain == null || domain.isBlank()
                 ? "http://" + app + "." + environment + ".localhost:8080"
-                : "https://" + app + "." + domain;
+                : "https://" + app + "." + environment + "." + domain;
+    }
+
+    /**
+     * <b>The environment name, or null when this run may not guess one.</b>
+     * <p>
+     * {@code QITS_ENV_NAME} decides it. Unset, the LOCAL arm keeps its {@code prod} default: that
+     * name has always been in the local hostname ({@code idp.prod.localhost}) and this change did
+     * not move it, so a wrong value there fails the way it always did, against a platform on the
+     * caller's own machine.
+     * <p>
+     * <b>With a domain there is no default that is safe, so there is none.</b> The environment used
+     * to be absent from the domain-arm hostname altogether — {@code idp.<domain>} reached whichever
+     * tier the edge called default — and it is in the name now. A guessed {@code prod} against a
+     * platform whose environment is called something else does not fail at the resolver: the zone's
+     * wildcards answer every shape, so the request reaches the edge, which reads {@code prod} as no
+     * environment it has and hands it to the apex. What comes back is a confusing 404 from the right
+     * host, and the thing being got wrong is which platform this workstation is being logged in to.
+     * So it is refused before the browser is opened.
+     *
+     * @param configured {@code QITS_ENV_NAME} as the environment gives it, null or blank when unset
+     */
+    static String environmentName(String domain, String configured) {
+        if (configured != null && !configured.isBlank()) {
+            return configured.strip();
+        }
+        return domain == null || domain.isBlank() ? "prod" : null;
+    }
+
+    /** What the refusal says, and it names the one value that fixes it. */
+    static String environmentRefusal(String domain) {
+        return "QITS_DOMAIN is set to '" + domain + "' and QITS_ENV_NAME is not, and on a domain "
+                + "platform every public name spells its environment: this workstation would ask "
+                + "idp.<env>." + domain + " and githost.<env>." + domain + " without knowing what "
+                + "<env> is. There is no safe default — a guess resolves, reaches the edge and "
+                + "comes back a 404 from the right host, which reads as a broken platform rather "
+                + "than as a wrong name. Set QITS_ENV_NAME to that platform's environment (the "
+                + "value its bootstrap was given as --platform-env) and run `qits login` again.";
     }
 
     private static void openBrowser(String url) throws Exception {

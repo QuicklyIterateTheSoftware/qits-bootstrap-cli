@@ -427,8 +427,9 @@ public class PipelinePhases {
      * neither hurry nor detect. So the phase warns and this block prints the retry with the mode and
      * the address already filled in, exactly as the register token's lines do for its own one call.
      */
-    static List<String> domainLines(String domain, String publicIp, Acme.Mode mode, String email,
-            String certificate, List<String> projectSlugs, List<String> extraSans) {
+    static List<String> domainLines(String domain, String environment, String publicIp,
+            Acme.Mode mode, String email, String certificate, List<String> projectSlugs,
+            List<String> extraSans) {
         List<String> lines = new ArrayList<>();
         lines.add("domain:    " + domain + " — DNS IS NOT THIS PLATFORM'S. Check your provider "
                 + "holds these A records:");
@@ -437,65 +438,104 @@ public class PipelinePhases {
                     + record.why());
         }
         lines.add("           A wildcard per DEPTH, not a record per name: the edge reads at most "
-                + "the first two");
-        lines.add("           labels of a Host header, so a new environment or a new app vhost "
-                + "needs no dns step.");
+                + "the first three");
+        lines.add("           labels of a Host header, so a new environment, a new app vhost or a "
+                + "new PROJECT needs");
+        lines.add("           no dns step. *.*.* is the project tier — <app>.<project>.<env>."
+                + domain + " — and it is");
+        lines.add("           the record that makes creating a project cost nobody an edit here.");
         lines.add("           Names are relative to the apex — @ is the apex, and no wildcard "
                 + "matches it.");
         lines.add("           Every one carries " + publicIp + ", the address this run was given.");
-        lines.addAll(editorLines(domain, projectSlugs, extraSans));
+        lines.addAll(editorLines(domain, environment, projectSlugs, extraSans));
         lines.addAll(tlsLines(domain, mode, email, certificate));
         return lines;
     }
 
     /**
-     * <b>The editor hosts, beside the records, and what the certificate does about them.</b>
+     * <b>The project tier, beside the records: what serves it and what covers it.</b>
      * <p>
-     * The two halves of a public name come apart here, which is why this block sits between them.
-     * DNS is fine by construction: {@code editor.<project>.<domain>} is the same depth as
-     * {@code <app>.<env>.<domain>}, so the {@code *.*} record above answers it for every project
-     * there will ever be. The CERTIFICATE is not: a wildcard covers one label, so
-     * {@code *.<domain>} stops above these names and {@code *.<env>.<domain>} only holds where the
-     * middle label is an environment. Each editor host is therefore a SAN of its own.
+     * The two halves of a public name used to come apart here, and this block is what said so. They
+     * do not any more, which is the whole news. DNS was always fine by construction — the
+     * {@code *.*.*} record above answers {@code <app>.<project>.<env>.<domain>} for every project
+     * there will ever be — and the CERTIFICATE now is too: the edge derives
+     * {@code *.<project>.<domain>} and {@code *.<project>.<env>.<domain>} from qits-projects'
+     * ProjectCreated events, so a project's editor host is covered the moment the project exists.
+     * <b>A project created after this boot needs nothing done to it</b>: its own creation event
+     * triggers the edge's next order, and the name is on the certificate without a rerun of this
+     * program, a restart of the edge or a value written down anywhere.
      * <p>
-     * <b>Printed per project rather than as a shape</b>, because the interesting fact is which
-     * projects are covered and which are not — a project created after the certificate was ordered
-     * has a working name serving a certificate it is not in, and a browser refuses it with an
-     * error about the site's identity rather than about a missing name.
+     * <b>So the projects are printed as information and not as a checklist.</b> There is no covered
+     * / not-covered column left to print — the answer is "covered" for every row, by construction,
+     * and a table that always says one thing is a table that stops being read. What is worth an
+     * operator's eye is the count: the derived set grows with the projects and Let's Encrypt caps
+     * one certificate at 100 names, so the budget is stated here, where the projects are.
      */
-    private static List<String> editorLines(String domain, List<String> projectSlugs,
-            List<String> extraSans) {
+    private static List<String> editorLines(String domain, String environment,
+            List<String> projectSlugs, List<String> extraSans) {
         List<String> lines = new ArrayList<>();
         lines.add("editor:    the web editor is one origin per project, editor.<project>."
-                + domain + ". The records");
-        lines.add("           above already cover them — that is the *.* depth — but the "
-                + "CERTIFICATE does not:");
-        lines.add("           a wildcard covers ONE label, so each name is its own SAN, named in "
-                + "QITS_ACME_EXTRA_SANS.");
+                + environment + "." + domain + " — the");
+        lines.add("           PROJECT TIER, and nothing about it is a bootstrap step. The *.*.* "
+                + "record above answers");
+        lines.add("           the name, and the edge derives *.<project>." + domain + " and "
+                + "*.<project>." + environment + "." + domain);
+        lines.add("           as certificate names from qits-projects' own ProjectCreated events "
+                + "— so the editor host");
+        lines.add("           is covered by construction. A PROJECT CREATED LATER IS COVERED TOO: "
+                + "its creation event");
+        lines.add("           triggers the edge's next order, so the name reaches the certificate "
+                + "on its own — no");
+        lines.add("           rerun of this boot, no restart of the edge, and no name to write "
+                + "down.");
         if (projectSlugs.isEmpty()) {
-            lines.add("           No project list was read, so add one name per project: "
-                    + "QITS_ACME_EXTRA_SANS=editor.<project>");
-            return lines;
-        }
-        List<String> missing = new ArrayList<>();
-        for (String slug : projectSlugs) {
-            String host = ExtraSans.editorHost(slug, domain);
-            boolean covered = extraSans.contains(host);
-            lines.add("             " + host + (covered ? "   on the certificate"
-                    : "   NOT on the certificate"));
-            if (!covered) {
-                missing.add("editor." + slug);
+            lines.add("           No project list was read, so this run cannot name them. Nothing "
+                    + "turns on that: the");
+            lines.add("           certificate follows the events rather than this report.");
+        } else {
+            lines.add("           The projects this run saw, for information — each already has "
+                    + "its editor host:");
+            for (String slug : projectSlugs) {
+                lines.add("             editor." + slug + "." + environment + "." + domain);
             }
         }
-        if (!missing.isEmpty()) {
-            lines.add("           Add QITS_ACME_EXTRA_SANS=" + String.join(",", missing)
-                    + " and rerun, or restart the edge");
-            lines.add("           once the value is in its extras — a name reaches the "
-                    + "certificate at the next ORDER,");
-            lines.add("           which is a renewal or a restart, not a deploy. Until then those "
-                    + "hosts serve TLS a");
-            lines.add("           browser refuses.");
+        lines.addAll(sanBudgetLines(projectSlugs, extraSans));
+        return lines;
+    }
+
+    /**
+     * <b>The 100-name cap, and where this platform stands against it.</b> Let's Encrypt issues at
+     * most 100 SANs on one certificate, and the derived set now grows with the PROJECTS — so the
+     * number that used to be fixed is a number that moves while nobody is watching it. An order
+     * that crosses the cap fails whole: every name goes down with it, not just the one that was
+     * one too many.
+     * <p>
+     * Printed with the arithmetic rather than as a total, because the total answers "am I near it"
+     * and the arithmetic answers "what will move it": {@code P*E} is the term that grows twice.
+     */
+    private static List<String> sanBudgetLines(List<String> projectSlugs, List<String> extraSans) {
+        List<String> lines = new ArrayList<>();
+        lines.add("sans:      the certificate holds 2 + E + P + P*E + extras names — the apex and "
+                + "*.<domain>, one");
+        lines.add("           per environment, one per project, one per project AND environment. "
+                + "Let's Encrypt caps");
+        lines.add("           a certificate at 100, and an order over the cap fails WHOLE, taking "
+                + "the names that");
+        lines.add("           would have worked with it.");
+        if (!projectSlugs.isEmpty()) {
+            // E is this platform's environment count, and the edge is configured with exactly one:
+            // QITS_EDGE_ENVIRONMENTS is ${ENV_NAME} on the seed stack and in the extras both.
+            int projects = projectSlugs.size();
+            int total = 2 + 1 + projects + projects + extraSans.size();
+            lines.add("           Here E=1 and P=" + projects + " with " + extraSans.size()
+                    + " extra, so " + total + " of 100.");
         }
+        lines.add("           QITS_ACME_EXTRA_SANS is AD-HOC NAMES ONLY now — names outside those "
+                + "shapes. The per-");
+        lines.add("           project debt it used to carry is retired, so it is empty on an "
+                + "ordinary platform.");
+        lines.add("           This run resolved: " + (extraSans.isEmpty() ? "nothing"
+                : String.join(", ", extraSans)));
         return lines;
     }
 
@@ -1159,11 +1199,13 @@ public class PipelinePhases {
      * <b>A project already answers to this name: STOP.</b>
      * <p>
      * An environment name and a project slug are read at the same place. The edge takes at most the
-     * first two labels of a Host header, and position 1 is an ENVIRONMENT if it is one — so
-     * {@code editor.<project>.<domain>}, the web editor's origin, is the same shape as
-     * {@code <app>.<env>.<domain>}. Bootstrapping an environment called after an existing project
-     * makes every one of that project's own names read as that tier's: its editor is served out of
-     * the wrong environment, and the tie-break says so before any app label is even considered.
+     * first three labels of a Host header, and it asks position 1 whether it is an ENVIRONMENT
+     * before it reads it as a PROJECT — so {@code editor.<project>.<env>.<domain>}, the web
+     * editor's origin, is decided at the same label {@code <app>.<env>.<domain>} spells its tier
+     * at. Bootstrapping an environment called after an existing project makes every one of that
+     * project's own names read as that tier's: the project label wins as an environment, the rest
+     * of the name is taken for an apex, and the editor is served out of the wrong tier at a domain
+     * that is not the domain.
      * <p>
      * <b>The other direction is closed at the source.</b> qits-projects is handed the environment
      * names as {@code QITS_PROJECTS_RESERVED_SLUGS} and refuses them, so a project cannot be
@@ -1206,11 +1248,12 @@ public class PipelinePhases {
                 .findFirst()
                 .map(slug -> "A project on this platform is already called '" + slug + "', and "
                         + "this boot asks for an environment of the same name. They are read at the "
-                        + "same place: the edge takes the first two labels of a host, and the label "
-                        + "in front is an APPLICATION when the one behind it is an environment — so "
-                        + "editor." + slug + ".<domain>, that project's own web editor, would be "
-                        + "read as the editor of the '" + name + "' tier instead. Bootstrap with "
-                        + "--platform-env under another name, or rename the project first.");
+                        + "same place: the edge asks the label after the application whether it "
+                        + "names an ENVIRONMENT before it reads it as a PROJECT — so editor."
+                        + slug + ".<env>.<domain>, that project's own web editor, would be read as "
+                        + "the editor of the '" + name + "' tier over an apex of <env>.<domain> "
+                        + "instead. Bootstrap with --platform-env under another name, or rename "
+                        + "the project first.");
     }
 
     private void patch(String id, String json) {
@@ -2328,12 +2371,13 @@ public class PipelinePhases {
             // THE LOGIN IS A SERVICE HOST NOW, like every other. The door serves no /idp path.
             String idp = boot.config.idpOrigin();
             String authority = boot.config.envAuthority();
-            // THE ENVIRONMENT LABEL IS OPTIONAL FOR THE DEFAULT TIER on a domain platform:
-            // <app>.<domain> and <app>.<env>.<domain> are the same host, and the short one is what
-            // a person types. Locally there is no apex to shorten to — the door carries the
-            // environment's name, so an app host is <app>.<env>.localhost:<port> and nothing else.
+            // EVERY PUBLIC NAME SPELLS ITS ENVIRONMENT, on both kinds of platform. The short
+            // <app>.<domain> form is retired with the project tier: the edge used to give an
+            // unrecognised first label to the default environment, and that fallthrough is gone —
+            // only the bare apex still serves the default tier. So an app host is <app>. of the
+            // ENVIRONMENT AUTHORITY and nothing else, which is what it always was locally.
             String apex = DomainName.of(boot.config).orElse(null);
-            String appHost = apex == null ? "http://<app>." + authority : "https://<app>." + apex;
+            String appHost = (apex == null ? "http://<app>." : "https://<app>.") + authority;
             String returns = apex == null ? "*." + authority : "*." + apex + " and *." + authority;
             report.add("edge:      " + door + "/  — the host's one HTTP port, in front of every "
                     + "environment. The");
@@ -2352,10 +2396,11 @@ public class PipelinePhases {
                     + "deployments, system, and the");
             report.add("           three above.");
             if (apex != null) {
-                report.add("           The environment label is optional for " + env
-                        + ", the default tier: <app>." + apex);
-                report.add("           and <app>." + authority + " are the same host. Another "
-                        + "tier spells its own label.");
+                report.add("           EVERY NAME SPELLS ITS TIER: <app>." + apex + " is retired "
+                        + "and serves nothing — only");
+                report.add("           the apex still answers for " + env + ". A project's hosts "
+                        + "go one label deeper again:");
+                report.add("           <app>.<project>." + authority + ".");
             }
             report.add("           ONE LOGIN COVERS THEM ALL: the session cookie is scoped to "
                     + boot.config.browserSsoCookieDomain() + " and the");
@@ -2549,7 +2594,7 @@ public class PipelinePhases {
             // under it the run does itself.
             // NOTE: this could be a hook to read those records back from an external dns provider,
             // and say which of them are actually in place.
-            DomainName.of(boot.config).ifPresent(domain -> report.addAll(domainLines(domain,
+            DomainName.of(boot.config).ifPresent(domain -> report.addAll(domainLines(domain, env,
                     PublicIp.of(boot.config).orElse(""), Acme.mode(boot.config),
                     Acme.email(boot.config, domain), boot.state.certificate,
                     // The editor hosts are per PROJECT, so the list comes from the platform. A

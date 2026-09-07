@@ -204,15 +204,19 @@ class BootstrapConfigTest {
         assertThat(plain.webauthnOrigins()).isEqualTo("http://idp.dev.localhost:9090");
 
         // With a domain the door is TLS on the APEX — the name the edge's certificate is issued
-        // for — while the environments are its children. The login is idp. of that apex, because
-        // the environment label is optional for the default tier.
+        // for — while the environments are its children. THE LOGIN IS idp. OF THE ENVIRONMENT
+        // AUTHORITY, the same shape the local platform always had: every public name spells its
+        // environment now, and the short idp.<domain> form reaches nothing.
         BootstrapConfig hosted = from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev",
                 "QITS_DOMAIN", "qits-dev.eu"));
 
         assertThat(hosted.publicOrigin()).isEqualTo("https://qits-dev.eu");
+        // AND THE RP ID DOES NOT MOVE WITH IT. It is the bare apex, a credential asserts on the rp
+        // id and its children, so idp.dev.qits-dev.eu is covered exactly as idp.qits-dev.eu was —
+        // and changing it would invalidate every passkey this platform ever registered.
         assertThat(hosted.webauthnRpId()).isEqualTo("qits-dev.eu");
-        assertThat(hosted.idpOrigin()).isEqualTo("https://idp.qits-dev.eu");
-        assertThat(hosted.webauthnOrigins()).isEqualTo("https://idp.qits-dev.eu");
+        assertThat(hosted.idpOrigin()).isEqualTo("https://idp.dev.qits-dev.eu");
+        assertThat(hosted.webauthnOrigins()).isEqualTo("https://idp.dev.qits-dev.eu");
     }
 
     /**
@@ -234,15 +238,19 @@ class BootstrapConfigTest {
                 .contains("*." + plain.envAuthority());
 
         // With a domain the apex leads the list, because that is where the ceremony happens — and
-        // there are FOUR shapes, because the environment label is optional for the default tier:
-        // ci.qits-dev.eu and ci.dev.qits-dev.eu are the same host, so both wildcards are named.
+        // there are FOUR shapes still. *.qits-dev.eu used to be the second spelling of one host,
+        // back when the environment label was optional for the default tier; that fallthrough is
+        // retired, so it is now simply the wider entry. It stays because an allow-list is not a
+        // router: an entry for a name the edge does not serve admits nobody.
         BootstrapConfig hosted = from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev",
                 "QITS_DOMAIN", "qits-dev.eu"));
 
         assertThat(hosted.browserSsoHosts()).isEqualTo(
                 "qits-dev.eu,dev.qits-dev.eu,*.qits-dev.eu,*.dev.qits-dev.eu");
         assertThat(hosted.browserSsoCookieDomain()).isEqualTo("qits-dev.eu");
-        // idp.qits-dev.eu is admitted by *.qits-dev.eu, so the login host is on the list already.
+        // idp.dev.qits-dev.eu is admitted by *.dev.qits-dev.eu, so the login host is on the list
+        // already — one extra label under the environment authority, same as the local platform.
+        assertThat(hosted.browserSsoHosts().split(",")).contains("*.dev.qits-dev.eu");
         assertThat(hosted.browserSsoHosts().split(",")).contains("*.qits-dev.eu");
     }
 
