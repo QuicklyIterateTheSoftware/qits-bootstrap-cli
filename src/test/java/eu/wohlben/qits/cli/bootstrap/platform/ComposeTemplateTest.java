@@ -1688,6 +1688,10 @@ class ComposeTemplateTest {
      * release at all while it cannot name a git host, and both keys ship unset — a tier that does
      * not release never learns one. This platform releases, so both are spelled, and the ci client
      * is what lets the release gate read qits-ci's active runs and cancel what it supersedes.
+     * <p>
+     * Two is the count of the SWITCHES, not of the addresses in the block: the maintenance url
+     * enriches an announcement and the workspaces url reports a released branch after the fact, and
+     * each has a test of its own below.
      */
     @Test
     void projectsIsToldWhereToDriveAReleaseAndWithWhichCredential() {
@@ -1699,8 +1703,43 @@ class ComposeTemplateTest {
                 .contains("env.QUARKUS_OIDC_CLIENT_CI_CLIENT_ID=prod-qits-projects")
                 .contains("env.QUARKUS_OIDC_CLIENT_CI_GRANT_OPTIONS_CLIENT_AUDIENCE=prod-qits-ci")
                 .contains("env.QUARKUS_OIDC_CLIENT_CI_CREDENTIALS_SECRET=");
-        // The retired address: it named qits-workspaces' release door, which is gone.
-        assertThat(projects).doesNotContain("RELEASE_REQUESTS_WORKSPACES_URL");
+    }
+
+    /**
+     * <b>The fourth address is a workspace lifecycle call, and it is spelled because its shipped
+     * default only looks set.</b> After a release deletes the branch it consumed, qits-projects
+     * tells qits-workspaces so — the delete is a git-host primitive that fires no event, so nothing
+     * else can. The image ships {@code http://qits-workspaces:8080}, a bare name no tiered estate
+     * serves, and the caller is best-effort by construction: without this line every release leaves
+     * its workspace ACTIVE for ever, and says so only in a WARN.
+     * <p>
+     * The address and the fifth named client are ONE fix and are pinned together. That caller is
+     * fail-closed on its bearer — it asks another context to destroy a container, so there is no
+     * forwarded-header fallback — and a tier holding the address without the credential reaps just
+     * as little, with a different WARN.
+     */
+    @Test
+    void projectsIsToldWhereToResolveAReleasedBranchsWorkspaceAndWithWhichCredential() {
+        String projects = extras("qits-projects");
+
+        // The TIER's workspaces, never the bare name the image ships.
+        assertThat(projects)
+                .contains("env.QITS_PROJECTS_RELEASE_REQUESTS_WORKSPACES_URL="
+                        + "http://prod-qits-workspaces:8080")
+                .doesNotContain("WORKSPACES_URL=http://qits-workspaces:8080")
+                // The fifth named client, and the audience is what makes it a fifth: qits-workspaces
+                // refuses a bearer minted for ci, for the catalog or for the git host.
+                .contains("env.QUARKUS_OIDC_CLIENT_WORKSPACES_CLIENT_ENABLED=true")
+                .contains("env.QUARKUS_OIDC_CLIENT_WORKSPACES_CLIENT_ID=prod-qits-projects")
+                .contains("env.QUARKUS_OIDC_CLIENT_WORKSPACES_GRANT_OPTIONS_CLIENT_AUDIENCE="
+                        + "prod-qits-workspaces")
+                .contains("env.QUARKUS_OIDC_CLIENT_WORKSPACES_CREDENTIALS_SECRET=")
+                .contains("env.QUARKUS_OIDC_CLIENT_WORKSPACES_AUTH_SERVER_URL=");
+        // Nothing releases during the seed window, so no branch is consumed and no workspace stands
+        // on one.
+        assertThat(serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-projects"))
+                .doesNotContain("RELEASE_REQUESTS_WORKSPACES_URL")
+                .doesNotContain("QUARKUS_OIDC_CLIENT_WORKSPACES_");
     }
 
     /**
