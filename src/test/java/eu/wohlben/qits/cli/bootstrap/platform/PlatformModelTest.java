@@ -150,7 +150,6 @@ class PlatformModelTest {
         // The environment tier's services.
         expected.put("artifacts", "qits-artifacts-service");
         expected.put("ci", "qits-ci-service");
-        expected.put("configuration", "qits-configuration-service");
         expected.put("containers", "qits-containers-service");
         expected.put("docs", "qits-docs-service");
         expected.put("githost", "qits-githost-service");
@@ -159,6 +158,7 @@ class PlatformModelTest {
         expected.put("stt", "qits-stt-service");
         expected.put("workspaces", "qits-workspaces-service");
         // The platform tier's, plane as a modifier before the role.
+        expected.put("configuration", "qits-configuration-platform-service");
         expected.put("deployments", "qits-deployments-platform-service");
         expected.put("events", "qits-events-platform-service");
         expected.put("platform-edge", "qits-edge-platform-service");
@@ -171,7 +171,7 @@ class PlatformModelTest {
         // service's component and plane.
         expected.put("spa-artifacts", "qits-artifacts-frontend");
         expected.put("spa-ci", "qits-ci-frontend");
-        expected.put("spa-configuration", "qits-configuration-frontend");
+        expected.put("spa-configuration", "qits-configuration-platform-frontend");
         expected.put("spa-deployments", "qits-deployments-platform-frontend");
         expected.put("spa-docs", "qits-docs-frontend");
         expected.put("spa-events", "qits-events-platform-frontend");
@@ -695,10 +695,11 @@ class PlatformModelTest {
         assertThat(PlatformModel.wireAlias("configuration", "prod")).isEqualTo("qits-configuration");
         assertThat(PlatformModel.wireAlias("configuration", "preprod"))
                 .isEqualTo("qits-configuration");
-        // The REPOSITORY is untouched by any of that: the plane is decided in PLATFORM_SERVICES and
-        // said by no name until the rename wave, exactly as the deployer's and the bus's were.
+        // The REPOSITORY moved one wave later, and the fallback path says both halves at once: the
+        // leaf carries the plane as a modifier now, while the directory is still the ROLE's —
+        // services/, exactly as the deployer's and the bus's are.
         assertThat(PlatformModel.repoPath("configuration"))
-                .isEqualTo("services/qits-configuration-service");
+                .isEqualTo("services/qits-configuration-platform-service");
     }
 
     /**

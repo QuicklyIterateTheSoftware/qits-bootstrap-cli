@@ -653,7 +653,6 @@ public final class PlatformModel {
             // The environment tier's services.
             Map.entry("artifacts", "qits-artifacts-service"),
             Map.entry("ci", "qits-ci-service"),
-            Map.entry("configuration", "qits-configuration-service"),
             Map.entry("containers", "qits-containers-service"),
             Map.entry("docs", "qits-docs-service"),
             Map.entry("githost", "qits-githost-service"),
@@ -664,14 +663,16 @@ public final class PlatformModel {
 
             // The platform tier's. The application names of six of them already carry the plane as a
             // PREFIX and the repositories carry it as a modifier instead, so both halves move:
-            // platform-idp is qits-idp-platform-service. The deployer and the bus say no plane at
-            // all on the application side and never will — that is what PLATFORM_SERVICES is for.
+            // platform-idp is qits-idp-platform-service. The deployer, the bus and the
+            // configuration store say no plane at all on the application side and never will —
+            // that is what PLATFORM_SERVICES is for.
             Map.entry("platform-edge", "qits-edge-platform-service"),
             Map.entry("platform-idp", "qits-idp-platform-service"),
             Map.entry("platform-maintenance", "qits-maintenance-platform-service"),
             Map.entry("platform-mirror", "qits-mirror-platform-service"),
             Map.entry("platform-orchestrator", "qits-orchestrator-platform-service"),
             Map.entry("platform-system", "qits-system-platform-service"),
+            Map.entry("configuration", "qits-configuration-platform-service"),
             Map.entry("deployments", "qits-deployments-platform-service"),
             Map.entry("events", "qits-events-platform-service"),
 
@@ -679,14 +680,16 @@ public final class PlatformModel {
             // SERVICE's component and plane, whether the model spelled it spa-<x> or
             // platform-spa-<x>. qits-spa-events and qits-spa-deployments are the pair that shows it
             // — their services moved plane on 2026-08-17 and the clients follow them here.
+            // qits-spa-configuration is the third, its service moved on 2026-09-07, and the model
+            // name each of them is keyed by moved for none of the three.
             Map.entry("spa-artifacts", "qits-artifacts-frontend"),
             Map.entry("spa-ci", "qits-ci-frontend"),
-            Map.entry("spa-configuration", "qits-configuration-frontend"),
             Map.entry("spa-docs", "qits-docs-frontend"),
             Map.entry("spa-githost", "qits-githost-frontend"),
             Map.entry("spa-observability", "qits-observability-frontend"),
             Map.entry("spa-projects", "qits-projects-frontend"),
             Map.entry("spa-workspaces", "qits-workspaces-frontend"),
+            Map.entry("spa-configuration", "qits-configuration-platform-frontend"),
             Map.entry("spa-deployments", "qits-deployments-platform-frontend"),
             Map.entry("spa-events", "qits-events-platform-frontend"),
             Map.entry("platform-spa-idp", "qits-idp-platform-frontend"),
