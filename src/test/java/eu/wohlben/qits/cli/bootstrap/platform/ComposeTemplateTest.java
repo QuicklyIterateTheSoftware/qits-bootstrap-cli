@@ -1534,16 +1534,22 @@ class ComposeTemplateTest {
 
     /**
      * <b>NOTHING RELEASES DURING THE SEED WINDOW, so the seed drives no release.</b> The release
-     * executor's addresses and its three named clients are the DEPLOYED qits-projects' — the pair
-     * that lets it tag through the git host and cancel the ci runs it supersedes, and the third
-     * address that enriches an announcement with the repositories downstream of the one being
-     * released. That third one switches nothing on and is best-effort by construction: unset,
-     * unreachable, refused or 404 and the event simply carries no such key, so a platform without
-     * it releases exactly as well.
+     * executor's four addresses and its three named clients are the DEPLOYED qits-projects' — the
+     * pair that lets it tag through the git host and cancel the ci runs it supersedes, and two more
+     * that switch nothing on: the maintenance url enriches an announcement with the repositories
+     * downstream of the one being released, and the workspaces url resolves the workspace that
+     * stood on the branch a release consumed. Both are best-effort by construction — unset,
+     * unreachable, refused or 404 and the release lands anyway, saying so in a WARN — so a platform
+     * without either releases exactly as well.
      * <p>
      * The seed carries none of it, and this is the side of that fact a golden cannot hold: the
      * blocks are in {@code compose-golden/extras/qits-projects.properties}, the ABSENCE is here,
      * because it is an absence from the other file.
+     * <p>
+     * The workspaces url is the one address here that ships LOOKING set — the image's own default is
+     * {@code http://qits-workspaces:8080}, a bare name no tiered estate answers to — so its bare
+     * form is an absence worth stating beside the seed's. The pair above ship unset instead and say
+     * so by refusing to release.
      */
     @Test
     void theSeedProjectsServiceDrivesNoRelease() {
@@ -1552,12 +1558,13 @@ class ComposeTemplateTest {
         assertThat(seeded).doesNotContain("RELEASE_REQUESTS_GITHOST_URL")
                 .doesNotContain("RELEASE_REQUESTS_CI_URL")
                 .doesNotContain("RELEASE_REQUESTS_MAINTENANCE_URL")
+                .doesNotContain("RELEASE_REQUESTS_WORKSPACES_URL")
                 .doesNotContain("QUARKUS_OIDC_CLIENT_CI_")
-                .doesNotContain("QUARKUS_OIDC_CLIENT_MAINTENANCE_");
-        // The retired address, which named qits-workspaces' release door: that door is gone, and a
-        // generated line naming a key nothing reads outlives its reader and reads like
-        // configuration for years.
-        assertThat(ComposeTemplate.extras(tokens())).doesNotContain("RELEASE_REQUESTS_WORKSPACES_URL");
+                .doesNotContain("QUARKUS_OIDC_CLIENT_MAINTENANCE_")
+                .doesNotContain("QUARKUS_OIDC_CLIENT_WORKSPACES_");
+        // The TIER's workspaces, never the bare name the image ships: a deployment that took the
+        // default would look configured and reap nothing, for ever, in a WARN.
+        assertThat(extras("qits-projects")).doesNotContain("WORKSPACES_URL=http://qits-workspaces:8080");
     }
 
     /**

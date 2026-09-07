@@ -2175,6 +2175,19 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_MAINTENANCE_CLIENT_ID=${ENV_NAME}-qits-projects
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_MAINTENANCE_GRANT_OPTIONS_CLIENT_AUDIENCE=${ALIAS_PLATFORM_MAINTENANCE}
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_MAINTENANCE_CREDENTIALS_SECRET=${IDP_SECRET_PROJECTS}
+            # THE RESOLUTION CALL'S OWN CLIENT, audience qits-workspaces. Telling qits-workspaces
+            # that a released branch was deleted is behind that service's machine gate, and the
+            # caller is FAIL-CLOSED on this bearer by design: it asks another context to destroy a
+            # container, so unlike the two qits-ci hops it has no forwarded-header fallback and does
+            # not send the request at all without a token for THIS audience. A tier that spells the
+            # address below without this block therefore reaps exactly nothing — same WARN, second
+            # reason. Same service identity, fifth named client; the default (unnamed) one is
+            # qits-containers' and must not be borrowed for any of them.
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_WORKSPACES_CLIENT_ENABLED=${MACHINE_CLIENT}
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_WORKSPACES_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_WORKSPACES_CLIENT_ID=${ENV_NAME}-qits-projects
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_WORKSPACES_GRANT_OPTIONS_CLIENT_AUDIENCE=${ENV_NAME}-qits-workspaces
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_WORKSPACES_CREDENTIALS_SECRET=${IDP_SECRET_PROJECTS}
             # THE TWO ADDRESSES THE RELEASE FLOW IS SWITCHED ON BY, and they ship UNSET on purpose:
             # qits-projects refuses to release at all while it cannot name a git host, and a tier
             # that is not meant to release simply never learns one. This platform releases, so both
@@ -2186,8 +2199,9 @@ public final class ComposeTemplate {
             # The SECOND is qits-ci's, for the active-run listing the release gate settles against
             # and the cancellations it makes.
             #
-            # qits.projects.release-requests.workspaces-url is NOT here and must not come back: it
-            # addressed qits-workspaces' release door, and that door is gone with the entry branch.
+            # qits.projects.release-requests.workspaces-url is not a third switch and is spelled
+            # further down, with its own argument: the release door it once addressed is gone with
+            # the entry branch and stays gone, and what it names now is a call made AFTER a release.
             #
             # THE SEED BLOCK SPELLS NEITHER, deliberately. Nothing releases during the seed window —
             # a bootstrap restores tags, it cuts no release — and the seed qits-projects is replaced
@@ -2206,6 +2220,35 @@ public final class ComposeTemplate {
             # The seed spells it no more than it spells the pair, and for the same reason: nothing
             # releases during the seed window, so there is no announcement to enrich.
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RELEASE_REQUESTS_MAINTENANCE_URL=http://${ALIAS_PLATFORM_MAINTENANCE}:8080
+            # A FOURTH ADDRESS, AND IT IS A LIFECYCLE CALL RATHER THAN ANY KIND OF SWITCH. Once a
+            # release has landed and deleted the branch it consumed, the executor POSTs
+            # /workspaces/api/branches/resolution so qits-workspaces resolves the workspace that
+            # stood on that branch — its container, its volume and its commissioned credential. The
+            # delete is a git-host primitive that writes the ref and fires no event, so this call is
+            # the only way qits-workspaces can ever learn the branch under one of its workspaces
+            # died. Never a release verb: the door that merged, tagged and promoted left that service
+            # on 2026-09-03, and nothing may be routed back through this one. The credential is the
+            # workspaces client above, and it is half of the same fix: neither the address nor the
+            # bearer reaps anything on its own.
+            #
+            # IT IS SPELLED HERE BECAUSE THE SHIPPED DEFAULT LOOKS SET AND SERVES NOWHERE. The pair
+            # above ship unset and say so by refusing to release; this key ships
+            # http://qits-workspaces:8080 — a bare name no tiered estate answers to, because the live
+            # service is <env>-qits-workspaces. And the caller is rightly best-effort: a release that
+            # has already happened must not be undone because a reap could not be made, so it WARNs
+            # and returns. The two together are silence, and the silence is measured: on 2026-09-07
+            # every release this platform has made left its workspace ACTIVE for ever, holding a
+            # container — workspace 101, still standing on the branch wrapper release
+            # 2026.907.135446 deleted and merged.
+            #
+            # It belongs in THIS block and not only in the live store, because the
+            # config-declarations migration authors each application's declarations FROM the extras:
+            # a key that is absent here is a key the migration never translates, and this bug would
+            # outlive the epic meant to end it.
+            #
+            # The seed spells it no more than it spells the three above: nothing releases during the
+            # seed window, so there is no consumed branch and no workspace to resolve.
+            qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RELEASE_REQUESTS_WORKSPACES_URL=http://${ENV_NAME}-qits-workspaces:8080
             # THE SLUGS NO PROJECT MAY TAKE: this platform's environment names, because a project
             # slug sits at the label the edge reads a tier at — editor.<project>.<domain>. Spelled
             # here as well as on the seed, or the first self-deploy drops it: the update argv
