@@ -1703,6 +1703,35 @@ class ComposeTemplateTest {
         assertThat(projects).doesNotContain("RELEASE_REQUESTS_WORKSPACES_URL");
     }
 
+    /**
+     * <b>The third address enriches an announcement and switches nothing on.</b> A fold reads the
+     * repositories downstream of the one being released out of the maintenance catalog and puts
+     * them on its event, which is what lets qits-ci order its queue by them. It is best-effort by
+     * construction — unset, unreachable, refused or 404 and the event simply carries no such key —
+     * so a platform without it releases exactly as well, and the SEED carries it no more than it
+     * carries the pair.
+     */
+    @Test
+    void projectsIsToldWhereToReadTheDownstreamClosureAndWithWhichCredential() {
+        String projects = extras("qits-projects");
+
+        assertThat(projects)
+                .contains("env.QITS_PROJECTS_RELEASE_REQUESTS_MAINTENANCE_URL="
+                        + "http://qits-platform-maintenance:8080")
+                // The fourth named client, and the audience is what makes it a fourth: the catalog
+                // refuses a bearer minted for ci or for the git host.
+                .contains("env.QUARKUS_OIDC_CLIENT_MAINTENANCE_CLIENT_ENABLED=true")
+                .contains("env.QUARKUS_OIDC_CLIENT_MAINTENANCE_CLIENT_ID=prod-qits-projects")
+                .contains("env.QUARKUS_OIDC_CLIENT_MAINTENANCE_GRANT_OPTIONS_CLIENT_AUDIENCE="
+                        + "qits-platform-maintenance")
+                .contains("env.QUARKUS_OIDC_CLIENT_MAINTENANCE_CREDENTIALS_SECRET=")
+                .contains("env.QUARKUS_OIDC_CLIENT_MAINTENANCE_AUTH_SERVER_URL=");
+        // Nothing releases during the seed window, so there is no announcement to enrich.
+        String seeded = serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-projects");
+        assertThat(seeded).doesNotContain("RELEASE_REQUESTS_MAINTENANCE_URL")
+                .doesNotContain("QUARKUS_OIDC_CLIENT_MAINTENANCE_");
+    }
+
     @Test
     void theExtrasCoverEveryApplicationThatNeedsMoreThanItsImage() {
         String properties = ComposeTemplate.extras(tokens());

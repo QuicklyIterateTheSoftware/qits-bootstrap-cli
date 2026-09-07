@@ -2142,6 +2142,17 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_CI_CLIENT_ID=${ENV_NAME}-qits-projects
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_CI_GRANT_OPTIONS_CLIENT_AUDIENCE=${ALIAS_CI}
             qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_CI_CREDENTIALS_SECRET=${IDP_SECRET_PROJECTS}
+            # THE ENRICHMENT'S OWN CLIENT, audience qits-platform-maintenance. Announcing a release
+            # request asks the maintenance catalog which repositories sit downstream of the one being
+            # released, and that route is behind the catalog's machine gate — so the fold needs a
+            # token for THAT audience, which neither the githost nor the ci client can mint. Same
+            # service identity, fourth named client; the default (unnamed) one is qits-containers'
+            # and must not be borrowed for any of them.
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_MAINTENANCE_CLIENT_ENABLED=${MACHINE_CLIENT}
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_MAINTENANCE_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_MAINTENANCE_CLIENT_ID=${ENV_NAME}-qits-projects
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_MAINTENANCE_GRANT_OPTIONS_CLIENT_AUDIENCE=${ALIAS_PLATFORM_MAINTENANCE}
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_CLIENT_MAINTENANCE_CREDENTIALS_SECRET=${IDP_SECRET_PROJECTS}
             # THE TWO ADDRESSES THE RELEASE FLOW IS SWITCHED ON BY, and they ship UNSET on purpose:
             # qits-projects refuses to release at all while it cannot name a git host, and a tier
             # that is not meant to release simply never learns one. This platform releases, so both
@@ -2162,6 +2173,17 @@ public final class ComposeTemplate {
             # githost client, which it has, because it creates bares.
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RELEASE_REQUESTS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RELEASE_REQUESTS_CI_URL=http://${ALIAS_CI}:8080
+            # A THIRD ADDRESS, AND IT IS NOT A THIRD SWITCH. The pair above is what the release flow
+            # is turned on BY — no git host, no release. This one only ENRICHES what a fold
+            # announces: one capped GET at the maintenance catalog for the repositories downstream
+            # of the released one. Unset, unreachable, refused or 404 and the event carries no such
+            # key at all, so qits-ci orders its queue by kind, priority and age as it did before. A
+            # platform without it releases exactly as well; it is spelled here because this one has
+            # a catalog to ask.
+            #
+            # The seed spells it no more than it spells the pair, and for the same reason: nothing
+            # releases during the seed window, so there is no announcement to enrich.
+            qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RELEASE_REQUESTS_MAINTENANCE_URL=http://${ALIAS_PLATFORM_MAINTENANCE}:8080
             # THE SLUGS NO PROJECT MAY TAKE: this platform's environment names, because a project
             # slug sits at the label the edge reads a tier at — editor.<project>.<domain>. Spelled
             # here as well as on the seed, or the first self-deploy drops it: the update argv
