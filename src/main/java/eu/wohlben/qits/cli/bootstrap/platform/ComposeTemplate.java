@@ -2447,12 +2447,17 @@ public final class ComposeTemplate {
             # PROJECTS url and the PROJECTS credential already set above. Nothing was added here for
             # it, and QITS_MAINTENANCE_TARGETS_WORKSPACES_URL went with the door.
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_ARTIFACTS_URL=http://${ALIAS_ARTIFACTS}:8080
-            # NIGHTLY INTERNAL BUMPS SHIP OFF, deliberately, although the jar defaults them on: the
-            # per-repository hop files still follow releases immediately until the decommissioning
-            # waves land, and two mechanisms pushing the same branches is noise a fresh platform
-            # does not need. Flip to true when the hop files go. The retired
-            # QITS_MAINTENANCE_BUMP_AUTO key is gone with the scan-coupled auto-bump it gated.
-            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_BUMP_INTERNAL_AUTO=false
+            # NIGHTLY INTERNAL BUMPS ARE ON, which is the jar's own default and is now also this
+            # platform's. They shipped OFF while the per-repository ci-event-upstream-frontend.yml
+            # hop files still followed releases immediately, because two mechanisms pushing the same
+            # branches is noise a fresh platform does not need. THE HOP FILES ARE GONE — no
+            # .config/qits/ci-event-upstream-*.yml survives anywhere in the estate — so the reason
+            # lapsed, and leaving the key at false made this line the only thing holding the nightly
+            # bump shut: every bump on the platform was a button press, and a repository nobody
+            # pressed for drifted until somebody noticed. The retired QITS_MAINTENANCE_BUMP_AUTO key
+            # is gone with the scan-coupled auto-bump it gated; this one gates the 02:00 cron alone,
+            # and the EXTERNAL half stays manual whatever it says.
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_BUMP_INTERNAL_AUTO=true
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_REGISTRIES_MAVEN_URL=http://${ALIAS_ARTIFACTS}:8080/artifacts/maven/maven
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_REGISTRIES_NPM_URL=http://${ALIAS_ARTIFACTS}:8080/artifacts/npm/npm
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_REGISTRIES_OCI_URL=http://${ALIAS_ARTIFACTS}:8080/v2
