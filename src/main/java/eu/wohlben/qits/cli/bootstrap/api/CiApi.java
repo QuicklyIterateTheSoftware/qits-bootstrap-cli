@@ -58,8 +58,11 @@ public class CiApi {
      * <b>A hand-supplied SCMRelease closes qits-ci's release join by construction</b> — the event
      * that caused the run IS the release announcement, so the green run announces its {@code
      * SoftwareRelease} per declared artifact and the deployer's own subscriber does the rest. That
-     * is the ordinary path, and {@link PdApi#softwareReleased} is what stands in when it is not
-     * taken: a rerun whose run is long green announces nothing, because nothing ran.
+     * is the ONLY path now. {@code PdApi#softwareReleased} used to stand in when it was not taken —
+     * a rerun whose run is long green announces nothing, because nothing ran — and that intake is
+     * gone from the deployer: there is no third state between the right version running and a
+     * rebuild, so a boot that wants a version deployed replays the release and lets the build
+     * publish it.
      */
     public Http.Response trigger(String eventJson, String token) {
         return http.postJson(base + "/api/events/trigger", eventJson, bearer(token));

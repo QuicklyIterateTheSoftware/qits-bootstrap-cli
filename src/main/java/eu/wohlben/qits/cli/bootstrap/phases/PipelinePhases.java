@@ -1394,25 +1394,23 @@ public class PipelinePhases {
             if (!mainSha.isBlank() && boot.ci.greenReleaseRunAt(storageId, mainSha)) {
                 ctx.log("  " + repo + "'s release run at " + SeedPhases.shortSha(mainSha)
                         + " is already green — qits/" + application + ":" + version
-                        + " is published, so this asks the deployer for it directly");
-            } else {
-                List<String> runs = announceRelease(ctx, name, src, version);
-                if (runs.isEmpty()) {
-                    // No release recipe selected it, so nothing is going to publish the image. Said
-                    // once and loudly: the deployer is still asked below, because a version this
-                    // platform already holds deploys perfectly well, and an IMAGE_MISSING row
-                    // minutes from now is a better answer than an hour of waiting for a build
-                    // nobody started.
-                    ctx.warn(repo + " has no release pipeline that selects its own SCMRelease, so"
-                            + " nothing will publish qits/" + application + ":" + version
-                            + ". Asking the deployer for the version the registry may already"
-                            + " hold");
-                } else {
-                    runId = runs.getFirst();
-                }
+                        + " is published, so its SCMRelease is replayed to deploy it");
             }
-            if (runId == null) {
-                postSoftwareReleased(ctx, name, application, version);
+            // ONE PATH, AND IT IS THE SCMRelease REPLAY. A green run at this sha means the image is
+            // already published, which used to be a reason to ask the deployer for the version
+            // directly — but there is no third state between "the right version is running" and
+            // "it rebuilds", and the direct ask was the only way to file a deployment that the bus
+            // had not announced. Replaying costs a build on a re-boot and buys one way in.
+            List<String> runs = announceRelease(ctx, name, src, version);
+            if (runs.isEmpty()) {
+                // Nothing will publish the image, and nothing can be handed over instead: a
+                // repository with no release recipe is a configuration error to fix, not a
+                // deployment to force.
+                ctx.warn(repo + " has no release pipeline that selects its own SCMRelease, so"
+                        + " nothing will publish qits/" + application + ":" + version
+                        + " and nothing will deploy it");
+            } else {
+                runId = runs.getFirst();
             }
             awaitDeployment(ctx, name, application, version, runId, mainSha, baselineRowId);
         });
@@ -1749,8 +1747,6 @@ public class PipelinePhases {
         DeployLogStream pdLog = new DeployLogStream(boot.docker, ctx, application,
                 PlatformModel.wireAlias("deployments", boot.config.envName()),
                 PlatformModel.pdNamePrefix("deployments", boot.config.envName()));
-        long[] greenForMillis = {0};
-        boolean[] replayed = {false};
         long interval = boot.config.pollInterval().toMillis();
         String target = platformService
                 ? "a container named " + PlatformModel.pdNamePrefix(name, boot.config.envName())
@@ -1811,31 +1807,14 @@ public class PipelinePhases {
                             });
                             return Waiter.Poll.done("RELEASE BUILD " + runStatus, runStatus);
                         }
-                        // <b>The green run's own announcement can still be lost.</b> qits-ci
-                        // publishes SoftwareRelease when the run closes, and the deployer's
-                        // subscriber is durable — but the deployer is an application THIS BOOT
-                        // redeploys, and a subscriber that is mid-cutover when the frame is offered
-                        // catches up on its own sweep rather than at once. So a green run with no
-                        // row a minute later gets the release handed over by hand, ONCE. One more
-                        // attempt, never a retry loop. Environment services only: a platform
-                        // service is read through its container, which only turns true once the
-                        // cutover has finished, and that alone can outlast a minute.
-                        if ("SUCCESS".equals(runStatus) && !platformService) {
-                            greenForMillis[0] += interval;
-                            // A stale terminal row means the deployer consumed this version's
-                            // announcement long ago and will never act unprompted — hand it over at
-                            // once, not after a minute.
-                            boolean staleTerminal = boot.pd.newestDeployment(
-                                            boot.state.environmentId, application)
-                                    .map(r -> Json.text(r, "id").equals(baselineRowId))
-                                    .orElse(false);
-                            if ((greenForMillis[0] >= 60_000 || staleTerminal) && !replayed[0]) {
-                                ctx.warn(application + "'s release build is green but no deployment"
-                                        + " appeared — handing the deployer the release");
-                                postSoftwareReleased(ctx, name, application, version);
-                                replayed[0] = true;
-                            }
-                        }
+                        // <b>A green run with no deployment row is WAITED OUT, never handed
+                        // over.</b> qits-ci publishes SoftwareRelease when the run closes and the
+                        // deployer's subscriber is DURABLE, so the frame is owed rather than lost
+                        // even when the deployer is mid-cutover — which it is, because the deployer
+                        // is an application this boot redeploys. The hand-over that used to run
+                        // here after a minute was impatience, and it was the only caller of an
+                        // intake that could file a deployment the bus had not announced. What
+                        // catches up is the consumer's own sweep.
                         return Waiter.Poll.pending("release build "
                                 + (runId == null ? "not this phase's"
                                         : runStatus.isBlank() ? "starting" : runStatus)
@@ -1872,49 +1851,6 @@ public class PipelinePhases {
     }
 
     /**
-     * <b>Hands the deployer the release, by hand.</b> Two callers and one meaning: the version is
-     * published and there is no deployment of it — either because nothing ran (the image is
-     * already in the registry from an earlier boot) or because the announcement of a run that did
-     * go green never reached the deployer's subscriber.
-     * <p>
-     * Retried: the edge this public call travels through is an application this run deploys, so a
-     * call can meet it mid-cutover.
-     * <p>
-     * <b>The public pair goes with it whenever this run holds it.</b> The deployer reads the
-     * repository's {@code deployments.yml} to deploy at all, and with {@code (projectId, repoName)}
-     * it reads it name-addressed; without, it falls back to the storage scheme, which the deployed
-     * git host serves to qits-projects' client alone. This run has minted and recorded the pair for
-     * every repository, so it sends it.
-     */
-    private void postSoftwareReleased(PhaseContext ctx, String name, String application,
-            String version) {
-        String repo = PlatformModel.repo(name);
-        String projectId = boot.state.projectId;
-        Http.Response last = null;
-        for (int attempt = 1; attempt <= 3; attempt++) {
-            try {
-                // The ci client, addressed to the deployer: this stands in for the announcement
-                // qits-ci makes on a green release run, and a token that says qits-ci is exactly
-                // that. Both are wire aliases — the audience is the deployer's own id, which is why
-                // the idp's ci client is granted it in the seed.
-                String token = boot.tokenOrNull(PlatformModel.wireAlias("ci", boot.config.envName()),
-                        PlatformModel.wireAlias("deployments", boot.config.envName()));
-                last = boot.pd.softwareReleased(boot.storageId(name), projectId, repo, application,
-                        version, token);
-                if (last.ok()) {
-                    ctx.log("  software-released posted for " + application + " " + version);
-                    return;
-                }
-            } catch (RuntimeException e) {
-                ctx.log("  release hand-over attempt " + attempt + " failed: " + e.getMessage());
-            }
-            sleep(5000);
-        }
-        ctx.warn("could not hand the deployer " + application + " " + version
-                + (last == null ? "" : ": " + last.describe()));
-    }
-
-    /**
      * A ci run that ended red. Three words and qits-ci writes all three: {@code FAILED} is a step
      * that returned non-zero, {@code CONFIG_ERROR} a recipe that could not be read, and
      * {@code TIMED_OUT} a step aborted at its deadline. A word missing from here reads as "still
@@ -1926,13 +1862,17 @@ public class PipelinePhases {
                 || "TIMED_OUT".equals(status);
     }
 
-    // THE PUSH RE-ANNOUNCEMENT IS GONE, and the rule it served is not.
+    // BOTH RE-ANNOUNCEMENTS ARE GONE NOW, and the rule they served is not.
     //
-    // "An announcement the platform makes once, this program re-makes once" had two halves. The
-    // RELEASE half survives above, as postSoftwareReleased: qits-ci's green-run notice travels the
-    // bus and the deployer keeps an HTTP intake for a caller to hand it the release by hand. What
-    // is re-made there is a SoftwareRelease and never a build: /events/build-succeeded is gone
-    // from the deployer, and a call to it would be a call to nothing.
+    // "An announcement the platform makes once, this program re-makes once" had two halves and
+    // neither survives. The RELEASE half was postSoftwareReleased, which handed the deployer a
+    // SoftwareRelease over its HTTP intake when a green run's own frame had not produced a
+    // deployment row yet. That intake is gone from the deployer and this was its only caller. It
+    // was never needed: the deployer's subscriber is DURABLE, so a frame offered while the deployer
+    // was mid-cutover is owed and picked up by its own sweep — waiting is the whole fix, and the
+    // hand-over was impatience wearing a recovery's clothes. What it did buy was a way to file a
+    // deployment the bus had never announced, which is how an IMAGE_MISSING row gets written for a
+    // version whose image is still building.
     //
     // The PUSH half is retired, because there is no longer an announcement to lose: qits-githost
     // writes SCMPublishCommit to its outbox inside the push's own transaction, and qits-ci's
