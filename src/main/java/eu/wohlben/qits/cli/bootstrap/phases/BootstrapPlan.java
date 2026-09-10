@@ -89,6 +89,10 @@ public final class BootstrapPlan {
             // build on this platform.
             phases.add(seed.mavenPublish("userflows", "qits-userflows",
                     "publish qits-userflows into seed artifacts"));
+            // The shared agent harness second, on the same terms: it resolves nothing of ours, and
+            // both agent daemons' release replays resolve it from the store.
+            phases.add(seed.mavenPublish("coding-agents", "qits-coding-agents",
+                    "publish the shared agent harness into seed artifacts"));
             // The integrations next: the blob store is written against qits-db-core — one of this
             // repository's three modules — since its DbRetry release (2026-08-13), and
             // qits-eventstream since 2026-08-11. A publish resolves its qits half from the store it

@@ -228,6 +228,43 @@ class PinnedVersionsTest {
                 .singleElement().asString().contains("qits-not-a-library");
     }
 
+    /**
+     * <b>The agent harness is pinned two ways, and both are pins.</b> qits-workspace-daemon says
+     * {@code <qits.coding-agents.version>}, qits-projects-daemon {@code <qits-coding-agents.version>}.
+     * A reader that saw only the first let the second daemon's lagging pin go unpublished.
+     */
+    @Test
+    void theHarnessIsAPinInBothItsSpellings() {
+        assertThat(PinnedVersions.pinsIn(
+                "<qits.coding-agents.version>2026.909.111643</qits.coding-agents.version>"))
+                .containsExactly(entry("coding-agents", "2026.909.111643"));
+        assertThat(PinnedVersions.pinsIn(
+                "<qits-coding-agents.version>2026.909.101408</qits-coding-agents.version>"))
+                .containsExactly(entry("coding-agents", "2026.909.101408"));
+        // Mismatched open and close tags are no pin.
+        assertThat(PinnedVersions.pinsIn(
+                "<qits-coding-agents.version>1</qits.coding-agents.version>")).isEmpty();
+
+        pom("coding-agents", PinnedVersions.HEAD, library("2026.909.122712"));
+        pom("coding-agents", "2026.909.101408", library("2026.909.101408"));
+        pom("coding-agents", "2026.909.111643", library("2026.909.111643"));
+        pom("workspace-daemon", PinnedVersions.HEAD,
+                library("1.0.0", "coding-agents", "2026.909.111643"));
+        pom("projects-daemon", PinnedVersions.HEAD, """
+                <project><artifactId>qits-projects-daemon</artifactId><version>1.0.0</version>
+                <properties>
+                  <qits-coding-agents.version>2026.909.101408</qits-coding-agents.version>
+                </properties></project>
+                """);
+
+        PinnedVersions pins =
+                PinnedVersions.read(List.of("workspace-daemon", "projects-daemon"), source);
+
+        assertThat(pins.extraVersions("coding-agents"))
+                .containsExactly("2026.909.101408", "2026.909.111643");
+        assertThat(pins.warnings()).isEmpty();
+    }
+
     @Test
     void aPropertyWhoseValueIsItselfAPlaceholderIsNotAPin() {
         assertThat(PinnedVersions.pinsIn(

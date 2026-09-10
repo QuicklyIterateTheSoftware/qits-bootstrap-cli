@@ -309,10 +309,17 @@ public final class PlatformModel {
      * that forbids re-deploying the database. Seeded like every image publisher: a checkout, a
      * git-host repository and a main history feed its seed-image build; it carries no release, so it
      * is not restored to a tag.
+     * <p>
+     * <b>qits-coding-agents joined on 2026-09-10</b>, a library on qits-userflows' terms. It is the
+     * shared coding-agent harness (the {@code qits-agents} reactor: {@code qits-commands} and
+     * {@code qits-coding-agents}), which both agent daemons carried as in-repo modules until
+     * 2026-09-09 and now resolve as released jars from the platform's Maven registry. A boot that
+     * did not know it cloned nothing, published nothing, and the two daemon release replays died
+     * resolving a coordinate the fresh store had never seen.
      */
     public static final List<String> SEEDED_REPOS = List.of(
             "oci", "oci-postgresql", "ci-daemon", "eventstream", "registries", "spa-ui-components",
-            "userflows", "spa-docs", "spa-deployments",
+            "userflows", "coding-agents", "spa-docs", "spa-deployments",
             "integrations-angular", "integrations-quarkus", "spa-projects",
             "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events",
             "spa-ci", "spa-githost", "spa-configuration", "platform-spa-idp",
@@ -454,7 +461,8 @@ public final class PlatformModel {
             // and so does the byte plane's own, a library by the same test: three services consume
             // it and it is not deployed.
             case "eventstream", "registries", "spa-ui-components", "userflows",
-                 "integrations-angular", "integrations-quarkus" -> "libs/" + repo(name);
+                 "integrations-angular", "integrations-quarkus", "coding-agents" ->
+                    "libs/" + repo(name);
             // Anything served at a URL is a frontend, whether it is spelled qits-spa-<x> or
             // qits-platform-spa-<x>. Both spellings are live: the byte-plane split renamed two the
             // first way (qits-spa-artifacts, qits-spa-docs) and qits-platform-spa-mirror was born
@@ -520,7 +528,7 @@ public final class PlatformModel {
      */
     private static final List<String> LIBRARY_NAMES =
             List.of("eventstream", "registries", "spa-ui-components", "userflows",
-                    "integrations-angular", "integrations-quarkus");
+                    "integrations-angular", "integrations-quarkus", "coding-agents");
 
     /**
      * The names that are image builds today, and are none of them spelled so. Their renamed

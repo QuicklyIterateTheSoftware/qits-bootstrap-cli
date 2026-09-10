@@ -91,7 +91,11 @@ public final class PinnedVersions {
             Map.entry("githost-events", "githost"),
             Map.entry("containers-client", "containers"),
             Map.entry("containers-core", "containers"),
-            Map.entry("userflows", "userflows"));
+            Map.entry("userflows", "userflows"),
+            // One property for the harness reactor's two jars, spelled two ways: qits-workspace-
+            // daemon says <qits.coding-agents.version>, qits-projects-daemon
+            // <qits-coding-agents.version>. PIN reads both.
+            Map.entry("coding-agents", "coding-agents"));
 
     /** What the closure reads: the checkouts, by (repository, ref). */
     public interface Sources {
@@ -120,13 +124,18 @@ public final class PinnedVersions {
      */
     static final Comparator<String> VERSION_ORDER = PinnedVersions::compareVersions;
 
+    /**
+     * {@code <qits.<key>.version>}, and {@code <qits-<key>.version>} too: qits-projects-daemon pins
+     * the agent harness with a dash, and a pin the reader cannot see is a version the seed never
+     * publishes.
+     */
     private static final Pattern PIN = Pattern.compile(
-            "<qits\\.([A-Za-z0-9-]+)\\.version>\\s*([^<$\\s][^<]*?)\\s*</qits\\.\\1\\.version>");
+            "<qits([.-])([A-Za-z0-9-]+)\\.version>\\s*([^<$\\s][^<]*?)\\s*</qits\\1\\2\\.version>");
 
     /** A managed dependency whose version IS one of those properties: the artifact it versions. */
     private static final Pattern MANAGED = Pattern.compile(
             "<artifactId>\\s*([^<\\s]+)\\s*</artifactId>\\s*"
-                    + "<version>\\s*\\$\\{qits\\.([A-Za-z0-9-]+)\\.version}\\s*</version>");
+                    + "<version>\\s*\\$\\{qits[.-]([A-Za-z0-9-]+)\\.version}\\s*</version>");
 
     private static final Pattern ARTIFACT = Pattern.compile("<artifactId>\\s*([^<\\s]+)\\s*</artifactId>");
 
@@ -306,7 +315,8 @@ public final class PinnedVersions {
         }
         Map<String, String> used = new LinkedHashMap<>();
         pins.forEach((key, pinned) -> {
-            if (texts.indexOf("${qits." + key + ".version}") >= 0) {
+            if (texts.indexOf("${qits." + key + ".version}") >= 0
+                    || texts.indexOf("${qits-" + key + ".version}") >= 0) {
                 used.put(key, pinned);
                 return;
             }
@@ -606,7 +616,7 @@ public final class PinnedVersions {
         Map<String, String> pins = new LinkedHashMap<>();
         Matcher matcher = PIN.matcher(pom);
         while (matcher.find()) {
-            pins.put(matcher.group(1), matcher.group(2));
+            pins.put(matcher.group(2), matcher.group(3));
         }
         return pins;
     }

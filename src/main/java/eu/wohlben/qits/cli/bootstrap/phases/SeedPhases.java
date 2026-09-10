@@ -117,6 +117,11 @@ public class SeedPhases {
      *       nowhere else, so a cold boot's first seed image build died on
      *       {@code qits-userflows:pom:2026.904.223009 (absent)} — 2026-09-05, phase 9. First
      *       rather than last because the phase's own skip probe asks for the LAST entry.
+     *   <li><b>qits-coding-agents is SECOND and depends on nothing of ours either</b> — vertx-core
+     *       and junit. No seed image resolves it today: the two agent daemons that do are built by
+     *       their release replays, which resolve from the store. It is here anyway because the
+     *       temporary registry holds every qits jar a seed image could ask for, and a daemon that
+     *       becomes a seed image must not be able to turn that into a failed build.
      * </ul>
      * <b>githost and containers name SERVICE repositories and publish modules of them</b> — the git
      * host's event vocabulary, and the orchestrator's core and client. {@link
@@ -131,8 +136,8 @@ public class SeedPhases {
      * versions this same container has already deployed.
      */
     static final List<String> SEED_LIBRARIES = List.of(
-            "userflows", "integrations-quarkus", "registries", "eventstream", "githost",
-            "containers");
+            "userflows", "coding-agents", "integrations-quarkus", "registries", "eventstream",
+            "githost", "containers");
 
     /**
      * <b>The third-party download cache every maven container this program starts shares.</b>

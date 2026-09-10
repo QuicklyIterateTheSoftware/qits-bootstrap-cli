@@ -199,6 +199,9 @@ class PlatformModelTest {
         expected.put("ci-daemon", "qits-ci-daemon");
         expected.put("projects-daemon", "qits-projects-daemon");
         expected.put("workspace-daemon", "qits-workspace-daemon");
+        // The agent harness, born on 2026-09-08 under a name outside the grammar. The wrapper
+        // declares it so, and the boot follows the wrapper.
+        expected.put("coding-agents", "qits-coding-agents");
 
         // Every repository of the platform, and nothing that is not one.
         assertThat(PlatformModel.platformRepos())
@@ -206,6 +209,13 @@ class PlatformModelTest {
         expected.forEach((name, repo) ->
                 assertThat(PlatformModel.repo(name)).as(name).isEqualTo(repo));
     }
+
+    /**
+     * The one repository whose name says no role. qits-coding-agents was created on 2026-09-08
+     * after the renames, and {@code qits-agents-javalib} would be its grammar name. Renaming it is
+     * an estate decision, not this program's: the boot clones what the wrapper declares.
+     */
+    private static final String OUT_OF_GRAMMAR = "coding-agents";
 
     /**
      * <b>The renames are complete, so every repository says its role in its own name.</b> There is
@@ -217,8 +227,11 @@ class PlatformModelTest {
     @Test
     void noRepositoryIsLeftAtAStaleName() {
         assertThat(PlatformModel.platformRepos())
+                .filteredOn(name -> !name.equals(OUT_OF_GRAMMAR))
                 .allSatisfy(name -> assertThat(PlatformModel.repo(name)).as(name)
                         .matches(".*-(service|frontend|daemon|oci|cli|javalib|jslib)$"));
+        // The exception answers LIBRARY all the same, from the table of names that say nothing.
+        assertThat(PlatformModel.archetype(OUT_OF_GRAMMAR, null)).isEqualTo("LIBRARY");
         // And the spellings the renames replaced are gone: a name that resolves to no repository on
         // the git host creates one, pushes to it, and waits an hour for a build nobody asked for.
         assertThat(PlatformModel.platformRepos().stream().map(PlatformModel::repo))
@@ -598,6 +611,24 @@ class PlatformModelTest {
                 .hasSize(PlatformModel.DEPLOYABLES.size() + PlatformModel.SEEDED_REPOS.size())
                 .containsAll(PlatformModel.DEPLOYABLES)
                 .containsAll(PlatformModel.SEEDED_REPOS);
+    }
+
+    /**
+     * The shared agent harness, added on 2026-09-10. Both agent daemons resolve its jars from the
+     * store, so it is cloned, hosted and seed-published like qits-userflows — and neither deployed
+     * nor replayed: nothing pins an image of it, and the seed publishes put its jars in the store.
+     */
+    @Test
+    void theAgentHarnessIsASeededLibrary() {
+        assertThat(PlatformModel.SEEDED_REPOS).contains("coding-agents");
+        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("coding-agents");
+        assertThat(PlatformModel.RELEASE_PUBLISHERS).doesNotContain("coding-agents");
+        assertThat(PlatformModel.repo("coding-agents")).isEqualTo("qits-coding-agents");
+        assertThat(PlatformModel.nameOf("qits-coding-agents")).isEqualTo("coding-agents");
+        assertThat(PlatformModel.archetype("coding-agents",
+                "components/qits-agents/qits-coding-agents")).isEqualTo("LIBRARY");
+        assertThat(PlatformModel.mavenModule("coding-agents")).isEmpty();
+        assertThat(PlatformModel.carriesVersionIdentity("coding-agents")).isFalse();
     }
 
     /**

@@ -229,8 +229,8 @@ class SeedPhasesTest {
     @Test
     void theSeedLibrariesAreEveryJarASeedImageResolves() {
         assertThat(SeedPhases.SEED_LIBRARIES).containsExactly(
-                "userflows", "integrations-quarkus", "registries", "eventstream", "githost",
-                "containers");
+                "userflows", "coding-agents", "integrations-quarkus", "registries", "eventstream",
+                "githost", "containers");
         // Dependency order, and every pair is forced by a pom: the blob store is written against
         // qits-db-core (a module of qits-integrations-quarkus) since its DbRetry release,
         // qits-eventstream against qits-db-core too, qits-githost-events against qits-eventstream,

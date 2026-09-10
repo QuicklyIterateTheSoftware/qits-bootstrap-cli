@@ -64,6 +64,9 @@ class BootstrapPlanTest {
                 // qits-userflows first: it resolves nothing of ours, and every service build on
                 // this platform resolves it — test-scoped, which a -DskipTests build still needs.
                 "publish-qits-userflows",
+                // The shared agent harness resolves nothing of ours either; both agent daemons'
+                // release replays resolve it from the store.
+                "publish-qits-coding-agents",
                 "publish-qits-auth-core",
                 "publish-qits-registries-oci",
                 "publish-qits-eventstream",
