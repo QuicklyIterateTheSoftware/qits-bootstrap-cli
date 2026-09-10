@@ -686,6 +686,14 @@ class PlatformModelTest {
         // The orchestrator immediately before ci: ci runs every step as a container it asks that
         // service for, so the two cutovers have to be ordered rather than overlapping.
         assertThat(PlatformModel.DEPLOYABLES).containsSubsequence("containers", "ci");
+        // docs declares serviceAddress keys on qits-artifacts and qits-observability, and
+        // qits-configuration renders an address only once its target has deployed and recorded a
+        // plane — before that the resolved read is a 422 and the deployer refuses docs.
+        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence("artifacts", "docs");
+        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence("observability", "docs");
+        // ...without splitting the byte plane's three or the containers-ci pair.
+        assertThat(PlatformModel.DEPLOYABLES).containsSequence("platform-mirror", "artifacts", "githost");
+        assertThat(PlatformModel.DEPLOYABLES).containsSequence("containers", "ci");
     }
 
     /**

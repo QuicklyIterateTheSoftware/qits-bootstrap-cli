@@ -130,8 +130,11 @@ class BootstrapPlanTest {
         assertThat(ids).containsSubsequence("environment", "deploy-observability",
                 "deploy-platform-idp", "deploy-configuration",
                 "deploy-stt", "deploy-projects", "deploy-workspaces",
-                "deploy-events", "deploy-docs",
+                "deploy-events",
                 "deploy-platform-mirror", "deploy-artifacts", "deploy-githost",
+                // docs after artifacts: its declared serviceAddress key names that service, and
+                // qits-configuration renders it only once the target has deployed.
+                "deploy-docs",
                 // The orchestrator immediately before ci: ci runs every step as a container it asks
                 // that service for, so a ci cutover inside the orchestrator's window is a pipeline
                 // with nowhere to run.

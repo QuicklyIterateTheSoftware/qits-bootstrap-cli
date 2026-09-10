@@ -131,6 +131,17 @@ public final class PlatformModel {
      * and because the githost's own deployment is the one that re-hosts the repository this train
      * pushes to, the same self-referential class as the deployer.
      * <p>
+     * <b>qits-docs comes AFTER qits-artifacts, because its configuration names it.</b> Its
+     * {@code .config/qits/configuration.yml} declares {@code env.QITS_DOCS_ARTIFACTS_URL} as a
+     * {@code serviceAddress} of qits-artifacts, and qits-configuration renders that address from the
+     * TARGET's recorded plane — which a deployment records, and a seed-stack service has never had.
+     * Before it, the resolved read answers 422 and the deployer refuses the deployment: the
+     * wohlben.eu cold boot of 2026-09-10 warned at deploy-docs exactly so, two phases before
+     * qits-artifacts deployed. The rule is general — an application whose declaration addresses
+     * another deploys after it — and qits-docs is the only one this train has today; its other
+     * address, qits-observability, is first anyway. It goes after qits-githost rather than between
+     * the byte plane's three, and before qits-containers, whose place against qits-ci is forced.
+     * <p>
      * <b>qits-containers is immediately BEFORE qits-ci, and that pair's order is forced.</b> ci runs
      * every pipeline step as a container it asks this service for, so a ci cutover landing while the
      * orchestrator is mid-cutover is a pipeline with nowhere to run. Deploying the orchestrator first
@@ -175,7 +186,7 @@ public final class PlatformModel {
      */
     public static final List<String> DEPLOYABLES = List.of(
             "observability", "platform-idp", "configuration", "stt", "projects",
-            "workspaces", "events", "docs", "platform-mirror", "artifacts", "githost",
+            "workspaces", "events", "platform-mirror", "artifacts", "githost", "docs",
             "containers", "ci", "platform-orchestrator", "platform-maintenance", "platform-system",
             "platform-edge", "deployments");
 
