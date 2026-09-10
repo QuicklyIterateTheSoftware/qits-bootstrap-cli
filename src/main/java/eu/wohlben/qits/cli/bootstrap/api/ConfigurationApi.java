@@ -58,24 +58,12 @@ public class ConfigurationApi {
      * <p>
      * <b>THE IMPORT NAMES THE ENV IT ASSERTS.</b> One store holds every tier's rows since the plane
      * move, so which environment a properties file is for is a fact of the CALLER and not of the
-     * address it dialled. The query parameter is what states it. An absent one means the store's
-     * own legacy environment, which is right for a caller that predates the parameter and wrong for
-     * this one: a bootstrap is bringing ONE tier up and knows which.
+     * address it dialled. The query parameter is what states it, and since the cutover it is
+     * REQUIRED — an import that did not say which environment it was asserting was a guess, and the
+     * service answers 400 rather than making one.
      */
     public Http.Response importProperties(String properties) {
         return http.postText(base + "/configuration/api/import?env=" + envName, properties,
-                ADMIN_HEADERS);
-    }
-
-    /**
-     * One application as the DEPLOYER will read it — the same document, at the same url.
-     * <p>
-     * Still the env-less route, like {@link #health()}: this is the read the deployer makes, and
-     * asking it differently would stop it proving what it is here to prove. It moves to the
-     * env-addressed route in the epic's cutover feature, with the deployer's own read.
-     */
-    public Http.Response resolved(String application) {
-        return http.get(base + "/configuration/api/applications/" + application + "/resolved",
                 ADMIN_HEADERS);
     }
 }
