@@ -210,7 +210,8 @@ class ExtrasWiringGuardTest {
         // its own in ComposeTemplateTest; what this says is only that the line is wiring when it
         // is rendered.
         if (name.equals("QITS_ENVIRONMENT") || name.equals("QITS_EDGE_ENVIRONMENTS")
-                || name.equals("QITS_EDGE_DEFAULT_ENVIRONMENT")) {
+                || name.equals("QITS_EDGE_DEFAULT_ENVIRONMENT")
+                || name.equals("QITS_CONFIGURATION_LEGACY_ENV")) {
             return true;
         }
 

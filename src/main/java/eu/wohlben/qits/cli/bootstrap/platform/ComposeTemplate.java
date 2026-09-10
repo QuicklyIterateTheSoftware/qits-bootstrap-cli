@@ -1828,6 +1828,12 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-configuration.env.QITS_AUTH_MACHINE_AUDIENCE=${ALIAS_CONFIGURATION}
             qits.platform.deployments.extras.qits-configuration.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
             qits.platform.deployments.extras.qits-configuration.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # THE ENVIRONMENT ITS ENV-LESS ROWS BELONG TO. The service ships no default: its V2
+            # migration backfills every pre-plane row with this value as a Flyway placeholder, and the
+            # env-less routes answer with it. Unset, the service does not start (SRCFG00011), and
+            # the 2026-09-10 cold boot of wohlben.eu hung in deploy-configuration on exactly that.
+            # This platform has one environment, so its rows are that environment's.
+            qits.platform.deployments.extras.qits-configuration.env.QITS_CONFIGURATION_LEGACY_ENV=${ENV_NAME}
             # THE OLD NAME, KEPT ANSWERING FOR ONE MIGRATION — added 2026-09-07 with the plane move
             # and removed by the epic's cutover feature. Docker's embedded DNS answers a container's
             # aliases, so this is what keeps a caller that still holds `<env>-qits-configuration`
