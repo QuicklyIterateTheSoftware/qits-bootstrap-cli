@@ -199,6 +199,18 @@ public interface BootstrapConfig {
         return "http://qits-platform-edge:9000/q/lets-encrypt";
     }
 
+    /**
+     * <b>Whether this run configures the host against memory pressure</b> — systemd-oomd's two
+     * slice rules, the omit list, and swap. {@code QITS_HOST_OOM=false} in {@code .env} turns it
+     * off, and the {@code host-oom} phase then skips.
+     * <p>
+     * On by default because the host that livelocked was a host nobody had configured, and the
+     * boot is the first heavy workload on a fresh one. Off is for a machine whose memory policy
+     * somebody else owns — a managed node, or a laptop a person keeps their own swap on.
+     */
+    @WithDefault("true")
+    boolean hostOom();
+
     /** 1 = the seed images and the daemon binary exist; skip to compose and the pushes. */
     @WithDefault("false")
     boolean skipBuild();

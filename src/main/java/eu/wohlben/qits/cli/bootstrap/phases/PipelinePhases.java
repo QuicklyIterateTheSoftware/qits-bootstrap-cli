@@ -2438,6 +2438,31 @@ public class PipelinePhases {
             report.add("           families — so it arrives with ingress. The rule does NOT "
                     + "survive a reboot, which");
             report.add("           is why the launcher installs it every time rather than once.");
+            report.add("memory:    the host-oom phase configures systemd-oomd and swap on this host, "
+                    + "so memory");
+            report.add("           pressure kills ONE workload instead of hanging the machine — the "
+                    + "kernel's own");
+            report.add("           killer never fires in time, and oomd ignores oom_score_adj. A "
+                    + "warning there");
+            report.add("           means it is yours to run:");
+            report.add("             sudo apt-get install -y systemd-oomd");
+            report.add("             printf '[Slice]\\nManagedOOMMemoryPressure=kill\\n"
+                    + "ManagedOOMMemoryPressureLimit=" + HostOomd.PRESSURE_LIMIT + "\\n' \\");
+            report.add("               | sudo tee /etc/systemd/system/system.slice.d/"
+                    + HostOomd.DROP_IN);
+            report.add("             printf '[Slice]\\nManagedOOMSwap=kill\\n' \\");
+            report.add("               | sudo tee /etc/systemd/system/-.slice.d/" + HostOomd.DROP_IN);
+            report.add("             # and [Service] ManagedOOMPreference=omit under "
+                    + "/etc/systemd/system/<unit>.d/ for");
+            report.add("             #   " + String.join(" ", HostOomd.OMIT_UNITS)
+                    + " — containerd holds every");
+            report.add("             #   container's shim, so oomd killing it stops every "
+                    + "container at once");
+            report.add("             sudo systemctl daemon-reload && sudo systemctl restart "
+                    + "systemd-oomd");
+            report.add("             # swap: oomd asks for it — without it a host livelocks faster "
+                    + "than oomd reacts");
+            report.add("           `oomctl` lists the two rules when it is in place.");
             report.add("workloads: " + PlatformModel.wireAlias("containers", env)
                     + " on qits-net — the orchestrator that holds the");
             report.add("           docker socket. No host port and no public route: every caller "

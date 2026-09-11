@@ -32,6 +32,11 @@ public final class BootstrapPlan {
         // yet, which is the point: the rule is installed unconditionally so the landmine is
         // disarmed before the swarm ingress arms it.
         phases.add(seed.ipv6Loopback());
+        // Beside it, and for the other half of the same reason: what this host does under memory
+        // pressure is decided before the boot starts building, because the boot itself is the first
+        // heavy workload on it. It warns rather than stops — the platform comes up either way, it
+        // just has no early killer — so nothing after it depends on it.
+        phases.add(seed.hostOom());
         // The bootstrap edge is the first public component. It owns the normal public door while
         // the seed is built, and it stays there across worker retries until platform-edge cuts it
         // over near the end of this plan.

@@ -2090,6 +2090,68 @@ public class SeedPhases {
                 + "echo \"" + IPV6_MARKER + " before=$before rule=$state after=$after\"\n";
     }
 
+    /**
+     * <b>Memory pressure must cost a workload, never the host.</b>
+     * <p>
+     * This platform builds, runs agents and runs workspaces on the same machine it serves from, and
+     * a fresh host answers a memory squeeze by livelocking: the kernel's OOM killer never fires,
+     * because with swap the host crawls to a halt before an allocation fails, and with none it
+     * thrashes the page cache instead. Measured on 2026-09-11 — ping answered, ssh and the
+     * provider's console both timed out, and the machine needed a hard reset. A failed CI run or a
+     * killed agent is always better than that.
+     * <p>
+     * So the bootstrap owns the host setting that acts first: {@code systemd-oomd}, reading pressure
+     * stall information per cgroup and killing a leaf before the host stops answering, plus the swap
+     * its documentation asks for. {@link HostOomd} is what is written and why each piece is written.
+     * <p>
+     * <b>It APPLIES rather than reports, through the seam {@link #ipv6Loopback} opened.</b> The same
+     * throwaway privileged helper in the host's namespaces, for the same reason: the payload is a
+     * container, and a host setting that only lands when a person happened to start the run as root
+     * is a host setting that is missing on the node that needed it. Writing {@code /etc} is more
+     * than that phase does, and it is the same power — the helper is already root in the host's
+     * mount namespace.
+     * <p>
+     * <b>It WARNS and never stops the boot</b>, which is where it parts company with the ipv6 rule.
+     * That one is load-bearing: without it every client of a vhost hangs and the platform does not
+     * work. This one is a host that survives its own worst hour — everything still comes up without
+     * it, so a host this program cannot configure (no systemd, no apt-get, an oomd that will not
+     * start) gets the gap named and the boot goes on. A host with no systemd at all is SKIPPED
+     * rather than warned: there is nothing there to be missing.
+     */
+    public Phase hostOom() {
+        return new Phase("host-oom", "systemd-oomd and swap, so pressure kills a workload", ctx -> {
+            if (!boot.config.hostOom()) {
+                ctx.skip("QITS_HOST_OOM=false");
+            }
+            ctx.status("configuring systemd-oomd and swap on the host");
+            ProcessResult result = boot.docker.run(Cmd.of(List.of(
+                    "docker", "run", "--rm", "--privileged", "--pid=host",
+                    "--network", "host", "alpine:3",
+                    "nsenter", "-t", "1", "-m", "-n", "--",
+                    "sh", "-c", HostOomd.script())), ctx::log);
+            if (!result.ok()) {
+                ctx.warn("the host's memory-pressure setup could not be applied (exit "
+                        + result.exitCode() + "), so this host still livelocks under pressure "
+                        + "instead of losing one workload. The ticket's commands are in the closing "
+                        + "report. " + result.tailText(5));
+                return;
+            }
+            HostOomd.State state = HostOomd.read(result.captured());
+            if (state.systemdless()) {
+                ctx.skip("no systemd on this host");
+            }
+            ctx.log("  " + state.describe());
+            if (!state.complete()) {
+                ctx.warn("this host is not fully covered against memory pressure — "
+                        + state.describe() + ". Wanted: systemd-oomd active, system.slice at "
+                        + "ManagedOOMMemoryPressure=kill, the root slice at ManagedOOMSwap=kill, "
+                        + "and swap on. The closing report spells the host steps; the boot goes on");
+                return;
+            }
+            ctx.note(state.swap() + ", oomd on");
+        });
+    }
+
     /** Generate one run's two ingress capabilities before compose needs githost's fingerprint. */
     public Phase bootstrapIngressPrepare() {
         return new Phase("bootstrap-ingress-prepare", "prepare the bootstrap-only ingress capability",

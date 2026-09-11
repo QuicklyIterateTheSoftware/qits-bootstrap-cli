@@ -127,6 +127,21 @@ forced. Add to that list rather than deviating quietly.
   and a past run's is no evidence — one that was gone let a release run's SBOM upload hang forty
   minutes on 2026-09-02. Installing needs root, so a plain user gets the old warning instead; the
   closing report prints both steps.
+- **Memory pressure must cost a workload and never the host, and the bootstrap owns that setting
+  too.** The `host-oom` phase installs `systemd-oomd`, writes `ManagedOOMMemoryPressure=kill` at 50%
+  on `system.slice` and `ManagedOOMSwap=kill` on the root slice, puts `ManagedOOMPreference=omit` on
+  docker, containerd, ssh and journald, and makes an 8G `/swapfile` where the host has no swap at
+  all. Without it a squeeze LIVELOCKS the machine — measured 2026-09-11: ping answered, ssh and the
+  console did not, and the kernel's own killer never fired because with swap the host crawls to a
+  halt before an allocation fails. **containerd's omit is the load-bearing one**: every container's
+  shim lives in its cgroup, so oomd killing it stops every container at once. oomd ignores
+  `oom_score_adj` and `ManagedOOMPreference` cannot be set durably on a docker scope, so the later
+  refinement is qits-containers putting every spawned workload under one `--cgroup-parent` slice and
+  that slice carrying the pressure rule. It applies through the SAME privileged `nsenter` helper the
+  ipv6 rule uses, and unlike that rule it **warns rather than stops**: the platform comes up without
+  an early killer, so a host with no systemd is skipped and a gap is named with the commands in the
+  closing report. Everything it writes is written only where it differs, any existing swap is left
+  alone, and `vm.swappiness` is appended to `/etc/sysctl.d/99-qits.conf` rather than written over it.
 - **Every image this run builds goes through `qits-buildkitd`, and the run does not own it.** The
   first build ensures the container — `moby/buildkit:v0.33.0`, `--privileged`, host network,
   `--restart unless-stopped`, `--oom-score-adj 500`, the 9 GB / 4 cpu bounds the old buildx

@@ -40,7 +40,7 @@ class BootstrapPlanTest {
         // THE HOST RULE IS THIRD, before anything can dial the edge by name: every *.localhost
         // name resolves to ::1 and the swarm ingress mesh serves IPv4 only, so a client that meets
         // the landmine hangs rather than failing over.
-        assertThat(ids(phases)).startsWith("preflight", "network", "ipv6-loopback",
+        assertThat(ids(phases)).startsWith("preflight", "network", "ipv6-loopback", "host-oom",
                 "bootstrap-ingress-prepare", "bootstrap-ingress", "wrapper", "sources",
                 "recorded-state", "maven-seed");
         assertThat(ids(phases)).containsSubsequence(

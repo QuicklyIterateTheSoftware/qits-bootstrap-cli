@@ -97,6 +97,11 @@ public class OverridableConfig implements BootstrapConfig {
     }
 
     @Override
+    public boolean hostOom() {
+        return base.hostOom();
+    }
+
+    @Override
     public boolean shipMains() {
         return shipMains != null ? shipMains : base.shipMains();
     }
