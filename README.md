@@ -7,7 +7,7 @@ It **is** `qits-local-up.sh` in the wrapper repository — that file is now a sh
 CLI and runs it. The choreography is the shell port's, step for step; what is new is that a
 four-hour cold start is no longer four hours of silence.
 
-    ┌ qits bootstrap · 41m12s elapsed · log qits-bootstrap-cli.log ─────────────────┐
+    ┌ qits-bootstrap · 41m12s elapsed · log qits-bootstrap-cli.log ─────────────────┐
     │   … 31 earlier phases done                                                    │
     │   ✓ 32/59 wait for the seed services (1m20s)                                  │
     │   ✓ 33/59 publish the ci-daemon binary to the registry (12s)  — 8d0f1a2b…     │
@@ -30,8 +30,8 @@ Git route, both behind its run-scoped capability; there is no catch-all proxy.
 
 ## Two modes
 
-    qits bootstrap     # bring the platform up (the default when no mode is given)
-    qits unwrap        # take it off this machine again
+    qits-bootstrap         # bring the platform up (the default when no mode is given)
+    qits-bootstrap unwrap  # take it off this machine again
 
 `unwrap` removes the seed STACK, the qits-marked swarm services, containers, images and networks
 — services before containers, because removing a service task's container removes nothing: swarm
@@ -138,6 +138,13 @@ the GraalVM `.sdkmanrc` names for the binary, any JDK 25 for the tests.
 Cost, honestly: every seed image and every pipeline run is a cold GraalVM native build with no
 maven cache. The first run is measured in hours. Reruns skip what exists —
 `QITS_SKIP_BUILD=1` for the seed, and unchanged repositories push up to date and trigger nothing.
+
+**The command is `qits-bootstrap`, and a workstation configured before that rename has to be
+repointed.** A login done under the old name left `credential.helper '!qits git-credential'` behind,
+which names a command that no longer exists — Git reports the helper as missing rather than falling
+back to anything. Say it once more with the new name:
+
+    git config --global credential.helper '!qits-bootstrap git-credential'
 
 ## Configuring it
 

@@ -14,7 +14,7 @@ import java.util.concurrent.Callable;
  */
 @TopCommand
 @CommandLine.Command(
-        name = "qits",
+        name = "qits-bootstrap",
         mixinStandardHelpOptions = true,
         subcommands = {BootstrapCommand.class, UnwrapCommand.class, LoginCommand.class,
                 GitCredentialCommand.class, BootstrapIngressCommand.class,

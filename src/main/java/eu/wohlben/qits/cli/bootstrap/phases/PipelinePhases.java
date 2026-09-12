@@ -1190,7 +1190,7 @@ public class PipelinePhases {
                             + wanted + "'. Renaming it would leave every running container on "
                             + standing + "-qits-* aliases and orphan the recorded IDP_SECRET_"
                             + PlatformModel.clientKey(standing)
-                            + "_* entries in .qits-bootstrap.env. Run `qits unwrap` first, or "
+                            + "_* entries in .qits-bootstrap.env. Run `qits-bootstrap unwrap` first, or "
                             + "bootstrap with --platform-env " + standing + ".");
         });
     }

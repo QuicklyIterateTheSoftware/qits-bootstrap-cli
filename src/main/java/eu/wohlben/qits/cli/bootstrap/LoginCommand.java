@@ -66,7 +66,7 @@ public class LoginCommand implements Callable<Integer> {
             System.out.println("Opening your browser to sign in to qits…");
             openBrowser(authorize);
             System.out.println("If it says that no session exists, sign in at " + resolvedIdp
-                    + "/login and run qits login again.");
+                    + "/login and run qits-bootstrap login again.");
             LoopbackCallback.Callback result = callback.await(Duration.ofSeconds(timeout));
             if (!state.equals(result.state()) || result.code() == null
                     || (result.error() != null && !result.error().isEmpty())) {
@@ -78,7 +78,7 @@ public class LoginCommand implements Callable<Integer> {
             store.save(new WorkstationCredential(resolvedIdp, resolvedAudience, origin, token.refreshToken()));
         }
         System.out.println("This workstation is ready for Git pushes to " + origin + ".");
-        System.out.println("Configure Git once: git config --global credential.helper '!qits git-credential'");
+        System.out.println("Configure Git once: git config --global credential.helper '!qits-bootstrap git-credential'");
         return 0;
     }
 
@@ -132,7 +132,7 @@ public class LoginCommand implements Callable<Integer> {
                 + "<env> is. There is no safe default — a guess resolves, reaches the edge and "
                 + "comes back a 404 from the right host, which reads as a broken platform rather "
                 + "than as a wrong name. Set QITS_ENV_NAME to that platform's environment (the "
-                + "value its bootstrap was given as --platform-env) and run `qits login` again.";
+                + "value its bootstrap was given as --platform-env) and run `qits-bootstrap login` again.";
     }
 
     private static void openBrowser(String url) throws Exception {

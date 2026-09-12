@@ -44,7 +44,7 @@ public class PlainUi implements Ui {
     @Override
     public void started(List<Phase> phases) {
         total = phases.size();
-        out.println("qits bootstrap: " + total + " phases");
+        out.println("qits-bootstrap: " + total + " phases");
     }
 
     @Override

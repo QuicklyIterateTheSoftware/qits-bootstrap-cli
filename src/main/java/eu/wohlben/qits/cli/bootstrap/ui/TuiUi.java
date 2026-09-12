@@ -24,7 +24,7 @@ import java.util.concurrent.TimeUnit;
  * is running right now.
  *
  * <pre>
- *   qits bootstrap · 12m30s elapsed · log qits-bootstrap-cli.log
+ *   qits-bootstrap · 12m30s elapsed · log qits-bootstrap-cli.log
  *     … 6 earlier phases done
  *     ok  7/47 publish qits-eventstream 1.0.0 (41s)
  *     ok  8/47 build the seed image qits/ci:latest (11m02s)
@@ -289,7 +289,7 @@ public class TuiUi implements Ui {
 
     private String title(int width) {
         String elapsed = Format.duration(Duration.ofNanos(System.nanoTime() - runStartNanos));
-        return Format.fit("qits bootstrap · " + elapsed + " elapsed · log " + logPath, width);
+        return Format.fit("qits-bootstrap · " + elapsed + " elapsed · log " + logPath, width);
     }
 
     private String doneLine(PhaseOutcome outcome) {

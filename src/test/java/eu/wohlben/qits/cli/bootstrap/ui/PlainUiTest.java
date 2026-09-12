@@ -37,7 +37,7 @@ class PlainUiTest {
                 new Phase("b", "publish qits-eventstream", ctx -> ctx.skip("already published"))));
 
         String text = printed();
-        assertThat(text).contains("qits bootstrap: 2 phases");
+        assertThat(text).contains("qits-bootstrap: 2 phases");
         assertThat(text).contains("==> 1/2 build qits-platform-artifacts");
         assertThat(text).contains("    [INFO] building");
         assertThat(text).contains("  ok 1/2 build qits-platform-artifacts (2m10s)");

@@ -49,7 +49,7 @@ public final class LoopbackCallback implements AutoCloseable {
         }
         Map<String, String> query = query(exchange.getRequestURI());
         callback.complete(new Callback(query.get("code"), query.get("state"), query.get("error")));
-        byte[] response = "qits login is complete. You can close this page.".getBytes(StandardCharsets.UTF_8);
+        byte[] response = "qits-bootstrap login is complete. You can close this page.".getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
         exchange.sendResponseHeaders(200, response.length);
         exchange.getResponseBody().write(response);

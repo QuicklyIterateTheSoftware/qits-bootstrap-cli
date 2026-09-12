@@ -19,7 +19,7 @@ public final class WebPage {
             <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>qits bootstrap</title>
+            <title>qits-bootstrap</title>
             <style>
               :root {
                 --bg: #0b0e14; --fg: #c8ccd4; --dim: #6b7280; --line: #1c2230;
@@ -90,7 +90,7 @@ public final class WebPage {
             </head>
             <body>
             <header>
-              <h1>qits bootstrap &middot; <span id="elapsed">0s</span> elapsed
+              <h1>qits-bootstrap &middot; <span id="elapsed">0s</span> elapsed
                 <span class="log">&middot; log <span id="log"></span></span></h1>
               <div id="phases"></div>
               <div id="summary" class="summary"></div>

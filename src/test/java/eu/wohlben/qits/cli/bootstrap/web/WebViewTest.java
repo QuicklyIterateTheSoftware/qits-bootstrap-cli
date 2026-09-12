@@ -36,7 +36,7 @@ class WebViewTest {
     void thePageIsOneSelfContainedFile() throws Exception {
         String html = get("");
 
-        assertThat(html).contains("<title>qits bootstrap</title>");
+        assertThat(html).contains("<title>qits-bootstrap</title>");
         assertThat(html).contains("id=\"phases\"");
         assertThat(html).contains("id=\"tail\"");
         // The lower half is two columns: the step's output and what the platform announced.

@@ -36,7 +36,7 @@ public class GitCredentialCommand implements Callable<Integer> {
             return 0;
         }
         if (!"get".equals(action)) {
-            // Git's later `store` is intentionally ignored: only qits login can write a refresh token.
+            // Git's later `store` is intentionally ignored: only qits-bootstrap login can write a refresh token.
             return 0;
         }
         Optional<WorkstationCredential> saved = store.find(origin);
