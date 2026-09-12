@@ -30,8 +30,8 @@ Git route, both behind its run-scoped capability; there is no catch-all proxy.
 
 ## Two modes
 
-    qits-bootstrap         # bring the platform up (the default when no mode is given)
-    qits-bootstrap unwrap  # take it off this machine again
+    qits-bootstrap bootstrap  # bring the platform up (the default when no mode is given)
+    qits-bootstrap unwrap     # take it off this machine again
 
 `unwrap` removes the seed STACK, the qits-marked swarm services, containers, images and networks
 — services before containers, because removing a service task's container removes nothing: swarm
