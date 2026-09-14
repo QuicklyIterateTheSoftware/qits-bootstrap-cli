@@ -1094,8 +1094,32 @@ public final class PlatformModel {
      * plane: it is the wire alias, so it says what the alias says. Membership here did not change
      * and could not — an application is an audience because it VALIDATES and mints nothing, which
      * is a property of the service and not of the plane it runs on.
+     * <p>
+     * <b>qits-observability joined on 2026-09-14, and an AGENT is who it was missing for.</b> The
+     * service validates and mints nothing — {@code qits.auth.machine.audience} is
+     * {@code ${QITS_ENVIRONMENT}-qits-observability} and {@code quarkus.oidc.token.audience} is
+     * that value plus {@code qits-platform} — and it holds no client anywhere in this model. It is
+     * the definition of this list, and it was simply never written down: the service's own comment
+     * beside that audience said "No idp client asks for this audience today", and measured on dev
+     * that day, {@code qits-token dev-qits-observability} came back <b>400 invalid_target</b>. So a
+     * workspace agent could not mint a token for the one service the platform means it to read —
+     * qits-observability grants {@code qits:agent} read ON PURPOSE (its {@code AgentReadAccessTest}
+     * asserts an agent reads every {@code /observability/api/telemetry/*} route and opens the live
+     * stream), and {@code CommissionRoles.forKind("workspace")} hands a commissioned client exactly
+     * {@code qits:agent}.
+     * <p>
+     * Say plainly what this does NOT fix, because the symptom is easy to misread: a call carrying
+     * the platform-wide {@code qits-platform} audience already worked — {@code GET
+     * /observability/api/telemetry/sources} answered 200 from a workspace container the same day.
+     * The gap was never access. It was that the service's OWN audience was unaskable, so the only
+     * way in was the wide one, and a caller asking for the narrow name got a refusal from the idp
+     * that never reached the service's gate at all.
+     * <p>
+     * The audience is the wire alias, so it keeps its tier: qits-observability is an environment
+     * service, and {@code dev-qits-observability} is what a dev platform renders.
      */
-    public static final List<String> RECEIVE_ONLY_APPS = List.of("githost", "configuration");
+    public static final List<String> RECEIVE_ONLY_APPS =
+            List.of("githost", "configuration", "observability");
 
     /** The env-var spelling of a client id: uppercase, dashes as underscores. */
     public static String clientKey(String clientId) {

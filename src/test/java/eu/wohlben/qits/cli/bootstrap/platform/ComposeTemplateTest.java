@@ -705,6 +705,16 @@ class ComposeTemplateTest {
         // substring: "prod-qits-configuration" contains "qits-configuration" too, so a split is
         // what tells the two answers apart.
         assertThat(PlatformModel.idpAudiences(ENV).split(",")).contains("qits-configuration");
+        // And qits-observability beside it, which is the same shape with the tier still on it: the
+        // service validates and mints nothing, so the one thing it needs from the idp is to be a
+        // value a client may ASK for. Measured 2026-09-14 before this landed: `qits-token
+        // dev-qits-observability` was 400 invalid_target, so an agent could not mint a token for
+        // the service that grants qits:agent read on purpose. Split rather than substring for the
+        // same reason as above — the element is what tells a tier's name from a bare one.
+        assertThat(PlatformModel.idpAudiences(ENV).split(",")).contains(ENV + "-qits-observability");
+        // And spelled for dev as well, because dev is the platform the refusal was measured on and
+        // a derived expectation would have passed against itself.
+        assertThat(PlatformModel.idpAudiences("dev").split(",")).contains("dev-qits-observability");
     }
 
     /**

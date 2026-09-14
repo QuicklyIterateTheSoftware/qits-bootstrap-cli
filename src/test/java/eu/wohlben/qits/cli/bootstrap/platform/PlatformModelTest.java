@@ -712,7 +712,8 @@ class PlatformModelTest {
         // Each name once. The audience list is derived from the clients now, and a duplicate would
         // be a key that says the same thing twice to a service that replaces the shipped list.
         assertThat(PlatformModel.idpAudiences("prod").split(",")).doesNotHaveDuplicates();
-        assertThat(PlatformModel.RECEIVE_ONLY_APPS).containsExactly("githost", "configuration");
+        assertThat(PlatformModel.RECEIVE_ONLY_APPS)
+                .containsExactly("githost", "configuration", "observability");
     }
 
     /**
@@ -963,16 +964,19 @@ class PlatformModelTest {
                 "prod-qits-containers", "prod-qits-edge", "qits-platform-orchestrator",
                 "qits-platform-maintenance", "qits-platform-system");
         // The clients, then the receive-only applications: the git host, which validates and mints
-        // nothing, and qits-configuration, which the deployer asks for on every deployment. The
-        // pair is one of each shape now — the git host is a tier's, the configuration store moved
-        // to the platform plane on 2026-09-07 — so this string is where a plane move that did not
-        // reach the idp's own seeded list would show up as an invalid_target nobody could explain.
+        // nothing; qits-configuration, which the deployer asks for on every deployment; and
+        // qits-observability, which an AGENT asks for — it grants qits:agent read on purpose and
+        // until 2026-09-14 no client could ask for its audience at all, so the mint was 400
+        // invalid_target. Two of the three are a tier's and one is not, the configuration store
+        // having moved to the platform plane on 2026-09-07 — so this string is where a plane move
+        // that did not reach the idp's own seeded list would show up as an invalid_target nobody
+        // could explain.
         assertThat(PlatformModel.idpAudiences("prod")).isEqualTo(
                 "prod-qits-bootstrap,prod-qits-ci,prod-qits-artifacts,prod-qits-workspaces,"
                         + "prod-qits-projects,qits-deployments,prod-qits-containers,"
                         + "prod-qits-edge,qits-platform-orchestrator,qits-platform-maintenance,"
                         + "qits-platform-system,"
-                        + "prod-qits-githost,qits-configuration");
+                        + "prod-qits-githost,qits-configuration,prod-qits-observability");
         // Every one of them follows the environment now: the artifacts client was the one platform
         // id in this list, and the byte-plane split made that service a tier's again.
         // Every one but the deployer's, whose service belongs to no tier and so takes no name from
