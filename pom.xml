@@ -18,7 +18,7 @@
          verify` runs the tests and packages nothing. -->
     <groupId>eu.wohlben.qits</groupId>
     <artifactId>qits-cli-bootstrap</artifactId>
-    <version>2026.912.51259</version>
+    <version>2026.914.191719</version>
     <name>qits-cli-bootstrap</name>
 
     <properties>
