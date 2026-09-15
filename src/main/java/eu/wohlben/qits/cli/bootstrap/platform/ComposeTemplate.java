@@ -271,11 +271,10 @@ public final class ComposeTemplate {
                   # alone, before any client exists to create the rest with.
                   #
                   # NOTHING SAYS ROLES, CLAIMS OR AUDIENCES HERE ANY MORE, and their absence is not
-                  # an omission. A database service client's roles (qits:system,
-                  # qits-platform:system), its project claim (*) and its audience (qits-platform)
-                  # are fixed in qits-idp's own code — ClientRegistry.DATABASE_SERVICE_CLIENT_ROLES
-                  # and AudienceSource.DATABASE — so a line here could only restate them, and a
-                  # restatement is what drifts.
+                  # an omission. A database service client's role (qits:system), its project claim
+                  # (*) and its audience (qits-platform) are fixed in qits-idp's own code —
+                  # ClientRegistry.DATABASE_SERVICE_CLIENT_ROLES and AudienceSource.DATABASE — so a
+                  # line here could only restate them, and a restatement is what drifts.
                   QITS_IDP_SEED_CLIENT_ID: "${BOOTSTRAP_CLIENT_ID}"
                   QITS_IDP_SEED_CLIENT_SECRET: "${BOOTSTRAP_CLIENT_SECRET}"
                   # THE PASSKEY BINDING. A credential is bound to the rp id and asserts on that
@@ -641,11 +640,10 @@ public final class ComposeTemplate {
                   #
                   # NO AUDIENCE LINE, and the absence is the platform's rule rather than this
                   # service's exception: every image ships
-                  # quarkus.oidc.token.audience=${qits.auth.machine.audience},qits-platform with its
-                  # own name as the shipped default, so a token addressed to this service or to the
-                  # platform is accepted without anybody stating either name. All the env line ever
-                  # did was narrow that to the tier-qualified spelling, and nothing asks for a
-                  # per-service audience any more.
+                  # quarkus.oidc.token.audience=qits-platform, one literal name for the whole
+                  # platform, and the idp puts that name on every token it mints whatever the
+                  # caller asked for. So a bearer is accepted without anybody stating an audience,
+                  # and there is no per-service name for a line here to say.
                   QITS_AUTH_MACHINE_REQUIRED: "${MACHINE_REQUIRED}"
                   # ITS OWN IDP CLIENT, as the resource triple — see the edge's block for why a
                   # credential this program creates is spelled the way the deployer will inject it.
@@ -718,9 +716,10 @@ public final class ComposeTemplate {
                   # host's post-receive announcement, and the git host is qits-githost now — which
                   # publishes on the bus and mints nothing.
                   #
-                  # NO AUDIENCE LINE EITHER: the image validates its own name and qits-platform out
-                  # of its shipped quarkus.oidc.token.audience, so nothing here has to say which
-                  # name a caller may address. See the deployer's block.
+                  # NO AUDIENCE LINE EITHER: the image validates qits-platform out of its shipped
+                  # quarkus.oidc.token.audience, which is the one name every minted token carries,
+                  # so nothing here has to say which name a caller may address. See the deployer's
+                  # block.
                   QITS_AUTH_MACHINE_REQUIRED: "${MACHINE_REQUIRED}"
                   QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP}
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
@@ -1222,8 +1221,9 @@ public final class ComposeTemplate {
                   # row says which containers another module has running, and the owner in the path is
                   # the caller's own identity.
                   #
-                  # NO AUDIENCE LINE: the image validates its own name and qits-platform out of its
-                  # shipped quarkus.oidc.token.audience. See the deployer's block.
+                  # NO AUDIENCE LINE: the image validates qits-platform out of its shipped
+                  # quarkus.oidc.token.audience, the one name every minted token carries. See the
+                  # deployer's block.
                   QITS_AUTH_MACHINE_REQUIRED: "${MACHINE_REQUIRED}"
                   QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP}
                   # ITS OWN IDP CLIENT, as the resource triple — see the edge's block. This service
@@ -1343,8 +1343,8 @@ public final class ComposeTemplate {
             # So no QITS_RESOURCE_IDP_*, no QUARKUS_OIDC_CLIENT_*, no QITS_IDP_CLIENT* and no
             # QITS_AUTH_MACHINE_AUDIENCE anywhere below — ExtrasWiringGuardTest fails the build on
             # any of the four. The audience needs no line of its own either: every image ships
-            # quarkus.oidc.token.audience=${qits.auth.machine.audience},qits-platform with its own
-            # name as the default, so the gate admits what it always admitted.
+            # quarkus.oidc.token.audience=qits-platform, the one name the idp puts on every token it
+            # mints, so the gate admits what it always admitted.
             #
             # THE VOLUME IS NOT THIS FILE. config.json — the docker credential DOCKER_CONFIG names — is a
             # second file beside it on qits-deployments-config and is written by its own phase.
@@ -1489,10 +1489,10 @@ public final class ComposeTemplate {
             # putting this line back.
             #
             # NO AUDIENCE AND NO CREDENTIAL, and neither absence is an omission. Every image ships
-            # quarkus.oidc.token.audience=${qits.auth.machine.audience},qits-platform with its own
-            # name as the default, so the gate admits a bearer addressed to this service or to the
-            # platform without a line here; and identity is created against the running idp and
-            # injected by the deployer as QITS_RESOURCE_IDP_*, never stored as configuration.
+            # quarkus.oidc.token.audience=qits-platform and the idp puts that name on every token it
+            # mints, so the gate admits the bearer without a line here; and identity is created
+            # against the running idp and injected by the deployer as QITS_RESOURCE_IDP_*, never
+            # stored as configuration.
             #
             # GONE WITH THE SPLIT, and each absence is a service that owns it now:
             #   QITS_REPOSITORIES_GIT_*      the git host is qits-githost, two blocks down.
@@ -1605,7 +1605,8 @@ public final class ComposeTemplate {
             # resource it declares: the deployer creates the client, keeps the secret in its
             # registry and injects QITS_RESOURCE_IDP_* into the successor, so this file stores
             # neither the id nor the secret — a stored one would shadow the row that is kept
-            # current. The audience is the image's own default plus qits-platform and needs no line.
+            # current. The audience is qits-platform, the image's own shipped default, and needs no
+            # line.
             # THE CLIENT ID IS ALSO CI'S OWNER STRING at the orchestrator —
             # qits.ci.containers.owner defaults to reading it, and qits-containers compares it to
             # the token's `sub` on every route — which is what keeps two tiers sharing one docker
@@ -1688,10 +1689,10 @@ public final class ComposeTemplate {
             # pin here would be written after the injection, where the last assignment wins, and
             # would outlive the rotation the first deployment performs.
             #
-            # QITS_EVENTS_URL is where the outbox drains to. The audience is this tier's alias, which
-            # the image cannot ship: the default is the bare name, so a token minted for
-            # ${ENV_NAME}-qits-containers would be refused on every guarded route — which is all of
-            # them.
+            # QITS_EVENTS_URL is where the outbox drains to. Nothing states an audience beside it:
+            # the image ships qits-platform, the one name the idp puts on every token it mints, so a
+            # bearer passes every guarded route here — which is all of them — without this file
+            # naming one.
             #
             # THE SECOND MOUNT IS ONE FILE: the config.json this service's `docker pull` reads,
             # written by the bootstrap with this service's own idp client. The container runs with no
@@ -1717,10 +1718,9 @@ public final class ComposeTemplate {
             # deployments.yml is what gets it a store, and the deployer injects QITS_RESOURCE_DB_*
             # before the successor starts.
             #
-            # THE THREE VARIABLES ARE ITS GATE. The image ships the bare qits-configuration as its
-            # audience — which the plane move made CORRECT rather than merely un-tiered, so this
-            # line now restates the shipped default. It stays spelled because both sides come out
-            # of the one derivation and a value nobody states is a value nobody notices moving.
+            # THE THREE VARIABLES ARE ITS GATE, and no audience is among them: the image ships
+            # qits-platform, the one name the idp puts on every token it mints, so the deployer's
+            # bearer is admitted here without this file naming an audience.
             # QITS_AUTH_MACHINE_REQUIRED carries the platform's own switch: off, the service starts
             # no OIDC tenant and the deployer's read arrives on forward-auth headers alone, which is
             # the supported posture of a platform with the gate down.
@@ -1753,8 +1753,8 @@ public final class ComposeTemplate {
             #
             # IT IS A PLATFORM SERVICE and its gate says so: what a deletion run reclaims is ONE
             # MACHINE's however many tiers share it. Nothing states the audience — the image
-            # validates its own name and qits-platform out of its shipped
-            # quarkus.oidc.token.audience, which is the bare alias on this plane already.
+            # validates qits-platform out of its shipped quarkus.oidc.token.audience, one name for
+            # every tier that could ask.
             #
             # AND NO OIDC CLIENT OF ANY SPELLING, although this service MINTS more than any other
             # here: one token per peer, because a bearer minted for the store is refused by the
@@ -1821,9 +1821,8 @@ public final class ComposeTemplate {
             # QITS_RESOURCE_DB_* triple is how this component consumes the same contract it hands every
             # other application. QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD is what lets it
             # provision one. Machine auth INBOUND only, and nothing states the audience: the image
-            # validates its own name and qits-platform out of its shipped
-            # quarkus.oidc.token.audience, so the gate admits the bearers it always admitted without
-            # this file naming either name.
+            # validates qits-platform out of its shipped quarkus.oidc.token.audience, so the gate
+            # admits the bearers it always admitted without this file naming a name.
             #
             # ONE TRIPLE, NOT TWO, and the asymmetry with the seed stack block is the point. The
             # deployer's OUTBOX is declared — `postgresql:eventstream:qits_deployments_eventstream` in
@@ -2169,9 +2168,9 @@ public final class ComposeTemplate {
             # and everything it calls is deployed above it in the train.
             #
             # IT IS A PLATFORM SERVICE and nothing here states its audience: a dependency inventory
-            # is one catalog's however many tiers read it, and the image validates its own name —
-            # the bare alias on this plane — plus qits-platform out of its shipped
-            # quarkus.oidc.token.audience.
+            # is one catalog's however many tiers read it, and the image validates qits-platform out
+            # of its shipped quarkus.oidc.token.audience — one name, the same whichever tier is
+            # asking.
             #
             # NOR ANY OIDC CLIENT, and it mints against three guarded peers: qits-projects for the
             # catalog, qits-githost for the manifests, qits-ci for the trigger. A bearer minted for

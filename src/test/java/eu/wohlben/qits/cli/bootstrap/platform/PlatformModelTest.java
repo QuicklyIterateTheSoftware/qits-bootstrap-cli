@@ -714,16 +714,17 @@ class PlatformModelTest {
 
     /**
      * <b>qits-configuration validates the deployer's bearer and mints nothing</b>, so it is an
-     * audience and never a client of this bootstrap's making. Nothing states that audience any
-     * more: the image validates its own name plus qits-platform out of its shipped
-     * {@code quarkus.oidc.token.audience}, and its own name is the wire alias below.
+     * audience and never a client of this bootstrap's making. Nothing states that audience: the
+     * image validates qits-platform out of its shipped {@code quarkus.oidc.token.audience}, the one
+     * name the idp puts on every token it mints. What the alias below decides is the ADDRESS the
+     * deployer dials and the id the client is created under.
      */
     @Test
-    void theConfigurationServicesAudienceIsItsPlatformPlaneAlias() {
+    void theConfigurationServiceIsDialledAtItsPlatformPlaneAlias() {
         assertThat(PlatformModel.SEED_IDP_CLIENT_APPS).doesNotContain("configuration");
         // AND IT NO LONGER FOLLOWS THE ENVIRONMENT NAME, since the plane move on 2026-09-07: one
-        // store serves every tier, so its audience is the same value whichever tier is asking.
-        // That is what makes deriving it load-bearing rather than tidy.
+        // store serves every tier, so the name is the same value whichever tier is asking. That is
+        // what makes deriving it load-bearing rather than tidy.
         assertThat(PlatformModel.wireAlias("configuration", "prod")).isEqualTo("qits-configuration");
         assertThat(PlatformModel.wireAlias("configuration", "preprod"))
                 .isEqualTo("qits-configuration");
