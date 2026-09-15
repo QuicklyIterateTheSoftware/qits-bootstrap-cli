@@ -346,10 +346,10 @@ public class Boot {
      * It used to ask for a peer's own wire alias per call — {@code <env>-qits-githost} for a push,
      * {@code <env>-qits-projects} for the alias table — which meant the bootstrap's client had to
      * be granted every audience on the platform and each grant had to be remembered by hand. It
-     * asks for {@code qits-platform} instead: the platform-wide audience a database service client
-     * is given by the idp itself, together with {@code qits:system} and
-     * {@code qits-platform:system}, both fixed in idp code. Every guarded service on this platform
-     * validates it.
+     * asks for {@code qits-platform} instead: the platform-wide audience the idp puts on every
+     * token it mints, and which a database service client holds beside its {@code qits:system}
+     * role, both fixed in idp code. It is what every guarded service on this platform validates,
+     * and the only name any of them does.
      * <p>
      * One constant, so no call site spells it. A spelling nothing mints is a 401 with nothing in
      * any log to say why.

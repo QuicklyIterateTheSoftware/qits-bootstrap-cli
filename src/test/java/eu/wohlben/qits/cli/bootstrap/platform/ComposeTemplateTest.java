@@ -637,10 +637,9 @@ class ComposeTemplateTest {
     /**
      * <b>NO SERVICE IS TOLD WHICH AUDIENCE TO VALIDATE ANY MORE, and that is one line per service
      * removed rather than a gate weakened.</b> Every image ships
-     * {@code quarkus.oidc.token.audience=${qits.auth.machine.audience},qits-platform} with its own
-     * name as the shipped default, so a bearer addressed to the service or to the platform is
-     * accepted without either file naming one. All the env line ever did was narrow that to this
-     * tier's spelling, and nothing asks for a per-service audience now.
+     * {@code quarkus.oidc.token.audience=qits-platform} as one literal name, and the idp puts that
+     * name on every token it mints, so a bearer is accepted without either file naming an audience.
+     * There is no per-service name left for an env line to say.
      * <p>
      * What stays on both sides is the GATE — whether a bearer is demanded at all — and the ISSUER,
      * which is one address per platform rather than one per service.
@@ -1350,9 +1349,9 @@ class ComposeTemplateTest {
                 .contains("QITS_RESOURCE_EVENTSTREAM_PASSWORD: \"0f0f0f0f0f0f0f0f\"");
         assertThat(block).contains("QITS_EVENTS_URL: http://qits-events:8080");
         // Every route of this service is guarded, and the gate is what the seed states: the
-        // audience is the image's own name plus qits-platform, which no file has to say. No
-        // oidc-client either — it validates and mints nothing — but it HOLDS a credential, because
-        // its `docker pull` of every workload image presents one.
+        // audience is qits-platform, the one name every minted token carries, which no file has
+        // to say. No oidc-client either — it validates and mints nothing — but it HOLDS a
+        // credential, because its `docker pull` of every workload image presents one.
         assertThat(block).contains("QITS_AUTH_MACHINE_REQUIRED: \"true\"")
                 .contains("QUARKUS_OIDC_AUTH_SERVER_URL: http://qits-platform-idp:8080/idp")
                 .contains("QITS_RESOURCE_IDP_CLIENT_ID: prod-qits-containers")

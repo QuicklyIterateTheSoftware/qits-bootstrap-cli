@@ -52,10 +52,10 @@ Two things are NOT here and must not move here:
 The tests these files replaced held decisions in their comments. The assertions were content; the
 arguments were not, so they are kept here.
 
-**qits-configuration is a platform service with a gate and nothing else.** Its image ships the bare
-`qits-configuration` as the audience, and since the 2026-09-07 plane move that is the right name
-rather than merely an un-tiered one — the line stays spelled because the idp is seeded from the same
-derivation, and an address nobody states is an address nobody notices moving. No mount, no publish
+**qits-configuration is a platform service with a gate and nothing else.** Its image ships
+`qits-platform` as the audience, the one name the idp puts on every token it mints, so the gate is
+the two variables that say whether a bearer is demanded and where it is issued — and no file here
+names an audience at all. No mount, no publish
 and no datasource: `resources: postgresql:db` in its own `deployments.yml` provisions its store, and
 a triple here would be an operator pin that outlives the deployer's next rotation. Its one network
 alias is TRANSITIONAL: the live deployer and the live orchestrator hold `<env>-qits-configuration` in

@@ -52,8 +52,8 @@ import static org.assertj.core.api.Assertions.fail;
  *       name it.
  * </ul>
  * <b>An audience-shaped key is deliberately not a family at all any more.</b> No service is told
- * which audience to validate — every image ships {@code quarkus.oidc.token.audience} as its own
- * name plus {@code qits-platform} — and {@code QITS_GITHOST_AUDIENCE} and
+ * which audience to validate — every image ships {@code quarkus.oidc.token.audience=qits-platform},
+ * the one name the idp puts on every token it mints — and {@code QITS_GITHOST_AUDIENCE} and
  * {@code QITS_CI_CONTAINER_GIT_AUDIENCE}, which name a PEER rather than the service itself, keep
  * their application's exemption until the wave decides where they go.
  *

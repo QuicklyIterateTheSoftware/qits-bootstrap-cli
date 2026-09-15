@@ -374,9 +374,9 @@ forced. Add to that list rather than deviating quietly.
   fails the build on `QITS_RESOURCE_IDP_*`, `QITS_IDP_CLIENT*`, `QITS_OIDC_CLIENT_*` and
   `QUARKUS_OIDC_CLIENT_*` in any block.
   **No service is told which audience to validate either.** Every image ships
-  `quarkus.oidc.token.audience=${qits.auth.machine.audience},qits-platform` with its own name as
-  the default, so `QITS_AUTH_MACHINE_AUDIENCE` only ever narrowed that to the tier-qualified
-  spelling. What stays on both sides is `QITS_AUTH_MACHINE_REQUIRED` — the gate — and
+  `quarkus.oidc.token.audience=qits-platform` as one literal name, and the idp puts that name on
+  every token it mints whatever the caller asked for, so there is no per-service audience for a
+  variable to name. What stays on both sides is `QITS_AUTH_MACHINE_REQUIRED` — the gate — and
   `QUARKUS_OIDC_AUTH_SERVER_URL` — the issuer, one address per platform.
 - **`QITS_ENVIRONMENT` is a statement of tier membership, and a platform service is handed none.**
   The deployer records a resource row per application under that environment, `orElse(null)`, and
