@@ -161,7 +161,16 @@ public final class BootstrapPlan {
         // without its database, so the server has to answer before that phase — while a warm rerun
         // has no such phase and needs postgres only for the passwords both generated files carry.
         // One placement per arm, each the earliest point that arm needs.
-        phases.add(seed.idpSecrets());
+        // THE IDENTITY ORDER, AND EVERY GAP IN IT IS LOAD-BEARING. The seed services' idp clients
+        // are created against a running idp rather than written into a generated file, so:
+        // the bootstrap's own pair first, because the idp seeds its first database service client
+        // FROM it; then the idp alone, because a client cannot be created at a service that is not
+        // up; then the five clients; and only then the two generated files, because the seed
+        // services' QITS_RESOURCE_IDP_CLIENT_SECRET values are not known until the idp has issued
+        // them.
+        phases.add(seed.idpBootstrapClient());
+        phases.add(pipeline.seedIdp());
+        phases.add(seed.idpClients());
         DomainName.of(boot.config).ifPresent(name -> phases.add(seed.dnsHetznerSecret(name)));
         phases.add(seed.composeFile());
         phases.add(seed.pdExtras());

@@ -347,12 +347,37 @@ forced. Add to that list rather than deviating quietly.
   own: `SeedPhases.dockerConfig` writes one per holder, with the hosts that holder pulls from (the
   registry vhost for the first two, the registry AND the mirror for qits-platform-system, whose
   glances image is the mirror's).
-- **Nothing outside `PlatformModel` decides a wire alias, a client-id key or whether a service is
-  told its tier.** All three change when an application moves plane, so `wireAlias`,
-  `pdNamePrefix` and `PlatformModel.modelTokens` are the only places any of them is built — the
-  generated stack and extras carry `${ALIAS_<APP>}`, `${CLIENT_KEY_<APP>}` and `${TIER_ENV_<APP>}`
-  placeholders, and `BootstrapConfig`'s urls derive too. A concatenated copy is a peer dialling a
-  name nothing answers to, or an audience the idp never mints, and both fail as a silent 401.
+- **Nothing outside `PlatformModel` decides a wire alias or whether a service is told its tier.**
+  Both change when an application moves plane, so `wireAlias`, `pdNamePrefix` and
+  `PlatformModel.modelTokens` are the only places either is built — the generated stack and extras
+  carry `${ALIAS_<APP>}` and `${TIER_ENV_<APP>}` placeholders, and `BootstrapConfig`'s urls derive
+  too. A concatenated copy is a peer dialling a name nothing answers to, or an audience the idp
+  never mints, and both fail as a silent 401. **A client id is one of those aliases and not a third
+  family**: the seed stack spells `QITS_RESOURCE_IDP_CLIENT_ID: ${ALIAS_<APP>}`, which is exactly
+  what the deployer's own `PdNetworks.alias` derives. The retired `${CLIENT_KEY_<APP>}` family was
+  the env-var infix of the idp's per-client config keys, and it went with them.
+- **IDENTITY IS CREATED AGAINST A RUNNING IDP AND NEVER WRITTEN INTO A GENERATED FILE.** Three
+  phases in this order, and every gap is load-bearing: `idp-bootstrap-client` resolves the ONE pair
+  this program owns (recorded in `.qits-bootstrap.env` as `IDP_SECRET_<ENV>_QITS_BOOTSTRAP`);
+  `seed-idp` brings qits-platform-idp up alone, seeding its first database service client from that
+  pair through `QITS_IDP_SEED_CLIENT_ID`/`_SECRET` — once per installation, gated by an `idp_seed`
+  marker row rather than by the variables, so the pair stays spelled on every boot; and
+  `idp-clients` creates the five seed services' clients at `POST /idp/api/service-clients`,
+  recording each secret in qits-deployments' `pd_resource` registry. Only then are the two files
+  generated, because until then the values do not exist.
+  **The seed stack carries what this run knows and the extras carry nothing of it.** A seed block
+  gets `QITS_RESOURCE_IDP_URL` / `_CLIENT_ID` / `_CLIENT_SECRET` because it starts before anything
+  could inject one; a deployed application is handed the same triple by the deployer off the same
+  registry row, and those variables are written BEFORE an application's own extras where the last
+  assignment wins — so a credential in the extras would not configure the deployment, it would
+  SHADOW the row that is kept current and outlive every rotation of it. `ExtrasWiringGuardTest`
+  fails the build on `QITS_RESOURCE_IDP_*`, `QITS_IDP_CLIENT*`, `QITS_OIDC_CLIENT_*` and
+  `QUARKUS_OIDC_CLIENT_*` in any block.
+  **No service is told which audience to validate either.** Every image ships
+  `quarkus.oidc.token.audience=${qits.auth.machine.audience},qits-platform` with its own name as
+  the default, so `QITS_AUTH_MACHINE_AUDIENCE` only ever narrowed that to the tier-qualified
+  spelling. What stays on both sides is `QITS_AUTH_MACHINE_REQUIRED` — the gate — and
+  `QUARKUS_OIDC_AUTH_SERVER_URL` — the issuer, one address per platform.
 - **`QITS_ENVIRONMENT` is a statement of tier membership, and a platform service is handed none.**
   The deployer records a resource row per application under that environment, `orElse(null)`, and
   looks a platform-target service's rows up by the null key. Tell a platform service it has a tier

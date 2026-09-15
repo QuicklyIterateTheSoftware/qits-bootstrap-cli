@@ -697,41 +697,33 @@ class PlatformModelTest {
     }
 
     /**
-     * The deployer and the orchestrator are AUDIENCES and CLIENTS both, since 2026-08-14. They
-     * validate exactly as they always did — every route of the orchestrator is behind the machine
-     * gate, reads included — and each holds a credential now because each pulls images, and a
-     * docker config.json is a client id and a secret. Neither asks the idp for a token.
+     * The deployer and the container orchestrator hold a credential because each PULLS images, and
+     * a docker config.json is a client id and a secret. Both are seed services, so this bootstrap
+     * creates those two clients itself — every other application declares an {@code idp:client}
+     * resource and is handed one by the deployer.
      */
     @Test
-    void thePullersValidateAndHoldACredentialOfTheirOwn() {
+    void thePullersHoldACredentialOfTheirOwnAndTheBootstrapCreatesIt() {
+        assertThat(PlatformModel.SEED_IDP_CLIENT_APPS).contains("deployments", "containers");
         // The deployer's id lost its tier with the plane move; the orchestrator is still a tier's.
-        assertThat(PlatformModel.idpClients("prod"))
-                .contains("qits-deployments", "prod-qits-containers");
-        assertThat(PlatformModel.idpAudiences("prod"))
-                .contains("qits-deployments", "prod-qits-containers");
-        // Each name once. The audience list is derived from the clients now, and a duplicate would
-        // be a key that says the same thing twice to a service that replaces the shipped list.
-        assertThat(PlatformModel.idpAudiences("prod").split(",")).doesNotHaveDuplicates();
-        assertThat(PlatformModel.RECEIVE_ONLY_APPS)
-                .containsExactly("githost", "configuration", "observability");
+        // The id IS the wire alias, which is why there is one derivation and no second list.
+        assertThat(PlatformModel.wireAlias("deployments", "prod")).isEqualTo("qits-deployments");
+        assertThat(PlatformModel.wireAlias("containers", "prod"))
+                .isEqualTo("prod-qits-containers");
     }
 
     /**
-     * <b>qits-configuration is an audience and never a client.</b> It validates the deployer's
-     * bearer on every read of an application's configuration and mints nothing at all — so it holds
-     * no credential, and the one thing it needs from the idp is to be a value the deployer's client
-     * may ASK for. An audience no client may ask for is {@code invalid_target} rather than a call
-     * that reaches the service's own gate.
+     * <b>qits-configuration validates the deployer's bearer and mints nothing</b>, so it is an
+     * audience and never a client of this bootstrap's making. Nothing states that audience any
+     * more: the image validates its own name plus qits-platform out of its shipped
+     * {@code quarkus.oidc.token.audience}, and its own name is the wire alias below.
      */
     @Test
-    void theConfigurationServiceIsAnAudienceTheDeployerMayAskFor() {
-        assertThat(PlatformModel.idpAudiences("prod").split(",")).contains("qits-configuration");
-        assertThat(PlatformModel.idpClients("prod")).doesNotContain("qits-configuration");
+    void theConfigurationServicesAudienceIsItsPlatformPlaneAlias() {
+        assertThat(PlatformModel.SEED_IDP_CLIENT_APPS).doesNotContain("configuration");
         // AND IT NO LONGER FOLLOWS THE ENVIRONMENT NAME, since the plane move on 2026-09-07: one
         // store serves every tier, so its audience is the same value whichever tier is asking.
-        // That is what makes deriving it load-bearing rather than tidy — the deployer's spelled
-        // audience moved with the alias and nothing had to be found and edited.
-        assertThat(PlatformModel.idpAudiences("preprod").split(",")).contains("qits-configuration");
+        // That is what makes deriving it load-bearing rather than tidy.
         assertThat(PlatformModel.wireAlias("configuration", "prod")).isEqualTo("qits-configuration");
         assertThat(PlatformModel.wireAlias("configuration", "preprod"))
                 .isEqualTo("qits-configuration");
@@ -797,23 +789,19 @@ class PlatformModelTest {
     }
 
     /**
-     * <b>It mints against four peers, so it holds four named clients and one credential.</b> A
-     * bearer minted for one peer's audience is refused by the other three, which is why the
-     * audience list it may ask for has to hold all of them — an audience a client may not ask for
-     * is {@code invalid_target} rather than a call that reaches the peer's own gate.
+     * <b>It mints against every peer it drives, and its credential arrives with its own
+     * deployment.</b> Nothing runs it during the seed window, so it is not one of the five clients
+     * this bootstrap creates: it declares an {@code idp:client} resource like every other
+     * deployable and qits-deployments creates it, records it and injects it.
      */
     @Test
-    void theOrchestratorMintsForEveryPeerItDrives() {
-        assertThat(PlatformModel.IDP_CLIENT_APPS).contains("platform-orchestrator");
-        assertThat(PlatformModel.idpClients("prod")).contains("qits-platform-orchestrator");
-        assertThat(PlatformModel.idpAudiences("prod")).contains(
-                "prod-qits-artifacts", "prod-qits-containers", "prod-qits-ci", "qits-deployments");
-        // Its own audience too: every route of it is behind the machine gate, so the deployer's
-        // health probe and a person's browser both arrive at a service that validates.
-        assertThat(PlatformModel.idpAudiences("prod")).contains("qits-platform-orchestrator");
-        // The secret is recorded under the APPLICATION's key, which is what the templates spell.
-        assertThat("IDP_SECRET_" + PlatformModel.clientKey("platform-orchestrator"))
-                .isEqualTo("IDP_SECRET_PLATFORM_ORCHESTRATOR");
+    void theOrchestratorsCredentialArrivesWithItsOwnDeployment() {
+        assertThat(PlatformModel.SEED_IDP_CLIENT_APPS).doesNotContain("platform-orchestrator");
+        assertThat(PlatformModel.DEPLOYABLES).contains("platform-orchestrator");
+        // Its client id is its wire alias, which says the plane: one deletion run reclaims one
+        // MACHINE however many tiers share it.
+        assertThat(PlatformModel.wireAlias("platform-orchestrator", "prod"))
+                .isEqualTo("qits-platform-orchestrator");
     }
 
     /**
@@ -874,16 +862,15 @@ class PlatformModelTest {
      */
     @Test
     void theDependencyInventoryMintsForItsThreeGuardedPeers() {
-        assertThat(PlatformModel.IDP_CLIENT_APPS).contains("platform-maintenance");
-        assertThat(PlatformModel.idpClients("prod")).contains("qits-platform-maintenance");
-        assertThat(PlatformModel.idpAudiences("prod")).contains(
-                "prod-qits-projects", "prod-qits-githost", "prod-qits-ci");
-        // Its own audience too: every route of it is behind the machine gate, so the deployer's
-        // health probe arrives at a service that validates.
-        assertThat(PlatformModel.idpAudiences("prod")).contains("qits-platform-maintenance");
-        // The secret is recorded under the APPLICATION's key, which is what the templates spell.
-        assertThat("IDP_SECRET_" + PlatformModel.clientKey("platform-maintenance"))
-                .isEqualTo("IDP_SECRET_PLATFORM_MAINTENANCE");
+        // Not a seed client: nothing runs it during the seed window, so its credential is the
+        // idp:client resource it declares and qits-deployments is what creates it.
+        assertThat(PlatformModel.SEED_IDP_CLIENT_APPS).doesNotContain("platform-maintenance");
+        assertThat(PlatformModel.DEPLOYABLES).contains("platform-maintenance");
+        // The three peers it drives, at the aliases it dials them by — two tiers' and one bare.
+        assertThat(PlatformModel.wireAlias("projects", "prod")).isEqualTo("prod-qits-projects");
+        assertThat(PlatformModel.wireAlias("githost", "prod")).isEqualTo("prod-qits-githost");
+        assertThat(PlatformModel.wireAlias("platform-maintenance", "prod"))
+                .isEqualTo("qits-platform-maintenance");
     }
 
     /**
@@ -939,67 +926,55 @@ class PlatformModelTest {
      */
     @Test
     void theBaseSystemPanelsHoldAClientBecauseTheyPullGlancesThroughTheMirror() {
-        assertThat(PlatformModel.IDP_CLIENT_APPS).contains("platform-system");
-        assertThat(PlatformModel.idpClients("prod")).contains("qits-platform-system");
-        // Its own audience: every route of it is behind the machine gate, so the deployer's health
-        // probe arrives at a service that validates.
-        assertThat(PlatformModel.idpAudiences("prod")).contains("qits-platform-system");
-        // The secret is recorded under the APPLICATION's key, which is what the templates spell.
-        assertThat("IDP_SECRET_" + PlatformModel.clientKey("platform-system"))
-                .isEqualTo("IDP_SECRET_PLATFORM_SYSTEM");
-        // And the alias the templates spell for its gate.
+        // The client is real and it is a DOCKER credential, but it arrives with the deployment:
+        // this console runs last of the platform tier and nothing waits on it, so it declares an
+        // idp:client resource like every other deployable rather than being seeded.
+        assertThat(PlatformModel.SEED_IDP_CLIENT_APPS).doesNotContain("platform-system");
+        assertThat(PlatformModel.DEPLOYABLES).contains("platform-system");
+        // And the alias the templates spell for its gate, which is also that client's id.
         assertThat(PlatformModel.modelTokens("prod"))
-                .containsEntry("ALIAS_PLATFORM_SYSTEM", "qits-platform-system")
-                .containsEntry("CLIENT_KEY_PLATFORM_SYSTEM", "QITS_PLATFORM_SYSTEM");
+                .containsEntry("ALIAS_PLATFORM_SYSTEM", "qits-platform-system");
     }
 
     @Test
     void aClientIdIsAWireAliasSoItFollowsTheEnvironment() {
-        // The id is part of the config KEY, so a client the deployment spells differently from
-        // the token request is invalid_client and nothing says it was a typo. qits-projects
-        // joined for orchestration round 2: its agent containers start through qits-containers.
-        assertThat(PlatformModel.idpClients("prod")).containsExactly(
-                "prod-qits-bootstrap", "prod-qits-ci", "prod-qits-artifacts", "prod-qits-workspaces",
-                "prod-qits-projects", "qits-deployments",
-                "prod-qits-containers", "prod-qits-edge", "qits-platform-orchestrator",
-                "qits-platform-maintenance", "qits-platform-system");
-        // The clients, then the receive-only applications: the git host, which validates and mints
-        // nothing; qits-configuration, which the deployer asks for on every deployment; and
-        // qits-observability, which an AGENT asks for — it grants qits:agent read on purpose and
-        // until 2026-09-14 no client could ask for its audience at all, so the mint was 400
-        // invalid_target. Two of the three are a tier's and one is not, the configuration store
-        // having moved to the platform plane on 2026-09-07 — so this string is where a plane move
-        // that did not reach the idp's own seeded list would show up as an invalid_target nobody
-        // could explain.
-        assertThat(PlatformModel.idpAudiences("prod")).isEqualTo(
-                "prod-qits-bootstrap,prod-qits-ci,prod-qits-artifacts,prod-qits-workspaces,"
-                        + "prod-qits-projects,qits-deployments,prod-qits-containers,"
-                        + "prod-qits-edge,qits-platform-orchestrator,qits-platform-maintenance,"
-                        + "qits-platform-system,"
-                        + "prod-qits-githost,qits-configuration,prod-qits-observability");
-        // Every one of them follows the environment now: the artifacts client was the one platform
-        // id in this list, and the byte-plane split made that service a tier's again.
-        // Every one but the deployer's, whose service belongs to no tier and so takes no name from
-        // one — which is exactly what makes this a derivation rather than a list.
-        assertThat(PlatformModel.idpClients("preprod")).containsExactly(
-                "preprod-qits-bootstrap", "preprod-qits-ci", "preprod-qits-artifacts", "preprod-qits-workspaces",
-                "preprod-qits-projects", "qits-deployments",
-                "preprod-qits-containers", "preprod-qits-edge", "qits-platform-orchestrator",
-                "qits-platform-maintenance", "qits-platform-system");
-        // The two new byte services hold no client at all: the mirror has no auth surface, and the
-        // git host validates a push option rather than a token.
-        assertThat(PlatformModel.idpClients("prod"))
-                .doesNotContain("qits-platform-mirror", "prod-qits-githost");
+        // The five clients this bootstrap creates, in the order it creates them, spelled the way
+        // the idp will know them. Two of the five are on the platform plane and take no tier name
+        // from one — which is exactly what makes this a derivation rather than a list, and this
+        // string is where a plane move that did not reach the idp would show up as an
+        // invalid_client nobody could explain.
+        assertThat(PlatformModel.SEED_IDP_CLIENT_APPS.stream()
+                .map(app -> PlatformModel.wireAlias(app, "prod")).toList())
+                .containsExactly("prod-qits-projects", "prod-qits-ci", "prod-qits-containers",
+                        "qits-deployments", "qits-platform-edge");
+        assertThat(PlatformModel.SEED_IDP_CLIENT_APPS.stream()
+                .map(app -> PlatformModel.wireAlias(app, "preprod")).toList())
+                .containsExactly("preprod-qits-projects", "preprod-qits-ci",
+                        "preprod-qits-containers", "qits-deployments", "qits-platform-edge");
+        // The registry row and the generated files are keyed by the APPLICATION instead, because a
+        // placeholder cannot be spelled with an environment name the template does not know yet.
+        assertThat(PlatformModel.SEED_IDP_CLIENT_APPS.stream()
+                .map(PlatformModel::application).toList())
+                .containsExactly("qits-projects", "qits-ci", "qits-containers", "qits-deployments",
+                        "qits-platform-edge");
+        // The two other byte services hold no client at all: the mirror has no auth surface, and
+        // the git host validates and mints nothing.
+        assertThat(PlatformModel.SEED_IDP_CLIENT_APPS)
+                .doesNotContain("platform-mirror", "githost");
     }
 
     /**
-     * <b>The generated files spell no alias and no client-id key for themselves.</b> Both shapes
-     * move when an application changes plane, so both are tokens the model fills — which is what
-     * makes PLATFORM_SERVICES the one place a plane is decided. Before this, the templates pasted
-     * a repository name after an ENV_KEY token and the deployer's flip landed in neither file.
+     * <b>The generated files spell no alias for themselves.</b> An alias moves when an application
+     * changes plane, so it is a token the model fills — which is what makes PLATFORM_SERVICES the
+     * one place a plane is decided. Before this, the templates pasted a repository name after an
+     * ENV_KEY token and the deployer's flip landed in neither file.
+     * <p>
+     * The alias is also the CLIENT ID, which is why a second family for it would be a copy: a
+     * {@code CLIENT_KEY_<APP>} token existed while the idp's registry was a config file keyed by
+     * client id, and went with it.
      */
     @Test
-    void everyAliasAndClientKeyTheTemplatesNeedComesOutOfTheModel() {
+    void everyAliasTheTemplatesNeedComesOutOfTheModel() {
         Map<String, String> tokens = PlatformModel.modelTokens("prod");
 
         // An environment service carries the tier; a platform one has no tier to carry.
@@ -1007,11 +982,8 @@ class PlatformModelTest {
                 .containsEntry("ALIAS_DEPLOYMENTS", "qits-deployments")
                 .containsEntry("ALIAS_EVENTS", "qits-events")
                 .containsEntry("ALIAS_PLATFORM_IDP", "qits-platform-idp");
-        // The env-var infix of the idp's per-client keys, which embed the client ID — so the
-        // deployer's key is QITS_IDP_CLIENT_QITS_DEPLOYMENTS_SECRET with no tier in front of it.
-        assertThat(tokens).containsEntry("CLIENT_KEY_CI", "PROD_QITS_CI")
-                .containsEntry("CLIENT_KEY_DEPLOYMENTS", "QITS_DEPLOYMENTS")
-                .containsEntry("CLIENT_KEY_EDGE", "PROD_QITS_EDGE");
+        // And not one key of the retired per-client family, which no generated file reads.
+        assertThat(tokens.keySet()).noneMatch(key -> key.startsWith("CLIENT_KEY_"));
         // Every application, so a service added to the model needs no second edit here.
         assertThat(tokens.keySet())
                 .containsAll(PlatformModel.platformRepos().stream()
@@ -1023,21 +995,22 @@ class PlatformModelTest {
     }
 
     /**
-     * <b>The edge's client id is the one that is not its service's alias.</b> The service answers
-     * to qits-platform-edge — one process for every environment — while the credential belongs to
-     * the session gate, which is an environment's. The edge is handed the same pair as
-     * QITS_EDGE_SESSIONS_CLIENT_ID and _SECRET, so the two sides agree with each other and with
-     * nothing else.
+     * <b>The edge's client id IS its service's alias now, and that is the change.</b> It used to be
+     * the session gate's {@code <env>-qits-edge} — an environment's credential for the one process
+     * that serves every environment — which is why both the idp and the edge had to be told the
+     * same invented pair. The client is an {@code idp:client} resource keyed by the APPLICATION
+     * today, so it is qits-platform-edge: one row, one id, and the service reads it out of
+     * QITS_RESOURCE_IDP_CLIENT_ID like every other application.
      */
     @Test
-    void theEdgesSessionClientCarriesTheEnvironmentAndNotTheServiceName() {
-        assertThat(PlatformModel.idpClients("prod")).contains("prod-qits-edge")
-                .doesNotContain("qits-platform-edge");
-        assertThat(PlatformModel.clientKey("prod-qits-edge")).isEqualTo("PROD_QITS_EDGE");
-        // Which is the key it is recorded under in .qits-bootstrap.env, and the spelling the idp's
-        // own per-client config key embeds.
-        assertThat("IDP_SECRET_" + PlatformModel.clientKey(
-                PlatformModel.wireAlias("edge", "prod"))).isEqualTo("IDP_SECRET_PROD_QITS_EDGE");
+    void theEdgesSessionClientIsTheServicesOwnAlias() {
+        assertThat(PlatformModel.SEED_IDP_CLIENT_APPS).contains("platform-edge");
+        assertThat(PlatformModel.wireAlias("platform-edge", "prod"))
+                .isEqualTo("qits-platform-edge");
+        // A platform service, so the id does not move with the tier — where the retired session
+        // gate's id did.
+        assertThat(PlatformModel.wireAlias("platform-edge", "preprod"))
+                .isEqualTo("qits-platform-edge");
     }
 
     @Test

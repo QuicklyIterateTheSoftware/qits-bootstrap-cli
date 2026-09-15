@@ -976,150 +976,40 @@ public final class PlatformModel {
     }
 
     /**
-     * The static clients qits-platform-idp seeds from config, for this environment. Every one of
-     * them gets a secret: a client without one is refused {@code invalid_client} exactly like a
-     * wrong one, so an unused client costs nothing and a used one that was forgotten costs a
-     * debugging session.
+     * <b>The seed services whose idp clients this bootstrap creates against a RUNNING idp</b>, in
+     * the order it creates them. Five, and the number is not a preference: these are the
+     * applications that are already up before anything exists that could provision a credential for
+     * them.
      * <p>
-     * <b>A client id is a wire alias</b>, which is why this is a method and not a constant: an
-     * environment service's identity carries its tier ({@code prod-qits-ci}), a platform service's
-     * does not ({@code qits-platform-idp}). With the default environment name this is
-     * exactly the list qits-platform-idp ships. With another one it follows, which the shipped
-     * list cannot — and the id is part of the config KEY
-     * ({@code qits.idp.client.<id>.secret}), so a client the deployment spells differently from
-     * the token request is {@code invalid_client} with nothing in any log to say why.
+     * Every other application gets its client the ordinary way — it declares an {@code idp:client}
+     * resource in its own {@code deployments.yml}, and qits-deployments creates the client, records
+     * the secret in its {@code pd_resource} registry and injects the triple at deploy. That path
+     * needs a deployer, a registry and a running idp, which is exactly what these five come up
+     * BEFORE. qits-projects, qits-ci, qits-containers and qits-deployments boot from the seed stack
+     * and speak to each other from their first second; qits-platform-edge is the door, and a door
+     * with no session client refuses every browser that arrives while the train is still running.
      * <p>
-     * qits-cd is gone for the opposite reason to the one that kept it: the client ids all moved on
-     * 2026-08-08, so no id in this list is one a pre-rename platform would recognise anyway.
+     * A client id here is the WIRE ALIAS ({@link #wireAlias}) and the registry row is keyed by the
+     * APPLICATION ({@link #application}) — the same two spellings of one identity every other part
+     * of this model carries.
      */
-    public static List<String> idpClients(String envName) {
-        return IDP_CLIENT_APPS.stream().map(app -> wireAlias(app, envName)).toList();
+    public static final List<String> SEED_IDP_CLIENT_APPS =
+            List.of("projects", "ci", "containers", "deployments", "platform-edge");
+
+    /**
+     * <b>The one client whose secret this program still records itself</b>, and the reason it is
+     * the exception: it is the credential the bootstrap creates all the others WITH. There is
+     * nowhere else to keep it — qits-deployments' registry does not exist on a cold boot, and the
+     * idp issues a secret once and never says it again — so it stays in
+     * {@code .qits-bootstrap.env} under {@code IDP_SECRET_<clientKey>}, exactly where every boot
+     * before this one already wrote it.
+     * <p>
+     * It is a wire alias like every other client id, so it carries the environment name:
+     * {@code <env>-qits-bootstrap}.
+     */
+    public static String bootstrapClientId(String envName) {
+        return wireAlias("bootstrap", envName);
     }
-
-    /**
-     * The APPLICATIONS behind those clients. The generated files are keyed by this name rather than
-     * by the client id — {@code IDP_SECRET_CI}, not {@code IDP_SECRET_PROD_QITS_CI} — because the
-     * id moves with the environment name and a placeholder cannot be spelled with a value that is
-     * not known until the run starts.
-     * <p>
-     * <b>qits-artifacts is on this list under its own name and its id now carries the tier</b>: the
-     * byte-plane split made it an environment service, so its client is {@code <env>-qits-artifacts}
-     * where it used to be the bare qits-platform-artifacts. Every key derived from it moves with it,
-     * which is exactly what a client id being a wire alias means.
-     * <p>
-     * <b>The two new byte services hold no client at all.</b> qits-platform-mirror has no auth
-     * surface — it serves cached third-party bytes to anonymous clients and mints nothing — and
-     * qits-githost validates but does not mint, so it remains receive-only. {@code bootstrap} is
-     * the exception that proves the distinction: it is not a deployable application, but it does
-     * make the first protected lifecycle calls and pushes before any service can do so.
-     * <p>
-     * <b>qits-deployments and qits-containers joined on 2026-08-14, and they are the PULLERS.</b>
-     * Both were validate-only for as long as a registry read was anonymous; the flip made a pull
-     * an authenticated request, and the thing that authenticates it is a docker {@code config.json}
-     * holding a client id and a secret. So each one needs a credential of its own — the identity in
-     * the file is the puller's, never a borrowed one, because a refused pull has to name the
-     * service that was refused. Neither has a quarkus-oidc-client extension and neither asks the
-     * idp for anything: the docker CLI performs the Bearer dance at the edge with these two values,
-     * which is why they get a client and no {@code QUARKUS_OIDC_CLIENT_*} env.
-     * <p>
-     * <b>The edge joined on 2026-08-14, for the user sessions, and its entry is the one that is not
-     * a repository name.</b> {@code edge} here derives {@code <env>-qits-edge}, while the service
-     * itself answers to {@code qits-platform-edge} — the id is the SESSION GATE's, and a session
-     * belongs to an environment, not to the one process that serves them all. The edge is told the
-     * pair as {@code QITS_EDGE_SESSIONS_CLIENT_ID} and {@code _SECRET}, so the only agreement that
-     * has to hold is between this generator and that service.
-     * <p>
-     * It gets a secret and no audience list: it introspects a browser session with Basic, the way a
-     * static client calls the commission API, and asks the idp for no token at all. The full list
-     * is one line away if that ever changes.
-     * <p>
-     * <b>qits-platform-orchestrator joined on 2026-08-21, and it MINTS more than anything else
-     * here.</b> A technical process is nothing but calls to peers, so this one service holds a
-     * named oidc client per peer — qits-artifacts, qits-containers, qits-ci and the deployer — and
-     * asks the idp for a token per audience. One client with one audience would not do: a bearer
-     * minted for {@code <env>-qits-artifacts} is refused by every other peer, so a run's every step
-     * but one would be a 401. All four present THIS application's id, never a borrowed one.
-     * <p>
-     * <b>qits-platform-maintenance joined on 2026-08-22, and its CLAIM is what is unusual about
-     * it.</b> Three named clients — qits-projects for the catalog, qits-githost for the manifests,
-     * qits-ci for the trigger — under the same one-client-per-audience rule. The registries it
-     * reads versions from are unguarded on qits-net, so it holds no client for them. What it needs
-     * beyond a token is {@code project=*}: qits-ci's trigger route demands every project, so a bump
-     * that names ONE repository is refused without the wildcard. qits-artifacts held the only such
-     * grant until now.
-     * <p>
-     * <b>qits-platform-system joined on 2026-08-23 as a THIRD PULLER.</b> It mints nothing — it
-     * calls no peer at all — but the glances terminal it opens is a {@code docker run} of an image
-     * behind the platform mirror, and the edge has granted no anonymous read since 2026-08-14. So
-     * it needs the same thing the deployer and the container orchestrator need: a client id and a
-     * secret in a docker {@code config.json}, its own and never a borrowed one, because a refused
-     * pull has to name the service that was refused. Its file carries TWO hosts rather than one —
-     * see {@code SeedPhases.dockerConfig} — since the image it pulls is the mirror's, not the
-     * registry's.
-     */
-    public static final List<String> IDP_CLIENT_APPS =
-            List.of("bootstrap", "ci", "artifacts", "workspaces", "projects", "deployments",
-                    "containers", "edge", "platform-orchestrator", "platform-maintenance",
-                    "platform-system");
-
-    /**
-     * The {@code aud} values the platform's clients may ask for: every client above plus the
-     * RECEIVE-ONLY applications below, which are an audience without being a client. An audience
-     * a client may not ask for is {@code invalid_target}, not a silent bare call — and the key
-     * REPLACES the shipped list rather than extending it, so it is restated in full.
-     */
-    public static String idpAudiences(String envName) {
-        List<String> audiences = new ArrayList<>(idpClients(envName));
-        RECEIVE_ONLY_APPS.forEach(app -> audiences.add(wireAlias(app, envName)));
-        return String.join(",", audiences);
-    }
-
-    /**
-     * The applications that VALIDATE a bearer and hold no client of their own. They are an audience
-     * and nothing else, which is what this list adds to {@link #idpAudiences}: a caller refused
-     * {@code invalid_target} never reaches the service's own gate at all.
-     * <p>
-     * <b>qits-deployments and qits-containers left it on 2026-08-14</b> — not because either mints
-     * a token, but because each pulls images and a docker {@code config.json} is a client id and a
-     * secret. They still validate exactly as they did; an audience is now something they get for
-     * being clients.
-     * <p>
-     * <b>qits-configuration joined on 2026-08-17</b>, and it is the shape this list was kept for.
-     * It validates the deployer's bearer on every read of an application's configuration and mints
-     * nothing at all, so it holds no client — but the deployer asks for {@code qits-configuration}
-     * as an audience, and an audience no client may ask for is {@code invalid_target} rather than a
-     * call that reaches the service's own gate.
-     * <p>
-     * That audience lost its tier segment on 2026-09-07, when the service moved to the platform
-     * plane: it is the wire alias, so it says what the alias says. Membership here did not change
-     * and could not — an application is an audience because it VALIDATES and mints nothing, which
-     * is a property of the service and not of the plane it runs on.
-     * <p>
-     * <b>qits-observability joined on 2026-09-14, and an AGENT is who it was missing for.</b> The
-     * service validates and mints nothing — {@code qits.auth.machine.audience} is
-     * {@code ${QITS_ENVIRONMENT}-qits-observability} and {@code quarkus.oidc.token.audience} is
-     * that value plus {@code qits-platform} — and it holds no client anywhere in this model. It is
-     * the definition of this list, and it was simply never written down: the service's own comment
-     * beside that audience said "No idp client asks for this audience today", and measured on dev
-     * that day, {@code qits-token dev-qits-observability} came back <b>400 invalid_target</b>. So a
-     * workspace agent could not mint a token for the one service the platform means it to read —
-     * qits-observability grants {@code qits:agent} read ON PURPOSE (its {@code AgentReadAccessTest}
-     * asserts an agent reads every {@code /observability/api/telemetry/*} route and opens the live
-     * stream), and {@code CommissionRoles.forKind("workspace")} hands a commissioned client exactly
-     * {@code qits:agent}.
-     * <p>
-     * Say plainly what this does NOT fix, because the symptom is easy to misread: a call carrying
-     * the platform-wide {@code qits-platform} audience already worked — {@code GET
-     * /observability/api/telemetry/sources} answered 200 from a workspace container the same day.
-     * The gap was never access. It was that the service's OWN audience was unaskable, so the only
-     * way in was the wide one, and a caller asking for the narrow name got a refusal from the idp
-     * that never reached the service's gate at all.
-     * <p>
-     * The audience is the wire alias, so it keeps its tier: qits-observability is an environment
-     * service, and {@code dev-qits-observability} is what a dev platform renders.
-     */
-    public static final List<String> RECEIVE_ONLY_APPS =
-            List.of("githost", "configuration", "observability");
 
     /** The env-var spelling of a client id: uppercase, dashes as underscores. */
     public static String clientKey(String clientId) {
@@ -1132,15 +1022,18 @@ public final class PlatformModel {
      * application moves plane, so the templates carry placeholders and this method answers them —
      * which is what makes {@link #PLATFORM_SERVICES} the one place a plane is decided.
      * <p>
-     * Three families keyed by the APPLICATION, because that name never moves:
+     * Two families keyed by the APPLICATION, because that name never moves:
      * <ul>
-     *   <li>{@code ALIAS_<APP>} — the address peers dial.
-     *   <li>{@code CLIENT_KEY_<APP>} — the env-var infix the idp's per-client keys are built from
-     *       ({@code QITS_IDP_CLIENT_<key>_SECRET}), which embeds the client id and so the alias.
+     *   <li>{@code ALIAS_<APP>} — the address peers dial, which is also the client id: an idp
+     *       client is named after the wire alias, so a template that wants one asks for the other.
      *   <li>{@code TIER_ENV_<APP>} and {@code TIER_ENV_EXTRAS_<APP>} — the {@code QITS_ENVIRONMENT}
      *       line in the stack file's words and in the extras', or NOTHING at all. See
      *       {@link #tierEnv}.
      * </ul>
+     * <p>
+     * A third family went with the idp's config-file registry: {@code CLIENT_KEY_<APP>} was the
+     * env-var infix of {@code QITS_IDP_CLIENT_<key>_SECRET}, and no generated file names a client
+     * that way any more — a client is a row the idp holds, created against the running service.
      * And one that is keyed by nothing because it is a statement about the platform as a whole:
      * <ul>
      *   <li>{@code RESERVED_SLUGS} — the names no project may take, which is this environment plus
@@ -1166,9 +1059,6 @@ public final class PlatformModel {
             tokens.put("TIER_ENV_" + clientKey(app), tierEnv(app, envName, "      ", ""));
             tokens.put("TIER_ENV_EXTRAS_" + clientKey(app), tierEnv(app, envName, "",
                     "qits.platform.deployments.extras." + application(app) + ".env."));
-        }
-        for (String app : IDP_CLIENT_APPS) {
-            tokens.put("CLIENT_KEY_" + clientKey(app), clientKey(wireAlias(app, envName)));
         }
         tokens.put("RESERVED_SLUGS", reservedSlugs(envName));
         return tokens;

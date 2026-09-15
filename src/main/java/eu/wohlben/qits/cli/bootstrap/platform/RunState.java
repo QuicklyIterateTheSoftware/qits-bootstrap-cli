@@ -31,8 +31,24 @@ public class RunState {
      * the host, and a run that made one has to say so.
      */
     public String swarm;
-    /** The idp's client secrets: given, kept or generated. */
-    public final Map<String, String> secrets = new LinkedHashMap<>();
+    /**
+     * <b>The one credential this program holds of its own</b>, resolved by
+     * {@code idp-bootstrap-client}: given, kept or generated. It is what the run authenticates to
+     * qits-idp with to create every other seed client, and what every machine token of this run is
+     * minted with.
+     */
+    public String bootstrapClientId;
+    public String bootstrapSecret;
+    /**
+     * <b>What the {@code idp-clients} phase resolved for each seed service</b>, keyed by the
+     * APPLICATION name ({@code qits-projects}, …) because that is what qits-deployments'
+     * {@code pd_resource} registry is keyed by and what the generated files read.
+     * <p>
+     * Never logged and never written to {@code .qits-bootstrap.env}. These secrets belong to the
+     * registry: the row is written the moment the idp issues one, and a rerun reads them back from
+     * there rather than from anything this run remembered.
+     */
+    public final Map<String, String> serviceClientSecrets = new LinkedHashMap<>();
     /**
      * The register token THIS run minted, and null on every other run. The closing report prints a
      * value only when it is this one: a token is printed on the run that made it, and after that it

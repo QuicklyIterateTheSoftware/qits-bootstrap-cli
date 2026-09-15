@@ -341,34 +341,54 @@ public class Boot {
     }
 
     /**
-     * A machine token for this bootstrap's own calls into the platform, or null when the gate is
-     * off. It borrows a platform client rather than owning one: the calls it makes stand in for
-     * announcements a service never sent, and a token that says so is exactly right.
+     * <b>THE ONE AUDIENCE THIS PROGRAM ASKS FOR.</b>
+     * <p>
+     * It used to ask for a peer's own wire alias per call — {@code <env>-qits-githost} for a push,
+     * {@code <env>-qits-projects} for the alias table — which meant the bootstrap's client had to
+     * be granted every audience on the platform and each grant had to be remembered by hand. It
+     * asks for {@code qits-platform} instead: the platform-wide audience a database service client
+     * is given by the idp itself, together with {@code qits:system} and
+     * {@code qits-platform:system}, both fixed in idp code. Every guarded service on this platform
+     * validates it.
+     * <p>
+     * One constant, so no call site spells it. A spelling nothing mints is a 401 with nothing in
+     * any log to say why.
      */
-    public String tokenOrNull(String clientId, String audience) {
+    public static final String PLATFORM_AUDIENCE = "qits-platform";
+
+    /**
+     * <b>The bootstrap's own machine token</b>, for every call this run makes into the platform by
+     * hand — or null when the gate is off, where the forwarded identity headers are the whole
+     * credential.
+     * <p>
+     * It presents THIS program's client rather than borrowing a service's, and that is the change
+     * the seed-client work made possible: there is no borrowed pair to present any more, because
+     * the seed services' secrets are the idp's and the deployer registry's rather than this run's.
+     * The calls stand in for announcements a service never sent, and a token that says
+     * "qits-bootstrap" is the honest one for them.
+     */
+    public String bootstrapToken() {
         if (!config.machineAuth()) {
             return null;
         }
-        String secret = state.secrets.get(clientId);
-        if (secret == null || secret.isBlank()) {
-            throw new IllegalStateException("no secret for the " + clientId
-                    + " client — .qits-bootstrap.env and the running idp disagree");
-        }
-        return idp.token(clientId, secret, audience);
+        return platformToken();
     }
 
     /**
-     * The bootstrap is a machine client in its own right. qits-githost is always protected, so
-     * this intentionally has no machineAuth-off or anonymous arm.
+     * The same token where there is no gate to be off: qits-githost is always protected, so a push
+     * has no anonymous arm to fall back to.
      */
     public String githostToken() {
-        String clientId = PlatformModel.wireAlias("bootstrap", config.envName());
-        String secret = state.secrets.get(clientId);
-        if (secret == null || secret.isBlank()) {
-            throw new IllegalStateException("no secret for the " + clientId
+        return platformToken();
+    }
+
+    private String platformToken() {
+        if (state.bootstrapSecret == null || state.bootstrapSecret.isBlank()) {
+            throw new IllegalStateException("no secret for the "
+                    + PlatformModel.bootstrapClientId(config.envName())
                     + " client — .qits-bootstrap.env and the running idp disagree");
         }
-        return idp.token(clientId, secret, PlatformModel.wireAlias("githost", config.envName()));
+        return idp.token(state.bootstrapClientId, state.bootstrapSecret, PLATFORM_AUDIENCE);
     }
 
     /** Waits for a health endpoint, saying which one and what it last answered. */

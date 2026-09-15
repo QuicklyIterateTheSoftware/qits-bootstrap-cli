@@ -69,13 +69,16 @@ class ComposeTemplateTest {
         // A one-build host: the 16 GB VPS the formula exists for.
         values.put("CI_CONCURRENT_BUILDS", "1");
         values.put("MACHINE_REQUIRED", "true");
-        values.put("MACHINE_CLIENT", "true");
         values.put("DOCKER_GID", "988");
         values.put("DAEMON_SHA", "abc123");
-        values.put("IDP_CLIENTS", String.join(",", PlatformModel.idpClients(ENV)));
-        values.put("IDP_AUDIENCES", PlatformModel.idpAudiences(ENV));
-        for (String app : PlatformModel.IDP_CLIENT_APPS) {
-            values.put("IDP_SECRET_" + PlatformModel.clientKey(app),
+        // The idp's own seed pair: the one credential this program records itself, and the whole
+        // of the identity bootstrap the generated stack still carries.
+        values.put("BOOTSTRAP_CLIENT_ID", PlatformModel.bootstrapClientId(ENV));
+        values.put("BOOTSTRAP_CLIENT_SECRET", "secret-" + PlatformModel.bootstrapClientId(ENV));
+        // And the five seed services' own, keyed by the APPLICATION the way the registry is.
+        // There is no id beside them: a client id is the wire alias, and ALIAS_<APP> renders it.
+        for (String app : PlatformModel.SEED_IDP_CLIENT_APPS) {
+            values.put("IDP_CLIENT_SECRET_" + PlatformModel.clientKey(app),
                     "secret-" + PlatformModel.wireAlias(app, ENV));
         }
         // The passkey binding of a platform with no domain: every *.localhost name is a secure
@@ -217,7 +220,8 @@ class ComposeTemplateTest {
         assertThat(compose).contains("published: 8080");
         assertThat(compose).contains("QITS_IDP_ISSUER: http://qits-platform-idp:8080/idp");
         assertThat(compose).contains(
-                "QITS_IDP_CLIENT_PROD_QITS_CI_SECRET: \"secret-prod-qits-ci\"");
+                "QITS_IDP_SEED_CLIENT_ID: \"prod-qits-bootstrap\"")
+                .contains("QITS_IDP_SEED_CLIENT_SECRET: \"secret-prod-qits-bootstrap\"");
         assertThat(compose).contains("user: \"1001:988\"");
         assertThat(compose).contains("QITS_CI_DAEMON_VERSION: \"abc123\"");
         assertThat(compose).doesNotContain("${PORT}");
@@ -244,13 +248,62 @@ class ComposeTemplateTest {
                 .doesNotContain("${EDGE_SEED_TLS_PORTS}")
                 .doesNotContain("${EDGE_TLS}");
         assertThat(compose).doesNotContain("${ENV_NAME}");
-        // The alias and client-key families, which replaced a single ENV_KEY the template pasted a
-        // repository name after. One left unfilled is an address or a config key rendered as text.
-        assertThat(compose).doesNotContain("${ALIAS_").doesNotContain("${CLIENT_KEY_")
-                .doesNotContain("${TIER_ENV_");
-        assertThat(compose).doesNotContain("${IDP_SECRET_");
-        assertThat(compose).doesNotContain("${IDP_AUDIENCES}");
-        assertThat(compose).doesNotContain("${IDP_CLIENTS}");
+        // The alias family, which replaced a single ENV_KEY the template pasted a repository name
+        // after. One left unfilled is an address rendered as text.
+        assertThat(compose).doesNotContain("${ALIAS_").doesNotContain("${TIER_ENV_");
+        // The credentials, and both families are filled from the run rather than the model.
+        assertThat(compose).doesNotContain("${BOOTSTRAP_CLIENT_")
+                .doesNotContain("${IDP_CLIENT_SECRET_");
+    }
+
+    /**
+     * <b>THE IDENTITY THE SEED STACK CARRIES, WHOLE, AND IT IS SIX VALUES.</b> One pair for the idp
+     * — the client it seeds its first database service client from — and one triple per seed
+     * service, spelled as the resource contract the deployer will inject the same row through.
+     * <p>
+     * The id in each triple is {@code ${ALIAS_<APP>}} and never a second spelling: a client id IS
+     * the wire alias, bare on the platform plane and tier-qualified otherwise, exactly as the
+     * deployer's own {@code PdNetworks.alias} derives it.
+     */
+    @Test
+    void everySeedServiceIsHandedItsOwnIdpClientAndTheIdpItsSeedPair() {
+        String compose = ComposeTemplate.compose(tokens());
+        String issuer = "http://qits-platform-idp:8080/idp";
+
+        assertThat(serviceBlock(compose, "qits-platform-idp"))
+                .contains("QITS_IDP_SEED_CLIENT_ID: \"prod-qits-bootstrap\"")
+                .contains("QITS_IDP_SEED_CLIENT_SECRET: \"secret-prod-qits-bootstrap\"");
+
+        Map<String, String> byService = new LinkedHashMap<>();
+        byService.put(ENV + "-qits-projects", ENV + "-qits-projects");
+        byService.put(ENV + "-qits-ci", ENV + "-qits-ci");
+        byService.put(ENV + "-qits-containers", ENV + "-qits-containers");
+        byService.put("qits-deployments", "qits-deployments");
+        byService.put("qits-platform-edge", "qits-platform-edge");
+        byService.forEach((service, client) -> assertThat(serviceBlock(compose, service))
+                .as("the idp client of %s", service)
+                .contains("QITS_RESOURCE_IDP_URL: " + issuer)
+                .contains("QITS_RESOURCE_IDP_CLIENT_ID: " + client)
+                .contains("QITS_RESOURCE_IDP_CLIENT_SECRET: \"secret-" + client + "\""));
+        // The five are the model's five, so a sixth seed client cannot be added without this list
+        // being wrong about it.
+        assertThat(PlatformModel.SEED_IDP_CLIENT_APPS.stream()
+                .map(app -> PlatformModel.wireAlias(app, ENV)).toList())
+                .containsExactlyInAnyOrderElementsOf(byService.values());
+    }
+
+    /**
+     * <b>And no other identity survives in the stack, under either spelling.</b> A named oidc
+     * client is five env lines of one identity the resource triple already carries, and a
+     * per-client idp key is the registry the idp holds in its own store now. Read off the KEYS
+     * rather than the text: the comments that explain both absences name them.
+     */
+    @Test
+    void theSeedStackNamesNoOidcClientAndNoIdpClientKey() {
+        assertThat(ComposeTemplate.compose(tokens()).lines()
+                .filter(line -> !line.strip().startsWith("#")))
+                .noneMatch(line -> line.contains("QUARKUS_OIDC_CLIENT_")
+                        || line.contains("QITS_IDP_CLIENT_"));
     }
 
     @Test
@@ -483,15 +536,12 @@ class ComposeTemplateTest {
         assertThat(extras).contains("env.QITS_EVENTS_URL=http://qits-events:8080")
                 .contains("qits-artifacts.env.QITS_ARTIFACTS_GC_PINS_CD_BASE_URL="
                         + "http://qits-deployments:8080/platform-deployments/api")
-                .contains("qits-deployments.env.QITS_AUTH_MACHINE_AUDIENCE=qits-deployments")
-                .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ID=qits-deployments");
-        // The idp seeds the same bare id, and its per-client keys embed it — so the key loses the
-        // tier too, in both files.
-        assertThat(compose).contains("QITS_IDP_CLIENT_QITS_DEPLOYMENTS_SECRET")
-                .doesNotContain("QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_");
-        assertThat(extras).contains("env.QITS_IDP_CLIENT_QITS_DEPLOYMENTS_ROLES=")
-                .doesNotContain("QITS_IDP_CLIENT_PROD_QITS_DEPLOYMENTS_");
-        assertThat(PlatformModel.idpAudiences(ENV)).contains("qits-deployments");
+                .contains("qits-deployments.env.QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL="
+                        + "http://qits-configuration:8080");
+        // And its idp client id is the same bare alias, on the seed stack where the credential is
+        // spelled at all. The extras spell no identity for anybody.
+        assertThat(ComposeTemplateTest.serviceBlock(compose, "qits-deployments"))
+                .contains("QITS_RESOURCE_IDP_CLIENT_ID: qits-deployments");
     }
 
     /**
@@ -584,50 +634,39 @@ class ComposeTemplateTest {
                 .doesNotContain("QUARKUS_OIDC_CLIENT_CLIENT_ENABLED");
     }
 
+    /**
+     * <b>NO SERVICE IS TOLD WHICH AUDIENCE TO VALIDATE ANY MORE, and that is one line per service
+     * removed rather than a gate weakened.</b> Every image ships
+     * {@code quarkus.oidc.token.audience=${qits.auth.machine.audience},qits-platform} with its own
+     * name as the shipped default, so a bearer addressed to the service or to the platform is
+     * accepted without either file naming one. All the env line ever did was narrow that to this
+     * tier's spelling, and nothing asks for a per-service audience now.
+     * <p>
+     * What stays on both sides is the GATE — whether a bearer is demanded at all — and the ISSUER,
+     * which is one address per platform rather than one per service.
+     */
     @Test
-    void everyServiceValidatesTheAudienceTheIdpActuallyMintsFor() {
-        // The images ship their pre-rename ids, and a token minted for prod-qits-ci that ci
-        // validates as qits-ci is a 401 on a gate that looks right from both sides.
+    void neitherFileNamesAnAudienceAndBothCarryTheGateAndTheIssuer() {
         String compose = ComposeTemplate.compose(tokens());
 
-        // ci ASKS FOR THE ORCHESTRATOR, and that audience moved with the caller: it asked for the
-        // deployer while it posted build-succeeded, and that call was retired in favour of the bus.
-        // Its client id is also its OWNER string at qits-containers, which compares the token's
-        // `sub` to the owner in the path — so the two lines below are one fact twice.
-        assertThat(serviceBlock(compose, ENV + "-qits-ci"))
-                .contains("QITS_AUTH_MACHINE_AUDIENCE: prod-qits-ci")
-                .contains("QUARKUS_OIDC_CLIENT_CLIENT_ID: prod-qits-ci")
-                .contains("QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE: "
-                        + "prod-qits-containers");
-        assertThat(serviceBlock(compose, "qits-deployments"))
-                .contains("QITS_AUTH_MACHINE_AUDIENCE: qits-deployments");
-        // The artifacts service validates a tier-qualified audience since the split, and mints
-        // nothing at all: the git host's announcement was the only token it ever asked for.
-        assertThat(serviceBlock(compose, ENV + "-qits-artifacts"))
-                .contains("QITS_AUTH_MACHINE_AUDIENCE: prod-qits-artifacts")
-                .doesNotContain("QUARKUS_OIDC_CLIENT_");
+        // The KEYS rather than the text: the comments that explain the absence name the variable,
+        // and a comment is not a setting.
+        assertThat(compose.lines().filter(line -> !line.strip().startsWith("#")))
+                .noneMatch(line -> line.contains("QITS_AUTH_MACHINE_AUDIENCE"));
+        assertThat(extrasKeys()).noneMatch(line -> line.contains("QITS_AUTH_MACHINE_AUDIENCE"));
 
+        assertThat(serviceBlock(compose, ENV + "-qits-ci"))
+                .contains("QITS_AUTH_MACHINE_REQUIRED: \"true\"")
+                .contains("QUARKUS_OIDC_AUTH_SERVER_URL: http://qits-platform-idp:8080/idp");
         assertThat(extras("qits-ci"))
-                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-ci")
-                .contains("env.QUARKUS_OIDC_CLIENT_CLIENT_ID=prod-qits-ci")
-                .contains("env.QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_CLIENT_AUDIENCE="
-                        + "prod-qits-containers");
-        assertThat(extras("qits-deployments"))
-                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=qits-deployments");
-        assertThat(extras("qits-artifacts"))
-                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-artifacts")
-                .doesNotContain("QUARKUS_OIDC_CLIENT_");
-        // Workspaces is both a machine caller and a machine resource: the commissioned workspace
-        // daemon dials its control socket directly, so the inbound audience must be the same
-        // environment-qualified service id the IdP minted for that socket.
+                .contains("env.QITS_AUTH_MACHINE_REQUIRED=true")
+                .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp");
         assertThat(extras("qits-workspaces"))
                 .contains("env.QITS_AUTH_MACHINE_REQUIRED=true")
-                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-workspaces")
                 .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp");
-        // The mirror remains anonymous; githost validates machine bearers and user-forwarded roles.
+        // The mirror stays anonymous on both sides: it serves cached third-party bytes to
+        // anonymous clients, validates nothing and mints nothing.
         assertThat(extras("qits-platform-mirror")).doesNotContain("QITS_AUTH_MACHINE_")
-                .doesNotContain("QUARKUS_OIDC_");
-        assertThat(extras("qits-githost")).contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-githost")
                 .doesNotContain("QUARKUS_OIDC_");
     }
 
@@ -643,21 +682,17 @@ class ComposeTemplateTest {
 
         assertThat(deployer).contains("env.QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL="
                 + "http://qits-configuration:8080");
-        // The credential that read presents: the deployer's OWN client, and an audience that is
-        // bare on both sides since the store moved plane — the pair used to be asymmetric, one
-        // plane's id asking for another plane's name.
-        assertThat(deployer)
-                .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ENABLED=true")
-                .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_AUTH_SERVER_URL="
-                        + "http://qits-platform-idp:8080/idp")
-                .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ID=qits-deployments")
-                .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_CREDENTIALS_SECRET="
-                        + "secret-qits-deployments")
-                .contains("env.QUARKUS_OIDC_CLIENT_CONFIGURATION_GRANT_OPTIONS_CLIENT_AUDIENCE="
-                        + "qits-configuration");
-        // The DEFAULT unnamed client stays off: the extension creates it whether or not anything
-        // injects it, and an enabled client with no auth-server-url fails the deployer's boot.
-        assertThat(deployer).doesNotContain("env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED");
+        // AND THE CREDENTIAL THAT READ PRESENTS IS NOT HERE. The read is behind
+        // qits-configuration's machine gate, so it carries a bearer — minted from the deployer's
+        // OWN client, which is the idp:client resource it declares and the row it injects into its
+        // own successor. The five QUARKUS_OIDC_CLIENT_CONFIGURATION_* lines this block used to
+        // carry would shadow that row and survive every rotation of it.
+        assertThat(deployer).doesNotContain("QUARKUS_OIDC_CLIENT_")
+                .doesNotContain("QITS_RESOURCE_IDP_");
+        // The seed deployer is handed it on the stack instead, because it starts before anything
+        // could inject one.
+        assertThat(serviceBlock(ComposeTemplate.compose(tokens()), "qits-deployments"))
+                .contains("QITS_RESOURCE_IDP_CLIENT_SECRET: \"secret-qits-deployments\"");
     }
 
     /**
@@ -680,146 +715,6 @@ class ComposeTemplateTest {
         assertThat(compose).doesNotContain("\n  " + ENV + "-qits-configuration:\n")
                 .doesNotContain("\n  qits-configuration:\n");
         assertThat(PlatformModel.CORE).doesNotContain("configuration");
-    }
-
-    /**
-     * <b>The deployer's client needs ROLES now, and it needed none until it had a guarded peer.</b>
-     * Every route of qits-configuration is {@code @RolesAllowed({qits:admin, qits:system})} and the
-     * idp puts a client's roles in the token's {@code groups} claim — so a deployer client with no
-     * roles mints a token that validates and is then refused 403 on the read that decides what a
-     * deployment is configured with.
-     */
-    @Test
-    void theDeployersIdpClientCarriesTheSystemRoleInBothFiles() {
-        assertThat(serviceBlock(ComposeTemplate.compose(tokens()), "qits-platform-idp"))
-                .contains("QITS_IDP_CLIENT_QITS_DEPLOYMENTS_ROLES: "
-                        + "\"qits:system,qits-platform:system\"");
-        assertThat(extras("qits-platform-idp"))
-                .contains("env.QITS_IDP_CLIENT_QITS_DEPLOYMENTS_ROLES="
-                        + "qits:system,qits-platform:system");
-        // And the audience it may ask for, which is what keeps the mint out of invalid_target.
-        assertThat(extras("qits-platform-idp"))
-                .contains("env.QITS_IDP_CLIENT_QITS_DEPLOYMENTS_AUDIENCES="
-                        + PlatformModel.idpAudiences(ENV));
-        // Bare since the store moved plane, and asserted as a whole element rather than as a
-        // substring: "prod-qits-configuration" contains "qits-configuration" too, so a split is
-        // what tells the two answers apart.
-        assertThat(PlatformModel.idpAudiences(ENV).split(",")).contains("qits-configuration");
-        // And qits-observability beside it, which is the same shape with the tier still on it: the
-        // service validates and mints nothing, so the one thing it needs from the idp is to be a
-        // value a client may ASK for. Measured 2026-09-14 before this landed: `qits-token
-        // dev-qits-observability` was 400 invalid_target, so an agent could not mint a token for
-        // the service that grants qits:agent read on purpose. Split rather than substring for the
-        // same reason as above — the element is what tells a tier's name from a bare one.
-        assertThat(PlatformModel.idpAudiences(ENV).split(",")).contains(ENV + "-qits-observability");
-        // And spelled for dev as well, because dev is the platform the refusal was measured on and
-        // a derived expectation would have passed against itself.
-        assertThat(PlatformModel.idpAudiences("dev").split(",")).contains("dev-qits-observability");
-    }
-
-    /**
-     * <b>The orchestrator's client carries BOTH planes' system roles, and its process is why.</b>
-     * The gc routes of qits-artifacts, qits-containers and qits-ci are {@code qits:system}; the
-     * deployer's pin union at {@code /platform-deployments/api/pins} is {@code qits-platform:system}.
-     * The idp puts a client's roles in the token's {@code groups} claim, so one missing role is a
-     * step that authenticates and is then refused 403 — and a run that cannot read the pins refuses
-     * to delete anything at all.
-     */
-    @Test
-    void theOrchestratorsIdpClientCarriesBothSystemRolesInBothFiles() {
-        assertThat(serviceBlock(ComposeTemplate.compose(tokens()), "qits-platform-idp"))
-                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_ORCHESTRATOR_SECRET: "
-                        + "\"secret-qits-platform-orchestrator\"")
-                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_ORCHESTRATOR_ROLES: "
-                        + "\"qits:system,qits-platform:system\"")
-                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_ORCHESTRATOR_AUDIENCES: \""
-                        + PlatformModel.idpAudiences(ENV) + "\"");
-        assertThat(extras("qits-platform-idp"))
-                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_ORCHESTRATOR_SECRET="
-                        + "secret-qits-platform-orchestrator")
-                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_ORCHESTRATOR_ROLES="
-                        + "qits:system,qits-platform:system")
-                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_ORCHESTRATOR_AUDIENCES="
-                        + PlatformModel.idpAudiences(ENV));
-        // Every peer it mints for is on that list. An audience a client may not ask for is
-        // invalid_target, which never reaches the peer's own gate.
-        assertThat(PlatformModel.idpAudiences(ENV)).contains("prod-qits-artifacts")
-                .contains("prod-qits-containers").contains("prod-qits-ci")
-                .contains("qits-deployments");
-    }
-
-    /**
-     * <b>Its client carries both planes' system roles and the WILDCARD PROJECT CLAIM.</b> The roles
-     * are the orchestrator's pair — qits:system for the catalog, the content reads and ci's
-     * trigger, qits-platform:system for the platform plane's half — and qits:admin is deliberately
-     * absent, because that is the role of a person. The claim is the part that is not optional:
-     * qits-ci's trigger calls {@code requireProject("*")}, so a bump naming ONE repository is
-     * refused without a token granted every project.
-     */
-    @Test
-    void theMaintenanceIdpClientCarriesBothSystemRolesAndTheWildcardProjectClaim() {
-        assertThat(serviceBlock(ComposeTemplate.compose(tokens()), "qits-platform-idp"))
-                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_SECRET: "
-                        + "\"secret-qits-platform-maintenance\"")
-                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_ROLES: "
-                        + "\"qits:system,qits-platform:system\"")
-                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_AUDIENCES: \""
-                        + PlatformModel.idpAudiences(ENV) + "\"")
-                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_CLAIMS_PROJECT: \"*\"");
-        assertThat(extras("qits-platform-idp"))
-                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_SECRET="
-                        + "secret-qits-platform-maintenance")
-                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_ROLES="
-                        + "qits:system,qits-platform:system")
-                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_AUDIENCES="
-                        + PlatformModel.idpAudiences(ENV))
-                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_CLAIMS_PROJECT=*");
-        // qits:admin is the human role and this service is never a person.
-        assertThat(extras("qits-platform-idp"))
-                .doesNotContain("QITS_IDP_CLIENT_QITS_PLATFORM_MAINTENANCE_ROLES="
-                        + "qits:system,qits-platform:system,qits:admin");
-        // Every peer it mints for is on the audience list. An audience a client may not ask for is
-        // invalid_target, which never reaches the peer's own gate.
-        assertThat(PlatformModel.idpAudiences(ENV)).contains("prod-qits-projects")
-                .contains("prod-qits-githost").contains("prod-qits-ci");
-        // And the client itself is named, or the idp answers invalid_client to a secret it holds.
-        assertThat(PlatformModel.idpClients(ENV)).contains("qits-platform-maintenance");
-    }
-
-    /**
-     * <b>Its idp client is a docker credential first.</b> The service mints against no peer, but
-     * the glances pull it starts goes through the platform mirror and the edge has granted no
-     * anonymous read since 2026-08-14 — so the client exists to be half of a {@code config.json}.
-     * Its roles are the machine pair; qits:admin is absent, and on this service that absence is
-     * what keeps a shell a person's.
-     */
-    @Test
-    void theSystemIdpClientCarriesTheMachineRolesAndNoWildcardClaim() {
-        assertThat(serviceBlock(ComposeTemplate.compose(tokens()), "qits-platform-idp"))
-                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_SYSTEM_SECRET: "
-                        + "\"secret-qits-platform-system\"")
-                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_SYSTEM_ROLES: "
-                        + "\"qits:system,qits-platform:system\"")
-                .contains("QITS_IDP_CLIENT_QITS_PLATFORM_SYSTEM_AUDIENCES: \""
-                        + PlatformModel.idpAudiences(ENV) + "\"");
-        assertThat(extras("qits-platform-idp"))
-                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_SYSTEM_SECRET="
-                        + "secret-qits-platform-system")
-                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_SYSTEM_ROLES="
-                        + "qits:system,qits-platform:system")
-                .contains("env.QITS_IDP_CLIENT_QITS_PLATFORM_SYSTEM_AUDIENCES="
-                        + PlatformModel.idpAudiences(ENV));
-        // qits:admin is the human role, and it is what opens a terminal. A machine may read the
-        // panels; only a person may get a shell.
-        assertThat(extras("qits-platform-idp"))
-                .doesNotContain("QITS_IDP_CLIENT_QITS_PLATFORM_SYSTEM_ROLES="
-                        + "qits:system,qits-platform:system,qits:admin");
-        // No wildcard project claim: it triggers no pipeline. The two grants stay artifacts' and
-        // maintenance's.
-        assertThat(extras("qits-platform-idp"))
-                .doesNotContain("QITS_IDP_CLIENT_QITS_PLATFORM_SYSTEM_CLAIMS_PROJECT");
-        // And the client itself is named, or the idp answers invalid_client to a secret it holds.
-        assertThat(PlatformModel.idpClients(ENV)).contains("qits-platform-system");
     }
 
     /**
@@ -1011,48 +906,33 @@ class ComposeTemplateTest {
                 .filter(line -> line.startsWith(EXTRAS))
                 .filter(line -> line.contains("QITS_CI_REGISTRY_AUTH"))
                 .toList()).isEmpty();
-        // The artifacts secret is still in both files — the idp is told what it is — and it is
-        // ci's block that must not carry it.
-        assertThat(serviceBlock(compose, ENV + "-qits-ci"))
-                .doesNotContain("secret-prod-qits-artifacts");
-        assertThat(extras("qits-ci")).doesNotContain("secret-prod-qits-artifacts");
+        // And the store's own credential is in neither file now — qits-artifacts is not a seed
+        // client, so its client arrives with its own deployment — which makes ci's block carrying
+        // it doubly impossible.
+        assertThat(compose).doesNotContain("secret-prod-qits-artifacts");
+        assertThat(ComposeTemplate.extras(tokens())).doesNotContain("secret-prod-qits-artifacts");
     }
 
     /**
-     * <b>THE TWO PULLERS HOLD A CLIENT NOW, and each holds its OWN.</b> The deployer and the
-     * orchestrator both shell {@code docker pull}, and since the flip a pull is authenticated with
-     * a client id and a secret out of a config.json. A borrowed identity would make a refused pull
-     * unattributable, so each gets a credential of its own — and the same full audience list every
-     * other client gets, because a list is restated in full or it is not there.
+     * <b>THE TWO PULLERS HOLD A CREDENTIAL, and each holds its OWN.</b> The deployer and the
+     * container orchestrator both shell {@code docker pull}, and since the flip a pull is
+     * authenticated with a client id and a secret out of a config.json. A borrowed identity would
+     * make a refused pull unattributable, so each is handed its own — as the resource triple, on
+     * its own seed block, and nowhere in the extras: the deployer injects the same registry row
+     * into every successor.
      */
     @Test
-    void thePullersAreIdpClientsWithTheirOwnSecrets() {
+    void thePullersAreHandedTheirOwnCredentialOnTheSeedAndNeverInTheExtras() {
         String compose = ComposeTemplate.compose(tokens());
-        String idp = serviceBlock(compose, "qits-platform-idp");
-        String idpExtras = extras("qits-platform-idp");
-        String audiences = PlatformModel.idpAudiences(ENV);
 
-        assertThat(idp).contains("QITS_IDP_CLIENT_QITS_DEPLOYMENTS_SECRET: "
-                        + "\"secret-qits-deployments\"")
-                .contains("QITS_IDP_CLIENT_PROD_QITS_CONTAINERS_SECRET: "
-                        + "\"secret-prod-qits-containers\"")
-                .contains("QITS_IDP_CLIENT_QITS_DEPLOYMENTS_AUDIENCES: \"" + audiences + "\"")
-                .contains("QITS_IDP_CLIENT_PROD_QITS_CONTAINERS_AUDIENCES: \"" + audiences + "\"");
-        assertThat(idpExtras)
-                .contains("env.QITS_IDP_CLIENT_QITS_DEPLOYMENTS_SECRET="
-                        + "secret-qits-deployments")
-                .contains("env.QITS_IDP_CLIENT_PROD_QITS_CONTAINERS_SECRET="
-                        + "secret-prod-qits-containers")
-                .contains("env.QITS_IDP_CLIENT_QITS_DEPLOYMENTS_AUDIENCES=" + audiences)
-                .contains("env.QITS_IDP_CLIENT_PROD_QITS_CONTAINERS_AUDIENCES=" + audiences);
-        // And both are on the list that says which clients exist: an id not on it is
-        // invalid_client, with nothing to say it was a typo.
-        assertThat(idp).contains("QITS_IDP_CLIENTS: \"" + String.join(",",
-                PlatformModel.idpClients(ENV)) + "\"");
-        assertThat(idpExtras).contains("env.QITS_IDP_CLIENTS="
-                + String.join(",", PlatformModel.idpClients(ENV)));
-        assertThat(PlatformModel.idpClients(ENV))
-                .contains("qits-deployments", "prod-qits-containers");
+        assertThat(serviceBlock(compose, "qits-deployments"))
+                .contains("QITS_RESOURCE_IDP_CLIENT_ID: qits-deployments")
+                .contains("QITS_RESOURCE_IDP_CLIENT_SECRET: \"secret-qits-deployments\"");
+        assertThat(serviceBlock(compose, ENV + "-qits-containers"))
+                .contains("QITS_RESOURCE_IDP_CLIENT_ID: prod-qits-containers")
+                .contains("QITS_RESOURCE_IDP_CLIENT_SECRET: \"secret-prod-qits-containers\"");
+        assertThat(extras("qits-deployments")).doesNotContain("QITS_RESOURCE_IDP_");
+        assertThat(extras("qits-containers")).doesNotContain("QITS_RESOURCE_IDP_");
     }
 
     /**
@@ -1062,31 +942,31 @@ class ComposeTemplateTest {
      * credential, and a session belongs to a tier.
      */
     @Test
-    void theEdgeIsAnIdpClientAndSessionsAreEnabled() {
+    void theEdgesSessionCredentialIsTheResourceTripleAndSessionsAreEnabled() {
         String compose = ComposeTemplate.compose(tokens());
         String edge = serviceBlock(compose, "qits-platform-edge");
         String idp = serviceBlock(compose, "qits-platform-idp");
 
-        assertThat(idp).contains(
-                "QITS_IDP_CLIENT_PROD_QITS_EDGE_SECRET: \"secret-prod-qits-edge\"")
-                .contains("QITS_IDP_CLIENT_PROD_QITS_EDGE_ROLES: \"qits:system,qits-platform:system\"")
-                .contains("QITS_IDP_CLIENT_PROD_QITS_CI_ROLES: \"qits:system,qits-platform:system,qits:admin\"");
+        // THE IDP IS TOLD NOTHING ABOUT THE EDGE, or about any other client: the only pair on its
+        // block is its own seed client, which it creates its first database service client from.
+        assertThat(idp).contains("QITS_IDP_SEED_CLIENT_ID: \"prod-qits-bootstrap\"")
+                .doesNotContain("QITS_IDP_CLIENT_");
+        // The edge holds its session credential as the resource triple every seed service gets:
+        // qits-edge reads QITS_RESOURCE_IDP_CLIENT_ID/_CLIENT_SECRET first and maps them onto
+        // qits.edge.sessions.client-id/-secret itself, so the pair it used to be told separately
+        // is one row in the deployer's registry now.
         assertThat(edge).contains("QITS_EDGE_SESSIONS_ENABLED: \"true\"")
-                .contains("QITS_EDGE_SESSIONS_CLIENT_ID: prod-qits-edge")
-                .contains("QITS_EDGE_SESSIONS_CLIENT_SECRET: \"secret-prod-qits-edge\"");
-        assertThat(extras("qits-platform-idp"))
-                .contains("env.QITS_IDP_CLIENT_PROD_QITS_EDGE_SECRET=secret-prod-qits-edge")
-                .contains("env.QITS_IDP_CLIENT_PROD_QITS_EDGE_ROLES=qits:system,qits-platform:system")
-                .contains("env.QITS_IDP_CLIENT_PROD_QITS_CI_ROLES=qits:system,qits-platform:system,qits:admin");
+                .contains("QITS_RESOURCE_IDP_CLIENT_ID: qits-platform-edge")
+                .contains("QITS_RESOURCE_IDP_CLIENT_SECRET: \"secret-qits-platform-edge\"")
+                .doesNotContain("QITS_EDGE_SESSIONS_CLIENT_SECRET");
+        assertThat(extras("qits-platform-idp")).doesNotContain("QITS_IDP_CLIENT")
+                .doesNotContain("QITS_IDP_SEED_CLIENT");
+        // And the deployed edge carries the switch and no credential at all — the deployer injects
+        // the row, and a stored secret would shadow the one it keeps current.
         assertThat(extras("qits-platform-edge"))
                 .contains("env.QITS_EDGE_SESSIONS_ENABLED=true")
-                .contains("env.QITS_EDGE_SESSIONS_CLIENT_ID=prod-qits-edge")
-                .contains("env.QITS_EDGE_SESSIONS_CLIENT_SECRET=secret-prod-qits-edge");
-        // No audience list for it: the edge introspects a session with Basic and asks the idp for
-        // no token at all, which is what parts it from the two pullers above.
-        assertThat(idp).doesNotContain("QITS_IDP_CLIENT_PROD_QITS_EDGE_AUDIENCES");
-        assertThat(extras("qits-platform-idp"))
-                .doesNotContain("QITS_IDP_CLIENT_PROD_QITS_EDGE_AUDIENCES");
+                .doesNotContain("env.QITS_EDGE_SESSIONS_CLIENT_SECRET=")
+                .doesNotContain("QITS_RESOURCE_IDP_");
         // And the gateway is untouched by all of it: which variant it is built as is a pipeline
         // build arg, and neither generated file sets one — the comments that NAME it are not
         // settings, which is why this reads the keys rather than the text.
@@ -1314,7 +1194,6 @@ class ComposeTemplateTest {
                 .contains("env.QITS_PROJECTS_AGENT_GIT_BASE=" + host + "/git")
                 .contains("env.QITS_EVENTS_URL=http://qits-events:8080")
                 .contains("env.QITS_AUTH_MACHINE_REQUIRED=true")
-                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-projects")
                 .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp")
                 .doesNotContain("QITS_ARTIFACTS_URL");
         assertThat(extras("qits-workspaces")).contains("env.QITS_GITHOST_URL=" + host)
@@ -1470,12 +1349,13 @@ class ComposeTemplateTest {
                 .contains("QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_containers_eventstream")
                 .contains("QITS_RESOURCE_EVENTSTREAM_PASSWORD: \"0f0f0f0f0f0f0f0f\"");
         assertThat(block).contains("QITS_EVENTS_URL: http://qits-events:8080");
-        // Every route of this service is guarded, so the audience is not decoration: the image ships
-        // the bare qits-containers and the idp mints prod-qits-containers. No oidc-client — it
-        // validates and mints nothing, exactly like the deployer.
-        assertThat(block).contains("QITS_AUTH_MACHINE_AUDIENCE: prod-qits-containers")
-                .contains("QITS_AUTH_MACHINE_REQUIRED: \"true\"")
+        // Every route of this service is guarded, and the gate is what the seed states: the
+        // audience is the image's own name plus qits-platform, which no file has to say. No
+        // oidc-client either — it validates and mints nothing — but it HOLDS a credential, because
+        // its `docker pull` of every workload image presents one.
+        assertThat(block).contains("QITS_AUTH_MACHINE_REQUIRED: \"true\"")
                 .contains("QUARKUS_OIDC_AUTH_SERVER_URL: http://qits-platform-idp:8080/idp")
+                .contains("QITS_RESOURCE_IDP_CLIENT_ID: prod-qits-containers")
                 .doesNotContain("QUARKUS_OIDC_CLIENT_");
         // The socket and the group, in the seed — the group as the PRIMARY one, because
         // group_add is a key a stack file refuses. No data volume: the store is the postgres
@@ -1491,10 +1371,11 @@ class ComposeTemplateTest {
                 .contains(".mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock")
                 .contains(".groups[0]=988")
                 .contains("env.QITS_EVENTS_URL=http://qits-events:8080")
-                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=prod-qits-containers")
                 .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp");
         // Both stores are declared in its deployments.yml, so the deployer injects the six
         // variables — a pin here is written after that injection and outlives the next rotation.
+        // Its idp client is the same contract and the same reason, which is why QITS_RESOURCE_
+        // covers both halves of this assertion.
         assertThat(orchestrator).doesNotContain("QITS_RESOURCE_");
         // No gateway route, and there must not be one: every caller is a machine on qits-net, and a
         // route would put a socket-holding orchestrator behind the platform's public door.
@@ -1766,7 +1647,7 @@ class ComposeTemplateTest {
     }
 
     @Test
-    void theIdpsDeploymentCarriesEverySecretAndTheClientListItself() {
+    void theIdpsDeploymentCarriesNoClientAtAll() {
         String idp = extras("qits-platform-idp");
 
         // No volume and no datasource: the store is a database the deployer provisions from
@@ -1775,20 +1656,18 @@ class ComposeTemplateTest {
         assertThat(idp).doesNotContain(".mounts[")
                 .doesNotContain("QUARKUS_DATASOURCE_IDP_JDBC_URL")
                 .doesNotContain("QITS_RESOURCE_");
-        for (String app : PlatformModel.IDP_CLIENT_APPS) {
-            assertThat(idp).contains("secret-" + PlatformModel.wireAlias(app, ENV));
-        }
-        // Each of these keys REPLACES the shipped list rather than extending it, and every id in
-        // them carries the environment name, which no shipped default can follow.
-        assertThat(idp).contains("QITS_IDP_CLIENTS=" + String.join(",", PlatformModel.idpClients(ENV)));
-        assertThat(idp).contains("QITS_IDP_CLIENT_PROD_QITS_CI_AUDIENCES=")
-                .contains("QITS_IDP_CLIENT_PROD_QITS_ARTIFACTS_AUDIENCES=")
-                .contains("qits-deployments");
-        // The wildcard project claim, under the id it moved to when the store became an
-        // environment service. Nobody in this bootstrap presents it any more — the release replays
-        // push a tag — and it stays for the person who triggers a run by hand.
-        assertThat(idp).contains("QITS_IDP_CLIENT_PROD_QITS_ARTIFACTS_CLAIMS_PROJECT=*");
-        assertThat(idp).doesNotContain("QITS_IDP_CLIENT_QITS_PLATFORM_ARTIFACTS_");
+        // AND NOT ONE CLIENT. This block used to mirror the idp's whole registry — the list, a
+        // secret per client, the audiences, the roles and the two project claims — because the idp
+        // was configured from a file. A client is a ROW it holds now, created against the running
+        // service, and a redeployed idp keeps every one of them.
+        assertThat(idp).doesNotContain("QITS_IDP_CLIENT")
+                .doesNotContain("QITS_IDP_SEED_CLIENT_ID")
+                .doesNotContain("QITS_IDP_SEED_CLIENT_SECRET")
+                .doesNotContain("secret-");
+        // What stays is what a repository cannot know: the issuer, the browser-SSO trio and the
+        // passkey binding.
+        assertThat(idp).contains("env.QITS_IDP_ISSUER=")
+                .contains("env.QITS_IDP_WEBAUTHN_RP_ID=");
     }
 
     /**
@@ -1857,9 +1736,11 @@ class ComposeTemplateTest {
      */
     @Test
     void everyDatabaseTheSeedDialsIsOneTheSeedCreates() {
+        // The jdbc ones only: QITS_RESOURCE_IDP_URL is the same contract for a credential rather
+        // than a store, and the issuer it names is not a database anybody creates.
         List<String> dialled = ComposeTemplate.compose(tokens()).lines()
                 .map(String::strip)
-                .filter(line -> line.startsWith("QITS_RESOURCE_") && line.contains("_URL:"))
+                .filter(line -> line.startsWith("QITS_RESOURCE_") && line.contains("_URL: jdbc:"))
                 .map(line -> line.substring(line.lastIndexOf('/') + 1))
                 .distinct()
                 .toList();
@@ -1953,10 +1834,13 @@ class ComposeTemplateTest {
         // shipped client-enabled=false could create no wrapper and therefore no project.
         assertThat(block)
                 .contains("QITS_GITHOST_URL: http://" + ENV + "-qits-githost:8080")
-                .contains("QUARKUS_OIDC_CLIENT_GITHOST_CLIENT_ENABLED: \"true\"")
-                .contains("QUARKUS_OIDC_CLIENT_GITHOST_CLIENT_ID: " + ENV + "-qits-projects")
-                .contains("QUARKUS_OIDC_CLIENT_GITHOST_GRANT_OPTIONS_CLIENT_AUDIENCE: " + ENV
-                        + "-qits-githost");
+                .contains("QITS_RESOURCE_IDP_URL: http://qits-platform-idp:8080/idp")
+                .contains("QITS_RESOURCE_IDP_CLIENT_ID: " + ENV + "-qits-projects")
+                .contains("QITS_RESOURCE_IDP_CLIENT_SECRET: \"secret-" + ENV
+                        + "-qits-projects\"")
+                // One credential, and no named client per peer: the image builds those over
+                // qits.resource.idp.*, so a quintet here would be a second copy of one identity.
+                .doesNotContain("QUARKUS_OIDC_CLIENT_");
         // Its mirrors go on the volume its successor mounts, not into a container layer — and not
         // under ${user.home}, which is the literal "?" for this image's passwd-less uid.
         assertThat(block)
@@ -2158,12 +2042,13 @@ class ComposeTemplateTest {
         assertThat(ComposeTemplate.compose(other))
                 .contains("\n  preprod-qits-ci:\n")
                 .contains("QITS_EDGE_ENVIRONMENTS: preprod")
-                .contains("QITS_IDP_CLIENT_PREPROD_QITS_CI_SECRET")
+                // ci's own client id follows the tier, on the seed where it is spelled at all.
+                .contains("QITS_RESOURCE_IDP_CLIENT_ID: preprod-qits-ci")
                 // The registry name carries the tier too: one edge, one door, a name per tier.
                 .contains("QITS_ARTIFACTS_REGISTRY_HOST: registry.preprod.localhost:8080");
         assertThat(ComposeTemplate.extras(other))
                 .contains("env.QITS_ARTIFACTS_REGISTRY_HOST=registry.preprod.localhost:8080")
-                .contains("env.QITS_AUTH_MACHINE_AUDIENCE=preprod-qits-ci")
+                .contains("env.QITS_CI_CONTAINER_GIT_AUDIENCE=preprod-qits-githost")
                 // The bus is a PLATFORM service, so this one address does NOT carry the tier —
                 // which is the whole point of deriving it rather than spelling the environment in.
                 .contains("env.QITS_EVENTS_URL=http://qits-events:8080")
@@ -2195,7 +2080,9 @@ class ComposeTemplateTest {
                 .doesNotContain("QITS_GITHOST_STORAGE_CLIENT");
         // And it names the projects service's own client id, which is the only one qits-idp ever
         // stamps clients/<that> into. Naming anything else would close the scheme to everybody.
-        assertThat(PlatformModel.idpClients(ENV)).contains(ENV + "-qits-projects");
+        // That id is the wire alias, which is also what the seed block hands the service as its
+        // QITS_RESOURCE_IDP_CLIENT_ID.
+        assertThat(PlatformModel.wireAlias("projects", ENV)).isEqualTo(ENV + "-qits-projects");
     }
 
     /**

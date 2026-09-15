@@ -3,6 +3,7 @@ package eu.wohlben.qits.cli.bootstrap.phases;
 import com.fasterxml.jackson.databind.JsonNode;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.Json;
+import eu.wohlben.qits.cli.bootstrap.api.ServiceClientsApi;
 import eu.wohlben.qits.cli.bootstrap.config.Acme;
 import eu.wohlben.qits.cli.bootstrap.config.DomainName;
 import eu.wohlben.qits.cli.bootstrap.config.ExtraSans;
@@ -672,9 +673,14 @@ public class SeedPhases {
                     boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME));
             state.read();
             boot.state.daemonSha = state.daemonSha().orElse(null);
-            for (String client : PlatformModel.idpClients(boot.config.envName())) {
-                state.secret(client).ifPresent(secret -> boot.state.secrets.put(client, secret));
-            }
+            // ONE identity key, and it is the bootstrap's own. The seed services' secrets are read
+            // back from qits-deployments' registry by the idp-clients phase, because that is where
+            // they live from the moment the idp issues them.
+            String bootstrapClient = PlatformModel.bootstrapClientId(boot.config.envName());
+            state.bootstrapSecret(bootstrapClient).ifPresent(secret -> {
+                boot.state.bootstrapClientId = bootstrapClient;
+                boot.state.bootstrapSecret = secret;
+            });
             // A token this file holds is a token an earlier run minted, and the mint phase mints
             // once per installation: every call makes another key to the first admin account.
             boot.state.registerTokenRecorded = state.registerToken().isPresent();
@@ -694,13 +700,14 @@ public class SeedPhases {
             ctx.log("  " + state.file());
             ctx.log("  recorded daemon digest: "
                     + (boot.state.daemonSha == null ? "none" : shortSha(boot.state.daemonSha)));
-            ctx.log("  recorded client secrets: " + boot.state.secrets.size() + " of "
-                    + PlatformModel.idpClients(boot.config.envName()).size());
+            ctx.log("  recorded bootstrap client secret: "
+                    + (boot.state.bootstrapSecret == null ? "none yet" : "yes"));
             ctx.log("  recorded repository storage ids: " + boot.state.repositoryIds.size() + " of "
                     + PlatformModel.platformRepos().size());
             ctx.log("  register token: " + (boot.state.registerTokenRecorded
                     ? "minted by an earlier run" : "none yet"));
-            ctx.note("kept " + boot.state.secrets.size() + " secrets");
+            ctx.note(boot.state.bootstrapSecret == null ? "no bootstrap secret yet"
+                    : "kept the bootstrap secret");
         });
     }
 
@@ -1956,38 +1963,186 @@ public class SeedPhases {
     // --- secrets, compose, extras ----------------------------------------------------------------
 
     /**
-     * Every static client ships without a secret and is unusable until a deployment gives it one.
-     * Precedence: an explicit override, else what a previous run recorded, else a fresh random.
+     * <b>THE ONE CREDENTIAL THIS PROGRAM STILL RESOLVES FOR ITSELF.</b>
+     * <p>
+     * It used to resolve one per platform client and write them all into the seed stack. It does
+     * not: a secret in a generated file is a second copy of a credential the idp already holds, and
+     * the two drift the first time either side is edited. Every other client is CREATED against the
+     * running idp by {@link #idpClients()} and its secret recorded in qits-deployments'
+     * {@code pd_resource} registry, which is the authority for an application credential anyway.
+     * <p>
+     * <b>This one cannot be, because it is the credential the creating is done WITH.</b> The idp
+     * seeds its first database service client from {@code QITS_IDP_SEED_CLIENT_ID} /
+     * {@code _SECRET} at its first start, so the bootstrap's pair has to exist BEFORE the idp does
+     * — which is why this phase is above {@code seed-idp} rather than beside the clients it makes.
+     * <p>
+     * Precedence unchanged in spirit: an explicit override, else what a previous run recorded, else
+     * a fresh random. The recorded arm is what makes a rerun keep working — the idp's seed is
+     * once-per-installation (an {@code idp_seed} marker row, not the variables), so a boot that
+     * generated a new secret would present one the standing idp never accepted.
+     * <p>
+     * The ORIGIN reaches the screen. The value never does.
      */
-    public Phase idpSecrets() {
-        return new Phase("idp-secrets", "resolve the idp's client secrets and record the run state",
-                ctx -> {
-                    for (String client : PlatformModel.idpClients(boot.config.envName())) {
-                        Optional<String> given = ConfigProvider.getConfig()
-                                .getOptionalValue("qits.idp.client." + client + ".secret", String.class)
-                                .filter(value -> !value.isBlank());
-                        String kept = boot.state.secrets.get(client);
-                        String origin;
-                        String value;
-                        if (given.isPresent()) {
-                            value = given.get();
-                            origin = "given";
-                        } else if (kept != null && !kept.isBlank()) {
-                            value = kept;
-                            origin = "kept";
-                        } else {
-                            value = randomSecret();
-                            origin = "generated";
-                        }
-                        boot.state.secrets.put(client, value);
-                        ctx.log(String.format("  %-24s %s", client, origin));
-                    }
+    public Phase idpBootstrapClient() {
+        return new Phase("idp-bootstrap-client",
+                "resolve the bootstrap's idp client and record the run state", ctx -> {
+                    String client = PlatformModel.bootstrapClientId(boot.config.envName());
                     BootstrapState state = new BootstrapState(
                             boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME));
-                    state.write(boot.state.daemonSha, boot.state.secrets);
+                    state.read();
+                    Optional<String> given = ConfigProvider.getConfig()
+                            .getOptionalValue("qits.idp.client." + client + ".secret", String.class)
+                            .filter(value -> !value.isBlank());
+                    Optional<String> kept = state.bootstrapSecret(client);
+                    String origin;
+                    String value;
+                    if (given.isPresent()) {
+                        value = given.get();
+                        origin = "given";
+                    } else if (kept.isPresent()) {
+                        value = kept.get();
+                        origin = "kept";
+                    } else {
+                        value = randomSecret();
+                        origin = "generated";
+                    }
+                    boot.state.bootstrapClientId = client;
+                    boot.state.bootstrapSecret = value;
+                    ctx.log(String.format("  %-24s %s", client, origin));
+                    state.write(boot.state.daemonSha, client, value);
                     ctx.log("  recorded in " + state.file());
+                    ctx.note(origin);
                 });
     }
+
+    /**
+     * <b>THE SEED SERVICES' IDP CLIENTS, created against the idp that is already running.</b>
+     * <p>
+     * Five applications ({@link PlatformModel#SEED_IDP_CLIENT_APPS}) and one act each: find a
+     * working secret, or make one. Everything else on this platform declares an {@code idp:client}
+     * resource and is handed its triple by qits-deployments at deploy time; these five are up
+     * before there is a deployer to hand them anything, so the bootstrap stands in — and it stands
+     * in by writing the SAME registry row the deployer would, so the deployer inherits the
+     * credential rather than rotating it out from under a running service on its first sweep.
+     * <p>
+     * <b>The order of the three arms is what makes a rerun safe.</b>
+     * <ul>
+     *   <li><b>Recorded and it still works</b> — the registry row is the authority, and a token
+     *       minted with it is the only proof that it is current. The probe is not ceremony: the
+     *       idp stores a HASH, so a row that has gone stale looks exactly like one that has not.
+     *   <li><b>Create</b> — a first boot, where the idp knows nothing about this client.
+     *   <li><b>409, then rotate</b> — the client is there and its secret is unrecoverable. Rotating
+     *       is the only way back to a usable pair, which is why a conflict is a step in this phase
+     *       and never a failure of it.
+     * </ul>
+     * <p>
+     * <b>A registry that is not there yet does not stop the boot.</b> On a cold machine
+     * qits-deployments' Flyway has not run, so {@link PgAdmin#recordIdpClient} has no table to
+     * write to. The secret is still good for this run — the seed containers are started with what
+     * this phase resolved — and the next run finds no row, creates, meets the 409 and rotates. The
+     * log says so rather than leaving a person to work it out.
+     * <p>
+     * <b>Three spellings of one identity, and only one of them follows the plane.</b> The registry
+     * row is keyed by the APPLICATION and the TIER — the tier for every application, platform
+     * services included, because that is what qits-deployments keys a {@code pd_resource} row by
+     * and what its {@code ResourceProvisioning} refuses a deployment for lacking. The CLIENT ID in
+     * that row is the WIRE ALIAS, which is bare for a platform service and qualified for an
+     * environment one. Writing the tier into the alias, or the plane into the key, is a row the
+     * deployer cannot find and a second credential rotated over a running container.
+     * <p>
+     * One aligned line per client, with the client id and the outcome. No secret reaches the
+     * screen, the run log or {@code .qits-bootstrap.env}.
+     */
+    public Phase idpClients() {
+        return new Phase("idp-clients", "create the seed services' idp clients", ctx -> {
+            String env = boot.config.envName();
+            ServiceClientsApi clients = new ServiceClientsApi(boot.http, boot.config.idpIssuer(),
+                    boot.state.bootstrapClientId, boot.state.bootstrapSecret);
+            // The registry, read ONCE: one connection for five questions, and every row is
+            // answered from the same snapshot.
+            String registryUrl = deploymentsRegistryUrl();
+            Map<String, PgAdmin.IdpRow> recorded = PgAdmin.recordedIdpClients(registryUrl,
+                    "postgres", orEmpty(boot.state.pgSuperuserPassword), env);
+            ctx.log("  " + recorded.size() + " idp client"
+                    + (recorded.size() == 1 ? "" : "s") + " already in the deployer's registry");
+            boolean registryWrote = true;
+            for (String app : PlatformModel.SEED_IDP_CLIENT_APPS) {
+                String clientId = PlatformModel.wireAlias(app, env);
+                String application = PlatformModel.application(app);
+                PgAdmin.IdpRow row = recorded.get(application);
+                String secret = null;
+                String outcome;
+                if (row != null && clientId.equals(row.clientId()) && probes(clientId, row.secret())) {
+                    secret = row.secret();
+                    outcome = "reused";
+                } else {
+                    ServiceClientsApi.Result made = clients.create(clientId);
+                    outcome = "created";
+                    if (made.conflict()) {
+                        // The row is there and its secret is a hash. Rotating is the repair, and
+                        // the only one: nothing anywhere can read the old value back.
+                        made = clients.rotate(clientId);
+                        outcome = "rotated";
+                    }
+                    if (!made.ok()) {
+                        throw new IllegalStateException("the idp issued no secret for " + clientId
+                                + ": " + made.detail());
+                    }
+                    secret = made.secret();
+                    // Recorded the moment it arrives, before anything else can fail: a secret this
+                    // run holds and never wrote down is a credential nobody can recover.
+                    // THE TIER, for every one of the five. A registry row's key is the
+                    // environment's name and there is always one: a platform service is deployed
+                    // into the designated environment like anything else since qits-deployments'
+                    // V8 rekey, and its ResourceProvisioning REFUSES a deployment that names no
+                    // environment. What IS plane-dependent is the client id above, which
+                    // PlatformModel.wireAlias already answers.
+                    if (!PgAdmin.recordIdpClient(registryUrl, "postgres",
+                            orEmpty(boot.state.pgSuperuserPassword), application,
+                            env, clientId, secret)) {
+                        registryWrote = false;
+                    }
+                }
+                boot.state.serviceClientSecrets.put(application, secret);
+                ctx.log(String.format("  %-28s %s", clientId, outcome));
+            }
+            if (!registryWrote) {
+                ctx.log("  qits-deployments' pd_resource registry does not exist yet — its Flyway "
+                        + "has not run on this machine, so nothing was recorded. The seed starts "
+                        + "with what this phase resolved, and the next run finds no row, creates, "
+                        + "meets the 409 and rotates into a fresh one.");
+            }
+            ctx.note(PlatformModel.SEED_IDP_CLIENT_APPS.size() + " clients");
+        });
+    }
+
+    /**
+     * Whether a recorded secret is still the one the idp accepts. The service stores a hash, so
+     * there is no cheaper question than asking for a token — {@code GET /service-clients/<id>} says
+     * only that a row exists, which a stale secret says too.
+     * <p>
+     * A refusal is an ANSWER: {@link eu.wohlben.qits.cli.bootstrap.api.IdpApi#token} throws on one,
+     * and here that means "rotate", not "stop".
+     */
+    private boolean probes(String clientId, String secret) {
+        try {
+            return !boot.idp.token(clientId, secret, Boot.PLATFORM_AUDIENCE).isBlank();
+        } catch (RuntimeException refused) {
+            return false;
+        }
+    }
+
+    /**
+     * The deployer's own database on the seed postgres, as an admin url. The same server
+     * {@code seed-postgres} started and the same superuser credential it resolved — this phase
+     * invents no second source for either, because two sources are two clusters the day one moves.
+     */
+    private String deploymentsRegistryUrl() {
+        return "jdbc:postgresql://"
+                + PlatformModel.wireAlias("oci-postgresql", boot.config.envName())
+                + ":5432/qits_deployments";
+    }
+
 
     // --- the one host rule this platform cannot run without ---------------------------------------
 
@@ -2240,15 +2395,12 @@ public class SeedPhases {
                     // nothing on the successor. Same masking every other credential in this file
                     // gets.
                     .mask(orEmpty(boot.config.dnsHetznerToken().orElse(null)));
-            // EVERY IDP CLIENT SECRET, and the loop is what keeps the list honest. ci's used to be
-            // the one spelled here, because ci's was the one value in the file. It is not: the
-            // idp's own block carries a secret per client, and ci now carries the ARTIFACTS
-            // client's a second time — the credential its publish steps push to the registry
-            // with. A mask that has to be remembered per key is a secret on the screen the first
-            // time somebody adds one.
-            for (String client : PlatformModel.idpClients(boot.config.envName())) {
-                write.mask(boot.state.secrets.getOrDefault(client, ""));
-            }
+            // EVERY IDP CLIENT SECRET THIS RUN HOLDS, and the loop is what keeps the list honest.
+            // A mask that has to be remembered per key is a secret on the screen the first time
+            // somebody adds one — so the whole map is masked whether or not the extras spell each
+            // value, and the bootstrap's own pair with it.
+            boot.state.serviceClientSecrets.values().forEach(write::mask);
+            write.mask(orEmpty(boot.state.bootstrapSecret));
             ProcessResult result = boot.docker.run(write, ctx::log);
             Boot.must(result, "writing the deployer's extras failed");
             ctx.log("  " + properties.lines()
@@ -2296,7 +2448,16 @@ public class SeedPhases {
      */
     private void dockerConfig(PhaseContext ctx, String volume, String app, String... hosts) {
         String client = PlatformModel.wireAlias(app, boot.config.envName());
-        String secret = boot.state.secrets.getOrDefault(client, "");
+        // The value the idp-clients phase resolved, keyed by the APPLICATION because the registry
+        // is. A puller that is not a seed client has none here and gets an empty one: its
+        // credential arrives with its own deployment, out of the idp:client resource it declares,
+        // and the file is rewritten then. Said out loud rather than written silently.
+        String secret = boot.state.serviceClientSecrets
+                .getOrDefault(PlatformModel.application(app), "");
+        if (secret.isBlank()) {
+            ctx.log("  " + client + " has no secret yet — its config.json is written empty and "
+                    + "its own deployment fills it from the registry");
+        }
         List<String> auths = List.of(hosts);
         Cmd write = dockerConfigWrite(volume, dockerConfigJson(auths, client, secret),
                 client, secret);
@@ -2824,18 +2985,29 @@ public class SeedPhases {
         // memory gets the benefit on its next boot.
         values.put("CI_CONCURRENT_BUILDS", String.valueOf(boot.config.ciConcurrentBuildsEffective()));
         values.put("MACHINE_REQUIRED", String.valueOf(boot.config.machineAuth()));
-        // The OUTBOUND half, and a separate switch from the gate: quarkus-oidc-client ships
-        // DISABLED, so a service given an issuer and a secret still posts BARE until this is set.
-        values.put("MACHINE_CLIENT", String.valueOf(boot.config.machineAuth()));
         values.put("DOCKER_GID", boot.state.dockerGid);
         values.put("DAEMON_SHA", boot.state.daemonSha == null ? "" : boot.state.daemonSha);
-        values.put("IDP_CLIENTS", String.join(",", PlatformModel.idpClients(env)));
-        values.put("IDP_AUDIENCES", PlatformModel.idpAudiences(env));
-        // Keyed by the APPLICATION, not by the client id: the id carries the environment name and
-        // a placeholder cannot be spelled with a value the template does not know yet.
-        for (String app : PlatformModel.IDP_CLIENT_APPS) {
-            values.put("IDP_SECRET_" + PlatformModel.clientKey(app),
-                    boot.state.secrets.getOrDefault(PlatformModel.wireAlias(app, env), ""));
+        // THE IDP'S OWN SEED PAIR, and the only credential this program still records itself. The
+        // seed stack hands it to qits-platform-idp as QITS_IDP_SEED_CLIENT_ID/_SECRET, which is
+        // what the idp seeds its first database service client from — once, gated by an idp_seed
+        // marker row rather than by these values, so rendering them on every boot seeds nothing
+        // twice. They must be rendered on every boot: `seed-idp` writes this same stack file to
+        // bring the idp up alone, before there is a client to create any other client with.
+        values.put("BOOTSTRAP_CLIENT_ID", orEmpty(boot.state.bootstrapClientId));
+        values.put("BOOTSTRAP_CLIENT_SECRET", orEmpty(boot.state.bootstrapSecret));
+        // THE FIVE SEED SERVICES' OWN CREDENTIALS, resolved by `idp-clients` against the RUNNING
+        // idp and recorded in qits-deployments' pd_resource registry — the same row the deployer
+        // will inject as QITS_RESOURCE_IDP_* when it replaces each seed container.
+        //
+        // Keyed by the APPLICATION, because the id carries the environment name and a placeholder
+        // cannot be spelled with a value the template does not know yet. There is deliberately NO
+        // matching id token: a client id IS the wire alias, ${ALIAS_<APP>} already renders it, and
+        // a second spelling would be a copy of PlatformModel.wireAlias that cannot follow a plane
+        // change. Empty until the phase has run, which is what a rerun of an earlier phase renders.
+        for (String app : PlatformModel.SEED_IDP_CLIENT_APPS) {
+            values.put("IDP_CLIENT_SECRET_" + PlatformModel.clientKey(app),
+                    boot.state.serviceClientSecrets
+                            .getOrDefault(PlatformModel.application(app), ""));
         }
         // THE PASSKEY BINDING, and it follows the address a browser arrives at rather than standing
         // beside it: a credential registered under one rp id asserts under no other host.

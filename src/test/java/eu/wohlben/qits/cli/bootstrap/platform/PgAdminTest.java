@@ -9,7 +9,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -157,6 +156,67 @@ class PgAdminTest {
     }
 
     /**
+     * <b>The idp-client half of the same registry, and the same belt.</b> A row that is not an
+     * application name, a client id and a plausible secret must never steer what a seed container
+     * is started with — the values reach a running service's credentials, not just a log line.
+     */
+    @Test
+    void theIdpClientRowsAreReadBackAndTheBeltStillHolds() {
+        FakeRegistry registry = new FakeRegistry(List.of(
+                new String[]{"qits-projects", "prod-qits-projects", "s3cr3t-and-long-enough"},
+                // No secret worth the name: a truncated or placeholder value would be handed to a
+                // container that then cannot authenticate at all.
+                new String[]{"qits-ci", "prod-qits-ci", "short"},
+                // Not a client id, so not a row this program derived.
+                new String[]{"qits-events", "PROD-QITS-EVENTS", "s3cr3t-and-long-enough"},
+                new String[]{"Robert'); drop", "prod-qits-x", "s3cr3t-and-long-enough"}));
+
+        assertThat(PgAdmin.readRecordedIdpClients(registry.connection(), "prod"))
+                .containsExactly(entry("qits-projects", new PgAdmin.IdpRow(
+                        "qits-projects", "prod-qits-projects", "s3cr3t-and-long-enough")));
+    }
+
+    /**
+     * <b>A cold boot has no registry at all</b> — qits-deployments' Flyway has not run, so there is
+     * no database, no table and no column. That answers the same as "nothing recorded", because it
+     * is the same answer: the caller creates the clients and records them on the next run.
+     */
+    @Test
+    void aMachineWithNoDeployerRegistryAnswersNothingRatherThanFailing() {
+        assertThat(PgAdmin.readRecordedIdpClients(new FakeRegistry(null).connection(), "prod"))
+                .isEmpty();
+    }
+
+    /**
+     * The same belt on the WRITE side, and it throws rather than answering false: a false says
+     * "there is no table yet", which is a stage of a cold boot, while a triple this program should
+     * never have derived is a bug in the caller.
+     */
+    @Test
+    void aTripleThisProgramMayNotRecordIsRefusedAtAssembly() {
+        assertThatThrownBy(() -> PgAdmin.recordIdpClient("jdbc:postgresql://nowhere:5432/x",
+                "postgres", PASSWORD, "qits-projects", "prod", "prod-qits-projects", "short"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageNotContaining("short");
+    }
+
+    /**
+     * <b>A row's key is the TIER and there is always one.</b> A null environment is the retired
+     * pre-V8 shape, and it is the one bad value here that would not fail loudly: the unique key is
+     * {@code nulls not distinct}, so a null and {@code prod} are different keys and the insert
+     * would SUCCEED beside the deployer's own row rather than update it — leaving the deployer to
+     * find nothing at {@code findOne(app, tier, "idp")}, provision a second credential and rotate
+     * the one the seed containers hold. Refused at assembly instead.
+     */
+    @Test
+    void aRowWithNoEnvironmentIsRefusedRatherThanWrittenBesideTheDeployersOwn() {
+        assertThatThrownBy(() -> PgAdmin.recordIdpClient("jdbc:postgresql://nowhere:5432/x",
+                "postgres", PASSWORD, "qits-deployments", null, "qits-deployments",
+                "s3cr3t-and-long-enough"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /**
      * A postgres that answers the only two things this class asks of one: whether a name is in
      * pg_catalog, and here is a statement. A proxy rather than a server, because the question is
      * which statements are assembled — and these tests run without docker like every other.
@@ -231,12 +291,15 @@ class PgAdminTest {
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws SQLException {
             return switch (method.getName()) {
-                case "createStatement" -> {
+                case "createStatement", "prepareStatement" -> {
                     if (rows == null) {
                         throw new SQLException("relation \"pd_resource\" does not exist");
                     }
-                    yield proxy(Statement.class);
+                    yield proxy(PreparedStatement.class);
                 }
+                // The idp-client read binds its two filters; this fake holds one table and
+                // answers every row of it, so what was bound changes nothing.
+                case "setString" -> null;
                 case "executeQuery" -> proxy(ResultSet.class);
                 case "next" -> ++cursor < rows.size();
                 case "getString" -> rows.get(cursor)[(int) args[0] - 1];

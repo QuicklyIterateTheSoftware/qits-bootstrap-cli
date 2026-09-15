@@ -35,12 +35,12 @@ import static org.assertj.core.api.Assertions.fail;
  *       {@code aliases[]}. These are not configuration at all: they are what the deployer builds a
  *       container out of, and no image can declare its own socket mount or its own host port.
  *   <li><b>Secrets</b> — every value this run minted. A repository cannot ship a password.
- *   <li><b>The idp client registry</b> — which clients exist, what each may ask for, and the host a
- *       passkey is bound to. Every id in it carries this environment's name.
- *   <li><b>Audiences</b> — the name a peer validates and the name a caller asks for. Both are
- *       derived from {@code PlatformModel}, and both move when an application moves plane.
- *   <li><b>The machine gate and the oidc clients</b> — whether the gate is on and where the issuer
- *       is, which is one address per platform rather than one per service.
+ *       <b>Not an idp credential</b>, which is a resource the deployer creates and injects: see
+ *       {@link #noExtrasBlockCarriesAnIdentity}, which fails the build on one.
+ *   <li><b>The passkey binding</b> — the host a credential asserts on, which is this platform's own
+ *       name and no image's to ship.
+ *   <li><b>The machine gate and the issuer</b> — whether the gate is on and where the issuer is,
+ *       which is one address per platform rather than one per service.
  *   <li><b>Tier names</b> — {@code QITS_ENVIRONMENT} and the edge's environment list. A service
  *       cannot ship the name of a tier it has not been deployed into yet.
  *   <li><b>Boot sequencing</b> — the deployer's own successor. Nothing configures the deployer but
@@ -51,10 +51,11 @@ import static org.assertj.core.api.Assertions.fail;
  *       {@link ImagePinKeys}, because a pin is a release this boot cut and no shipped default can
  *       name it.
  * </ul>
- * <b>An audience-shaped key outside the two named forms is deliberately not a family.</b>
- * {@code QITS_GITHOST_AUDIENCE} and {@code QITS_CI_CONTAINER_GIT_AUDIENCE} look like wiring and may
- * well be; widening the family to every {@code *_AUDIENCE} would classify them without anybody
- * deciding. They keep their application's exemption instead, and the wave decides where they go.
+ * <b>An audience-shaped key is deliberately not a family at all any more.</b> No service is told
+ * which audience to validate — every image ships {@code quarkus.oidc.token.audience} as its own
+ * name plus {@code qits-platform} — and {@code QITS_GITHOST_AUDIENCE} and
+ * {@code QITS_CI_CONTAINER_GIT_AUDIENCE}, which name a PEER rather than the service itself, keep
+ * their application's exemption until the wave decides where they go.
  *
  * @see ComposeTemplateGoldenTest the other half of the pair — a golden says what a block HOLDS,
  *      this says what a block is ALLOWED to hold
@@ -115,6 +116,49 @@ class ExtrasWiringGuardTest {
                     + "image that reads it. Only wiring this bootstrap alone knows -- a mount, a "
                     + "secret, an audience, a tier name, the deployer's own successor -- belongs "
                     + "in ComposeTemplate.EXTRAS.");
+        }
+    }
+
+    /**
+     * <b>IDENTITY IS NOT CONFIGURATION, AND THIS IS WHERE THAT IS ENFORCED.</b> An application's idp
+     * client is a RESOURCE it declares — {@code idp:client} in its own deployments.yml — which
+     * qits-platform-deployments creates against the running idp, records in its {@code pd_resource}
+     * registry and injects as {@code QITS_RESOURCE_IDP_URL} / {@code _CLIENT_ID} /
+     * {@code _CLIENT_SECRET} before the container starts. Those variables are written BEFORE an
+     * application's own extras and the last assignment of a key wins, so a credential stored here
+     * would not configure the deployment: it would SHADOW the row the deployer keeps current and
+     * survive every rotation of it.
+     * <p>
+     * Four prefixes, and one pair of them is deliberate. {@code QITS_OIDC_CLIENT_} is the spelling
+     * the ruling used; {@code QUARKUS_OIDC_CLIENT_} is the spelling that actually existed in this
+     * file. Both are named, so neither can come back under the other's name.
+     */
+    @Test
+    void noExtrasBlockCarriesAnIdentity() {
+        List<String> identities = new ArrayList<>();
+        for (String line : extrasKeys()) {
+            String key = key(line);
+            if (!key.startsWith("env.")) {
+                continue;
+            }
+            String name = key.substring("env.".length());
+            if (name.startsWith("QITS_RESOURCE_IDP_") || name.startsWith("QITS_IDP_CLIENT")
+                    || name.startsWith("QITS_OIDC_CLIENT_")
+                    || name.startsWith("QUARKUS_OIDC_CLIENT_")) {
+                identities.add("  " + application(line) + "." + name);
+            }
+        }
+
+        if (!identities.isEmpty()) {
+            fail("these extras keys are an identity:\n" + String.join("\n", identities)
+                    + "\n\nAn idp client is created against the RUNNING idp -- by this bootstrap "
+                    + "for the five seed applications, by qits-platform-deployments for every "
+                    + "other -- and injected into the container as QITS_RESOURCE_IDP_URL, "
+                    + "_CLIENT_ID and _CLIENT_SECRET off the pd_resource row. The deployer writes "
+                    + "those BEFORE an application's own extras and the last assignment wins, so a "
+                    + "credential stored here does not configure the deployment: it shadows the row "
+                    + "that is kept current and outlives every rotation of it. Nothing "
+                    + "identity-shaped belongs in ComposeTemplate.EXTRAS.");
         }
     }
 
@@ -184,25 +228,20 @@ class ExtrasWiringGuardTest {
             return true;
         }
 
-        // The idp client registry: who exists, what each may ask for, and the host a passkey is
-        // bound to. QITS_IDP_CLIENTS is the list and QITS_IDP_CLIENT_<ID>_* are its members, so one
-        // prefix answers both.
-        if (name.startsWith("QITS_IDP_CLIENT") || name.equals("QITS_IDP_AUDIENCES")
-                || name.startsWith("QITS_IDP_WEBAUTHN_")) {
+        // The passkey binding: the host a credential asserts on, which is this platform's own
+        // name. What used to stand beside it — the idp's client registry, every client's audience
+        // list and every service's own audience — is gone from this file entirely, and
+        // noExtrasBlockCarriesAnIdentity FAILS the build on those families rather than allowing
+        // them.
+        if (name.startsWith("QITS_IDP_WEBAUTHN_")) {
             return true;
         }
 
-        // Audiences: the name this service validates, and the name each of its clients asks for.
-        if (name.equals("QITS_AUTH_MACHINE_AUDIENCE")
-                || name.endsWith("_GRANT_OPTIONS_CLIENT_AUDIENCE")) {
-            return true;
-        }
-
-        // The machine gate and the oidc clients — whether the gate is on, and where the one issuer
-        // this platform has is. The secret and audience halves were taken above.
+        // The machine gate and the issuer — whether a bearer is demanded at all, and where the one
+        // issuer this platform has is. Neither is a credential: the gate is a platform posture, the
+        // issuer is one address per platform rather than one per service.
         if (name.equals("QITS_AUTH_MACHINE_REQUIRED")
-                || name.equals("QUARKUS_OIDC_AUTH_SERVER_URL")
-                || name.startsWith("QUARKUS_OIDC_CLIENT_")) {
+                || name.equals("QUARKUS_OIDC_AUTH_SERVER_URL")) {
             return true;
         }
 

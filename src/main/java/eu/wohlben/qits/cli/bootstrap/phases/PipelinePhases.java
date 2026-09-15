@@ -74,6 +74,46 @@ public class PipelinePhases {
 
     // --- the seed stack ---------------------------------------------------------------------------
 
+    /**
+     * <b>THE IDP, UP ALONE AND BEFORE EVERYTHING ELSE.</b>
+     * <p>
+     * The seed services' idp clients are created against a RUNNING idp now rather than spelled into
+     * the generated files, and a client that does not exist yet cannot be handed to a container. So
+     * the order is: resolve the bootstrap's own pair, start the idp with it, create the five
+     * clients, and only then render the compose file and the extras that carry their secrets.
+     * <p>
+     * It is a subset of the same generated stack the whole seed comes up from — one service, cut
+     * out with {@link ComposeTemplate#only} exactly the way {@link #stackFile} cuts one for a
+     * partly deployer-managed platform. Rendered here rather than read from
+     * {@code boot.state.composeFile}, because {@code compose-file} has not run yet: it is below
+     * {@code idp-clients} for the very reason this phase is above it.
+     * <p>
+     * {@code docker stack deploy} of a subset ADDS to the stack rather than replacing it — nothing
+     * here prunes — so {@code seed-stack} later deploys the whole file over this without the idp
+     * being restarted for it.
+     * <p>
+     * postgres is already answering: {@code seed-postgres} started it by hand, in both arms of the
+     * plan, and the idp refuses to boot without its database.
+     */
+    public Phase seedIdp() {
+        return new Phase("seed-idp", "bring the idp up alone", ctx -> {
+            boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
+            String alias = PlatformModel.wireAlias("platform-idp", boot.config.envName());
+            Path file = boot.state.wrapperDir.resolve("docker-stack.qits.idp.yml");
+            Files.deleteIfExists(file);
+            Files.writeString(file, ComposeTemplate.only(
+                            ComposeTemplate.compose(new SeedPhases(boot).tokens()), List.of(alias)),
+                    StandardCharsets.UTF_8);
+            ctx.log("  " + file.getFileName() + ": " + alias + " alone");
+            Boot.must(boot.docker.stackDeploy(file, Docker.STACK, Duration.ofMinutes(30), ctx::log),
+                    "docker stack deploy of " + alias + " failed");
+            // Waited for, like every other remote thing this program needs: the phase below asks
+            // this service to create five clients, and a silent wait is a bug in this repository.
+            boot.awaitHealth(ctx, "the idp", boot.idp::health);
+            ctx.note(alias);
+        });
+    }
+
     public Phase seedStackUp() {
         return new Phase("seed-stack", "deploy the seed stack", ctx -> {
             boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
@@ -339,8 +379,10 @@ public class PipelinePhases {
      * <p>
      * <b>Here because this is the first point the idp answers</b>, and a row it writes outlives
      * every redeploy after it — the store is postgres, not the container. It is dialled with the
-     * EDGE's static client: minting is a static client's right, and the edge is the one whose whole
-     * business is user sessions.
+     * BOOTSTRAP's static client: minting is a static client's right and a commissioned credential
+     * may not make a person, and the bootstrap's is the one static pair this program holds. It was
+     * the edge's until the seed clients moved to the idp — the edge's secret is the deployer
+     * registry's now, and borrowing it here would mean reading a row back to make one call.
      * <p>
      * <b>A refusal warns and the boot goes on.</b> Nothing this platform runs waits on a person
      * registering, and while the sessions flip is off nothing even reads a session — so the cost of
@@ -351,8 +393,8 @@ public class PipelinePhases {
             if (boot.state.registerTokenRecorded) {
                 ctx.skip("an earlier run minted one — it is in " + BootstrapState.FILE_NAME);
             }
-            String client = PlatformModel.wireAlias("edge", boot.config.envName());
-            String secret = boot.state.secrets.getOrDefault(client, "");
+            String client = boot.state.bootstrapClientId;
+            String secret = boot.state.bootstrapSecret == null ? "" : boot.state.bootstrapSecret;
             String url = boot.config.idpIssuer() + "/api/register-tokens";
             ctx.status("POST " + url + " as " + client);
             Http.Response response = boot.idp.mintRegisterToken(client, secret);
@@ -1136,8 +1178,7 @@ public class PipelinePhases {
                 refuseIfAnotherEnvironmentIsThePlatformOne(name);
                 refuseIfAProjectAlreadyHasThisName(ctx, name);
                 Http.Response created = boot.pd.createEnvironment(name, Boot.NETWORK,
-                        boot.tokenOrNull(PlatformModel.wireAlias("ci", boot.config.envName()),
-                    PlatformModel.wireAlias("deployments", boot.config.envName())));
+                        boot.bootstrapToken());
                 if (created.status() == 201) {
                     boot.state.environmentId = Json.text(
                             Json.parse(created.body()).path("environment"), "id");
@@ -1262,9 +1303,7 @@ public class PipelinePhases {
     }
 
     private void patch(String id, String json) {
-        Http.Response response = boot.pd.patchEnvironment(id, json,
-                boot.tokenOrNull(PlatformModel.wireAlias("ci", boot.config.envName()),
-                        PlatformModel.wireAlias("deployments", boot.config.envName())));
+        Http.Response response = boot.pd.patchEnvironment(id, json, boot.bootstrapToken());
         if (!response.ok()) {
             throw new IllegalStateException("environment " + id + " reconcile failed: "
                     + response.describe());
@@ -1453,11 +1492,10 @@ public class PipelinePhases {
         // of the git host — the tag was pushed from here moments ago.
         String event = releaseEvent(boot.state.projectId, boot.storageId(name), repo, version,
                 boot.git.commitOf(src, version));
-        // The door demands the one project=* client — the same identity the git host announces
-        // pushes with, because this stands in for an announcement the platform makes itself.
-        String token = boot.tokenOrNull(
-                PlatformModel.wireAlias("artifacts", boot.config.envName()),
-                PlatformModel.wireAlias("ci", boot.config.envName()));
+        // The bootstrap's own identity, on the platform-wide audience: this stands in for an
+        // announcement the platform makes itself, and the run says so rather than borrowing a
+        // service's client to say it.
+        String token = boot.bootstrapToken();
         ctx.status("announcing " + repo + " " + version + " to qits-ci");
         Http.Response answer = null;
         for (int attempt = 1; attempt <= 3; attempt++) {
@@ -2097,7 +2135,10 @@ public class PipelinePhases {
                         + "nothing in THIS run deploys from the service");
                 return;
             }
-            String secret = boot.state.secrets.getOrDefault(alias, "");
+            // The deployer's own client secret, keyed by the APPLICATION the way the registry
+            // and the idp-clients phase key it.
+            String secret = boot.state.serviceClientSecrets
+                    .getOrDefault(PlatformModel.application("deployments"), "");
             if (alreadyFlipped(service, env, secret)) {
                 ctx.skip(service + " already reads " + boot.config.configurationUrl());
             }
@@ -2119,17 +2160,22 @@ public class PipelinePhases {
 
     /**
      * The env pairs of the flip, read back out of the extras this boot rendered. Filtered by what
-     * they MEAN rather than listed: the url that moves the authority, and the named oidc client that
-     * is the credential the moved read presents. Nothing else on the deployer's block is this
-     * phase's to touch — the rest is already in the file the running deployer read at its boot.
+     * it MEANS rather than listed: the url that moves the authority, and nothing else. The rest of
+     * the deployer's block is already in the file the running deployer read at its boot.
+     * <p>
+     * <b>It used to carry the credential too</b> — five {@code QUARKUS_OIDC_CLIENT_CONFIGURATION_*}
+     * pairs, because the guarded read qits-configuration answers needs a bearer and the extras were
+     * where the deployer's client id and secret were written. They are not: the deployer's identity
+     * is an {@code idp:client} resource now, the seed stack hands this very container its
+     * {@code QITS_RESOURCE_IDP_*} triple, and its successor is injected the same row by the running
+     * deployer. So the flip moves one value, and the credential it presents is one it already has.
      */
     static List<String> flipEnv(String extras, String application) {
         String prefix = "qits.platform.deployments.extras." + application + ".env.";
         return extras.lines()
                 .filter(line -> line.startsWith(prefix))
                 .map(line -> line.substring(prefix.length()))
-                .filter(pair -> pair.startsWith("QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=")
-                        || pair.startsWith("QUARKUS_OIDC_CLIENT_CONFIGURATION_"))
+                .filter(pair -> pair.startsWith("QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL="))
                 .toList();
     }
 
@@ -2287,12 +2333,12 @@ public class PipelinePhases {
     }
 
     /**
-     * The bootstrap's own bearer, addressed to qits-projects — or null with the gate off, where the
-     * forwarded identity headers are the whole credential.
+     * The bootstrap's own bearer as qits-projects reads it — or null with the gate off, where the
+     * forwarded identity headers are the whole credential. It carries the platform-wide audience
+     * like every other token of this run; see {@link Boot#PLATFORM_AUDIENCE}.
      */
     private String projectsToken() {
-        return boot.tokenOrNull(PlatformModel.wireAlias("bootstrap", boot.config.envName()),
-                PlatformModel.wireAlias("projects", boot.config.envName()));
+        return boot.bootstrapToken();
     }
 
     // --- the closing report ------------------------------------------------------------------------
@@ -2550,10 +2596,11 @@ public class PipelinePhases {
             if (boot.config.machineAuth()) {
                 report.add("machines:  ENFORCED on ci, deployments, artifacts — issuer "
                         + boot.config.idpIssuer());
-                report.add("           clients: " + String.join(", ",
-                        PlatformModel.idpClients(env)));
-                report.add("           secrets are in " + boot.state.wrapperDir
-                        .resolve(".qits-bootstrap.env"));
+                report.add("           the seed services' clients were created at the idp and "
+                        + "their secrets recorded");
+                report.add("           in qits-deployments' resource registry. Only "
+                        + PlatformModel.bootstrapClientId(env) + "'s is in");
+                report.add("           " + boot.state.wrapperDir.resolve(".qits-bootstrap.env"));
             } else {
                 report.add("machines:  gate OFF (QITS_MACHINE_AUTH=0) — ci, deployments "
                         + "and artifacts trust the network");

@@ -2,6 +2,7 @@ package eu.wohlben.qits.cli.bootstrap.phases;
 
 import eu.wohlben.qits.cli.bootstrap.config.TestConfig;
 import eu.wohlben.qits.cli.bootstrap.platform.MuslToolchain;
+import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
 import org.junit.jupiter.api.Test;
@@ -548,22 +549,25 @@ class SeedPhasesTest {
     }
 
     /**
-     * <b>ONE VALUE, TWO SPELLINGS, and the pair is the whole credential.</b> The state file records
-     * a secret under the CLIENT ID — {@code IDP_SECRET_PROD_QITS_EDGE} — while both generated files
-     * read it under the APPLICATION, because a placeholder cannot be spelled with an environment
-     * name the template does not know yet. A pair that drifted apart is an idp holding a secret
-     * that nothing on this platform presents.
+     * <b>ONE VALUE, TWO SPELLINGS, and the pair is the whole credential.</b> The {@code idp-clients}
+     * phase records a secret under the APPLICATION — {@code qits-platform-edge}, which is the key
+     * qits-deployments' {@code pd_resource} registry uses — and the generated files read it under
+     * the same name, because a placeholder cannot be spelled with an environment name the template
+     * does not know yet. A pair that drifted apart is an idp holding a secret that nothing on this
+     * platform presents.
      */
     @Test
-    void theEdgesSecretIsRecordedByIdAndReadByApplication() {
+    void theEdgesSecretIsRecordedByApplicationAndReadByApplication() {
         Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "prod")),
                 new RunLog(temp.resolve("run.log")));
-        boot.state.secrets.put("prod-qits-edge", "s3cr3t");
+        boot.state.serviceClientSecrets.put(PlatformModel.application("platform-edge"), "s3cr3t");
 
         Map<String, String> tokens = new SeedPhases(boot).tokens();
 
-        assertThat(tokens).containsEntry("IDP_SECRET_EDGE", "s3cr3t");
-        assertThat(tokens.get("IDP_CLIENTS")).contains("prod-qits-edge");
+        assertThat(tokens).containsEntry("IDP_CLIENT_SECRET_PLATFORM_EDGE", "s3cr3t");
+        // And the id beside it is the WIRE ALIAS, which the model already answers: there is no
+        // second token for it, because a second spelling could not follow a plane change.
+        assertThat(tokens).containsEntry("ALIAS_PLATFORM_EDGE", "qits-platform-edge");
         // The passkey binding travels in the same map. The rp id is the ENVIRONMENT's label, and
         // the ceremony's origin is the idp's own host — a child of it, so the binding holds.
         assertThat(tokens).containsEntry("WEBAUTHN_RP_ID", "prod.localhost")

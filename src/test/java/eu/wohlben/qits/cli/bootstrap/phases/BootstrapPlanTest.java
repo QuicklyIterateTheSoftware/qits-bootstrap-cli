@@ -107,13 +107,23 @@ class BootstrapPlanTest {
         assertThat(ids).containsSubsequence("seed-image-events", "seed-artifacts");
         // The daemon digest is written into the compose file and the deployer's extras, so it is
         // measured before either is generated.
-        assertThat(ids).containsSubsequence("ci-daemon", "idp-secrets", "compose-file",
-                "pd-extras", "seed-stack", "seed-health",
+        // AND THE IDENTITY ORDER INSIDE IT. The seed services' clients are created against a
+        // running idp, so the idp comes up alone between the bootstrap's own pair and the five it
+        // makes — and compose-file is BELOW all three, because the secrets it renders do not exist
+        // until the idp has issued them.
+        assertThat(ids).containsSubsequence("ci-daemon", "idp-bootstrap-client", "seed-idp",
+                "idp-clients", "compose-file", "pd-extras", "seed-stack", "seed-health",
                 "register-token");
+        // The phase that wrote a secret per client into the generated files is gone outright.
+        assertThat(ids).doesNotContain("idp-secrets");
         // postgres before every file that addresses it: the deployer refuses to boot without the
         // database, and seed-stack is what starts the deployer.
+        // postgres before seed-idp too, and for two reasons at once: the idp refuses to boot
+        // without its database, and idp-clients records every issued secret in the deployer's
+        // registry on that same server.
         assertThat(ids).containsSubsequence("seed-image-oci-postgresql", "seed-postgres",
-                "idp-secrets", "compose-file", "pd-extras", "seed-stack");
+                "idp-bootstrap-client", "seed-idp", "idp-clients", "compose-file", "pd-extras",
+                "seed-stack");
         // The git host is in the seed stack rather than started by hand: nothing needs it before
         // compose brings it up, and git-repos — the first phase that PUTs against it — is after
         // the health wait.
@@ -325,6 +335,11 @@ class BootstrapPlanTest {
         // postgres is NOT a build, so a warm rerun still runs it: it resolves the passwords both
         // generated files carry, and the server has to answer before the deployer starts.
         assertThat(warm).contains("seed-postgres");
+        // And the identity order is in BOTH arms: a warm rerun's seed containers need the same
+        // five clients, and a rerun is exactly where the recorded-row and the 409/rotate arms
+        // earn their keep.
+        assertThat(warm).containsSubsequence("seed-postgres", "idp-bootstrap-client", "seed-idp",
+                "idp-clients", "compose-file", "seed-stack");
         // The wrapper phase is in every plan. An existing checkout is skipped when it RUNS, which
         // is what keeps the skip visible on the header line instead of silent in the plan.
         assertThat(warm).contains("wrapper");

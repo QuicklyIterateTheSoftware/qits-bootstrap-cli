@@ -669,34 +669,43 @@ class PipelinePhasesTest {
     @TempDir
     Path temp;
 
-    /** The extras exactly as a run renders them, with one client secret so the pair is readable. */
+    /** The extras exactly as a run renders them, with the deployer's own client secret resolved. */
     private String renderedExtras() {
         Boot boot = new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log")));
-        boot.state.secrets.put(PlatformModel.wireAlias("deployments", ENV), "s3cr3t");
+        boot.state.serviceClientSecrets.put(PlatformModel.application("deployments"), "s3cr3t");
         return ComposeTemplate.extras(new SeedPhases(boot).tokens());
     }
 
     /**
-     * <b>The flip's values are READ BACK out of the rendered extras, never spelled again.</b> The
+     * <b>The flip's value is READ BACK out of the rendered extras, never spelled again.</b> The
      * running deployer is patched live and its successor is configured from the same file, so a
      * second spelling here would be a platform whose two deployers read different services.
+     * <p>
+     * ONE VALUE, and it used to be six: the five
+     * {@code QUARKUS_OIDC_CLIENT_CONFIGURATION_*} pairs were the credential the moved read
+     * presents, and no extras block carries a credential any more. The deployer's identity is the
+     * {@code idp:client} resource it declares — the seed stack hands this very container the
+     * triple, so the flip moves the authority and nothing else.
      */
     @Test
-    void theFlipTakesItsValuesFromTheRenderedExtras() {
+    void theFlipTakesItsValueFromTheRenderedExtras() {
         List<String> env = PipelinePhases.flipEnv(renderedExtras(), "qits-deployments");
 
-        assertThat(env).containsExactlyInAnyOrder(
-                "QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://qits-configuration:8080",
-                "QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ENABLED=true",
-                "QUARKUS_OIDC_CLIENT_CONFIGURATION_AUTH_SERVER_URL="
-                        + "http://qits-platform-idp:8080/idp",
-                // The deployer's own client id, which lost the tier when it moved plane on
-                // 2026-08-17 — and the peer it reads lost it on 2026-09-07, so what used to be an
-                // asymmetric pair is two bare names out of the one derivation.
-                "QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ID=qits-deployments",
-                "QUARKUS_OIDC_CLIENT_CONFIGURATION_CREDENTIALS_SECRET=s3cr3t",
-                "QUARKUS_OIDC_CLIENT_CONFIGURATION_GRANT_OPTIONS_CLIENT_AUDIENCE="
-                        + "qits-configuration");
+        assertThat(env).containsExactly(
+                "QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://qits-configuration:8080");
+    }
+
+    /**
+     * <b>And no credential travels with it.</b> A flip that carried a client secret would be the
+     * bootstrap writing identity onto a service whose own registry row is the authority for it —
+     * the failure the extras' identity ban exists to stop, in the one place that patches a live
+     * service rather than a file.
+     */
+    @Test
+    void theFlipCarriesNoCredential() {
+        assertThat(PipelinePhases.flipEnv(renderedExtras(), "qits-deployments"))
+                .noneMatch(pair -> pair.contains("SECRET") || pair.contains("CLIENT_ID")
+                        || pair.startsWith("QITS_RESOURCE_IDP_"));
     }
 
     /**

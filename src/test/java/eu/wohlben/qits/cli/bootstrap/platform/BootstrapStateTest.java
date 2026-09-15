@@ -5,14 +5,17 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * A rotated client secret locks every already-deployed service out until it too is redeployed, so
  * what a previous run recorded has to survive this one.
+ * <p>
+ * <b>ONE identity key is recorded now</b>, the bootstrap's own: every other client is created
+ * against the running idp and its secret kept in qits-deployments' registry. The spelling did not
+ * change with the count, which is what lets a machine that has bootstrapped before keep the pair it
+ * already has.
  */
 class BootstrapStateTest {
 
@@ -59,7 +62,7 @@ class BootstrapStateTest {
         BootstrapState reread = new BootstrapState(file);
         reread.read();
         assertThat(reread.daemonSha()).contains("8d0f1a2b3c4d5e6f");
-        assertThat(reread.secret("qits-ci")).contains("aaa");
+        assertThat(reread.bootstrapSecret("qits-ci")).contains("aaa");
         assertThat(reread.repositoryId("qits-ci")).contains("qits-ci");
         assertThat(reread.repositoryId("qits-events")).contains("qits-events");
     }
@@ -77,9 +80,9 @@ class BootstrapStateTest {
         state.read();
 
         assertThat(state.daemonSha()).contains("8d0f1a2b3c4d5e6f");
-        assertThat(state.secret("qits-ci")).contains("aaa");
-        assertThat(state.secret("qits-cd")).contains("bbb");
-        assertThat(state.secret("qits-gateway")).isEmpty();
+        assertThat(state.bootstrapSecret("qits-ci")).contains("aaa");
+        assertThat(state.bootstrapSecret("qits-cd")).contains("bbb");
+        assertThat(state.bootstrapSecret("qits-gateway")).isEmpty();
     }
 
     @Test
@@ -89,24 +92,43 @@ class BootstrapStateTest {
 
         assertThat(state.exists()).isFalse();
         assertThat(state.daemonSha()).isEmpty();
-        assertThat(state.secret("qits-ci")).isEmpty();
+        assertThat(state.bootstrapSecret("qits-ci")).isEmpty();
     }
 
+    /**
+     * <b>ONE key, under the spelling it always had.</b> A client id is a wire alias, so it follows
+     * the environment name and only the caller knows it — this class writes the id it was handed,
+     * and the env-var spelling of it is what a machine that has bootstrapped before already holds.
+     */
     @Test
-    void writesWhateverTheRunResolvedRatherThanAListOfItsOwn() throws Exception {
-        // A client id is a wire alias, so the set follows the environment name and only the caller
-        // knows it. This class writes the map it was handed.
+    void writesTheOneClientSecretTheRunResolved() throws Exception {
         Path file = temp.resolve(BootstrapState.FILE_NAME);
-        Map<String, String> secrets = new LinkedHashMap<>();
-        secrets.put("prod-qits-ci", "one");
-        secrets.put("qits-platform-artifacts", "two");
 
-        new BootstrapState(file).write("digest", secrets);
+        new BootstrapState(file).write("digest", "prod-qits-bootstrap", "one");
 
         String text = Files.readString(file);
         assertThat(text).contains("DAEMON_SHA=digest");
-        assertThat(text).contains("IDP_SECRET_PROD_QITS_CI=one");
-        assertThat(text).contains("IDP_SECRET_QITS_PLATFORM_ARTIFACTS=two");
+        assertThat(text).contains("IDP_SECRET_PROD_QITS_BOOTSTRAP=one");
+    }
+
+    /**
+     * <b>A retired per-client secret is left where it is</b> rather than swept. It is dead — that
+     * client's credential is qits-deployments' registry's now — but it costs a line, and the merge
+     * keeps unknown keys by construction rather than by a rule somebody has to remember.
+     */
+    @Test
+    void anOldMachinesRetiredClientSecretsAreLeftAlone() throws Exception {
+        Path file = temp.resolve(BootstrapState.FILE_NAME);
+        Files.writeString(file, """
+                IDP_SECRET_PROD_QITS_CI=old-ci
+                IDP_SECRET_PROD_QITS_BOOTSTRAP=old-bootstrap
+                """);
+
+        new BootstrapState(file).write("digest", "prod-qits-bootstrap", "kept");
+
+        String text = Files.readString(file);
+        assertThat(text).contains("IDP_SECRET_PROD_QITS_CI=old-ci");
+        assertThat(text).contains("IDP_SECRET_PROD_QITS_BOOTSTRAP=kept");
     }
 
     @Test
@@ -140,15 +162,13 @@ class BootstrapStateTest {
         postgres.put("PG_DEPLOYMENTS_PASSWORD", "cccc3333dddd4444");
         postgres.write();
 
-        Map<String, String> secrets = new LinkedHashMap<>();
-        secrets.put("prod-qits-ci", "one");
-        new BootstrapState(file).write("digest", secrets);
+        new BootstrapState(file).write("digest", "prod-qits-bootstrap", "one");
 
         BootstrapState afterSecrets = new BootstrapState(file);
         afterSecrets.read();
         assertThat(afterSecrets.value("PG_SUPERUSER_PASSWORD")).contains("aaaa1111bbbb2222");
         assertThat(afterSecrets.value("PG_DEPLOYMENTS_PASSWORD")).contains("cccc3333dddd4444");
-        assertThat(afterSecrets.secret("prod-qits-ci")).contains("one");
+        assertThat(afterSecrets.bootstrapSecret("prod-qits-bootstrap")).contains("one");
 
         // And the other way: a later postgres write keeps the digest and the secrets.
         BootstrapState again = new BootstrapState(file);
@@ -159,7 +179,7 @@ class BootstrapStateTest {
         BootstrapState last = new BootstrapState(file);
         last.read();
         assertThat(last.daemonSha()).contains("digest");
-        assertThat(last.secret("prod-qits-ci")).contains("one");
+        assertThat(last.bootstrapSecret("prod-qits-bootstrap")).contains("one");
         assertThat(last.value("PG_SUPERUSER_PASSWORD")).contains("eeee5555ffff6666");
     }
 
@@ -177,29 +197,24 @@ class BootstrapStateTest {
         first.put(BootstrapState.REGISTER_TOKEN_KEY, "rt-0123456789");
         first.write();
 
-        Map<String, String> secrets = new LinkedHashMap<>();
-        secrets.put("prod-qits-edge", "one");
-        new BootstrapState(file).write("digest", secrets);
+        new BootstrapState(file).write("digest", "prod-qits-bootstrap", "one");
 
         BootstrapState rerun = new BootstrapState(file);
         rerun.read();
         assertThat(rerun.registerToken()).contains("rt-0123456789");
-        assertThat(rerun.secret("prod-qits-edge")).contains("one");
+        assertThat(rerun.bootstrapSecret("prod-qits-bootstrap")).contains("one");
     }
 
     @Test
     void aWrittenFileReadsBackTheSame() throws Exception {
         Path file = temp.resolve(BootstrapState.FILE_NAME);
-        Map<String, String> secrets = new LinkedHashMap<>();
-        PlatformModel.idpClients("prod").forEach(client -> secrets.put(client, "secret-" + client));
-        new BootstrapState(file).write("abc", secrets);
+        String client = PlatformModel.bootstrapClientId("prod");
+        new BootstrapState(file).write("abc", client, "secret-" + client);
 
         BootstrapState reread = new BootstrapState(file);
         reread.read();
 
         assertThat(reread.daemonSha()).contains("abc");
-        for (String client : PlatformModel.idpClients("prod")) {
-            assertThat(reread.secret(client)).contains("secret-" + client);
-        }
+        assertThat(reread.bootstrapSecret(client)).contains("secret-" + client);
     }
 }

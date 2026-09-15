@@ -11,18 +11,23 @@ import java.util.Optional;
 
 /**
  * {@code .qits-bootstrap.env}: what a previous bootstrap generated and this one must not change —
- * the ci-daemon digest, the idp's client secrets, the postgres passwords.
+ * the ci-daemon digest, the bootstrap's own idp client secret, the postgres passwords.
  * <p>
- * It is read before anything needs it, so a full rerun keeps the secrets it issued last time.
- * Regenerating them would leave every already-deployed service holding a credential the idp no
- * longer knows.
+ * It is read before anything needs it, so a full rerun keeps what it issued last time. Regenerating
+ * the bootstrap's secret would leave this program unable to authenticate to the idp it seeded.
+ * <p>
+ * <b>ONE identity key, and it is the bootstrap's.</b> This file used to hold a secret per platform
+ * client. It does not any more: the seed services' clients are created against a running idp and
+ * their secrets recorded in qits-deployments' {@code pd_resource} registry, which is the authority
+ * for every application credential on this platform. See {@link #bootstrapSecret}.
  * <p>
  * <b>Every write MERGES.</b> The file is one run's whole memory and several phases write it at
  * different points, so a write that rebuilt the file from the keys its own caller happened to hold
  * would delete the ones the other phases recorded. That is not theoretical: {@code seed-postgres}
- * records the postgres passwords minutes before {@code idp-secrets} writes the client secrets, and
- * a postgres password that is on the data volume but not in this file locks the next rerun out of
- * a database nothing can reset.
+ * records the postgres passwords minutes before {@code idp-bootstrap-client} writes the bootstrap
+ * secret, and a postgres password that is on the data volume but not in this file locks the next
+ * rerun out of a database nothing can reset. The merge is also what leaves an old machine's
+ * retired {@code IDP_SECRET_*} lines alone rather than sweeping them.
  */
 public class BootstrapState {
 
@@ -123,10 +128,23 @@ public class BootstrapState {
         return value(REGISTER_TOKEN_KEY);
     }
 
-    /** What a previous run recorded for this client, if anything. */
-    public Optional<String> secret(String clientId) {
-        return Optional.ofNullable(values.get("IDP_SECRET_" + PlatformModel.clientKey(clientId)))
-                .filter(s -> !s.isBlank());
+    /**
+     * <b>The one client secret this file still holds</b>, under the unchanged
+     * {@code IDP_SECRET_<clientKey>} spelling — {@code IDP_SECRET_PROD_QITS_BOOTSTRAP} for a
+     * platform called {@code prod}.
+     * <p>
+     * The spelling is deliberately what it always was. A machine that has run a bootstrap before
+     * already holds its bootstrap secret under that key, and the idp says a secret once: changing
+     * the name here would look like a first boot and rotate the one credential this program creates
+     * every other client with.
+     * <p>
+     * Every OTHER {@code IDP_SECRET_*} line an old machine's file still carries is left exactly
+     * where it is. It is dead — those clients' secrets live in qits-deployments' {@code pd_resource}
+     * registry now — but it costs a line, and the merge in {@link #write()} keeps unknown keys by
+     * construction rather than by a rule anybody has to remember.
+     */
+    public Optional<String> bootstrapSecret(String clientId) {
+        return value("IDP_SECRET_" + PlatformModel.clientKey(clientId));
     }
 
     /** Records one key for the next {@link #write()}. */
@@ -139,15 +157,21 @@ public class BootstrapState {
         return Optional.ofNullable(values.get(key)).filter(s -> !s.isBlank());
     }
 
-    /** Writes the digest and the whole secret set, keeping every other key the file holds. */
-    public void write(String daemonSha, Map<String, String> secrets) throws IOException {
+    /**
+     * Writes the digest and the bootstrap's own client secret, keeping every other key the file
+     * holds.
+     * <p>
+     * ONE secret, where this used to take a map of them. The seed services' secrets are the idp's
+     * to issue and qits-deployments' registry's to keep; the only credential that has nowhere else
+     * to live is the one this program authenticates to the idp with.
+     */
+    public void write(String daemonSha, String bootstrapClientId, String bootstrapSecret)
+            throws IOException {
         values.put("DAEMON_SHA", daemonSha == null ? "" : daemonSha);
-        // Whatever the caller resolved, not a list this class holds its own copy of: a client id
-        // is a wire alias now, so the set follows the environment name and only the caller knows
-        // it. A key that was written by an earlier run under another environment is left in the
-        // file rather than dropped — it costs a line and it is the only record of that secret.
-        secrets.forEach((client, value) ->
-                values.put("IDP_SECRET_" + PlatformModel.clientKey(client), value));
+        // The client id is the caller's, not a list this class holds its own copy of: it is a wire
+        // alias and so follows the environment name, which only the run knows.
+        values.put("IDP_SECRET_" + PlatformModel.clientKey(bootstrapClientId),
+                bootstrapSecret == null ? "" : bootstrapSecret);
         write();
     }
 

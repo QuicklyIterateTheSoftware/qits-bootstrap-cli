@@ -194,6 +194,179 @@ public final class PgAdmin {
         return Map.copyOf(recorded);
     }
 
+    // --- the deployer's idp-client rows -----------------------------------------------------------
+
+    /**
+     * What the platform is addressed by and what it presents, as one row of the deployer's
+     * registry.
+     *
+     * @param applicationName the plain application name — {@code qits-projects}, never the alias
+     * @param clientId        the WIRE ALIAS, which is what the idp knows the client as
+     * @param secret          the idp-issued secret. Never logged, never printed, never recorded in
+     *                        {@code .qits-bootstrap.env}
+     */
+    public record IdpRow(String applicationName, String clientId, String secret) {
+    }
+
+    /** {@code pd_resource.resource_type} for an idp client, and the registry's own spelling. */
+    private static final String IDP_CLIENT_TYPE = "idp-client";
+
+    /** {@code pd_resource.resource_name} for the one idp resource an application declares. */
+    private static final String IDP_RESOURCE = "idp";
+
+    /**
+     * A client id and an application name have the same shape, and it is the idp's rather than
+     * postgres': {@code [a-z][a-z0-9-]{0,127}}. Dashes, so {@link #IDENTIFIER} cannot answer for it.
+     */
+    static final Pattern CLIENT_ID = Pattern.compile("^[a-z][a-z0-9-]{0,127}$");
+
+    /**
+     * What may be handed to a container as an idp secret. Printable ASCII with no space and no
+     * quote, bounded — the idp's generated form, and nothing that could be a truncated row, a
+     * placeholder or a line of yaml somebody pasted.
+     */
+    static final Pattern CLIENT_SECRET = Pattern.compile("^[!-~]{16,512}$");
+
+    /**
+     * <b>What qits-deployments' registry says each seed application's idp client presents</b>, by
+     * application name.
+     * <p>
+     * It is the same posture {@link #recordedPasswords} takes for the database half, and for the
+     * same reason: {@code pd_resource} is the single authority for an application's credentials
+     * from its first deploy on, and a value this CLI remembers is what the credential WAS. The idp
+     * says a secret once, at the call that issued it, so a row is the only place a working one can
+     * be read back from at all.
+     * <p>
+     * <b>Empty when there is nothing to ask</b>, and a cold boot is exactly that: qits-deployments'
+     * Flyway has not run, so there is no database, no table and no column. A connection that fails,
+     * a table that is not there and a table with no rows all mean "nothing recorded", which is one
+     * answer and is answered one way.
+     * <p>
+     * The same belt as everywhere in this class: a row that is not an application name, a client id
+     * and a plausible secret never steers what a container is started with.
+     *
+     * <p>
+     * <b>A row's key is the TIER, and there is always one.</b> Every application is deployed into
+     * the designated environment — a platform service included, since qits-deployments' V8 rekey —
+     * and its {@code ResourceProvisioning} refuses outright a deployment that names no environment.
+     * So this asks for the tier, and {@link #recordIdpClient} always writes it. What IS
+     * plane-dependent is the CLIENT ID in the row, which is a wire alias and so bare for a platform
+     * service ({@code qits-deployments}) and qualified for an environment one
+     * ({@code prod-qits-ci}) — {@code PlatformModel.wireAlias} is the one place that decides it.
+     * <p>
+     * <b>The null arm finds a PRE-V8 row and nothing else.</b> Platform-plane rows used to be
+     * written with {@code environment_name} null, and {@code environment_name = 'prod'} is false
+     * for a null — so a machine bootstrapped before the rekey would read as "never recorded" and
+     * have two live credentials rotated under it. It is a migration courtesy on the READ, never a
+     * shape this program writes: a row written null would be one the deployer's own
+     * {@code findOne(app, tier, "idp")} cannot see, and the unique key is {@code nulls not
+     * distinct}, so it would insert a SECOND row beside ours rather than conflict with it and then
+     * rotate a secret the seed containers are holding.
+     *
+     * @param environmentName the tier the rows are keyed under
+     */
+    public static Map<String, IdpRow> recordedIdpClients(String jdbcUrl, String user,
+                                                         String password, String environmentName) {
+        try (Connection registry = connect(jdbcUrl, user, password)) {
+            return readRecordedIdpClients(registry, environmentName);
+        } catch (SQLException absent) {
+            return Map.of();
+        }
+    }
+
+    static Map<String, IdpRow> readRecordedIdpClients(Connection registry, String environmentName) {
+        Map<String, IdpRow> recorded = new LinkedHashMap<>();
+        try (PreparedStatement statement = registry.prepareStatement(
+                "select application_name, client_id, password from pd_resource"
+                        + " where resource_type = ?"
+                        + " and (environment_name = ? or environment_name is null)")) {
+            statement.setString(1, IDP_CLIENT_TYPE);
+            statement.setString(2, environmentName);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    String application = rows.getString(1);
+                    String clientId = rows.getString(2);
+                    String secret = rows.getString(3);
+                    if (application != null && CLIENT_ID.matcher(application).matches()
+                            && clientId != null && CLIENT_ID.matcher(clientId).matches()
+                            && secret != null && CLIENT_SECRET.matcher(secret).matches()) {
+                        recorded.put(application, new IdpRow(application, clientId, secret));
+                    }
+                }
+            }
+        } catch (SQLException absent) {
+            return Map.of();
+        }
+        return Map.copyOf(recorded);
+    }
+
+    /**
+     * Records one idp client in the deployer's registry, in the shape the deployer's own
+     * {@code ResourceProvisioning.storeIdpRow} writes.
+     * <p>
+     * <b>It never creates the table, and that is not a convenience it is missing.</b> The table
+     * belongs to qits-deployments' Flyway lineage — {@code V1} owns it — and a table this program
+     * created would be one Flyway did not, so the deployer's next migration would fail against a
+     * relation that already exists. A cold boot simply has no registry yet: this answers
+     * {@code false}, the caller says so, and the next run records the row once the deployer has
+     * migrated. The credential is not lost by that — the create/409/rotate arm re-issues one.
+     * <p>
+     * The upsert's conflict target is the registry's own unique key,
+     * {@code (application_name, environment_name, resource_name)}.
+     * <p>
+     * <b>{@code environmentName} is the tier and is never null.</b> A null is the retired pre-V8
+     * shape, and writing one would not fail loudly — the key is {@code nulls not distinct}, so a
+     * null and {@code prod} are different keys and the insert would SUCCEED beside the deployer's
+     * own row rather than update it. The deployer would then find nothing at
+     * {@code findOne(app, tier, "idp")}, provision a second credential and rotate the one the seed
+     * containers are already holding. Same failure the postgres half of this class learned; the
+     * caller passes {@code boot.config.envName()} for every application, whatever plane it is on.
+     *
+     * @return whether the row is there now. False rather than a throw for the absent table, because
+     *         a missing registry is a stage of a cold boot and not a failure of one
+     */
+    public static boolean recordIdpClient(String jdbcUrl, String user, String password,
+                                          String applicationName, String environmentName,
+                                          String clientId, String secret) {
+        // The environment is checked with the rest, and it is the one of the four that is checked
+        // for being THERE rather than for being safe: a null slips past every other guard in this
+        // class and lands as a second row nobody will look at again.
+        if (applicationName == null || !CLIENT_ID.matcher(applicationName).matches()
+                || environmentName == null || !CLIENT_ID.matcher(environmentName).matches()
+                || clientId == null || !CLIENT_ID.matcher(clientId).matches()
+                || secret == null || !CLIENT_SECRET.matcher(secret).matches()) {
+            // The value is deliberately not in the message.
+            throw new IllegalArgumentException("not a (application, environment, client, secret) "
+                    + "quadruple this program may record: " + applicationName + " / "
+                    + environmentName + " / " + clientId);
+        }
+        try (Connection registry = connect(jdbcUrl, user, password);
+             PreparedStatement statement = registry.prepareStatement(
+                     "insert into pd_resource (id, application_name, environment_name,"
+                             + " resource_name, resource_type, database_name, role_name,"
+                             + " client_id, password, created_at, last_provisioned_at)"
+                             + " values (?, ?, ?, ?, ?, null, null, ?, ?, now(), now())"
+                             + " on conflict (application_name, environment_name, resource_name)"
+                             + " do update set resource_type = excluded.resource_type,"
+                             + " database_name = null, role_name = null,"
+                             + " client_id = excluded.client_id, password = excluded.password,"
+                             + " last_provisioned_at = now()")) {
+            // created_at is INSERT-ONLY: the update arm leaves it, so a row keeps saying when the
+            // credential first existed rather than when it was last touched.
+            statement.setString(1, java.util.UUID.randomUUID().toString());
+            statement.setString(2, applicationName);
+            statement.setString(3, environmentName);
+            statement.setString(4, IDP_RESOURCE);
+            statement.setString(5, IDP_CLIENT_TYPE);
+            statement.setString(6, clientId);
+            statement.setString(7, secret);
+            statement.executeUpdate();
+            return true;
+        } catch (SQLException absent) {
+            return false;
+        }
+    }
+
     /**
      * The database, owned by its own role and closed to everyone else.
      *

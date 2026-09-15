@@ -18,8 +18,10 @@ That is deliberate: a run that repaired its own expectations and went green woul
 the generator agrees with itself. Regenerate, read `git diff`, and commit the diff as the change it
 is.
 
-The values are fixture fakes and safe to commit. `PG_*_PASSWORD`, `IDP_SECRET_*` and `PUSH_TOKEN`
-are the literals that test spells; no real platform's secrets ever pass through here.
+The values are fixture fakes and safe to commit. `PG_*_PASSWORD` and `PUSH_TOKEN` are the literals
+that test spells; no real platform's secrets ever pass through here. **No credential is rendered
+into these files at all any more** — an application's idp client is a resource the deployer creates
+and injects, which `ExtrasWiringGuardTest.noExtrasBlockCarriesAnIdentity` is what keeps true.
 
 ## Why the blocks are files and not assertions
 
