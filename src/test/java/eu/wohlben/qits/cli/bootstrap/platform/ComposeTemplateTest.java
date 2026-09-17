@@ -223,7 +223,7 @@ class ComposeTemplateTest {
                 "QITS_IDP_SEED_CLIENT_ID: \"prod-qits-bootstrap\"")
                 .contains("QITS_IDP_SEED_CLIENT_SECRET: \"secret-prod-qits-bootstrap\"");
         assertThat(compose).contains("user: \"1001:988\"");
-        assertThat(compose).contains("QITS_CI_DAEMON_VERSION: \"abc123\"");
+        assertThat(compose).contains("QITS_CI_DAEMON_VERSION_OVERRIDE: \"abc123\"");
         assertThat(compose).doesNotContain("${PORT}");
         assertThat(compose).doesNotContain("${PG_SUPERUSER_PASSWORD}")
                 .doesNotContain("${PG_DEPLOYMENTS_PASSWORD}")

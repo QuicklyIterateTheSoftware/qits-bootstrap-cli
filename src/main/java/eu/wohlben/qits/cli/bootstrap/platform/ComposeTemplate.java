@@ -1137,7 +1137,16 @@ public final class ComposeTemplate {
                   QITS_EVENTS_URL: http://${ALIAS_EVENTS}:8080
                   # The binary every step container downloads and execs — uploaded by this bootstrap, digest
                   # pinned. Blank would mean every run fails as never-registered.
-                  QITS_CI_DAEMON_VERSION: "${DAEMON_SHA}"
+                  #
+                  # SPELLED AS THE OVERRIDE, deliberately: qits-ci's ordinary answer is the version of
+                  # the eu.wohlben.qits:qits-ci-daemon-protocol jar it pins, which is the version of the
+                  # binary released beside it, and a freshly bootstrapped platform has released nothing —
+                  # its only daemon binary is this digest, uploaded by this bootstrap and named by
+                  # nothing else. The override is exactly the hatch a digest belongs in. Once this
+                  # platform has released a daemon and qits-ci's pin has moved to that version, clearing
+                  # this entry is what hands the decision back to the pin. The retired name
+                  # QITS_CI_DAEMON_VERSION is read by nobody; qits-ci WARNs at boot if it finds it set.
+                  QITS_CI_DAEMON_VERSION_OVERRIDE: "${DAEMON_SHA}"
                   # Where a step container wgets that binary. The shipped default still names the
                   # retired qits-platform-artifacts alias; on qits-net the store is this tier's.
                   QITS_CI_DAEMON_BINARY_URL_TEMPLATE: "http://${ENV_NAME}-qits-artifacts:8080/artifacts/daemons/qits-ci-daemon/{version}"
@@ -1662,7 +1671,12 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_PROXY_URL=http://qits-platform-mirror:8080/artifacts/npm/npmjs/
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_MAVEN_REGISTRY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_DOCS_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/docs/docs
-            qits.platform.deployments.extras.qits-ci.env.QITS_CI_DAEMON_VERSION=${DAEMON_SHA}
+            # THE OVERRIDE, not the ordinary answer — see the seed block's QITS_CI_DAEMON_VERSION_OVERRIDE
+            # for why: a bootstrapped platform's daemon is a digest this bootstrap uploaded and named
+            # nothing else, and clearing this entry once a released daemon's version is pinned by
+            # qits-ci is what hands the decision back to that pin. QITS_CI_DAEMON_VERSION is retired
+            # and read by nobody.
+            qits.platform.deployments.extras.qits-ci.env.QITS_CI_DAEMON_VERSION_OVERRIDE=${DAEMON_SHA}
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_DAEMON_BINARY_URL_TEMPLATE=http://${ENV_NAME}-qits-artifacts:8080/artifacts/daemons/qits-ci-daemon/{version}
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_DAEMON_URL=ws://${ENV_NAME}-qits-ci:8080/ci/daemon
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_WORKSPACES_URL=http://${ENV_NAME}-qits-workspaces:8080
