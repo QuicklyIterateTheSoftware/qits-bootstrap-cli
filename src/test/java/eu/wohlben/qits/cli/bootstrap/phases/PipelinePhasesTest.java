@@ -24,7 +24,6 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assertions.tuple;
 
 /**
  * The two sentences these phases read machine output by. The phases that shell docker and git are
@@ -737,6 +736,28 @@ class PipelinePhasesTest {
 
     private static final String EDITOR_VERSION = "2026.906.34347";
 
+    /**
+     * <b>A PIN THAT IS NOT PINNED — the fixture the seeding tests below are driven with.</b>
+     * {@link PipelinePhases#IMAGE_PINS} is empty, so asserting the rendering against IT would be
+     * four assertions that pass because nothing happened. The mechanism is kept for the next
+     * consumer that cannot declare its key (see the list's own javadoc), so it is proven here
+     * against a list shaped like the rows that left: one image landing on two applications, and a
+     * second image of its own.
+     * <p>
+     * The keys and publishers are the retired ones deliberately — a name that never existed would
+     * prove the same rendering and say less about what the rendering is for. Nothing in production
+     * reads these; {@link #noPinIsAuthoredSoNothingIsSeeded} is what asserts that.
+     */
+    private static final List<PipelinePhases.ImagePin> FIXTURE_PINS = List.of(
+            new PipelinePhases.ImagePin("qits/project-agent", "projects",
+                    "QITS_PROJECTS_AGENT_IMAGE_VERSION", "projects-daemon"),
+            new PipelinePhases.ImagePin("qits/workspace", "workspaces",
+                    "QITS_WORKSPACE_IMAGE_VERSION", "workspace-daemon"),
+            new PipelinePhases.ImagePin("qits/workspace", "projects",
+                    "QITS_PROJECTS_REFINEMENT_IMAGE_VERSION", "workspace-daemon"),
+            new PipelinePhases.ImagePin("qits/workspace-editor", "workspaces",
+                    "QITS_EDITOR_IMAGE_VERSION", "oci-workspace-editor"));
+
     /** Every publisher released, which is what a green boot hands the renderer. */
     private static Map<String, String> allReleased() {
         return Map.of("projects-daemon", AGENT_VERSION,
@@ -746,41 +767,50 @@ class PipelinePhasesTest {
 
     /**
      * <b>THE TRIPWIRE. The master list is qits-configuration's {@code control/ImagePins.AUTHORED},
-     * and the four triples below are spelled the way that class has them.</b> This copy exists
-     * because the CLI builds cold from Maven Central before any platform exists, and because
-     * {@code GET /configuration/api/pins} omits a mapping nothing has set — so the boot can neither
-     * depend on that repository nor ask a fresh platform for the map. The two change together, and
-     * this is the assertion that fails on the day they do not.
+     * and it is empty — so this copy is too.</b> The copy exists because the CLI builds cold from
+     * Maven Central before any platform exists, and because {@code GET /configuration/api/pins}
+     * omits a mapping nothing has set, so the boot can neither depend on that repository nor ask a
+     * fresh platform for the map. The two change together, and this is the assertion that fails on
+     * the day they do not.
+     * <p>
+     * <b>Empty is a state of the list, not the end of it.</b> Nothing below special-cases it, which
+     * is the same ruling {@code ImagePins} makes for itself — so this test asserts the count and
+     * the publisher rule that any future row has to satisfy, and neither is written as a claim that
+     * the seeding is gone.
      */
     @Test
-    void theFourPinsAreTheOnesQitsConfigurationAuthored() {
-        assertThat(PipelinePhases.IMAGE_PINS)
-                .extracting(PipelinePhases.ImagePin::image,
-                        pin -> PlatformModel.application(pin.application()),
-                        pin -> "env." + pin.key())
-                .containsExactly(
-                        tuple("qits/project-agent", "qits-projects",
-                                "env.QITS_PROJECTS_AGENT_IMAGE_VERSION"),
-                        tuple("qits/workspace", "qits-workspaces",
-                                "env.QITS_WORKSPACE_IMAGE_VERSION"),
-                        tuple("qits/workspace", "qits-projects",
-                                "env.QITS_PROJECTS_REFINEMENT_IMAGE_VERSION"),
-                        tuple("qits/workspace-editor", "qits-workspaces",
-                                "env.QITS_EDITOR_IMAGE_VERSION"));
-        // And every publisher named is one the plan replays a release of, or the version read
-        // would be the tag of a repository this boot never restores.
+    void noPinIsAuthoredSoNothingIsSeeded() {
+        assertThat(PipelinePhases.IMAGE_PINS).isEmpty();
+
+        // The consequence a bootstrapped platform is actually born with: the import is the rendered
+        // extras whole, and not one of the four retired keys is written into it. Each of those
+        // services takes its image version from a maven pin now and reads a `…_OVERRIDE` key, so a
+        // seed here would be an entry nothing reads and nothing on this platform can delete.
+        String seeded = PipelinePhases.withImageVersions(renderedExtras(), allReleased());
+
+        assertThat(seeded).isEqualTo(renderedExtras());
+        assertThat(seeded).doesNotContain("QITS_PROJECTS_AGENT_IMAGE_VERSION")
+                .doesNotContain("QITS_WORKSPACE_IMAGE_VERSION")
+                .doesNotContain("QITS_PROJECTS_REFINEMENT_IMAGE_VERSION")
+                .doesNotContain("QITS_EDITOR_IMAGE_VERSION");
+
+        // And the rule a row added back would have to satisfy: every publisher named is one the
+        // plan replays a release of, or the version read would be the tag of a repository this boot
+        // never restores.
         assertThat(PipelinePhases.IMAGE_PINS)
                 .allSatisfy(pin -> assertThat(PlatformModel.RELEASE_PUBLISHERS)
                         .as(pin.image()).contains(pin.publisher()));
     }
 
     /**
-     * All four pins are seeded into the imported extras, each onto the application that reads it, so
-     * a first deploy pins the release this boot cut instead of waiting on the SoftwareRelease event.
+     * The seeding itself, against {@link #FIXTURE_PINS}: each pin lands on the application that
+     * reads it, so a first deploy pins the release this boot cut instead of waiting on the
+     * SoftwareRelease event. This is the mechanism the empty list keeps.
      */
     @Test
     void everyPinIsSeededOntoTheApplicationThatReadsIt() {
-        String seeded = PipelinePhases.withImageVersions(renderedExtras(), allReleased());
+        String seeded = PipelinePhases.withImageVersions(renderedExtras(), allReleased(),
+                FIXTURE_PINS);
 
         assertThat(seeded).contains(
                 "qits.platform.deployments.extras.qits-projects.env."
@@ -799,14 +829,15 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>ONE RELEASE OF qits/workspace MOVES TWO KEYS</b> — the workspace a session opens and the
-     * image a refinement runs in are the same image, which is what qits-configuration's pin list
-     * says. So one version read is written to both, and they cannot drift apart.
+     * <b>ONE RELEASE OF ONE PUBLISHER MOVES TWO KEYS</b>, and the mechanism allows it on purpose —
+     * {@code qits/workspace} was the worked example, on qits-workspaces and qits-projects at once,
+     * because the image a refinement runs in is the image a workspace runs in. So one version read
+     * is written to both, and they cannot drift apart.
      */
     @Test
-    void theWorkspaceReleaseSeedsBothTheWorkspaceAndTheRefinementKey() {
+    void oneReleaseSeedsEveryKeyItsImageMoves() {
         String seeded = PipelinePhases.withImageVersions(renderedExtras(),
-                Map.of("workspace-daemon", WORKSPACE_VERSION));
+                Map.of("workspace-daemon", WORKSPACE_VERSION), FIXTURE_PINS);
 
         assertThat(seeded).contains("QITS_WORKSPACE_IMAGE_VERSION=" + WORKSPACE_VERSION)
                 .contains("QITS_PROJECTS_REFINEMENT_IMAGE_VERSION=" + WORKSPACE_VERSION);
@@ -815,10 +846,10 @@ class PipelinePhasesTest {
     /** The exact key the deployer injects, on the application that reads it and nothing else. */
     @Test
     void theSeedLineNamesTheApplicationsOwnKey() {
-        assertThat(PipelinePhases.imageVersionSeed(PipelinePhases.IMAGE_PINS.get(0), AGENT_VERSION))
+        assertThat(PipelinePhases.imageVersionSeed(FIXTURE_PINS.get(0), AGENT_VERSION))
                 .isEqualTo("qits.platform.deployments.extras.qits-projects.env."
                         + "QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION);
-        assertThat(PipelinePhases.imageVersionSeed(PipelinePhases.IMAGE_PINS.get(3), EDITOR_VERSION))
+        assertThat(PipelinePhases.imageVersionSeed(FIXTURE_PINS.get(3), EDITOR_VERSION))
                 .isEqualTo("qits.platform.deployments.extras.qits-workspaces.env."
                         + "QITS_EDITOR_IMAGE_VERSION=" + EDITOR_VERSION);
     }
@@ -832,19 +863,20 @@ class PipelinePhasesTest {
     void aBlankVersionSeedsOnlyItsOwnPinAway() {
         String extras = renderedExtras();
 
-        assertThat(PipelinePhases.withImageVersions(extras, Map.of())).isEqualTo(extras);
+        assertThat(PipelinePhases.withImageVersions(extras, Map.of(), FIXTURE_PINS))
+                .isEqualTo(extras);
 
         String noEditor = PipelinePhases.withImageVersions(extras,
                 Map.of("projects-daemon", AGENT_VERSION,
                         "workspace-daemon", WORKSPACE_VERSION,
-                        "oci-workspace-editor", ""));
+                        "oci-workspace-editor", ""), FIXTURE_PINS);
         assertThat(noEditor).contains("QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION)
                 .contains("QITS_WORKSPACE_IMAGE_VERSION=" + WORKSPACE_VERSION)
                 .doesNotContain("QITS_EDITOR_IMAGE_VERSION");
 
         // A blank workspace release takes BOTH of its keys with it and leaves the agent's alone.
         String noWorkspace = PipelinePhases.withImageVersions(extras,
-                Map.of("projects-daemon", AGENT_VERSION));
+                Map.of("projects-daemon", AGENT_VERSION), FIXTURE_PINS);
         assertThat(noWorkspace).contains("QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION)
                 .doesNotContain("QITS_WORKSPACE_IMAGE_VERSION")
                 .doesNotContain("QITS_PROJECTS_REFINEMENT_IMAGE_VERSION");

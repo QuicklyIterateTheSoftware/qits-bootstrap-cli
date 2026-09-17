@@ -49,7 +49,8 @@ import static org.assertj.core.api.Assertions.fail;
  *       key that decides whether there is a configuration service to read at all.
  *   <li><b>The initial image pins</b> — asked of {@code PipelinePhases.IMAGE_PINS} through
  *       {@link ImagePinKeys}, because a pin is a release this boot cut and no shipped default can
- *       name it.
+ *       name it. The list is empty today, so the family admits nothing; it is asked rather than
+ *       deleted because the next pin belongs to it without an edit here.
  * </ul>
  * <b>An audience-shaped key is deliberately not a family at all any more.</b> No service is told
  * which audience to validate — every image ships {@code quarkus.oidc.token.audience=qits-platform},

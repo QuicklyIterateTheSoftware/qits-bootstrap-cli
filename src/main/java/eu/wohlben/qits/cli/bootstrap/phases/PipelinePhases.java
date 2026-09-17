@@ -1990,17 +1990,21 @@ public class PipelinePhases {
     public Phase configurationImport() {
         return new Phase("configuration-import",
                 "import the deployment extras into qits-configuration", ctx -> {
-            // The rendered extras, PLUS the deployment values the release train does not restore on
-            // its own: the image versions each service starts a sandbox from. They are the calvers
-            // the publishers were released at this boot — read the same way releaseReplay reads
-            // them, so the seeds and the pins cannot disagree. Seeded here, before qits-projects and
-            // qits-workspaces deploy a few phases below, they give each service the right version on
-            // its FIRST boot instead of leaving the first sandbox to wait on the durable
-            // SoftwareRelease event to be consumed.
+            // The rendered extras, PLUS one seed per image pin: the version a service starts a
+            // sandbox from, which is a release this boot cut and not a value any image can ship.
+            // Seeded here, before the services that read them deploy a few phases below, so a first
+            // boot pins the right version instead of leaving the first sandbox waiting on the
+            // durable SoftwareRelease event to be consumed.
+            //
+            // THE PIN LIST IS EMPTY TODAY, so this seeds nothing and the import is the rendered
+            // extras whole. That is not a dead branch — see IMAGE_PINS: the next pin a consumer
+            // cannot express in its own repository lands in that list and is seeded from here with
+            // no other edit.
             //
             // ONE READ PER PUBLISHER, derived from the pin list rather than spelled beside it: two
-            // of the four pins are moved by the same release of qits/workspace, and a second read of
-            // the same checkout is a second answer that could differ.
+            // pins may be moved by the same publisher's release — qits/workspace was that case
+            // while it was pinned — and a second read of the same checkout is a second answer that
+            // could differ.
             Map<String, String> released = new LinkedHashMap<>();
             for (ImagePin pin : IMAGE_PINS) {
                 released.computeIfAbsent(pin.publisher(),
@@ -2038,29 +2042,51 @@ public class PipelinePhases {
     /**
      * <b>THE PIN LIST, and the master copy of it is qits-configuration's own
      * {@code control/ImagePins.AUTHORED}.</b> That service owns which image moves which key on
-     * which application, and it keeps the four in sync from the SoftwareRelease event for the whole
+     * which application, and it keeps them in sync from the SoftwareRelease event for the whole
      * life of the platform. This is a COPY, for the one window it cannot cover: the CLI builds cold
      * from Maven Central before any platform exists, so it can depend on nothing of that repository
      * — and {@code GET /configuration/api/pins} OMITS a mapping nothing has set, so a fresh
-     * platform cannot be asked for the map either. The test beside this list spells the four
-     * triples verbatim and is the tripwire that fails when the two repositories disagree.
+     * platform cannot be asked for the map either. The test beside this list is the tripwire that
+     * fails when the two repositories disagree.
      * <p>
-     * <b>Two entries name the same image, and that is the pin list's own ruling rather than a
-     * duplicate.</b> One release of {@code qits/workspace} moves qits-workspaces' workspace version
-     * AND qits-projects' refinement version — a refinement runs in the same image a workspace does
-     * — so one version read writes two keys. A fresh node with only the first seeded refused every
-     * refinement start with IMAGE_MISSING, because qits-projects fell back to the default committed
-     * in its own image.
+     * <b>IT IS EMPTY, AND AN EMPTY LIST IS NOT A RETIRED MECHANISM</b> — the same ruling
+     * {@code ImagePins} states for itself, and this copy must not read it differently. Nothing here
+     * is special-cased on there being no pins and nothing may become so: this is still the one
+     * place a cold boot can seed a version no image could ship, and the next consumer that needs
+     * one — a new image started per unit of work, on an application that cannot declare the key in
+     * its own {@code .config/qits/configuration.yml} — lands here and is seeded with no other edit.
+     * <p>
+     * <b>The four rows that were here left because their consumers stopped reading configuration
+     * for the version at all.</b> Each now pins a maven artifact whose own version IS the image
+     * tag, proven against the daemon it names by an integration test before it ships:
+     * <pre>
+     *   qits/project-agent     qits-projects    QITS_PROJECTS_AGENT_IMAGE_VERSION
+     *   qits/workspace         qits-workspaces  QITS_WORKSPACE_IMAGE_VERSION
+     *   qits/workspace         qits-projects    QITS_PROJECTS_REFINEMENT_IMAGE_VERSION
+     *   qits/workspace-editor  qits-workspaces  QITS_EDITOR_IMAGE_VERSION
+     * </pre>
+     * qits-workspaces pins {@code qits-workspace-daemon-protocol} and {@code
+     * qits-workspace-editor-image}; qits-projects pins the first for its refinement containers and
+     * {@code qits-projects-daemon-protocol} for its agent containers. Each service reads a
+     * {@code …_OVERRIDE} key now — a name nothing has ever written — and WARNs at boot if it finds
+     * the old one set, so seeding these four gave a fresh platform four entries no consumer reads
+     * and nothing on this platform can delete: {@code DELETE …/entries/{key}} is
+     * {@code {qits:admin, qits:system}}, and qits-configuration reports an orphan rather than
+     * cleaning it up. Inert residue born at bootstrap, under names that look like they decide which
+     * image every sandbox starts from.
+     * <p>
+     * <b>Do not add any of them back</b>, under this key or another: the version is a pom pin now,
+     * and a seed here would write an entry the consumer never reads and say nothing about it at any
+     * log level.
+     * <p>
+     * <b>One image may still land on several applications</b>, and the list allows it — {@code
+     * qits/workspace} was the worked example, on qits-workspaces and qits-projects at once, and a
+     * fresh node with only the first seeded refused every refinement start with IMAGE_MISSING. The
+     * rule survives its instances: a pin is keyed by the released image, the read below is per
+     * PUBLISHER so one checkout is described once, and a second row naming the same image needs no
+     * change to the mechanism.
      */
-    static final List<ImagePin> IMAGE_PINS = List.of(
-            new ImagePin("qits/project-agent", "projects",
-                    "QITS_PROJECTS_AGENT_IMAGE_VERSION", "projects-daemon"),
-            new ImagePin("qits/workspace", "workspaces",
-                    "QITS_WORKSPACE_IMAGE_VERSION", "workspace-daemon"),
-            new ImagePin("qits/workspace", "projects",
-                    "QITS_PROJECTS_REFINEMENT_IMAGE_VERSION", "workspace-daemon"),
-            new ImagePin("qits/workspace-editor", "workspaces",
-                    "QITS_EDITOR_IMAGE_VERSION", "oci-workspace-editor"));
+    static final List<ImagePin> IMAGE_PINS = List.of();
 
     /**
      * The imported extras with every pin above seeded onto the application that deploys from it.
@@ -2074,12 +2100,23 @@ public class PipelinePhases {
      * One source for every version: {@code releaseReplay} restores the tag, these lines seed it,
      * and qits-configuration's SoftwareRelease listener keeps them in sync afterwards — so the
      * value the deployer injects tracks the pin the release train moves.
+     * <p>
+     * <b>With {@link #IMAGE_PINS} empty this answers the extras unchanged</b>, which is the whole
+     * of what a boot seeds today. The mechanism is kept rather than the four calls to it (see the
+     * list), so the overload below takes the pins it renders: that is what lets a test prove the
+     * rendering against a pin without a row having to be typed back into production state.
      *
      * @param released the newest release tag per PUBLISHER model name
      */
     static String withImageVersions(String extras, Map<String, String> released) {
+        return withImageVersions(extras, released, IMAGE_PINS);
+    }
+
+    /** The same rendering, for a named list of pins. */
+    static String withImageVersions(String extras, Map<String, String> released,
+            List<ImagePin> pins) {
         String seeded = extras;
-        for (ImagePin pin : IMAGE_PINS) {
+        for (ImagePin pin : pins) {
             String version = released.getOrDefault(pin.publisher(), "");
             if (version == null || version.isBlank()) {
                 continue;
