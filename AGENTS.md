@@ -219,8 +219,9 @@ forced. Add to that list rather than deviating quietly.
   second file on it with a phase of its own. `demotion-rollout.md` is the hand procedure for a
   platform that is already flipped.
 - **A DEPLOYMENT IS A RELEASE, and there is no ref that deploys.** qits-projects tags a release
-  through qits-githost's primitives and publishes `SCMRelease`; the repository's own
-  `ci-event-release.yml` builds that tag and publishes `qits/<app>:<version>`; qits-ci announces
+  through qits-githost's primitives and publishes `SCMRelease`; the `release:` phase of the
+  repository's own `.config/qits/release.yml` — which qits-ci composes into a trigger document
+  selecting that event — builds that tag and publishes `qits/<app>:<version>`; qits-ci announces
   `SoftwareRelease`; qits-deployments enters a deployment request and pulls that image into the one
   designated platform environment. So this program seeds NO `environment/*` ref, derives none, and
   spells none in a generated file — the deployer's environments have no branch column to hold one.

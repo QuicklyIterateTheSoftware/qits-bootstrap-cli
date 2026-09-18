@@ -199,7 +199,9 @@ class PipelinePhasesTest {
      * <b>{@code repository} is the STORAGE UUID and {@code repositoryName} the name, exactly as a
      * real event spells them.</b> Selection is unaffected — qits-ci aliases a condition on
      * {@code repository} onto the name field whenever the payload carries one, which is what lets
-     * every {@code ci-event-release.yml} go on writing {@code repository: {exact: qits-…}}. What
+     * the release document's {@code repository: {exact: qits-…}} match — the line qits-ci composes
+     * for itself out of {@code .config/qits/release.yml}, and that a hand-written
+     * {@code ci-event-release.yml} used to carry. What
      * the UUID buys is the platform pass: {@code evaluatePlatform} looks the field up among its
      * candidates by name first and by id second, and in the seed window that catalogue is the git
      * host's listing, which answers ids and no names.
@@ -1476,14 +1478,72 @@ class PipelinePhasesTest {
                 .isEqualTo(" (0 pinned replayed, 5 already held)");
     }
 
+    /**
+     * <b>The re-announce guard reads the SLOT file, and the fixtures are real ones.</b> The
+     * predicate behind it asked whether a recipe spelled {@code event: SCMRelease}, which is the
+     * retired trigger file's grammar: a {@code release.yml} declares no {@code event:} at all, so a
+     * repointed constant alone would have left this guard permanently false and the
+     * IMAGE_MISSING race of 2026-09-05 unguarded again, with nothing red to say so.
+     */
     @Test
-    void aRecipeSelectingSCMReleaseIsRecognised(@org.junit.jupiter.api.io.TempDir Path src) throws Exception {
-        Path recipe = src.resolve(eu.wohlben.qits.cli.bootstrap.api.CiApi.RELEASE_CONFIG);
-        Files.createDirectories(recipe.getParent());
-        assertThat(PipelinePhases.selectsRelease(src)).isFalse();
-        Files.writeString(recipe, "name: release\nevent: SCMPublishTag\n");
-        assertThat(PipelinePhases.selectsRelease(src)).isFalse();
-        Files.writeString(recipe, "name: release\nevent: SCMRelease   # since 2026-09-04\nwhen:\n");
-        assertThat(PipelinePhases.selectsRelease(src)).isTrue();
+    void aRepositoryDeclaringItsOwnReleaseSlotDeclaresAReleasePhase(
+            @org.junit.jupiter.api.io.TempDir Path src) throws Exception {
+        Path slots = src.resolve(eu.wohlben.qits.cli.bootstrap.api.CiApi.RELEASE_SLOTS);
+        Files.createDirectories(slots.getParent());
+        Files.writeString(slots, """
+                archetype: java-service
+                artifacts:
+                  - { type: docker, name: qits/qits-ci, sbom: .sbom/sbom.json }
+                release:
+                  - image: qits/build-images/node-docker-base:latest
+                    build: true
+                    script: |
+                      buildctl build --output "type=image,name=$ref,push=true"
+                """);
+
+        assertThat(PipelinePhases.declaresReleasePhase(src)).isTrue();
+    }
+
+    /**
+     * <b>An archetype counts on its own, and erring toward yes is the decision.</b> The steps of
+     * this repository's phase two live in the wrapper's
+     * {@code .config/qits/release-archetypes/java-service.yml}, which one checkout cannot resolve —
+     * so a declared archetype is read as a declared phase. A false positive costs five more calls
+     * to a door that publishes nothing; a false negative costs the deploy.
+     */
+    @Test
+    void anArchetypeAloneDeclaresAReleasePhase(@org.junit.jupiter.api.io.TempDir Path src)
+            throws Exception {
+        Path slots = src.resolve(eu.wohlben.qits.cli.bootstrap.api.CiApi.RELEASE_SLOTS);
+        Files.createDirectories(slots.getParent());
+        Files.writeString(slots, "archetype: cli\n");
+
+        assertThat(PipelinePhases.declaresReleasePhase(src)).isTrue();
+    }
+
+    /**
+     * Phase one is not phase two. A slot file carrying only {@code release-request:} — the QA run,
+     * which publishes nothing — declares no release phase, and the column-zero anchoring is what
+     * keeps the prefix from answering for the key.
+     */
+    @Test
+    void aQaSlotAloneDeclaresNoReleasePhase(@org.junit.jupiter.api.io.TempDir Path src)
+            throws Exception {
+        Path slots = src.resolve(eu.wohlben.qits.cli.bootstrap.api.CiApi.RELEASE_SLOTS);
+        Files.createDirectories(slots.getParent());
+        Files.writeString(slots, """
+                release-request:
+                  - image: qits/build-images/maven-base:latest
+                    script: |
+                      ./mvnw -B -ntp verify
+                """);
+
+        assertThat(PipelinePhases.declaresReleasePhase(src)).isFalse();
+    }
+
+    /** No slot file is the one answer that is really a no: nothing declares, nothing is owed. */
+    @Test
+    void aCheckoutWithNoSlotFileDeclaresNothing(@org.junit.jupiter.api.io.TempDir Path src) {
+        assertThat(PipelinePhases.declaresReleasePhase(src)).isFalse();
     }
 }

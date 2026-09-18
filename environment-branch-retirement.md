@@ -17,8 +17,10 @@ A deployment is entered by a RELEASE now:
 1. qits-projects folds the release request's sources onto `release/<id>`, stamps a CalVer, commits
    the manifest bump, creates the tag and deletes the backing branch — all through qits-githost's
    git primitives — and publishes `SCMRelease`.
-2. The repository's own `.config/qits/ci-event-release.yml` selects that event, builds the tag and
-   publishes `qits/<app>:<version>`. qits-ci announces one `SoftwareRelease` per declared artifact.
+2. The repository's own `.config/qits/release.yml` declares a `release:` phase — its own steps, or an
+   `archetype:` the wrapper holds them for — and qits-ci composes that into a trigger document
+   selecting the event, builds the tag and publishes `qits/<app>:<version>`. qits-ci announces one
+   `SoftwareRelease` per declared artifact.
 3. qits-deployments enters a deployment request from the `docker` one and pulls
    `qits/<app>:<version>` into the designated platform environment (`pd_environment.platform`).
 4. `main` is finalized AFTER the deployment lands, not before it.
@@ -128,8 +130,9 @@ curl -fsS -H 'X-Qits-User: qits-bootstrap' -H 'X-Qits-Roles: qits:admin' \
 ```
 
 The row to see is `status: ACTIVE` with the `version` the request answered with. `IMAGE_MISSING`
-means the release build did not publish `qits/<app>:<version>` — a repository whose
-`ci-event-release.yml` still pushes only `:$QITS_CI_SHA`, or one carrying no release recipe at all.
+means the release build did not publish `qits/<app>:<version>` — a repository whose release phase
+still pushes only `:$QITS_CI_SHA`, or one whose `.config/qits/release.yml` declares no `release:`
+phase at all.
 Fix that first; it is the whole of what the new flow depends on.
 
 ## Step 4 — delete the live `environment/*` refs

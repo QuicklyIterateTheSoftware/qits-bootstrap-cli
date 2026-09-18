@@ -12,8 +12,20 @@ import java.util.Optional;
  * waits poll. */
 public class CiApi {
 
-    /** The one file whose run IS a repository's release — the identity no other run fact gives. */
-    public static final String RELEASE_CONFIG = ".config/qits/ci-event-release.yml";
+    /**
+     * The one file whose run IS a repository's release — the identity no other run fact gives.
+     * <p>
+     * <b>It is the SLOT file now, not a trigger file.</b> Every repository on the estate declares
+     * {@code .config/qits/release.yml} — slots, an archetype and the artifacts it publishes — and
+     * qits-ci composes the two trigger documents from it at evaluation time, stamping the composed
+     * run with this path. The hand-written pair it replaced
+     * ({@code ci-event-release-request.yml} / {@code ci-event-release.yml}) survives in no
+     * repository, so the old value matched no run row and every question asked by config path
+     * silently answered no. <b>The value must equal {@code CiReleaseSlotParser.CONFIG_PATH} in
+     * qits-ci</b>, which is what stamps the row; they move together or the questions below stop
+     * being asked of anything.
+     */
+    public static final String RELEASE_SLOTS = ".config/qits/release.yml";
 
     /** Identity asserted on the private qits-net hop to CI's now-authorized read API. */
     private static final Map<String, String> SYSTEM_HEADERS = Map.of(
@@ -139,6 +151,12 @@ public class CiApi {
      * release replay's skip asks. The config path is the identity, for the reasons above: the sha
      * collides with an upstream-fired bump run of the same repository, and the trigger name is a
      * property of the recipe rather than of the run.
+     * <p>
+     * <b>A composed run carries {@link #RELEASE_SLOTS} as its config path</b>, which is the whole
+     * of what the slot-file migration changed here: qits-ci stamps the row with the file it
+     * composed the document from, not with a file anybody committed as a pipeline. While this
+     * constant still named the retired trigger file the match could not succeed, so the skip was
+     * dead and every replay rebuilt what the registry already held.
      */
     public boolean greenReleaseRunAt(String repoId, String commitSha) {
         Http.Response response = http.get(base + "/api/runs?repositoryId=" + repoId + "&limit=20",
@@ -149,7 +167,7 @@ public class CiApi {
         for (JsonNode run : Json.parse(response.body()).path("runs")) {
             if ("EVENT".equals(Json.text(run, "triggerType"))
                     && "SUCCESS".equals(Json.text(run, "status"))
-                    && RELEASE_CONFIG.equals(Json.text(run, "configPath"))
+                    && RELEASE_SLOTS.equals(Json.text(run, "configPath"))
                     && commitSha.equals(Json.text(run, "commitSha"))) {
                 return true;
             }

@@ -865,11 +865,12 @@ public class PipelinePhases {
     /**
      * The RELEASED artifacts, restored by re-establishing ONE SCM fact — the release tag — and then
      * asking qits-ci for the build that publishes it. The wrapper builds install RELEASED versions,
-     * and a clean version only ever comes from a repo's ci-event-release.yml; a post-receive
-     * publish on main produces a prerelease nothing pins.
+     * and a clean version only ever comes from a repo's release pipeline — the {@code release:}
+     * phase of its {@code .config/qits/release.yml}; a post-receive publish on main produces a
+     * prerelease nothing pins.
      * <p>
-     * <b>The tag alone stopped being a trigger on 2026-09-04.</b> Every publisher's
-     * ci-event-release.yml declared {@code event: SCMPublishTag} when this phase was written, so
+     * <b>The tag alone stopped being a trigger on 2026-09-04.</b> Every publisher's release recipe
+     * declared {@code event: SCMPublishTag} when this phase was written, so
      * the push WAS the trigger; all eight select {@code SCMRelease} now, and a pushed tag announces
      * SCMPublishTag, which nothing selects any more. The phase waited its whole budget out for a
      * run that was never going to exist. So it pushes the tag and then says the one word that
@@ -1512,16 +1513,17 @@ public class PipelinePhases {
                     + (answer == null ? "no answer" : answer.describe()));
         }
         List<String> runs = CiApi.triggeredRunIds(answer);
-        // ZERO RUNS FROM A RECIPE THAT PLAINLY SELECTS THE EVENT IS A RACE, NOT AN ANSWER. Measured
-        // on the 2026-09-05 cold run: qits-containers' main had reached the git host ten seconds
-        // earlier and dev-qits-githost had just been cut over, qits-ci answered 200 with no run and
-        // logged nothing for the event — its trigger-file read met the service mid-cutover — and
-        // the boot took that as "no release pipeline" for good, so the deploy ended IMAGE_MISSING.
-        // The checkout beside this program holds the recipe, so it can tell the two apart: when the
-        // file selects SCMRelease, the announcement is repeated a few times before the empty
-        // answer is believed. A recipe that really selects nothing still gets one call.
-        for (int again = 1; runs.isEmpty() && again <= 5 && selectsRelease(src); again++) {
-            ctx.log("  " + repo + "'s recipe selects SCMRelease but qits-ci started no run — "
+        // ZERO RUNS FROM A REPOSITORY THAT PLAINLY DECLARES A RELEASE PIPELINE IS A RACE, NOT AN
+        // ANSWER. Measured on the 2026-09-05 cold run: qits-containers' main had reached the git
+        // host ten seconds earlier and dev-qits-githost had just been cut over, qits-ci answered 200
+        // with no run and logged nothing for the event — its config read met the service
+        // mid-cutover — and the boot took that as "no release pipeline" for good, so the deploy
+        // ended IMAGE_MISSING. The checkout beside this program holds the declaration, so it can
+        // tell the two apart: when the file declares a release phase, the announcement is repeated
+        // a few times before the empty answer is believed. A repository that really declares none
+        // still gets one call.
+        for (int again = 1; runs.isEmpty() && again <= 5 && declaresReleasePhase(src); again++) {
+            ctx.log("  " + repo + " declares a release phase but qits-ci started no run — "
                     + "asking again (" + again + "/5)");
             sleep(10_000);
             answer = boot.ci.trigger(event, token);
@@ -1539,19 +1541,44 @@ public class PipelinePhases {
     }
 
     /**
-     * Does the checkout's release recipe select {@code SCMRelease}? Read from the file the seed
-     * pushed, which is the file qits-ci reads from main's head: a match means the event has a
-     * pipeline, and an empty answer from the door is a read that failed, not a recipe that is absent.
+     * Does the checkout declare a release phase at all? Read from the file the seed pushed, which
+     * is the file qits-ci reads from main's head: a declaration means the announcement has a
+     * pipeline to start, and an empty answer from the door is then a read that failed rather than a
+     * repository that publishes nothing.
+     * <p>
+     * <b>The question used to be "does the recipe select {@code SCMRelease}", and that grammar is
+     * gone.</b> Every repository on the estate declares {@code .config/qits/release.yml} — SLOTS,
+     * {@code release-request:} for phase one and {@code release:} for phase two, usually reached
+     * through an {@code archetype:} the wrapper holds the steps for — and the hand-written trigger
+     * pair that spelled {@code event: SCMRelease} survives nowhere. A file with no {@code event:}
+     * key in it made this answer false forever, which is this guard dead with no symptom until the
+     * race it exists for comes round again.
+     * <p>
+     * <b>A declared {@code archetype:} counts, and the asymmetry is deliberate.</b> A repository
+     * may declare nothing but an archetype and its artifacts and still have a full publish phase,
+     * because the steps live in the wrapper's {@code .config/qits/release-archetypes/<name>.yml};
+     * this program reads one checkout and cannot resolve that, so it errs toward yes. The two costs
+     * are not comparable: a false negative is the IMAGE_MISSING boot above, while a false positive
+     * is at most five more announcements ten seconds apart against a repository that really has no
+     * release phase — and each of those is one call to a door that publishes nothing.
+     * <p>
+     * A file that cannot be READ is the same trade one step further on: the declaration is there
+     * and this program could not see it, which is exactly the case that must not be read as "no
+     * release pipeline". Only an ABSENT file is a no.
      */
-    static boolean selectsRelease(Path src) {
-        Path recipe = src.resolve(CiApi.RELEASE_CONFIG);
-        try {
-            return Files.exists(recipe)
-                    && Files.readString(recipe).lines()
-                    .map(String::strip)
-                    .anyMatch(line -> line.matches("event:\\s*['\"]?SCMRelease['\"]?\\s*(#.*)?"));
-        } catch (IOException e) {
+    static boolean declaresReleasePhase(Path src) {
+        Path slots = src.resolve(CiApi.RELEASE_SLOTS);
+        if (!Files.exists(slots)) {
             return false;
+        }
+        try {
+            // Top-level keys only — a column-zero `release:` or `archetype:`. The anchoring is the
+            // whole of the parsing and it is what keeps `release-request:` (phase one, QA, which
+            // publishes nothing) and a nested `release:` inside somebody's script out of the answer.
+            return Files.readString(slots).lines()
+                    .anyMatch(line -> line.matches("(release|archetype):\\s*(\\S.*)?"));
+        } catch (IOException e) {
+            return true;
         }
     }
 
@@ -1567,8 +1594,11 @@ public class PipelinePhases {
      * during the seed window that catalogue is the git host's own listing, which answers ids and no
      * names at all. A name there therefore matched nothing and no platform pipeline ran. Selection
      * is unaffected: qits-ci aliases a condition on {@code repository} onto {@code repositoryName}
-     * whenever the payload carries one, which is why every {@code ci-event-release.yml} can go on
-     * spelling {@code repository: {exact: qits-…-service}}.
+     * whenever the payload carries one, which is why a hand-written release trigger could spell
+     * {@code repository: {exact: qits-…-service}} at all. No repository writes that line any more —
+     * qits-ci composes the release document from {@code .config/qits/release.yml} and writes the
+     * {@code when: [{repository: {exact: <public name>}}]} itself — and the alias is what keeps
+     * this payload selecting it.
      * <p>
      * <b>{@code branch} is the TAG, not the release request's backing branch.</b> A real event
      * names {@code release/<uuid>}, and that branch is deleted in the same operation that creates
