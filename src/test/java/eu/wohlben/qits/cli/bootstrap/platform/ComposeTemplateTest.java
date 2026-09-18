@@ -1189,8 +1189,11 @@ class ComposeTemplateTest {
                 .contains("env.QITS_CI_CONTAINER_GIT_AUDIENCE=prod-qits-githost");
         // The two services that push. Their key was renamed with the split — a deployment still
         // passing qits.artifacts.url configures nothing and silently takes the default.
+        // The agent containers projects creates clone over the internal alias like ci's step
+        // containers do: their credential helper answers Basic, which only that alias's oauth2
+        // transport turns into a Bearer.
         assertThat(extras("qits-projects")).contains("env.QITS_GITHOST_URL=" + host)
-                .contains("env.QITS_PROJECTS_AGENT_GIT_BASE=" + host + "/git")
+                .contains("env.QITS_PROJECTS_AGENT_GIT_BASE=http://githost.prod.internal:8080/git")
                 .contains("env.QITS_EVENTS_URL=http://qits-events:8080")
                 .contains("env.QITS_AUTH_MACHINE_REQUIRED=true")
                 .contains("env.QUARKUS_OIDC_AUTH_SERVER_URL=http://qits-platform-idp:8080/idp")
