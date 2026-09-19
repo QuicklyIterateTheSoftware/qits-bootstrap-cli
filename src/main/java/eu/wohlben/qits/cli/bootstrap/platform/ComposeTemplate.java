@@ -969,7 +969,7 @@ public final class ComposeTemplate {
                   # pushing, and the default branch is protected here.
                   QITS_REPOSITORIES_GIT_PUSH_TOKEN: "${PUSH_TOKEN}"
                   QITS_PROJECTS_OWN_HOST: ${ENV_NAME}-qits-projects
-                  QITS_PROJECTS_AGENT_GIT_BASE: http://githost.${ENV_NAME}.internal:8080/git
+                  QITS_PROJECTS_CONTAINER_GIT_URL: http://githost.${ENV_NAME}.internal:8080
                   QITS_CONTAINERS_URL: http://${ENV_NAME}-qits-containers:8080
                   QITS_EVENTS_URL: http://${ALIAS_EVENTS}:8080
                   # Inbound: the bootstrap's own calls carry a bearer addressed to this service.
@@ -1971,20 +1971,30 @@ public final class ComposeTemplate {
             # override here would freeze that pin at whatever this file last said. Same reason
             # qits-workspaces' block does not name QITS_WORKSPACE_IMAGE.
             #
-            # QITS_PROJECTS_OWN_HOST and QITS_PROJECTS_AGENT_GIT_BASE are the two addresses an agent
-            # container is handed at creation: this service's own wire name, and the git host it clones
-            # from. The image ships pre-rename defaults (qits-projects, qits-artifacts), which resolve to
-            # nothing on this platform, so a container created from them never dials back and its boot
-            # clone fails. Both are spelled here, the first with the environment's own prefix.
+            # QITS_PROJECTS_OWN_HOST and QITS_PROJECTS_CONTAINER_GIT_URL are the two addresses a
+            # container qits-projects creates is handed at creation: this service's own wire name, and
+            # the git host that container clones and fetches from. The image ships pre-rename defaults
+            # (qits-projects, qits-artifacts), which resolve to nothing on this platform, so a container
+            # created from them never dials back and its boot clone fails. Both are spelled here, the
+            # first with the environment's own prefix.
             #
             # THE GIT ONE IS THE INTERNAL ALIAS, githost.<env>.internal, the same address qits-ci hands
             # its step containers and qits-workspaces its workspace containers — not the git host's
-            # service alias, which is what this line used to say. An agent container authenticates git
-            # with the credential helper baked into its image, and that helper answers a username and a
+            # service alias, which is what this line used to say. Every container image authenticates
+            # git with the credential helper baked into it, and that helper answers a username and a
             # token, which git sends as Basic. Only the internal alias's oauth2 transport turns that
             # into the Bearer the git host accepts; the service alias answers 401 to the same token, so
             # `qits checkout-daemon` inside the agent could never fetch. The agent container was the one
             # holder of a checkout still pointed at the service alias.
+            #
+            # SCHEME, HOST AND PORT, NO PATH, AND UNDER A NEW KEY. It was QITS_PROJECTS_AGENT_GIT_BASE
+            # and carried qits-githost's /git path; qits-projects reads QITS_PROJECTS_CONTAINER_GIT_URL
+            # now — one key for one concept, shared by its agent and refinement harnesses, each of which
+            # appends /git itself. The rename is the mechanism rather than a tidy-up: a stored entry
+            # outranks a shipped default, nothing on that platform deletes an entry and only qits:admin
+            # can rewrite one, so the deployments already carrying the poisoned service alias under the
+            # old name are only made inert by the code reading a different name. This template writes
+            # the old key nowhere at all, so a platform bootstrapped from it never adds to the residue.
             #
             # QITS_GITHOST_URL REPLACED QITS_ARTIFACTS_URL, and the rename is the point rather than a
             # tidy-up: this service mirrors and pushes git, and git is qits-githost now. The old key is
@@ -2101,7 +2111,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-projects.env.QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080
             qits.platform.deployments.extras.qits-projects.env.QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN}
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_OWN_HOST=${ENV_NAME}-qits-projects
-            qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_AGENT_GIT_BASE=http://githost.${ENV_NAME}.internal:8080/git
+            qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_CONTAINER_GIT_URL=http://githost.${ENV_NAME}.internal:8080
             qits.platform.deployments.extras.qits-projects.env.QITS_EVENTS_URL=http://${ALIAS_EVENTS}:8080
             qits.platform.deployments.extras.qits-projects.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The volume stays for the same reason qits-projects' does: /data is this service's own tree of
