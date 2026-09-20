@@ -379,6 +379,25 @@ forced. Add to that list rather than deviating quietly.
   every token it mints whatever the caller asked for, so there is no per-service audience for a
   variable to name. What stays on both sides is `QITS_AUTH_MACHINE_REQUIRED` — the gate — and
   `QUARKUS_OIDC_AUTH_SERVER_URL` — the issuer, one address per platform.
+- **ONLY CI MAY PUBLISH TO qits-artifacts, and this run's exception is a credential it hands back.**
+  The store's anonymous publishing door is closed (user ruling 2026-09-13) and `qits:ci-run` is the
+  only role that opens it. The bootstrap publishes before any CI exists, so it commissions ITSELF
+  one: `POST /idp/api/clients` with `contextKind: bootstrap-publish` and `gitRefs: []` — the idp's
+  `CommissionRoles` gives that kind `qits:ci-run`, and the empty list says it may push nothing.
+  Every publish into the store carries it: the maven ones through a `<server><id>qits</id>` with an
+  `Authorization` header (Maven does NOT authenticate preemptively, so a username/password pair
+  would never be sent at all), the npm ones as `_authToken`, which npm sends as a bearer, and the
+  daemon binary on its PUT. The id `qits` is not free to choose: it is what
+  `-DaltDeploymentRepository=qits::default::…` names, and any other spelling is a credential Maven
+  holds and never sends. **The lifetime is this program's to keep and nothing else's**: the
+  `publish-credential-release` phase hands it back the moment the daemon binary is up — the last
+  publish of the boot — and `Boot.runPhases` hands it back in a `finally` as well, because a
+  publish that FAILED ends the run before that phase and is exactly when one would be left standing.
+  READS at the store are gated too and carry the run's OWN machine token instead, because they go
+  on long after the publishing credential is gone; `health` is the one call that stays bare, since
+  every wait polls it before any idp exists. Where there is no idp yet — every phase of a cold boot
+  before `seed-idp` — there is nothing to present and the publishes go bare into the seed store
+  this run started without a gate, which is the exception the ruling left standing.
 - **`QITS_ENVIRONMENT` is a statement of tier membership, and a platform service is handed none.**
   The deployer records a resource row per application under that environment, `orElse(null)`, and
   looks a platform-target service's rows up by the null key. Tell a platform service it has a tier

@@ -191,7 +191,11 @@ public class BootstrapCommand implements Callable<Integer> {
             EventFeed feed = EventFeed.start(effective, ui);
             RunResult result;
             try {
-                result = new PhaseEngine(ui).run(phases);
+                // THROUGH THE BOOT, so the publishing identity goes back even when the run did
+                // not finish: a publish that FAILED ends the run before the phase that hands it
+                // back, and that is exactly when a credential would otherwise be left standing at
+                // the idp. See Boot.runPhases.
+                result = boot.runPhases(new PhaseEngine(ui), phases);
             } finally {
                 feed.close();
                 // The bootstrap edge is deliberately NOT stopped here. It owns the public door

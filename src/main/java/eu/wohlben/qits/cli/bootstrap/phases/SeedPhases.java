@@ -1173,11 +1173,11 @@ public class SeedPhases {
      *
      * @param trees the source trees to deploy, in build order — {@link #publishTree}
      */
-    String publishScript(String repoName, List<String> trees) {
+    String publishScript(String repoName, List<String> trees, String authorization) {
         // `set -eu` is not decoration now that there can be more than one build in here: without
         // it the container's exit code is the LAST command's, so a failed older version followed
         // by a green checkout would report success and leave the store short a version.
-        StringBuilder script = new StringBuilder("set -eu\n").append(mavenSettings())
+        StringBuilder script = new StringBuilder("set -eu\n").append(mavenSettings(authorization))
                 .append(MAVEN_PURGE_QITS);
         for (String tree : trees) {
             script.append("cd ").append(tree)
@@ -1224,11 +1224,19 @@ public class SeedPhases {
                 trees.add(publishTree(null));
             }
             boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
+            // Minted here rather than once for the boot, and that is the whole answer to the
+            // settings file outliving its token: the file is written into a container that is
+            // created on the next line and started on the one after, so the token is at most
+            // seconds old when the first deploy runs. What it does NOT survive is one publish
+            // container taking longer than the token's hour — the file cannot be rewritten from
+            // out here — and the symptom would be a 401 at the end of a long build. Per phase is
+            // the shortest exposure this shape allows.
+            String authorization = boot.publishAuthorization(ctx);
             String cid = create(ctx, List.of(
                     "docker", "create", "--network", Boot.NETWORK, "--user", "root",
                     "--entrypoint", "sh", "-v", MAVEN_CACHE_MOUNT,
                     "maven:3.9-eclipse-temurin-25",
-                    "-c", publishScript(repoName, trees)));
+                    "-c", publishScript(repoName, trees, authorization)), authorization);
             for (String pinned : missing) {
                 copyTag(ctx, repoName, pinned, cid, publishTree(pinned));
             }
@@ -1254,6 +1262,7 @@ public class SeedPhases {
     public Phase uiComponentsPublish() {
         return new Phase("publish-ui-components", "publish the shared UI package into seed artifacts",
                 ctx -> {
+                    String token = bearerOf(boot.publishAuthorization(ctx));
                     String script = """
                             set -eu
                             apk add --no-cache git >/dev/null
@@ -1268,14 +1277,16 @@ public class SeedPhases {
                             cd dist/qits-spa-ui-components
                             npm view @qits/ui-components@0.0.4 version >/dev/null 2>&1 || npm publish
 
-                            """.formatted(npmrc());
-                    nodePublish(ctx, "spa-ui-components", script, "UI package publish failed");
+                            """.formatted(npmrc(token));
+                    nodePublish(ctx, "spa-ui-components", script, "UI package publish failed",
+                            token);
                 });
     }
 
     public Phase angularPublish() {
         return new Phase("publish-angular", "publish the Angular integration package into seed artifacts",
                 ctx -> {
+                    String token = bearerOf(boot.publishAuthorization(ctx));
                     String script = """
                             set -eu
                             apk add --no-cache git >/dev/null
@@ -1290,9 +1301,9 @@ public class SeedPhases {
                             version=$(node -p "require(\\"./dist/qits-integrations-angular/package.json\\").version")
                             npm view "@qits/angular@$version" version >/dev/null 2>&1 || npm publish ./dist/qits-integrations-angular
 
-                            """.formatted(npmrc());
+                            """.formatted(npmrc(token));
                     nodePublish(ctx, "integrations-angular", script,
-                            "Angular integration publish failed");
+                            "Angular integration publish failed", token);
                 });
     }
 
@@ -1301,9 +1312,15 @@ public class SeedPhases {
      * which package goes to which is decided by its SCOPE rather than by a path:
      * <ul>
      *   <li>{@code @qits} → this environment's own qits-artifacts, which is where these two phases
-     *       publish and where every SPA build reads the platform's own packages from. The auth-token
-     *       line beside it is what makes {@code npm publish} attempt the write at all — the registry
-     *       takes any value, and the immutable version is what keeps it honest.
+     *       publish and where every SPA build reads the platform's own packages from. The
+     *       auth-token line beside it carries the run's PUBLISHING CREDENTIAL: npm sends
+     *       {@code _authToken} as {@code Authorization: Bearer <value>}, which is exactly what the
+     *       store's publish door now takes. It used to be the literal {@code qits-bootstrap} —
+     *       ceremony that made {@code npm publish} attempt the write at all, against a registry
+     *       that read no credential. Only CI may publish now (user ruling 2026-09-13), so the value
+     *       is a real token of a {@code bootstrap-publish} commission. Where there is none — the
+     *       gate off, or the seed store before any idp — the line is left out and the publish is
+     *       bare, as it was.
      *   <li>everything else → qits-platform-mirror's cache of npmjs. One cache for the machine, cold
      *       on a fresh platform and warm by the second build.
      * </ul>
@@ -1311,13 +1328,28 @@ public class SeedPhases {
      * default is what every unscoped package resolves through — and the hosted registry serves only
      * what was published to it, which for npmjs' half of a lockfile is nothing.
      */
-    private String npmrc() {
+    String npmrc(String token) {
+        String registry = boot.config.artifactsUrl().replaceFirst("^https?://", "") + "/npm/npm/";
         return "cat > /root/.npmrc <<'NPMRC'\n"
                 + "registry=" + boot.config.mirrorUrl() + "/artifacts/npm/npmjs/\n"
                 + "@qits:registry=" + boot.config.artifactsUrl() + "/npm/npm/\n"
-                + "//" + boot.config.artifactsUrl().replaceFirst("^https?://", "")
-                + "/npm/npm/:_authToken=qits-bootstrap\n"
+                + (token == null || token.isBlank() ? ""
+                        : "//" + registry + ":_authToken=" + token + "\n")
                 + "NPMRC";
+    }
+
+    /**
+     * The bearer out of an {@code Authorization} header value, which is the form npm's
+     * {@code _authToken} takes: npm puts {@code Bearer } in front of it itself, so the word must
+     * not be in the file twice.
+     */
+    static String bearerOf(String authorization) {
+        if (authorization == null || authorization.isBlank()) {
+            return "";
+        }
+        String prefix = "Bearer ";
+        return authorization.regionMatches(true, 0, prefix, 0, prefix.length())
+                ? authorization.substring(prefix.length()) : authorization;
     }
 
     /**
@@ -1337,9 +1369,10 @@ public class SeedPhases {
      * line, because where a publish LANDS is the phase's decision and where it READS from is the
      * platform's.
      */
-    private String mavenSettings() {
+    String mavenSettings(String authorization) {
         return "mkdir -p /root/.m2 && cat > /root/.m2/settings.xml <<'SETTINGS'\n"
                 + "<settings>\n"
+                + servers(authorization)
                 + "  <mirrors>\n"
                 + "    <mirror>\n"
                 + "      <id>qits-central-proxy</id>\n"
@@ -1360,11 +1393,47 @@ public class SeedPhases {
                 + "SETTINGS\n";
     }
 
-    private void nodePublish(PhaseContext ctx, String repoName, String script, String failure)
-            throws Exception {
+    /**
+     * <b>What a publish into the store presents, as Maven sends it.</b> Empty where there is
+     * nothing to present — the gate is off, or the seed store this run started itself and handed no
+     * gate.
+     * <p>
+     * <b>The id is {@code qits} and it is not free to choose.</b> A {@code <server>} is matched to
+     * a repository by id, and the repository a publish lands in is the one
+     * {@code -DaltDeploymentRepository=qits::default::<url>} names — so {@code qits} is the whole
+     * of what makes these credentials reach the wire. The toolchain seed's own {@code qits} target
+     * is the same id for the same reason; its {@code seed} target is a file url and takes none.
+     * <p>
+     * <b>A header, and NOT a {@code <username>}/{@code <password>} pair.</b> Maven does not
+     * authenticate preemptively: it sends a request bare, waits for the 401, and only then answers
+     * the challenge it names — so a Basic pair would never be sent at all against a store that
+     * refuses rather than challenges, and a bearer has no Basic challenge to answer in the first
+     * place. {@code httpHeaders} is what puts the value on the FIRST request.
+     */
+    private static String servers(String authorization) {
+        if (authorization == null || authorization.isBlank()) {
+            return "";
+        }
+        return "  <servers>\n"
+                + "    <server>\n"
+                + "      <id>qits</id>\n"
+                + "      <configuration>\n"
+                + "        <httpHeaders>\n"
+                + "          <property>\n"
+                + "            <name>Authorization</name>\n"
+                + "            <value>" + authorization + "</value>\n"
+                + "          </property>\n"
+                + "        </httpHeaders>\n"
+                + "      </configuration>\n"
+                + "    </server>\n"
+                + "  </servers>\n";
+    }
+
+    private void nodePublish(PhaseContext ctx, String repoName, String script, String failure,
+                             String token) throws Exception {
         String cid = create(ctx, List.of(
                 "docker", "create", "--network", Boot.NETWORK, "--user", "root",
-                "--entrypoint", "sh", "node:24-alpine", "-c", script));
+                "--entrypoint", "sh", "node:24-alpine", "-c", script), token);
         copyIn(ctx, boot.state.repoDir(repoName), cid);
         startAndReap(ctx, cid, failure);
     }
@@ -1433,12 +1502,17 @@ public class SeedPhases {
                         ctx.skip("both registries hold both toolchain tarballs");
                     }
                     ctx.status("downloading and publishing " + wanted.size() + " tarball(s)");
+                    // The store half of this phase deploys to the same `qits` repository id the
+                    // library publishes do, through the same settings file — so it carries the
+                    // same credential. The file-registry half is a file url and takes none.
+                    String authorization = wanted.stream().anyMatch(Publish::toStore)
+                            ? boot.publishAuthorization(ctx) : null;
                     String cid = create(ctx, List.of(
                             "docker", "create", "--network", Boot.NETWORK, "--user", "root",
                             "--entrypoint", "sh", "-v", SEED_REPO_VOLUME + ":/repo",
                             "-v", MAVEN_CACHE_MOUNT,
                             "maven:3.9-eclipse-temurin-25",
-                            "-c", toolchainScript(wanted)));
+                            "-c", toolchainScript(wanted, authorization)), authorization);
                     startAndReap(ctx, cid, "seeding the musl toolchain failed");
                     ctx.note(wanted.size() + " tarball(s) seeded");
                 });
@@ -1483,8 +1557,8 @@ public class SeedPhases {
      * whatever the mirror happened to cache. {@code -DgeneratePom} is left at its default so both
      * registries get the pom and the checksums a Maven client expects beside an artifact.
      */
-    String toolchainScript(List<Publish> publishes) {
-        StringBuilder script = new StringBuilder("set -eu\n").append(mavenSettings());
+    String toolchainScript(List<Publish> publishes, String authorization) {
+        StringBuilder script = new StringBuilder("set -eu\n").append(mavenSettings(authorization));
         for (Publish publish : publishes) {
             MuslToolchain.Tarball tarball = publish.tarball();
             script.append("echo \"downloading ").append(tarball.fileName()).append(" from ")
@@ -3046,10 +3120,20 @@ public class SeedPhases {
     // --- small helpers ----------------------------------------------------------------------------
 
     private String create(PhaseContext ctx, List<String> command) {
+        return create(ctx, command, null);
+    }
+
+    /**
+     * The same, with a secret on the command line — a publishing token inside the script the
+     * container runs. {@code Cmd.mask} is what keeps it off the screen and out of the run log.
+     */
+    private String create(PhaseContext ctx, List<String> command, String secret) {
         List<String> labelled = new ArrayList<>(command);
         labelled.add(2, "qits.bootstrap.temporary=true");
         labelled.add(2, "--label");
-        ProcessResult result = boot.docker.run(Cmd.of(labelled).timeout(Duration.ofMinutes(30)), ctx::log);
+        ProcessResult result = boot.docker.run(
+                Cmd.of(labelled).timeout(Duration.ofMinutes(30)).mask(secret)
+                        .mask(bearerOf(secret)), ctx::log);
         Boot.must(result, "docker create failed");
         List<String> lines = result.captured();
         if (lines.isEmpty()) {

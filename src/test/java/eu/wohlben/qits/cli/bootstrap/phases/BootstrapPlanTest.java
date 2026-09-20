@@ -289,6 +289,26 @@ class BootstrapPlanTest {
     }
 
     /**
+     * <b>The publishing identity goes back immediately after the last publish.</b> Only CI may
+     * publish to qits-artifacts (user ruling 2026-09-13); the bootstrap holds the one exception and
+     * holds it for minutes. The daemon binary is the last thing this program publishes, so the
+     * hand-back sits directly behind it — everything below is a push, a deployment or a read. On
+     * both paths, because {@code --skip-build} still publishes the daemon.
+     */
+    @Test
+    void thePublishingCredentialIsHandedBackTheMomentTheLastPublishIsDone() {
+        assertThat(ids(plan(Map.of())))
+                .containsSubsequence("daemon-publish", "publish-credential-release", "git-repos");
+        assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1"))))
+                .containsSubsequence("daemon-publish", "publish-credential-release");
+        // Directly behind it: a phase in between would be one more phase that can fail and leave a
+        // publishing credential standing.
+        List<String> ids = ids(plan(Map.of()));
+        assertThat(ids.get(ids.indexOf("daemon-publish") + 1))
+                .isEqualTo("publish-credential-release");
+    }
+
+    /**
      * The two phases a domain adds, and where each of them has to sit.
      * <p>
      * The PLACEHOLDER certificate goes before the seed stack, because the edge is started there with

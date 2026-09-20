@@ -1,5 +1,9 @@
 package eu.wohlben.qits.cli.bootstrap.api;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 
 /**
@@ -39,18 +43,59 @@ public class IdpApi {
      *                               with nothing in its log to say why
      */
     public String token(String clientId, String secret, String audience) {
+        return minted(clientId, secret, audience).value();
+    }
+
+    /**
+     * <b>One minted token and the lifetime the idp gave it</b>, for the callers that hold a token
+     * across a long phase and have to know when it stops being one.
+     * <p>
+     * The lifetime is READ rather than assumed. {@code qits.idp.token-ttl-seconds} is the idp's
+     * setting and 3600 is today's value; a copy of that number here would be a deployment's change
+     * turning into a 401 in the middle of an upload, with nothing to say why. What is hard-coded is
+     * only the fallback for an answer that states none.
+     */
+    public record Token(String value, Duration lifetime) {
+
+        /** How long a holder may use it before re-minting — {@link #MARGIN} short of its end. */
+        public Instant expiryFrom(Instant minted) {
+            return minted.plus(lifetime).minus(MARGIN);
+        }
+    }
+
+    /**
+     * How far before a token's end its holder re-mints. The estate's convention, and it is what
+     * covers the flight time of the request the token is being minted for.
+     */
+    public static final Duration MARGIN = Duration.ofSeconds(60);
+
+    /** What a token lasts when the idp's answer states no {@code expires_in}. */
+    static final Duration DEFAULT_LIFETIME = Duration.ofHours(1);
+
+    /** @see #token(String, String, String) */
+    public Token minted(String clientId, String secret, String audience) {
         Http.Response response = http.postForm(issuer + "/token", clientId, secret,
                 Map.of("grant_type", "client_credentials", "audience", audience));
         if (!response.ok()) {
             throw new IllegalStateException("the idp issued no token for " + clientId
                     + " (audience " + audience + "): " + response.describe());
         }
-        String token = Json.text(Json.parse(response.body()), "access_token");
+        JsonNode body = Json.parse(response.body());
+        String token = Json.text(body, "access_token");
         if (token.isBlank()) {
             throw new IllegalStateException("the idp answered without an access_token: "
                     + response.describe());
         }
-        return token;
+        return new Token(token, lifetime(Json.text(body, "expires_in")));
+    }
+
+    private static Duration lifetime(String expiresIn) {
+        try {
+            long seconds = Long.parseLong(expiresIn.trim());
+            return seconds > 0 ? Duration.ofSeconds(seconds) : DEFAULT_LIFETIME;
+        } catch (NumberFormatException stated) {
+            return DEFAULT_LIFETIME;
+        }
     }
 
     /**

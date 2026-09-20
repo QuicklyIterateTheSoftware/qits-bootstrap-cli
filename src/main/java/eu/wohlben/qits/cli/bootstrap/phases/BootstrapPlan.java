@@ -188,6 +188,10 @@ public final class BootstrapPlan {
         // DNS-01 issuance belongs to the running edge now. It starts asynchronously after the seed
         // stack is healthy and renews there; bootstrap neither runs certbot nor holds a challenge.
         phases.add(pipeline.daemonPublish());
+        // IMMEDIATELY AFTER THE LAST PUBLISH. The bootstrap is the one exception to "only CI may
+        // publish", and the exception is bounded by handing the credential back here rather than
+        // by anything the idp enforces. Everything below is a push, a deployment or a read.
+        phases.add(pipeline.publishCredentialRelease());
         // THE PROJECT EVERY REPOSITORY BELONGS TO, and it comes before the first bare rather than
         // after the sixth deployment. qits-projects is a seed service now, so the one thing that
         // has to happen before this run creates anything is that the `qits` project exists to

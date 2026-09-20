@@ -1,6 +1,7 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
 import eu.wohlben.qits.cli.bootstrap.api.ArtifactsApi;
+import eu.wohlben.qits.cli.bootstrap.api.BootstrapPublishCredential;
 import eu.wohlben.qits.cli.bootstrap.api.PdApi;
 import eu.wohlben.qits.cli.bootstrap.api.CiApi;
 import eu.wohlben.qits.cli.bootstrap.api.ConfigurationApi;
@@ -10,7 +11,10 @@ import eu.wohlben.qits.cli.bootstrap.api.IdpApi;
 import eu.wohlben.qits.cli.bootstrap.api.ProjectsApi;
 import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
 import eu.wohlben.qits.cli.bootstrap.ingress.BootstrapIngressLifecycle;
+import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
+import eu.wohlben.qits.cli.bootstrap.engine.PhaseEngine;
+import eu.wohlben.qits.cli.bootstrap.engine.RunResult;
 import eu.wohlben.qits.cli.bootstrap.engine.Waiter;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.Git;
@@ -24,6 +28,7 @@ import eu.wohlben.qits.cli.bootstrap.ui.Format;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
@@ -79,7 +84,8 @@ public class Boot {
                         .resolve(".buildkit"));
         this.git = new Git(runner);
         this.ingress = new BootstrapIngressLifecycle(this);
-        this.artifacts = new ArtifactsApi(http, config.artifactsUrl());
+        this.artifacts = new ArtifactsApi(http, config.artifactsUrl(),
+                this::storeReadAuthorization);
         this.githost = new GitHostApi(http, config.gitHostUrl(), config.gitHostHealthUrl());
         this.ci = new CiApi(http, config.ciUrl());
         this.pd = new PdApi(http, config.platformDeploymentsUrl());
@@ -389,6 +395,132 @@ public class Boot {
                     + " client — .qits-bootstrap.env and the running idp disagree");
         }
         return idp.token(state.bootstrapClientId, state.bootstrapSecret, PLATFORM_AUDIENCE);
+    }
+
+    /** The token behind {@link #storeReadAuthorization}, and when it stops being one. */
+    private String storeReadToken;
+    private Instant storeReadExpiry;
+
+    /**
+     * <b>What a READ at qits-artifacts presents</b> — this run's own machine token — or null where
+     * there is nothing to present yet.
+     * <p>
+     * Reads at the store are behind the machine gate like everything else, so the probes that
+     * decide whether a publish is needed have to carry a credential of their own. It is the
+     * BOOTSTRAP's, not the publishing credential: the publishing one is commissioned for the
+     * publish phase and handed back at the end of it, while these probes go on running for the
+     * rest of the boot — the release replays poll them for hours.
+     * <p>
+     * <b>Null is the honest answer three times over, and none of them weakens a gated store.</b>
+     * The gate is off, so nothing is being asked for; no bootstrap pair is recorded yet, which on a
+     * cold boot is every phase before {@code idp-bootstrap-client}; or the idp is not up yet, which
+     * is every phase before {@code seed-idp}. In all three the store being read is the SEED store,
+     * which this run started itself and handed no gate. A store that IS gated answers an
+     * uncredentialed read with a 401, loudly, rather than quietly serving it.
+     * <p>
+     * <b>Cached to its expiry</b>, because this is called per probe and a release replay probes
+     * every few seconds for the length of a native build: minting a token per poll would be
+     * thousands of them.
+     */
+    public String storeReadAuthorization() {
+        if (!config.machineAuth()) {
+            return null;
+        }
+        if (storeReadToken != null && Instant.now().isBefore(storeReadExpiry)) {
+            return "Bearer " + storeReadToken;
+        }
+        if (state.bootstrapSecret == null || state.bootstrapSecret.isBlank() || !idp.ready()) {
+            return null;
+        }
+        Instant minted = Instant.now();
+        IdpApi.Token token = idp.minted(state.bootstrapClientId, state.bootstrapSecret,
+                PLATFORM_AUDIENCE);
+        storeReadToken = token.value();
+        storeReadExpiry = token.expiryFrom(minted);
+        return "Bearer " + storeReadToken;
+    }
+
+    /** The publishing identity, made on first use and handed back by {@link #releasePublishCredential}. */
+    private BootstrapPublishCredential publishCredential;
+
+    /**
+     * <b>What a PUBLISH into qits-artifacts presents</b> — a credential of kind
+     * {@code bootstrap-publish}, commissioned on first use — or null where the gate is off or
+     * there is no idp to commission it at yet.
+     * <p>
+     * Only CI may publish (user ruling 2026-09-13), so the store's anonymous publishing door is
+     * closed and {@code qits:ci-run} is the only role that opens it. This run publishes before any
+     * CI exists, so it commissions itself that role for its publish phase and hands it back when
+     * that phase ends — see {@link BootstrapPublishCredential}.
+     * <p>
+     * <b>Null has the same three reasons as {@link #storeReadAuthorization}</b>, and the same
+     * answer to why it is safe: the publishes that meet it are the seed ones into a store this run
+     * started without a gate, which is exactly the exception the ruling left standing. A gated
+     * store refuses an anonymous PUT.
+     *
+     * @param ctx the phase that is about to publish, so the reason it is publishing bare is on the
+     *            screen rather than only in the shape of a later 401
+     */
+    public String publishAuthorization(PhaseContext ctx) {
+        if (!config.machineAuth()) {
+            ctx.log("  the machine gate is off — publishing into the store without a credential");
+            return null;
+        }
+        if (state.bootstrapSecret == null || state.bootstrapSecret.isBlank() || !idp.ready()) {
+            ctx.log("  no idp to commission a publishing credential at yet — publishing into the "
+                    + "ungated seed store without one");
+            return null;
+        }
+        if (publishCredential == null) {
+            publishCredential = new BootstrapPublishCredential(http, idp, config.idpIssuer(),
+                    state.bootstrapClientId, state.bootstrapSecret,
+                    PlatformModel.bootstrapClientId(config.envName()), PLATFORM_AUDIENCE);
+        }
+        String authorization = publishCredential.authorization();
+        ctx.log("  publishing as " + publishCredential.clientId() + " ("
+                + BootstrapPublishCredential.CONTEXT_KIND + ", may push nothing)");
+        return authorization;
+    }
+
+    /**
+     * <b>Hands the publishing credential back.</b> Idempotent, and called from both ends: the
+     * phase that closes the publish half of the boot, and {@code BootstrapCommand}'s own
+     * {@code finally}, which is what covers a publish that threw — a leaked publishing identity is
+     * the failure the ruling exists to prevent, and a failed run is when one would be left.
+     *
+     * @return what happened, for a phase to log, or empty when there was nothing to hand back
+     */
+    public String releasePublishCredential() {
+        return publishCredential == null ? "" : publishCredential.delete();
+    }
+
+    /**
+     * <b>Runs the boot's phases and hands the publishing credential back whatever happens.</b>
+     * <p>
+     * A failed phase ENDS the run — the engine breaks out of its loop — so the phase that hands the
+     * credential back is not reached when a publish fails, which is precisely the case the ruling
+     * cares about. This is the one place that is reached either way, so it is where the hand-back
+     * has to sit; the phase above it is what makes the lifetime short and visible on a boot that is
+     * going well.
+     */
+    public RunResult runPhases(PhaseEngine engine, List<Phase> phases) {
+        try {
+            return engine.run(phases);
+        } finally {
+            String handedBack = releasePublishCredential();
+            if (!handedBack.isEmpty()) {
+                log.line("publishing credential: " + handedBack);
+            }
+        }
+    }
+
+    /**
+     * The publishing credential, given rather than commissioned — the seam a test proves the
+     * hand-back through, since commissioning one takes a running idp. Nothing in the program calls
+     * it: {@link #publishAuthorization} makes the real one.
+     */
+    void publishCredential(BootstrapPublishCredential credential) {
+        this.publishCredential = credential;
     }
 
     /** Waits for a health endpoint, saying which one and what it last answered. */

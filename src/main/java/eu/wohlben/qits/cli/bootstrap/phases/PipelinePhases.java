@@ -663,12 +663,45 @@ public class PipelinePhases {
             }
             ctx.status("uploading " + (Files.size(binary) / (1024 * 1024)) + " MB to "
                     + boot.artifacts.base() + "/daemons/qits-ci-daemon/" + SeedPhases.shortSha(sha));
-            Http.Response response = boot.artifacts.publishDaemon("qits-ci-daemon", sha, binary);
+            // THE LAST PUBLISH OF THE BOOT, and the one that meets a store which is gated by the
+            // time it runs: the seed stack is up above this phase. It presents the publishing
+            // credential the seed publishes used — the same commission, minted afresh — and the
+            // phase below hands that credential back.
+            Http.Response response = boot.artifacts.publishDaemon("qits-ci-daemon", sha, binary,
+                    boot.publishAuthorization(ctx));
             if (response.status() != 201) {
                 throw new IllegalStateException("daemon publish answered " + response.describe());
             }
             ctx.log("  published qits-ci-daemon " + sha);
             ctx.note(SeedPhases.shortSha(sha));
+        });
+    }
+
+    /**
+     * <b>The publish phase is over, so the publishing identity goes back.</b>
+     * <p>
+     * Only CI may publish to qits-artifacts (user ruling 2026-09-13). The bootstrap holds the one
+     * exception and holds it for minutes: it commissions itself a {@code bootstrap-publish}
+     * credential the first time it publishes and hands it back HERE, immediately after the daemon
+     * binary — the last publish this program makes. Everything below this phase is a push, a
+     * deployment or a read, and the store's own publishes from here on are release runs, which is
+     * the ruling's whole point.
+     * <p>
+     * <b>It is not the only place the credential is handed back, and must not be.</b> A publish
+     * that FAILED is exactly when a leaked publishing identity would be left standing, and a
+     * failed phase means this one never runs — so {@code BootstrapCommand} calls the same
+     * idempotent hand-back in its {@code finally}. This phase is what makes the lifetime short on
+     * a boot that is going well; the {@code finally} is what makes it bounded on one that is not.
+     */
+    public Phase publishCredentialRelease() {
+        return new Phase("publish-credential-release",
+                "hand the bootstrap's publishing credential back to the idp", ctx -> {
+            String outcome = boot.releasePublishCredential();
+            if (outcome.isEmpty()) {
+                ctx.skip("this run commissioned no publishing credential");
+            }
+            ctx.log("  " + outcome);
+            ctx.note("handed back");
         });
     }
 

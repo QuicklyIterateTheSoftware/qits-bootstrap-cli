@@ -65,8 +65,17 @@ public class Http {
         return send(request(url, headers).GET().build());
     }
 
-    public Response head(String url) {
-        return send(request(url, Map.of()).method("HEAD", HttpRequest.BodyPublishers.noBody()).build());
+    public Response head(String url, Map<String, String> headers) {
+        return send(request(url, headers).method("HEAD", HttpRequest.BodyPublishers.noBody()).build());
+    }
+
+    /**
+     * A body-less DELETE, which is the shape of the idp's decommission route: the id is the whole
+     * of what it takes, and a 204 says the row is gone.
+     */
+    public Response delete(String url, Map<String, String> headers) {
+        return send(request(url, headers)
+                .method("DELETE", HttpRequest.BodyPublishers.noBody()).build());
     }
 
     /**
@@ -133,11 +142,14 @@ public class Http {
                 .PUT(HttpRequest.BodyPublishers.ofString(json)).build());
     }
 
-    public Response putFile(String url, Path file, Duration uploadTimeout) {
+    public Response putFile(String url, Path file, Duration uploadTimeout,
+                            Map<String, String> headers) {
         try {
-            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+            HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url))
                     .timeout(uploadTimeout)
-                    .header("Content-Type", "application/octet-stream")
+                    .header("Content-Type", "application/octet-stream");
+            headers.forEach(builder::header);
+            HttpRequest request = builder
                     .PUT(HttpRequest.BodyPublishers.ofFile(file))
                     .build();
             return send(request);

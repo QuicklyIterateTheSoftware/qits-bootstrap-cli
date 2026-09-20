@@ -316,7 +316,7 @@ class SeedPhasesTest {
         SeedPhases phases = new SeedPhases(
                 new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
 
-        String script = phases.publishScript("githost", List.of(SeedPhases.publishTree(null)));
+        String script = phases.publishScript("githost", List.of(SeedPhases.publishTree(null)), null);
 
         assertThat(script).contains("rm -rf /cache/repository/eu/wohlben/qits\n");
         assertThat(script).contains("-Dmaven.repo.local=/cache/repository");
@@ -397,7 +397,8 @@ class SeedPhasesTest {
                 new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
 
         String script = phases.publishScript("eventstream",
-                List.of(SeedPhases.publishTree("2026.904.82646"), SeedPhases.publishTree(null)));
+                List.of(SeedPhases.publishTree("2026.904.82646"), SeedPhases.publishTree(null)),
+                null);
 
         assertThat(script.lines().filter(line -> line.startsWith("cd ")).toList())
                 .containsExactly(
@@ -414,6 +415,125 @@ class SeedPhasesTest {
         assertThat(script.split("rm -rf /cache/repository", -1)).hasSize(2);
         // And the container's exit code is the FIRST failure's, not the last build's.
         assertThat(script).startsWith("set -eu\n");
+    }
+
+    // --- what a publish presents at the store ----------------------------------------------------
+
+    /**
+     * <b>The {@code <server>} id is {@code qits} and it is not free to choose.</b> Maven matches a
+     * server to a repository by id, and the repository a publish lands in is the one
+     * {@code -DaltDeploymentRepository=qits::default::<url>} names — so any other spelling is a
+     * credential Maven holds and never sends.
+     */
+    @Test
+    void thePublishSettingsCarryAServerForTheIdTheDeployTargetNames() {
+        SeedPhases phases = new SeedPhases(
+                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+
+        String script = phases.publishScript("githost", List.of(SeedPhases.publishTree(null)),
+                "Bearer publish-token");
+
+        assertThat(script).contains("""
+                  <servers>
+                    <server>
+                      <id>qits</id>
+                      <configuration>
+                        <httpHeaders>
+                          <property>
+                            <name>Authorization</name>
+                            <value>Bearer publish-token</value>
+                          </property>
+                        </httpHeaders>
+                      </configuration>
+                    </server>
+                  </servers>
+                """);
+        assertThat(script).contains("-DaltDeploymentRepository=qits::default::");
+        // The servers come before the mirrors, which is the order a settings.xml takes them in.
+        assertThat(script.indexOf("<servers>")).isLessThan(script.indexOf("<mirrors>"));
+    }
+
+    /**
+     * <b>A HEADER, and not a {@code <username>}/{@code <password>} pair.</b> Maven does not
+     * authenticate preemptively — it sends the request bare and answers the challenge that comes
+     * back — so a Basic pair would never leave the container against a store that refuses rather
+     * than challenges, and a bearer has no Basic challenge to answer at all.
+     */
+    @Test
+    void theCredentialIsAHeaderRatherThanAPasswordMavenWouldNeverSend() {
+        SeedPhases phases = new SeedPhases(
+                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+
+        String script = phases.mavenSettings("Bearer publish-token");
+
+        assertThat(script).doesNotContain("<username>").doesNotContain("<password>");
+        assertThat(script).contains("<name>Authorization</name>");
+    }
+
+    /**
+     * Nothing to present is no {@code <servers>} block at all — the seed store this run started
+     * itself, before any idp existed to commission a publishing credential at.
+     */
+    @Test
+    void withNoCredentialTheSettingsAreTheOnesThisBootAlwaysWrote() {
+        SeedPhases phases = new SeedPhases(
+                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+
+        assertThat(phases.mavenSettings(null)).doesNotContain("<servers>")
+                .contains("<mirrors>");
+        assertThat(phases.mavenSettings("")).doesNotContain("<servers>");
+    }
+
+    /**
+     * <b>The npm half carries the real token now.</b> npm sends {@code _authToken} as
+     * {@code Authorization: Bearer <value>}, so the value is the bearer WITHOUT the word in front
+     * of it — spelled twice, it is a header the store cannot read. The literal
+     * {@code qits-bootstrap} it replaced was ceremony: the registry read no credential at all.
+     */
+    @Test
+    void theNpmrcCarriesTheBearerUnderTheRegistryItPublishesTo() {
+        SeedPhases phases = new SeedPhases(
+                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+
+        String npmrc = phases.npmrc(SeedPhases.bearerOf("Bearer publish-token"));
+
+        assertThat(npmrc).contains(
+                "//prod-qits-artifacts:8080/artifacts/npm/npm/:_authToken=publish-token\n");
+        assertThat(npmrc).doesNotContain("qits-bootstrap").doesNotContain("Bearer");
+        // The two registries are unchanged: @qits to the store, everything else to the mirror's
+        // cache of npmjs, and the DEFAULT must not be the qits one.
+        assertThat(npmrc).contains("@qits:registry=http://prod-qits-artifacts:8080/artifacts/npm/npm/")
+                .contains("registry=http://qits-platform-mirror:8080/artifacts/npm/npmjs/\n");
+    }
+
+    /** No credential, no auth line — and the two registries still stand. */
+    @Test
+    void withNoTokenTheNpmrcHasNoAuthLineAtAll() {
+        SeedPhases phases = new SeedPhases(
+                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+
+        assertThat(phases.npmrc("")).doesNotContain("_authToken").contains("@qits:registry=");
+        assertThat(SeedPhases.bearerOf(null)).isEmpty();
+        assertThat(SeedPhases.bearerOf("Bearer t")).isEqualTo("t");
+        assertThat(SeedPhases.bearerOf("t")).isEqualTo("t");
+    }
+
+    /**
+     * The toolchain seed deploys to the same {@code qits} repository id through the same settings
+     * file, so it is the same credential — one code path, both publishes.
+     */
+    @Test
+    void theToolchainStorePublishGoesThroughTheSameServerBlock() {
+        SeedPhases phases = new SeedPhases(
+                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+
+        String script = phases.toolchainScript(bothRegistries(), "Bearer publish-token");
+
+        assertThat(script).contains("<id>qits</id>")
+                .contains("<value>Bearer publish-token</value>")
+                .contains("-DrepositoryId=qits");
+        // The file registry half is a file:// url and takes no credential.
+        assertThat(script).contains("-DrepositoryId=seed -Durl=file:///repo");
     }
 
     // --- the toolchain the ci-daemon builder image is made of ------------------------------------
@@ -444,7 +564,7 @@ class SeedPhasesTest {
         SeedPhases phases = new SeedPhases(
                 new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
 
-        String script = phases.toolchainScript(bothRegistries());
+        String script = phases.toolchainScript(bothRegistries(), null);
 
         assertThat(script).startsWith("set -eu\n");
         assertThat(script).contains(
@@ -470,7 +590,7 @@ class SeedPhasesTest {
         SeedPhases phases = new SeedPhases(
                 new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
 
-        String script = phases.toolchainScript(bothRegistries());
+        String script = phases.toolchainScript(bothRegistries(), null);
 
         assertThat(script).contains("-DrepositoryId=seed -Durl=file:///repo")
                 .contains("-DrepositoryId=qits -Durl=http://prod-qits-artifacts:8080/artifacts"
@@ -489,9 +609,9 @@ class SeedPhasesTest {
         MuslToolchain.Tarball zlib = MuslToolchain.read(MUSL_DOCKERFILE).get(1);
 
         String storeOnly = phases.toolchainScript(
-                List.of(new SeedPhases.Publish(zlib, false, true)));
+                List.of(new SeedPhases.Publish(zlib, false, true)), null);
         String seedOnly = phases.toolchainScript(
-                List.of(new SeedPhases.Publish(zlib, true, false)));
+                List.of(new SeedPhases.Publish(zlib, true, false)), null);
 
         assertThat(storeOnly).doesNotContain("-DrepositoryId=seed").contains("-DrepositoryId=qits");
         assertThat(seedOnly).contains("-DrepositoryId=seed").doesNotContain("-DrepositoryId=qits");
@@ -499,7 +619,7 @@ class SeedPhasesTest {
         assertThat(storeOnly).contains("sha256sum -c -");
         assertThat(seedOnly).contains("sha256sum -c -");
         // Nothing missing anywhere is an empty script — the phase skips before it gets here.
-        assertThat(phases.toolchainScript(List.of())).doesNotContain("curl");
+        assertThat(phases.toolchainScript(List.of(), null)).doesNotContain("curl");
     }
 
     /**
@@ -513,7 +633,7 @@ class SeedPhasesTest {
         SeedPhases phases = new SeedPhases(
                 new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
 
-        String script = phases.toolchainScript(bothRegistries());
+        String script = phases.toolchainScript(bothRegistries(), null);
 
         assertThat(script).contains("org.apache.maven.plugins:maven-deploy-plugin:3.1.2:deploy-file")
                 .contains("-DgroupId=eu.wohlben.qits.toolchain")
