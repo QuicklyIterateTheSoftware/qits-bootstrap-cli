@@ -2136,6 +2136,10 @@ public final class ComposeTemplate {
             # qits-containers (orchestration round 2), so this service holds a machine-token
             # client instead of the host daemon.
             qits.platform.deployments.extras.qits-workspaces.mounts[0]=volume:qits-workspaces-data:/data
+            # mounts[1] reads archived agent transcripts off the shared agent-home volume. Read-only
+            # because this service only walks and reads it, and the same volume also holds the shared
+            # OAuth credential.
+            qits.platform.deployments.extras.qits-workspaces.mounts[1]=volume:qits_shared_dot_claude:/claude-home:ro
             qits.platform.deployments.extras.qits-workspaces.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
             qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
