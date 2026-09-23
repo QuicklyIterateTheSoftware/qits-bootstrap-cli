@@ -81,9 +81,9 @@ forced. Add to that list rather than deviating quietly.
   re-announcing into nothing.
 - **Every address this CLI dials is a wire alias, and there is no second set.** The run joins
   `qits-net` in its second phase and reaches the platform the way every other member does:
-  `<env>-qits-artifacts:8080`, `qits-platform-mirror:8080`, `<env>-qits-githost:8080`, the postgres
-  alias on 5432, `qits-platform-idp:8080`, and ci and
-  the deployer through `qits-platform-edge:8080` — the edge rather than the service, so the run
+  `<env>-qits-artifacts:8080`, `<env>-qits-platform-mirror:8080`, `<env>-qits-githost:8080`, the
+  postgres alias on 5432, `<env>-qits-platform-idp:8080`, and ci and
+  the deployer through `<env>-qits-platform-edge:8080` — the edge rather than the service, so the run
   keeps exercising the gateway's route table. Do NOT add a host-addressed mode beside it: one set of
   addresses is what keeps the branching out of the code. The host's own addresses are still
   configured, and they are now TWO ports and three NAMES: `QITS_PORT` is the edge, which every
@@ -348,6 +348,20 @@ forced. Add to that list rather than deviating quietly.
   own: `SeedPhases.dockerConfig` writes one per holder, with the hosts that holder pulls from (the
   registry vhost for the first two, the registry AND the mirror for qits-platform-system, whose
   glances image is the mirror's).
+- **THE ADDRESS AND THE IDENTITY ARE TWO THINGS NOW, and confusing them is a silent 401.**
+  `PlatformModel.dialAlias` is what a peer DIALS and it carries the environment for every
+  application, both planes: `<env>-qits-platform-idp`. `PlatformModel.wireAlias` is the seed stack's
+  SERVICE KEY and the idp CLIENT ID, and it still goes bare on the platform plane. Every URL in a
+  generated file, in `BootstrapConfig` and in a health wait takes the first; the `QITS_RESOURCE_IDP_CLIENT_ID`
+  lines, the stack's service keys and `SeedPhases.idpClients` take the second. Qualifying a client id
+  does not rename a client — it mints a second one beside the live `pd_resource` row and leaves every
+  deployed peer holding a credential for the first. The templates carry `${DIAL_<APP>}` and
+  `${ALIAS_<APP>}` for the two, and `${SEED_NETWORKS_<APP>}` is what makes a seed platform service
+  answer to both names before any deployer exists to grant the second.
+  **`QITS_IDP_ISSUER` is neither**: it is the `iss` claim, compared for equality and not resolved, so
+  it is deliberately still bare (`${IDP}`) while every dialled idp address is `${IDP_DIAL}`. It moves
+  in a step of its own, after every consumer discovers from the qualified address — moving it with
+  the addresses would reject every token in flight across the estate at once.
 - **Nothing outside `PlatformModel` decides a wire alias or whether a service is told its tier.**
   Both change when an application moves plane, so `wireAlias`, `pdNamePrefix` and
   `PlatformModel.modelTokens` are the only places either is built — the generated stack and extras

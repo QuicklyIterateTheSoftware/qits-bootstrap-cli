@@ -255,14 +255,21 @@ public class PipelinePhases {
     public Phase seedHealth() {
         return new Phase("seed-health", "wait for the seed services", ctx -> {
             String env = boot.config.envName();
-            boot.awaitHealth(ctx, "qits-platform-idp (no host port, dialled on qits-net)",
-                    () -> boot.http.get("http://qits-platform-idp:8080/idp/q/health/ready",
-                            Map.of()));
+            // DERIVED, not spelled: this pair used to be the only two addresses in this file
+            // concatenated by hand, and they were bare because a platform service had no tier. Both
+            // planes carry the qualifier now, so a literal here would be a name that stops
+            // answering the day the bare alias is withdrawn — and nothing would say so but a wait
+            // that times out.
+            boot.awaitHealth(ctx, PlatformModel.dialAlias("platform-idp", env)
+                            + " (no host port, dialled on qits-net)",
+                    () -> boot.http.get(boot.config.idpDialUrl() + "/q/health/ready", Map.of()));
             // /q is the edge's own prefix, the one thing it never proxies. An answer here is this
             // process, not something behind it. Its alias rather than the port it publishes: this
             // run is on qits-net, and the published port is for a person's browser.
-            boot.awaitHealth(ctx, "qits-platform-edge (the door, on qits-net)",
-                    () -> boot.http.get("http://qits-platform-edge:8080/q/health/ready", Map.of()));
+            boot.awaitHealth(ctx, PlatformModel.dialAlias("platform-edge", env)
+                            + " (the door, on qits-net)",
+                    () -> boot.http.get("http://" + PlatformModel.dialAlias("platform-edge", env)
+                            + ":8080/q/health/ready", Map.of()));
             // THE BYTE PLANE'S THREE, each at its own alias. They are polled together because they
             // fail together in the same way — a store, a cache and a git host are three services
             // now, and "the registry answers" stopped being one question at the split.
@@ -284,7 +291,7 @@ public class PipelinePhases {
             boot.awaitHealth(ctx, env + "-qits-projects (the alias table, on qits-net)",
                     () -> boot.projects.health(projectsToken));
             boot.awaitHealth(ctx, env + "-qits-ci (on qits-net)", boot.ci::health);
-            boot.awaitHealth(ctx, PlatformModel.wireAlias("deployments", env) + " (on qits-net)",
+            boot.awaitHealth(ctx, PlatformModel.dialAlias("deployments", env) + " (on qits-net)",
                     boot.pd::health);
             // THE BUS, and it is waited for here rather than trusted to arrive: every green build
             // of this run travels ci -> outbox -> this service -> the deployer's subscriber, and
@@ -293,7 +300,7 @@ public class PipelinePhases {
             //
             // No auth-plane probe below for it: it enforces no machine gate, so there is no tenant
             // to warm.
-            boot.awaitHealth(ctx, PlatformModel.wireAlias("events", env) + " (the bus, on qits-net)",
+            boot.awaitHealth(ctx, PlatformModel.dialAlias("events", env) + " (the bus, on qits-net)",
                     () -> boot.http.get(boot.config.eventsUrl() + "/q/health/ready", Map.of()));
             // THE CONTAINER ORCHESTRATOR, and it is waited for BEFORE the first pipeline of this
             // boot rather than trusted to arrive: qits-ci runs every step as a container it asks
@@ -335,7 +342,7 @@ public class PipelinePhases {
             // THE DOOR THIS RUN ACTUALLY USES, and that is why it is the probe: /events/
             // build-succeeded is gone from the deployer and answers 404, which reads as "not warm"
             // and would spin here for the phase's whole timeout.
-            boot.awaitHealth(ctx, PlatformModel.wireAlias("deployments", env)
+            boot.awaitHealth(ctx, PlatformModel.dialAlias("deployments", env)
                             + " auth plane (junk bearer -> 401)",
                     () -> warmWhenGuardRefused(boot.http.postJson(
                             boot.config.platformDeploymentsUrl() + "/api/events/software-released",
@@ -395,7 +402,7 @@ public class PipelinePhases {
             }
             String client = boot.state.bootstrapClientId;
             String secret = boot.state.bootstrapSecret == null ? "" : boot.state.bootstrapSecret;
-            String url = boot.config.idpIssuer() + "/api/register-tokens";
+            String url = boot.config.idpDialUrl() + "/api/register-tokens";
             ctx.status("POST " + url + " as " + client);
             Http.Response response = boot.idp.mintRegisterToken(client, secret);
             if (!response.ok()) {
@@ -490,7 +497,7 @@ public class PipelinePhases {
                 + "matches it.");
         lines.add("           Every one carries " + publicIp + ", the address this run was given.");
         lines.addAll(editorLines(domain, environment, projectSlugs, extraSans));
-        lines.addAll(tlsLines(domain, mode, email, certificate));
+        lines.addAll(tlsLines(domain, mode, email, certificate, environment));
         return lines;
     }
 
@@ -591,7 +598,7 @@ public class PipelinePhases {
      * one, issuance switched off, and an order that did not go through.
      */
     private static List<String> tlsLines(String domain, Acme.Mode mode, String email,
-            String certificate) {
+            String certificate, String environment) {
         List<String> lines = new ArrayList<>();
         if (Acme.Mode.STAGING.word().equals(certificate)) {
             lines.add("tls:       ISSUED — the edge serves a Let's Encrypt STAGING certificate for "
@@ -638,7 +645,8 @@ public class PipelinePhases {
         lines.add("             quarkus tls lets-encrypt issue-certificate"
                 + (mode == Acme.Mode.PRODUCTION ? "" : " --staging") + " \\");
         lines.add("               --domain=" + domain + " --email=" + email + " \\");
-        lines.add("               --management-url=http://qits-platform-edge:9000");
+        lines.add("               --management-url=http://"
+                + PlatformModel.dialAlias("platform-edge", environment) + ":9000");
         lines.add("           The management port is NOT published: it is unauthenticated and a "
                 + "swarm publish cannot");
         lines.add("           be loopback-only, so it is reachable on qits-net and nowhere else.");
@@ -2537,7 +2545,7 @@ public class PipelinePhases {
             report.add("               -H 'Content-Type: application/json' \\");
             report.add("               -d '{\"contextKind\":\"workstation\",\"contextId\":\""
                     + "<hostname>\"}' \\");
-            report.add("               " + boot.config.idpIssuer() + "/api/clients");
+            report.add("               " + boot.config.idpDialUrl() + "/api/clients");
             report.add("           <client>:<secret> is a service client out of "
                     + ".qits-bootstrap.env, and a commissioned");
             report.add("           credential inherits ITS access — so name "

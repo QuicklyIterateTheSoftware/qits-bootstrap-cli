@@ -813,6 +813,77 @@ public final class PlatformModel {
     }
 
     /**
+     * <b>The address a peer dials, qualified by the environment for EVERY application.</b> This is
+     * {@link #wireAlias} for an environment service and {@code <env>-<app>} for a platform one, and
+     * the difference is the whole point: a platform service now answers to BOTH spellings, so the
+     * qualified one is the address to write into configuration.
+     * <p>
+     * <b>Why this is a second method and not a change to {@link #wireAlias}.</b> That method has
+     * two other jobs the qualification must not touch, and each one breaks silently:
+     * <ul>
+     *   <li><b>It is the idp CLIENT ID.</b> {@code SeedPhases.idpClients} creates a client per seed
+     *       application under this name and compares it for EQUALITY against the row already in the
+     *       deployer's {@code pd_resource} registry. Qualifying it would not rename a client, it
+     *       would mint a second one beside the live row and leave every deployed peer holding a
+     *       credential for the first — a 401 nobody can read the cause of. A client id is not an
+     *       address and does not move with one.
+     *   <li><b>It is the seed stack's SERVICE NAME.</b> The seed services exist before any deployer
+     *       does, so they are the only thing answering during the seed window, and their name is
+     *       what docker's DNS answers. They keep the bare name and DECLARE the qualified one as a
+     *       network alias instead — see {@code ComposeTemplate} — which is how both spellings
+     *       resolve before the first deployment as well as after it.
+     * </ul>
+     * <p>
+     * <b>What makes the qualified spelling safe to write.</b> qits-deployments gives a platform
+     * service the {@code <env>-<app>} alias IN ADDITION to its bare name, and recreates a live
+     * service that lacks it, so both names resolve on qits-net. A reader on either spelling
+     * therefore reaches the same container, which is what lets a key that can hold only ONE value
+     * move without an intermediate step where it holds both.
+     */
+    public static String dialAlias(String name, String envName) {
+        return envName + "-" + application(name);
+    }
+
+    /**
+     * The network aliases a SEED service declares beside its own name, so that the addresses this
+     * platform's configuration uses resolve during the seed window too.
+     * <p>
+     * Empty for an environment service, whose service name is already the qualified address. For a
+     * platform service it is the one qualified alias, because the service name is the bare one:
+     * together they are the same pair of names the deployer gives a deployed platform service, and
+     * they have to be the same pair or a boot would address a name that only starts answering once
+     * the seed service has been replaced.
+     */
+    public static List<String> seedAliases(String name, String envName) {
+        return wireAlias(name, envName).equals(dialAlias(name, envName))
+                ? List.of()
+                : List.of(dialAlias(name, envName));
+    }
+
+    /**
+     * A seed service's whole {@code networks:} block, in the stack file's own words.
+     * <p>
+     * The short form {@code networks: [qits-net]} where the service name is already the address —
+     * every environment service — and the long form naming {@link #seedAliases} where it is not.
+     * A stack file has no way to add an alias to the short form, so the choice of form IS the
+     * choice of whether a second name answers.
+     * <p>
+     * The fragment carries the OUTPUT's indentation for its continuation lines, the way every
+     * conditional fragment in these templates does: a text block's own indent is stripped before a
+     * value is substituted into it, so an unindented second line would leave the block's keys at
+     * column zero and the file would not parse.
+     */
+    public static String seedNetworks(String name, String envName, String indent) {
+        List<String> aliases = seedAliases(name, envName);
+        if (aliases.isEmpty()) {
+            return "networks: [qits-net]";
+        }
+        return "networks:\n"
+                + indent + "  qits-net:\n"
+                + indent + "    aliases: [" + String.join(", ", aliases) + "]";
+    }
+
+    /**
      * What qits-deployments names the container it manages for this application — the twin of its
      * own {@code ContainerNames.of}. Two shapes because the model has two: an environment service
      * carries its tier's name, a platform service has no tier and so DROPS the segment rather than
@@ -1024,8 +1095,16 @@ public final class PlatformModel {
      * <p>
      * Two families keyed by the APPLICATION, because that name never moves:
      * <ul>
-     *   <li>{@code ALIAS_<APP>} — the address peers dial, which is also the client id: an idp
-     *       client is named after the wire alias, so a template that wants one asks for the other.
+     *   <li>{@code ALIAS_<APP>} — the seed stack's SERVICE NAME, which is also the client id: an
+     *       idp client is named after the wire alias, so a template that wants one asks for the
+     *       other. It is NOT the address to dial any more — see the next entry.
+     *   <li>{@code DIAL_<APP>} — the address peers dial, environment-qualified for every
+     *       application. It differs from {@code ALIAS_<APP>} for the nine platform services alone,
+     *       and it is what every URL in a generated file must carry. See {@link #dialAlias} for why
+     *       the two parted company rather than one of them moving.
+     *   <li>{@code SEED_NETWORKS_<APP>} — the seed service's whole {@code networks:} block, which
+     *       declares the qualified alias so that the address in {@code DIAL_<APP>} resolves before
+     *       there is a deployer. See {@link #seedNetworks}.
      *   <li>{@code TIER_ENV_<APP>} and {@code TIER_ENV_EXTRAS_<APP>} — the {@code QITS_ENVIRONMENT}
      *       line in the stack file's words and in the extras', or NOTHING at all. See
      *       {@link #tierEnv}.
@@ -1056,6 +1135,8 @@ public final class PlatformModel {
         CORE.stream().filter(app -> !applications.contains(app)).forEach(applications::add);
         for (String app : applications) {
             tokens.put("ALIAS_" + clientKey(app), wireAlias(app, envName));
+            tokens.put("DIAL_" + clientKey(app), dialAlias(app, envName));
+            tokens.put("SEED_NETWORKS_" + clientKey(app), seedNetworks(app, envName, "    "));
             tokens.put("TIER_ENV_" + clientKey(app), tierEnv(app, envName, "      ", ""));
             tokens.put("TIER_ENV_EXTRAS_" + clientKey(app), tierEnv(app, envName, "",
                     "qits.platform.deployments.extras." + application(app) + ".env."));

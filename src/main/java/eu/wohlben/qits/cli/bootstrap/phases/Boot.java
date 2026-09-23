@@ -89,7 +89,7 @@ public class Boot {
         this.githost = new GitHostApi(http, config.gitHostUrl(), config.gitHostHealthUrl());
         this.ci = new CiApi(http, config.ciUrl());
         this.pd = new PdApi(http, config.platformDeploymentsUrl());
-        this.idp = new IdpApi(http, config.idpIssuer());
+        this.idp = new IdpApi(http, config.idpDialUrl());
         this.configuration = new ConfigurationApi(http, config.configurationUrl(),
                 config.envName());
         this.projects = new ProjectsApi(http, config.projectsUrl());
@@ -472,7 +472,7 @@ public class Boot {
             return null;
         }
         if (publishCredential == null) {
-            publishCredential = new BootstrapPublishCredential(http, idp, config.idpIssuer(),
+            publishCredential = new BootstrapPublishCredential(http, idp, config.idpDialUrl(),
                     state.bootstrapClientId, state.bootstrapSecret,
                     PlatformModel.bootstrapClientId(config.envName()), PLATFORM_AUDIENCE);
         }

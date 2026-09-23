@@ -51,19 +51,20 @@ public class BootstrapPublishCredential implements AutoCloseable {
     private boolean deleted;
 
     /**
-     * @param issuer      the idp's issuer url, {@code http://qits-platform-idp:8080/idp} — the API
-     *                    sits directly under it, like every other of the idp's own routes
+     * @param address     the idp's ADDRESS, {@code http://<env>-qits-platform-idp:8080/idp} — the
+     *                    API sits directly under it. <b>Not its ISSUER string</b>, which is a claim
+     *                    compared for equality rather than resolved, and is still spelled bare.
      * @param ownerId     the STATIC client this program owns, which is what may commission
      * @param ownerSecret its secret
      * @param contextId   what this credential is for, as the idp records it. This run's own
      *                    bootstrap client id: it says which platform's bootstrap is publishing, and
      *                    the idp puts a slug of it in the generated client id
      */
-    public BootstrapPublishCredential(Http http, IdpApi idp, String issuer, String ownerId,
+    public BootstrapPublishCredential(Http http, IdpApi idp, String address, String ownerId,
                                       String ownerSecret, String contextId, String audience) {
         this.http = http;
         this.idp = idp;
-        this.clientsUrl = issuer + "/api/clients";
+        this.clientsUrl = address + "/api/clients";
         this.ownerAuthorization = Http.basic(ownerId == null ? "" : ownerId,
                 ownerSecret == null ? "" : ownerSecret);
         this.contextId = contextId;

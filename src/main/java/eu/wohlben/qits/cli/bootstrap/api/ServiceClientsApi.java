@@ -46,12 +46,15 @@ public class ServiceClientsApi {
     private final String authorization;
 
     /**
-     * @param issuer the idp's issuer url, e.g. {@code http://qits-platform-idp:8080/idp} — the API
-     *               sits directly under it, like every other of the idp's own routes
+     * @param address the idp's ADDRESS, e.g. {@code http://<env>-qits-platform-idp:8080/idp} — the
+     *                API sits directly under it, like every other of the idp's own routes.
+     *                <b>Not its ISSUER string</b>, which is a claim compared for equality rather
+     *                than resolved and is still spelled bare: see {@code BootstrapConfig.idpDialUrl}
+     *                beside {@code idpIssuer}.
      */
-    public ServiceClientsApi(Http http, String issuer, String clientId, String secret) {
+    public ServiceClientsApi(Http http, String address, String clientId, String secret) {
         this.http = http;
-        this.base = issuer + "/api/service-clients";
+        this.base = address + "/api/service-clients";
         this.authorization = Http.basic(clientId == null ? "" : clientId,
                 secret == null ? "" : secret);
     }

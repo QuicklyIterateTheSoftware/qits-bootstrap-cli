@@ -2130,7 +2130,7 @@ public class SeedPhases {
     public Phase idpClients() {
         return new Phase("idp-clients", "create the seed services' idp clients", ctx -> {
             String env = boot.config.envName();
-            ServiceClientsApi clients = new ServiceClientsApi(boot.http, boot.config.idpIssuer(),
+            ServiceClientsApi clients = new ServiceClientsApi(boot.http, boot.config.idpDialUrl(),
                     boot.state.bootstrapClientId, boot.state.bootstrapSecret);
             // The registry, read ONCE: one connection for five questions, and every row is
             // answered from the same snapshot.
@@ -3044,7 +3044,11 @@ public class SeedPhases {
         values.put("PG_PLATFORM_EDGE_PASSWORD", orEmpty(boot.state.pgPlatformEdgePassword));
         values.put("PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD",
                 orEmpty(boot.state.pgPlatformEdgeEventstreamPassword));
+        // Two idp addresses, and the pair is the point. IDP is the ISSUER — the `iss` claim, held at
+        // the bare spelling because it is compared and not resolved. IDP_DIAL is the ADDRESS, now
+        // environment-qualified like every other. See BootstrapConfig.idpDialUrl.
         values.put("IDP", boot.config.idpIssuer());
+        values.put("IDP_DIAL", boot.config.idpDialUrl());
         values.put("PUSH_TOKEN", boot.config.pushToken());
         values.put("BOOTSTRAP_INGRESS_GIT_ENABLED", String.valueOf(boot.config.bootstrapIngress()));
         values.put("BOOTSTRAP_INGRESS_GIT_CAPABILITY_HASH",

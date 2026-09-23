@@ -139,6 +139,76 @@ class PlatformModelTest {
     }
 
     /**
+     * <b>THE ADDRESS AND THE IDENTITY PARTED COMPANY, and this is the test that holds them apart.</b>
+     * {@link PlatformModel#dialAlias} is what a peer dials and it carries the environment for EVERY
+     * application; {@link PlatformModel#wireAlias} is the seed stack's service key and the idp
+     * client id, and it still goes bare on the platform plane.
+     * <p>
+     * The difference is the platform-service retirement, landing on the address side first:
+     * qits-deployments gives a platform service the {@code <env>-<app>} alias beside its bare name
+     * and recreates a live service that lacks it, so both spellings resolve and a reader can be
+     * moved without a flag day. Qualifying the CLIENT ID instead would not rename a client — it
+     * would mint a second one beside the live registry row and leave every deployed peer holding a
+     * credential for the first, which fails as a 401 with nothing in it that names the cause.
+     */
+    @Test
+    void theDialledAddressCarriesTheTierOnBothPlanesWhileTheIdentityDoesNot() {
+        // An ENVIRONMENT service: the two have always agreed and still do, which is what makes the
+        // qualified spelling the general case rather than a second shape.
+        assertThat(PlatformModel.dialAlias("ci", "dev")).isEqualTo("dev-qits-ci");
+        assertThat(PlatformModel.wireAlias("ci", "dev")).isEqualTo("dev-qits-ci");
+
+        // A PLATFORM service: they differ, and each side is load-bearing.
+        assertThat(PlatformModel.dialAlias("platform-idp", "dev"))
+                .isEqualTo("dev-qits-platform-idp");
+        assertThat(PlatformModel.wireAlias("platform-idp", "dev")).isEqualTo("qits-platform-idp");
+
+        // The whole plane, swept rather than listed: an application that joins or leaves
+        // PLATFORM_SERVICES is covered without anybody adding a line.
+        for (String service : PlatformModel.PLATFORM_SERVICES) {
+            assertThat(PlatformModel.dialAlias(service, "preprod"))
+                    .as("the dialled address of %s", service)
+                    .isEqualTo("preprod-" + PlatformModel.application(service));
+            assertThat(PlatformModel.wireAlias(service, "preprod"))
+                    .as("the identity of %s", service)
+                    .isEqualTo(PlatformModel.application(service));
+        }
+
+        // AND THE APPLICATIONS ARE NOT RENAMED. The qualifier is all that is added: qits-platform-idp
+        // keeps that spelling and becomes dev-qits-platform-idp, NOT dev-qits-idp. The rename is a
+        // later phase of the same epic, and the two wire-address windows must never be open at once
+        // — a reader on one spelling and a service answering to the other resolve to nothing.
+        assertThat(PlatformModel.dialAlias("platform-idp", "dev")).doesNotContain("dev-qits-idp");
+        assertThat(PlatformModel.dialAlias("platform-mirror", "dev"))
+                .isEqualTo("dev-qits-platform-mirror");
+    }
+
+    /**
+     * <b>A seed service declares the names its own key does not give it.</b> The seed is the only
+     * thing standing before any deployer exists, so the dual alias qits-deployments grants is not
+     * there yet and the stack file has to state it — and a stack file cannot add an alias to the
+     * short form, so the choice of form IS the choice of whether a second name answers.
+     */
+    @Test
+    void aSeedPlatformServiceDeclaresItsQualifiedNameAndAnEnvironmentOneNeedsNone() {
+        assertThat(PlatformModel.seedAliases("platform-idp", "dev"))
+                .containsExactly("dev-qits-platform-idp");
+        // Nothing to declare: the service key already IS the address, so an alias would be the
+        // same name twice.
+        assertThat(PlatformModel.seedAliases("ci", "dev")).isEmpty();
+
+        assertThat(PlatformModel.seedNetworks("ci", "dev", "    "))
+                .isEqualTo("networks: [qits-net]");
+        // The fragment carries the OUTPUT's indentation on its continuation lines: a text block
+        // strips its own indent before a value is substituted in, so an unindented second line
+        // would put these keys at column zero and the file would not parse.
+        assertThat(PlatformModel.seedNetworks("events", "dev", "    ")).isEqualTo("""
+                networks:
+                      qits-net:
+                        aliases: [dev-qits-events]""");
+    }
+
+    /**
      * <b>THE WHOLE TABLE, spelled the way the wrapper's {@code .gitmodules} declares it.</b> This is
      * the assertion that fails on the day a rename lands in the wrapper and not here — or here and
      * not there — and a name this model gets wrong is a repository the boot creates, pushes to and

@@ -53,7 +53,7 @@ class BootstrapConfigTest {
         // reload live on it, both unauthenticated, and this run reaches them because it is on
         // qits-net. /q is the management root path and lets-encrypt is the extension's own segment.
         assertThat(config.edgeLetsEncryptUrl())
-                .isEqualTo("http://qits-platform-edge:9000/q/lets-encrypt");
+                .isEqualTo("http://prod-qits-platform-edge:9000/q/lets-encrypt");
         // No default, and unset is a supported platform: the edge stays on plain HTTP.
         assertThat(config.domain()).isEmpty();
         // Mandatory WITH a domain and refused without one, so there is nothing to default it to.
@@ -135,8 +135,10 @@ class BootstrapConfigTest {
         BootstrapConfig config = from(Map.of("QITS_PORT", "9090", "QITS_REGISTRY_PORT", "9091",
                 "QITS_ENV_NAME", "preprod"));
 
-        // THE BYTE PLANE'S THREE ADDRESSES, and two of the three carry the environment name: the
-        // store and the git host are environment services since the split, the cache is not.
+        // THE BYTE PLANE'S THREE ADDRESSES, and all three carry the environment name now. The store
+        // and the git host have since the split; the cache is still a PLATFORM service — one
+        // instance for the estate — and its address gained the qualifier anyway, which is the
+        // platform-service retirement seen from the address side.
         assertThat(config.artifactsUrl())
                 .isEqualTo("http://preprod-qits-artifacts:8080/artifacts");
         assertThat(config.gitHostUrl()).isEqualTo("http://preprod-qits-githost:8080/git");
@@ -146,22 +148,35 @@ class BootstrapConfigTest {
                 .isEqualTo("http://preprod-qits-githost:8080/githost");
         // Scheme, host and port with NO path: this service answers under /mirror/q for health and
         // under the registries' own literals for content, so each caller appends what it wants.
-        assertThat(config.mirrorUrl()).isEqualTo("http://qits-platform-mirror:8080");
+        assertThat(config.mirrorUrl()).isEqualTo("http://preprod-qits-platform-mirror:8080");
         // Seed services are reached at fixed aliases before deployment endpoints are projected.
         assertThat(config.ciUrl()).isEqualTo("http://preprod-qits-ci:8080/ci");
-        // THE THREE THAT DO NOT CARRY THE TIER, and they are the reason each is derived from
-        // PlatformModel rather than concatenated here: the deployer and the bus moved to the
-        // platform plane on 2026-08-17, and a hardcoded environment prefix would have sent every
-        // topology write and every bus health poll of this run to a name nothing answers to.
+        // AND EVERY ADDRESS CARRIES THE TIER NOW, the platform plane's included. These four were
+        // the exceptions until the platform-service concept began to be retired: the deployer, the
+        // bus and the store moved to the platform plane and answered to a bare name, and the cache
+        // never left it. qits-deployments gives a platform service the <env>-<app> alias BESIDE
+        // its bare name and recreates a live service that lacks it, so both spellings resolve —
+        // which is what lets these four move without a flag day.
+        //
+        // They stay DERIVED for the reason they always were, and the reason cuts both ways now: a
+        // concatenation here could not follow PLATFORM_SERVICES when an application moved plane,
+        // and it cannot follow this either. dialAlias is the one place the qualifier is decided.
         assertThat(config.platformDeploymentsUrl())
-                .isEqualTo("http://qits-deployments:8080/platform-deployments");
-        assertThat(config.eventsUrl()).isEqualTo("http://qits-events:8080/events");
+                .isEqualTo("http://preprod-qits-deployments:8080/platform-deployments");
+        assertThat(config.eventsUrl()).isEqualTo("http://preprod-qits-events:8080/events");
         // The configuration store is the third, since 2026-09-07 — and it was the one whose
         // concatenation cost the most: this exact string is also handed to the deployer as
         // QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL, which REFUSES a deployment it cannot resolve
         // rather than falling back to the file. Still no path, because that reader appends its own.
-        assertThat(config.configurationUrl()).isEqualTo("http://qits-configuration:8080");
-        // The issuer is a value consumers validate as well as an address this program dials.
+        assertThat(config.configurationUrl()).isEqualTo("http://preprod-qits-configuration:8080");
+        // THE IDP IS TWO VALUES, AND THIS PAIR IS THE WHOLE REASON THEY SPLIT. The address is
+        // qualified like every other; the ISSUER is not, because it is not an address — it is the
+        // `iss` claim every consumer compares for equality against the issuer it discovered. Both
+        // names resolving on qits-net is what makes every other move above safe, and it buys a
+        // string comparison nothing. Moving the issuer rejects every token in flight across the
+        // estate at once, so it moves in a step of its own, after every consumer is discovering
+        // from the qualified address.
+        assertThat(config.idpDialUrl()).isEqualTo("http://preprod-qits-platform-idp:8080/idp");
         assertThat(config.idpIssuer()).isEqualTo("http://qits-platform-idp:8080/idp");
     }
 

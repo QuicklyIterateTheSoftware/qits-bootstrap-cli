@@ -90,9 +90,9 @@ call libc do not survive being compiled into a native image. One process per ter
 that already shells docker and git for a living.
 
 It runs **in a container on `qits-net`**, with the host's docker socket mounted. Every address it
-dials is a wire alias — `prod-qits-artifacts:8080`, `qits-platform-mirror:8080`,
-`prod-qits-githost:8080`, the postgres alias on 5432, `qits-platform-idp:8080`, and qits-ci and
-qits-deployments through `qits-platform-edge:8080` — and
+dials is a wire alias — `prod-qits-artifacts:8080`, `prod-qits-platform-mirror:8080`,
+`prod-qits-githost:8080`, the postgres alias on 5432, `prod-qits-platform-idp:8080`, and qits-ci and
+qits-deployments through `prod-qits-platform-edge:8080` — and
 the run joins the network itself, before it dials anything. There is no host-addressed mode beside
 that one.
 
@@ -311,7 +311,7 @@ with the mode and the contact already filled in:
 
     quarkus tls lets-encrypt issue-certificate --staging \
       --domain=<domain> --email=<QITS_ACME_EMAIL> \
-      --management-url=http://qits-platform-edge:9000
+      --management-url=http://<env>-qits-platform-edge:9000
 
 That command is the manual equivalent and the documented fallback; it runs from a container on
 qits-net rather than from the host, because the management port is unpublished for the reason the
@@ -641,7 +641,7 @@ for 52. `QITS_DOMAIN` adds two more, marked below.
 | — | **with `QITS_DOMAIN` only**: write a self-signed placeholder certificate onto the `qits-edge-letsencrypt` volume, unless one is already there. It is before the stack starts because the edge's keystore names those files and a keystore whose files are missing fails startup. The real one replaces it two phases later, and this is what the edge keeps if that order does not go through |
 | 43–44 | `docker stack deploy` the seed (only what the deployer does not already manage — the rest is left out of the FILE, since a stack deploy takes no service list, and any seed SERVICE of a deployer-managed application is removed); wait for the idp, the edge, the gateway, the store, the mirror, the git host, the alias table (qits-projects, whose readiness is the three databases it refuses to boot without), ci, the deployer, the bus and the container orchestrator — all on qits-net. The orchestrator is polled at its own alias: it has no gateway route and must not have one, because every caller is a machine and a route would put a socket-holding service behind the platform's public door |
 | 45 | mint the ONE-TIME token the first account registers with (`POST /idp/api/register-tokens`, as the edge's own static client) and record it in `.qits-bootstrap.env`. Once per installation: a rerun that finds `IDP_REGISTER_TOKEN` there mints nothing, because every call makes another key to an admin account. A refusal WARNS and the boot goes on — nothing this platform runs waits on a person registering |
-| — | **with `QITS_DOMAIN` only**: order the edge's Let's Encrypt certificate for the apex, in a transient certbot container on qits-net whose hooks fill and empty the edge's one challenge slot over `http://qits-platform-edge:9000/q/lets-encrypt/challenge`. The PEMs are copied onto `qits-edge-letsencrypt` as uid 1001 and `POST .../certs` makes them live at once. Here because the edge has to be holding port 80, and the name has to resolve to this host already — which is the dns provider's job, before the run. Skipped when the volume already holds a matching certificate that is not near expiry, and **a production certificate is never replaced by a staging one**. A failure WARNS and the boot goes on — the records may simply not have propagated |
+| — | **with `QITS_DOMAIN` only**: order the edge's Let's Encrypt certificate for the apex, in a transient certbot container on qits-net whose hooks fill and empty the edge's one challenge slot over `http://<env>-qits-platform-edge:9000/q/lets-encrypt/challenge`. The PEMs are copied onto `qits-edge-letsencrypt` as uid 1001 and `POST .../certs` makes them live at once. Here because the edge has to be holding port 80, and the name has to resolve to this host already — which is the dns provider's job, before the run. Skipped when the volume already holds a matching certificate that is not near expiry, and **a production certificate is never replaced by a staging one**. A failure WARNS and the boot goes on — the records may simply not have propagated |
 | 46 | publish the ci-daemon binary, version-addressed by its digest |
 | 47 | the `qits` project. qits-projects' own startup self-seed creates it — nothing else may, or one platform holds two projects of one name — and this phase RELEASES that self-seed (`QITS_STARTUP_SEED_ENABLED`, held on the stack because creating the project's wrapper origin needs a bearer the idp mints) and then waits for the project to appear |
 | 48–50 | create the 46 repositories on qits-githost **under a minted UUID** and register each (uuid, name) pair with qits-projects before the next one is touched, recording the pairing in `.qits-bootstrap.env` as it goes; push the seeded repositories to it; pre-seed the seeded histories with `-o qits.no-ci`. The seeded push is here rather than at the end because every deployable's gitlinks have to be advertised before ci clones it. The lifecycle PUT is the only thing this run addresses by id — **every push of the boot is `/git/<projectId>/<repo>`** — see [Two coordinates, one seam](#two-coordinates-one-seam) |
@@ -934,7 +934,7 @@ deliberate difference is left, and it is the one the socket coming back did not 
 
 Two things about the addressing are worth stating plainly:
 
-- **ci and the deployer are dialled at the EDGE**, `qits-platform-edge:8080`, not at their own
+- **ci and the deployer are dialled at the EDGE**, `<env>-qits-platform-edge:8080`, not at their own
   aliases — the edge and the gateway's route table are the path every other client takes, and a
   bootstrap that stopped exercising it would stop noticing when it breaks. Calls made while the
   edge, the gateway or artifacts is mid-cutover are expected and retried rather than fatal.

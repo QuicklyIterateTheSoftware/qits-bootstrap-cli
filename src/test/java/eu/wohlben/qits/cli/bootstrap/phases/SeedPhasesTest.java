@@ -503,7 +503,7 @@ class SeedPhasesTest {
         // The two registries are unchanged: @qits to the store, everything else to the mirror's
         // cache of npmjs, and the DEFAULT must not be the qits one.
         assertThat(npmrc).contains("@qits:registry=http://prod-qits-artifacts:8080/artifacts/npm/npm/")
-                .contains("registry=http://qits-platform-mirror:8080/artifacts/npm/npmjs/\n");
+                .contains("registry=http://prod-qits-platform-mirror:8080/artifacts/npm/npmjs/\n");
     }
 
     /** No credential, no auth line — and the two registries still stand. */

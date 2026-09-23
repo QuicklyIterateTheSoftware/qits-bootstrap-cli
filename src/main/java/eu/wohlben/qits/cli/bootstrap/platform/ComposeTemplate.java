@@ -242,7 +242,22 @@ public final class ComposeTemplate {
                   # The 'iss' of every token and the base of every endpoint the discovery document advertises.
                   # Spelled here although it equals the shipped default, for the reason every other address in
                   # this file is spelled: an address a deployment inherits silently is one nobody knows to
-                  # change. Consumers below carry the same string; a mismatch is rejected at validation.
+                  # change.
+                  #
+                  # IT KEEPS THE BARE SPELLING WHILE EVERY DIALLED ADDRESS MOVES TO ${IDP_DIAL}, and
+                  # the split is deliberate. This is not an address — it is the STRING stamped into
+                  # every token's `iss` and compared for equality by every consumer against the
+                  # issuer it discovered. Both spellings resolving on qits-net, which is what makes
+                  # every other move in this file safe, buys this key nothing: a string comparison
+                  # asks no resolver. Moving it would reject every token already minted and every
+                  # token minted for a consumer whose cached discovery document still says the old
+                  # issuer, across the whole estate at once, and it cannot hold two values to cover
+                  # the gap. So it moves in a step of its own, after every consumer is dialling the
+                  # qualified address, and not here.
+                  #
+                  # Consumers dial ${IDP_DIAL} and discover this value from it, which is why the two
+                  # may differ: discovery is addressed, validation is compared, and only the second
+                  # one reads this line.
                   QITS_IDP_ISSUER: ${IDP}
                   # THE IDP'S OWN HOST, not the door: the login page is served at idp.<domain> /
                   # idp.<env>.localhost, the shape every service host has. The door serves nothing
@@ -297,7 +312,11 @@ public final class ComposeTemplate {
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
                 # No volume: /data held the H2 and nothing else, and the image has no mount point for it
                 # any more.
-                networks: [qits-net]
+                #
+                # The long form, because this is a platform service and the seed has to answer to
+                # BOTH of its names — the bare one, which is its idp client id and this block's key,
+                # and the qualified one every generated file dials. See PlatformModel.seedNetworks.
+                ${SEED_NETWORKS_PLATFORM_IDP}
                 deploy:
                   replicas: 1
                   restart_policy:
@@ -338,8 +357,15 @@ public final class ComposeTemplate {
                   #
                   # {env} is the EDGE's placeholder, read at runtime by the process this configures,
                   # and not a token of this generator: an app of a tier resolves to that tier's
-                  # service, so one edge serves every environment on this machine. The mirror carries
-                  # no {env} because it is a platform service — one cache per machine.
+                  # service, so one edge serves every environment on this machine.
+                  #
+                  # THE MIRROR CARRIES {env} NOW TOO, and it is the only one of the three whose
+                  # meaning did not change when it grew one. It is still a platform service and
+                  # still one cache per machine — the placeholder does not make a second one — it is
+                  # that the ONE instance answers to <env>-qits-platform-mirror as well as to its
+                  # bare name, so every tier's expansion resolves to the same container. The
+                  # qualifier is how the platform-service concept is retired: the address stops
+                  # being a special case before the service does.
                   #
                   # EVERY METHOD ON ALL THREE NAMES STILL NEEDS A BEARER, and the one-label list
                   # below is what says so. QITS_EDGE_AUTH_ANONYMOUS_READ_APPS is a LIST keyed by
@@ -395,7 +421,7 @@ public final class ComposeTemplate {
                   # standing at boot: it commissions a credential per run against the live idp.
                   QITS_EDGE_AUTH_ANONYMOUS_READ_APPS: "landing"
                   QITS_EDGE_APPS_REGISTRY_HOST_PATTERN: "{env}-qits-artifacts"
-                  QITS_EDGE_APPS_MIRROR_HOST_PATTERN: "qits-platform-mirror"
+                  QITS_EDGE_APPS_MIRROR_HOST_PATTERN: "{env}-qits-platform-mirror"
                   QITS_EDGE_APPS_GITHOST_HOST_PATTERN: "{env}-qits-githost"
                   QITS_EDGE_APPS_GITHOST_AUDIENCE_PATTERN: "{env}-qits-githost"
                   # A FOURTH NAME, AND IT IS READ AT A DIFFERENT DEPTH. The three above are
@@ -470,7 +496,7 @@ public final class ComposeTemplate {
                   # on the platform plane, tier-qualified otherwise, derived by the same rule the
                   # deployer's PdNetworks.alias uses. Spelling it a second way would be a copy that
                   # cannot follow a plane change.
-                  QITS_RESOURCE_IDP_URL: ${IDP}
+                  QITS_RESOURCE_IDP_URL: ${IDP_DIAL}
                   QITS_RESOURCE_IDP_CLIENT_ID: ${ALIAS_PLATFORM_EDGE}
                   QITS_RESOURCE_IDP_CLIENT_SECRET: "${IDP_CLIENT_SECRET_PLATFORM_EDGE}"
                   QITS_RESOURCE_EDGE_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_platform_edge
@@ -479,7 +505,7 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_EVENTSTREAM_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_platform_edge_eventstream
                   QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_platform_edge_eventstream
                   QITS_RESOURCE_EVENTSTREAM_PASSWORD: "${PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD}"
-                  QITS_EVENTS_URL: http://${ALIAS_EVENTS}:8080
+                  QITS_EVENTS_URL: http://${DIAL_EVENTS}:8080
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${EDGE_TLS}
                 networks:
                   # THE THREE VHOSTS ARE ALIASES OF THIS SERVICE, and the long form is here for
@@ -498,12 +524,21 @@ public final class ComposeTemplate {
                   # a curl from inside a container answers 127.0.0.1 and proves nothing about DNS,
                   # while libc's and Go's resolvers do ask and were getting NXDOMAIN. Ask with
                   # `getent hosts` or `nslookup` instead.
+                  #
+                  # AND THE EDGE'S OWN QUALIFIED NAME, which is a different kind of alias and is
+                  # here for the platform-service retirement. This service's NAME is the bare
+                  # qits-platform-edge, because that is its idp client id; the address every
+                  # generated file now dials is ${DIAL_PLATFORM_EDGE}. A deployed platform service
+                  # is given both names by qits-deployments, so the seed has to give both too —
+                  # otherwise every dialer would address a name that starts answering only once
+                  # this seed service has been replaced.
                   qits-net:
                     aliases:
                       - registry.${ENV_NAME}.localhost
                       - mirror.${ENV_NAME}.localhost
                       - githost.${ENV_NAME}.localhost
                       - githost.${ENV_NAME}.internal
+                      - ${DIAL_PLATFORM_EDGE}
                 deploy:
                   replicas: 1
                   restart_policy:
@@ -621,7 +656,7 @@ public final class ComposeTemplate {
                   # moves both sides at once. The deployer SUBSCRIBES durably here — a BuildSuccessful it
                   # never receives is a deployment that never happens — so a wrong value costs more than
                   # a lost publish.
-                  QITS_EVENTS_URL: http://${ALIAS_EVENTS}:8080${TIER_ENV_DEPLOYMENTS}
+                  QITS_EVENTS_URL: http://${DIAL_EVENTS}:8080${TIER_ENV_DEPLOYMENTS}
                   # WHERE IT READS A DEPLOYMENT SPEC. It was a plain property in the extras file, which
                   # this service reads at boot from its config volume — and the demotion is what moved
                   # it: that file holds extras and nothing else now, so what the deployer configures
@@ -673,10 +708,10 @@ public final class ComposeTemplate {
                   # credential this program creates is spelled the way the deployer will inject it.
                   # This one is the seam's own: the deployer both HOLDS this row and is the service
                   # that hands every other application its own.
-                  QITS_RESOURCE_IDP_URL: ${IDP}
+                  QITS_RESOURCE_IDP_URL: ${IDP_DIAL}
                   QITS_RESOURCE_IDP_CLIENT_ID: ${ALIAS_DEPLOYMENTS}
                   QITS_RESOURCE_IDP_CLIENT_SECRET: "${IDP_CLIENT_SECRET_DEPLOYMENTS}"
-                  QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP}
+                  QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP_DIAL}
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
                 volumes:
                   # No data volume any more: the store is the postgres above, and /data held the H2 files
@@ -684,7 +719,8 @@ public final class ComposeTemplate {
                   # successor inherits.
                   - qits-deployments-config:/work/config
                   - /var/run/docker.sock:/var/run/docker.sock
-                networks: [qits-net]
+                # Both names, for the reason spelled on qits-platform-idp's block above.
+                ${SEED_NETWORKS_DEPLOYMENTS}
                 deploy:
                   replicas: 1
                   restart_policy:
@@ -745,7 +781,7 @@ public final class ComposeTemplate {
                   # so nothing here has to say which name a caller may address. See the deployer's
                   # block.
                   QITS_AUTH_MACHINE_REQUIRED: "${MACHINE_REQUIRED}"
-                  QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP}
+                  QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP_DIAL}
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
                 networks: [qits-net]
                 deploy:
@@ -790,7 +826,8 @@ public final class ComposeTemplate {
                   # what this service pulled from upstream is rows in the same database, so the
                   # container is stateless and a cold start is the ordinary one anyway.
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
-                networks: [qits-net]
+                # Both names, for the reason spelled on qits-platform-idp's block above.
+                ${SEED_NETWORKS_PLATFORM_MIRROR}
                 deploy:
                   replicas: 1
                   restart_policy:
@@ -851,7 +888,7 @@ public final class ComposeTemplate {
                   # left to the jar's shipped qits-events:8080, which the bus's move to the platform
                   # plane finally made a resolvable name: the value follows the wire alias, so the
                   # repository rename ahead of us moves this line with it.
-                  QITS_EVENTS_URL: http://${ALIAS_EVENTS}:8080
+                  QITS_EVENTS_URL: http://${DIAL_EVENTS}:8080
                   # What turns /git/:projectId/:repoName into a repo id, and therefore what makes a
                   # committed relative submodule url (../<name>.git) resolve natively. Unset, the
                   # name-addressed scheme 404s and every project agent starts with an empty /workspace.
@@ -995,7 +1032,7 @@ public final class ComposeTemplate {
                   QITS_PROJECTS_OWN_HOST: ${ENV_NAME}-qits-projects
                   QITS_PROJECTS_CONTAINER_GIT_URL: http://githost.${ENV_NAME}.internal:8080
                   QITS_CONTAINERS_URL: http://${ENV_NAME}-qits-containers:8080
-                  QITS_EVENTS_URL: http://${ALIAS_EVENTS}:8080
+                  QITS_EVENTS_URL: http://${DIAL_EVENTS}:8080
                   # Inbound: the bootstrap's own calls carry a bearer addressed to this service.
                   # Outbound: ONE CREDENTIAL AND NO NAMED CLIENTS. Every git-host call this service
                   # makes refuses to open a socket without a bearer, and what it mints them from is
@@ -1004,10 +1041,10 @@ public final class ComposeTemplate {
                   # each, would be a second copy of one identity with its own spelling of the
                   # secret.
                   QITS_AUTH_MACHINE_REQUIRED: "${MACHINE_REQUIRED}"
-                  QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP}
+                  QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP_DIAL}
                   # ITS OWN IDP CLIENT, as the resource triple — see the edge's block for why a
                   # credential this program creates is spelled the way the deployer will inject it.
-                  QITS_RESOURCE_IDP_URL: ${IDP}
+                  QITS_RESOURCE_IDP_URL: ${IDP_DIAL}
                   QITS_RESOURCE_IDP_CLIENT_ID: ${ALIAS_PROJECTS}
                   QITS_RESOURCE_IDP_CLIENT_SECRET: "${IDP_CLIENT_SECRET_PROJECTS}"
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
@@ -1143,7 +1180,7 @@ public final class ComposeTemplate {
                   # and NOT the registry name above — that one is resolved by the HOST's daemon, and a
                   # step container's own resolver knows no *.localhost name at all.
                   QITS_ARTIFACTS_NPM_HOSTED_URL: http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/
-                  QITS_ARTIFACTS_NPM_PROXY_URL: http://qits-platform-mirror:8080/artifacts/npm/npmjs/
+                  QITS_ARTIFACTS_NPM_PROXY_URL: http://${DIAL_PLATFORM_MIRROR}:8080/artifacts/npm/npmjs/
                   QITS_ARTIFACTS_MAVEN_REGISTRY_URL: http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven
                   QITS_ARTIFACTS_DOCS_URL: http://${ENV_NAME}-qits-artifacts:8080/artifacts/docs/docs
                   # The websocket a step container's daemon dials BACK to this service. The image ships the
@@ -1158,7 +1195,7 @@ public final class ComposeTemplate {
                   # ConnectException, and gave up after its five attempts. The bus is a platform
                   # service since 2026-08-17 and the name resolves; the line stays, valued from the
                   # wire alias, like every other address in this block.
-                  QITS_EVENTS_URL: http://${ALIAS_EVENTS}:8080
+                  QITS_EVENTS_URL: http://${DIAL_EVENTS}:8080
                   # The binary every step container downloads and execs — uploaded by this bootstrap, digest
                   # pinned. Blank would mean every run fails as never-registered.
                   #
@@ -1178,7 +1215,7 @@ public final class ComposeTemplate {
                   # project claim covers the event's repo. Outbound: every request that starts, reads
                   # or removes a step container carries one.
                   QITS_AUTH_MACHINE_REQUIRED: "${MACHINE_REQUIRED}"
-                  QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP}
+                  QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP_DIAL}
                   # ITS OWN IDP CLIENT, as the resource triple — see the edge's block for why a
                   # credential this program creates is spelled the way the deployer will inject it.
                   #
@@ -1188,7 +1225,7 @@ public final class ComposeTemplate {
                   # keeps two tiers sharing one docker daemon out of each other's containers, since
                   # dev-qits-ci and prod-qits-ci are different owners. That is one more reason the
                   # id is the wire alias and is never spelled a second way.
-                  QITS_RESOURCE_IDP_URL: ${IDP}
+                  QITS_RESOURCE_IDP_URL: ${IDP_DIAL}
                   QITS_RESOURCE_IDP_CLIENT_ID: ${ALIAS_CI}
                   QITS_RESOURCE_IDP_CLIENT_SECRET: "${IDP_CLIENT_SECRET_CI}"
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
@@ -1248,7 +1285,7 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_EVENTSTREAM_PASSWORD: "${PG_CONTAINERS_EVENTSTREAM_PASSWORD}"
                   # The bus the outbox drains to, at its wire alias — bare since the bus moved to the
                   # platform plane, and stated rather than inherited from the jar's own default.
-                  QITS_EVENTS_URL: http://${ALIAS_EVENTS}:8080
+                  QITS_EVENTS_URL: http://${DIAL_EVENTS}:8080
                   # Machine auth, INBOUND ONLY, and EVERY route of this service is behind it —
                   # reads included, which is what makes it stricter than the rest of the platform: a
                   # row says which containers another module has running, and the owner in the path is
@@ -1258,12 +1295,12 @@ public final class ComposeTemplate {
                   # quarkus.oidc.token.audience, the one name every minted token carries. See the
                   # deployer's block.
                   QITS_AUTH_MACHINE_REQUIRED: "${MACHINE_REQUIRED}"
-                  QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP}
+                  QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP_DIAL}
                   # ITS OWN IDP CLIENT, as the resource triple — see the edge's block. This service
                   # mints no token of its own, and the pair is still its own rather than borrowed:
                   # what it authenticates with it is the `docker pull` of every workload image, and
                   # a refused pull has to name the service that was refused.
-                  QITS_RESOURCE_IDP_URL: ${IDP}
+                  QITS_RESOURCE_IDP_URL: ${IDP_DIAL}
                   QITS_RESOURCE_IDP_CLIENT_ID: ${ALIAS_CONTAINERS}
                   QITS_RESOURCE_IDP_CLIENT_SECRET: "${IDP_CLIENT_SECRET_CONTAINERS}"
                   # WHERE THE DOCKER CLI LOOKS FOR A CREDENTIAL, exactly as the deployer's block
@@ -1334,7 +1371,9 @@ public final class ComposeTemplate {
                 #
                 # No machine auth: this service enforces none, which is why its extras carry
                 # none either. Publishing to the bus is an ordinary PUT from qits-net.
-                networks: [qits-net]
+                #
+                # Both names, for the reason spelled on qits-platform-idp's block above.
+                ${SEED_NETWORKS_EVENTS}
                 deploy:
                   replicas: 1
                   restart_policy:
@@ -1466,7 +1505,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-edge.aliases[3]=githost.${ENV_NAME}.internal
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_ENVIRONMENTS=${ENV_NAME}
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_DEFAULT_ENVIRONMENT=${ENV_NAME}
-            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EVENTS_URL=http://${ALIAS_EVENTS}:8080
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EVENTS_URL=http://${DIAL_EVENTS}:8080
             # THE ANONYMOUS-READ LIST IS NOT EMPTY ANY MORE, AND IT HOLDS EXACTLY ONE LABEL. The key is
             # keyed by APP LABEL, and `landing` is the only entry: qits-landing is the tier's public
             # front door at landing.<env>.<domain>, a marketing page with no machine surface, no
@@ -1498,7 +1537,7 @@ public final class ComposeTemplate {
             # list is the change that WOULD undo the flip, and must not be done casually.
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_AUTH_ANONYMOUS_READ_APPS=landing
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_REGISTRY_HOST_PATTERN={env}-qits-artifacts
-            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN=qits-platform-mirror
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN={env}-qits-platform-mirror
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_AUDIENCE_PATTERN={env}-qits-githost
             # THE EDITOR VHOST, editor.<project>.<env>.<domain>, onto qits-workspaces. Same generic
@@ -1574,8 +1613,8 @@ public final class ComposeTemplate {
             # address is still SPELLED — the artifacts jar defaults to qits-platform-deployments, the
             # repository's post-rename name, which nothing answers to until phase 3.
             qits.platform.deployments.extras.qits-artifacts.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
-            qits.platform.deployments.extras.qits-artifacts.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
-            qits.platform.deployments.extras.qits-artifacts.env.QITS_ARTIFACTS_GC_PINS_CD_BASE_URL=http://${ALIAS_DEPLOYMENTS}:8080/platform-deployments/api
+            qits.platform.deployments.extras.qits-artifacts.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
+            qits.platform.deployments.extras.qits-artifacts.env.QITS_ARTIFACTS_GC_PINS_CD_BASE_URL=http://${DIAL_DEPLOYMENTS}:8080/platform-deployments/api
             qits.platform.deployments.extras.qits-artifacts.env.QITS_ARTIFACTS_GC_PINS_CI_BASE_URL=http://${ENV_NAME}-qits-ci:8080/ci/api
             qits.platform.deployments.extras.qits-artifacts.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE CACHE HALF. One address to say and nothing else — no mount, because the cached bytes
@@ -1613,7 +1652,7 @@ public final class ComposeTemplate {
             # QITS_EVENTS_URL is what makes a push visible to the platform at all: SCMPublishCommit,
             # SCMPublishTag and the two deletes ride the outbox to the bus, where ci's listener queues the
             # run. At the bus's wire alias, which the plane move made the bare qits-events.
-            qits.platform.deployments.extras.qits-githost.env.QITS_EVENTS_URL=http://${ALIAS_EVENTS}:8080
+            qits.platform.deployments.extras.qits-githost.env.QITS_EVENTS_URL=http://${DIAL_EVENTS}:8080
             #
             # QITS_PROJECTS_NAME_RESOLVER_URL is what makes the public url serve at all: the git host
             # resolves (projectId, repoName) to a storage id here, per request, and remembers none.
@@ -1722,7 +1761,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_REGISTRY_HOST=registry.${ENV_NAME}.localhost:${PORT}
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_DOCKER_AUTH_HOSTS=registry.${ENV_NAME}.localhost:${PORT},mirror.${ENV_NAME}.localhost:${PORT}
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_HOSTED_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/
-            qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_PROXY_URL=http://qits-platform-mirror:8080/artifacts/npm/npmjs/
+            qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_PROXY_URL=http://${DIAL_PLATFORM_MIRROR}:8080/artifacts/npm/npmjs/
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_MAVEN_REGISTRY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven
             qits.platform.deployments.extras.qits-ci.env.QITS_ARTIFACTS_DOCS_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/docs/docs
             # THE OVERRIDE, not the ordinary answer — see the seed block's QITS_CI_DAEMON_VERSION_OVERRIDE
@@ -1734,9 +1773,9 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_DAEMON_BINARY_URL_TEMPLATE=http://${ENV_NAME}-qits-artifacts:8080/artifacts/daemons/qits-ci-daemon/{version}
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_DAEMON_URL=ws://${ENV_NAME}-qits-ci:8080/ci/daemon
             qits.platform.deployments.extras.qits-ci.env.QITS_CI_WORKSPACES_URL=http://${ENV_NAME}-qits-workspaces:8080
-            qits.platform.deployments.extras.qits-ci.env.QITS_EVENTS_URL=http://${ALIAS_EVENTS}:8080
+            qits.platform.deployments.extras.qits-ci.env.QITS_EVENTS_URL=http://${DIAL_EVENTS}:8080
             qits.platform.deployments.extras.qits-ci.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
-            qits.platform.deployments.extras.qits-ci.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-ci.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
             qits.platform.deployments.extras.qits-ci.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE CONTAINER ORCHESTRATOR, and the SOCKET IS THE LINE. Every successor of this
             # application has to be started with /var/run/docker.sock and the socket's group, because
@@ -1772,9 +1811,9 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-containers.mounts[1]=volume:qits-containers-config:/work/config
             qits.platform.deployments.extras.qits-containers.groups[0]=${DOCKER_GID}
             qits.platform.deployments.extras.qits-containers.env.DOCKER_CONFIG=/work/config
-            qits.platform.deployments.extras.qits-containers.env.QITS_EVENTS_URL=http://${ALIAS_EVENTS}:8080
+            qits.platform.deployments.extras.qits-containers.env.QITS_EVENTS_URL=http://${DIAL_EVENTS}:8080
             qits.platform.deployments.extras.qits-containers.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
-            qits.platform.deployments.extras.qits-containers.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-containers.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
             qits.platform.deployments.extras.qits-containers.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # DEPLOYMENT CONFIGURATION AS PLATFORM STATE, and the service the block below reads. A
             # PLATFORM service since 2026-09-07, so its key is the bare repository name and no tier
@@ -1797,7 +1836,7 @@ public final class ComposeTemplate {
             # environment is read from, so its write surface carries the sensitivity of the
             # qits-deployments-config volume it replaces. There is no anonymous route on it.
             qits.platform.deployments.extras.qits-configuration.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
-            qits.platform.deployments.extras.qits-configuration.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-configuration.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
             qits.platform.deployments.extras.qits-configuration.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE OLD NAME, KEPT ANSWERING FOR ONE MIGRATION — added 2026-09-07 with the plane move
             # and removed by the epic's cutover feature. Docker's embedded DNS answers a container's
@@ -1836,24 +1875,27 @@ public final class ComposeTemplate {
             # hand — a target dialling a name nothing answers to is a step that fails with a
             # connect error and no clue which side is wrong.
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
-            qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-platform-orchestrator.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_ARTIFACTS_URL=http://${ALIAS_ARTIFACTS}:8080
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_CONTAINERS_URL=http://${ALIAS_CONTAINERS}:8080
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_CI_URL=http://${ALIAS_CI}:8080
-            qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_DEPLOYMENTS_URL=http://${ALIAS_DEPLOYMENTS}:8080
+            qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_DEPLOYMENTS_URL=http://${DIAL_DEPLOYMENTS}:8080
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_PROJECTS_URL=http://${ALIAS_PROJECTS}:8080
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_WORKSPACES_URL=http://${ALIAS_WORKSPACES}:8080
             # THE SEVENTH TARGET, and the one whose absence was silent. qits-configuration holds the
             # image pins, and a gc run asks it for them before it decides what a sweep may delete.
-            # The image's own default is the bare `http://qits-configuration:8080`, and since the
-            # plane move on 2026-09-07 that is the RIGHT name — this line is a plain restatement of
-            # the default now, where the day before it was the correction for it. It stays for the
+            # The image's own default is the bare `http://qits-configuration:8080`. That was the
+            # RIGHT name from the plane move on 2026-09-07 until the platform-service retirement
+            # began, and this line was a plain restatement of the default for those two weeks; it is
+            # the CORRECTION for it again now, because every address here carries the environment.
+            # Both names still resolve, so the restatement was never load-bearing and the correction
+            # is not urgent — but it is why the line may not be deleted as redundant. It stays for the
             # reason every other address in this file stays: stated, it moves with the derivation;
             # inherited, it moves without anybody seeing. What its absence cost is on the record —
             # while the service was a tier's, every gc run's pins.images read failed with a connect
             # error and the run skipped artifacts.plan and artifacts.sweep, so registry retention
             # had never once run on the fresh node, diagnosed 2026-09-06.
-            qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_CONFIGURATION_URL=http://${ALIAS_CONFIGURATION}:8080
+            qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_ORCHESTRATOR_TARGETS_CONFIGURATION_URL=http://${DIAL_CONFIGURATION}:8080
             qits.platform.deployments.extras.qits-platform-orchestrator.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The platform's PostgreSQL, deployed like everything else.
             #
@@ -1936,9 +1978,9 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-deployments.env.QITS_ARTIFACTS_REGISTRY_HOST=registry.${ENV_NAME}.localhost:${PORT}
             qits.platform.deployments.extras.qits-deployments.env.DOCKER_CONFIG=/work/config
             qits.platform.deployments.extras.qits-deployments.env.QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH=true
-            qits.platform.deployments.extras.qits-deployments.env.QITS_EVENTS_URL=http://${ALIAS_EVENTS}:8080
+            qits.platform.deployments.extras.qits-deployments.env.QITS_EVENTS_URL=http://${DIAL_EVENTS}:8080
             qits.platform.deployments.extras.qits-deployments.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
-            qits.platform.deployments.extras.qits-deployments.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-deployments.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
             # THE FLIP: WHERE THIS DEPLOYER READS AN APPLICATION'S EXTRAS FROM. Set, qits-configuration
             # is AUTHORITATIVE — a resolved read per deployment, layered over this file, and an
             # unreachable service REFUSES the deployment rather than shipping a stale value. That
@@ -1954,7 +1996,7 @@ public final class ComposeTemplate {
             # url before qits-configuration is deployed and imported refuses every deployment,
             # qits-configuration's own included. The seed deployer is therefore started WITHOUT it
             # (the seed stack spells none of these) and the boot flips it after the import phase.
-            qits.platform.deployments.extras.qits-deployments.env.QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://${ALIAS_CONFIGURATION}:8080
+            qits.platform.deployments.extras.qits-deployments.env.QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://${DIAL_CONFIGURATION}:8080
             # THE CREDENTIAL THAT READ PRESENTS IS NOT IN THIS FILE, and that is the whole of the
             # change. qits-configuration is the deployer's one guarded peer, so the read carries a
             # bearer — minted from the deployer's OWN idp client, which is the `idp:client` resource
@@ -1981,6 +2023,12 @@ public final class ComposeTemplate {
             # idp keeps every one of them in its own store. Its first client is seeded from
             # QITS_IDP_SEED_CLIENT_ID/_SECRET on the SEED stack alone, gated by an idp_seed marker
             # row — so a redeployed idp needs neither the pair nor anything else identity-shaped.
+            #
+            # THE BARE SPELLING IS HELD HERE ON PURPOSE. Every DIALLED idp address in this file is
+            # ${IDP_DIAL} now; this one is a token claim compared for equality, not a name anybody
+            # resolves, so the dual alias that makes the rest safe does nothing for it. It moves in
+            # its own step once every consumer discovers from the qualified address. The seed stack's
+            # block says the same thing at more length.
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_ISSUER=${IDP}
             # Browser SSO is configured in both halves, and the canonical origins DIFFER. The idp
             # is served on a host of its own, so its canonical origin is that host; the edge's stays
@@ -2072,7 +2120,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-projects.mounts[0]=volume:qits-projects-data:/data
             qits.platform.deployments.extras.qits-projects.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
             qits.platform.deployments.extras.qits-projects.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
-            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-projects.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
             # FIVE NAMED OIDC CLIENTS WENT FROM THIS BLOCK, AND NOT ONE CALL WITH THEM. This
             # service mints a token per peer — qits-containers to start an agent, qits-githost for
             # every mirror and push, qits-ci for the runs a release supersedes, the maintenance
@@ -2114,7 +2162,7 @@ public final class ComposeTemplate {
             #
             # The seed spells it no more than it spells the pair, and for the same reason: nothing
             # releases during the seed window, so there is no announcement to enrich.
-            qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RELEASE_REQUESTS_MAINTENANCE_URL=http://${ALIAS_PLATFORM_MAINTENANCE}:8080
+            qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RELEASE_REQUESTS_MAINTENANCE_URL=http://${DIAL_PLATFORM_MAINTENANCE}:8080
             # A FOURTH ADDRESS, AND IT IS A LIFECYCLE CALL RATHER THAN ANY KIND OF SWITCH. Once a
             # release has landed and deleted the branch it consumed, the executor POSTs
             # /workspaces/api/branches/resolution so qits-workspaces resolves the workspace that
@@ -2166,7 +2214,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-projects.env.QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN}
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_OWN_HOST=${ENV_NAME}-qits-projects
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_CONTAINER_GIT_URL=http://githost.${ENV_NAME}.internal:8080
-            qits.platform.deployments.extras.qits-projects.env.QITS_EVENTS_URL=http://${ALIAS_EVENTS}:8080
+            qits.platform.deployments.extras.qits-projects.env.QITS_EVENTS_URL=http://${DIAL_EVENTS}:8080
             qits.platform.deployments.extras.qits-projects.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The volume stays for the same reason qits-projects' does: /data is this service's own tree of
             # per-repository files, not a database. Both its stores — its own and the eventstream outbox —
@@ -2196,7 +2244,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-workspaces.mounts[1]=volume:qits_shared_dot_claude:/claude-home:ro
             qits.platform.deployments.extras.qits-workspaces.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
-            qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
             qits.platform.deployments.extras.qits-workspaces.env.QITS_PROJECTS_URL=http://${ENV_NAME}-qits-projects:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_GITHOST_AUDIENCE=${ENV_NAME}-qits-githost
@@ -2212,8 +2260,8 @@ public final class ComposeTemplate {
             # public registry, where the @qits scope does not exist.
             qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_MAVEN_REPOSITORY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven
             qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_NPM_REGISTRY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/
-            qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_NPM_PROXY_URL=http://qits-platform-mirror:8080/artifacts/npm/npmjs/
-            qits.platform.deployments.extras.qits-workspaces.env.QITS_EVENTS_URL=http://${ALIAS_EVENTS}:8080
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_NPM_PROXY_URL=http://${DIAL_PLATFORM_MIRROR}:8080/artifacts/npm/npmjs/
+            qits.platform.deployments.extras.qits-workspaces.env.QITS_EVENTS_URL=http://${DIAL_EVENTS}:8080
             qits.platform.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_GIT_HOST=${ENV_NAME}-qits-workspaces
             # NO RELEASE ENTRY BRANCH. QITS_WORKSPACES_RELEASE_ENTRY_BRANCH named the
             # environment/<name> ref this service fast-forwarded after writing a release commit, and
@@ -2277,7 +2325,7 @@ public final class ComposeTemplate {
             # bump RAN IN, recorded on every bump row so a second environment is a config entry
             # rather than a schema change.
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
-            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_PROJECTS_URL=http://${ALIAS_PROJECTS}:8080
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_GITHOST_URL=http://${ALIAS_GITHOST}:8080
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_TARGETS_CI_URL=http://${ALIAS_CI}:8080
@@ -2303,8 +2351,8 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_REGISTRIES_MAVEN_URL=http://${ALIAS_ARTIFACTS}:8080/artifacts/maven/maven
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_REGISTRIES_NPM_URL=http://${ALIAS_ARTIFACTS}:8080/artifacts/npm/npm
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_REGISTRIES_OCI_URL=http://${ALIAS_ARTIFACTS}:8080/v2
-            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_MIRROR_MAVEN_URL=http://${ALIAS_PLATFORM_MIRROR}:8080/artifacts/maven/central
-            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_MIRROR_NPM_URL=http://${ALIAS_PLATFORM_MIRROR}:8080/artifacts/npm/npmjs
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_MIRROR_MAVEN_URL=http://${DIAL_PLATFORM_MIRROR}:8080/artifacts/maven/central
+            qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_MIRROR_NPM_URL=http://${DIAL_PLATFORM_MIRROR}:8080/artifacts/npm/npmjs
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_MAINTENANCE_ENVIRONMENT=${ENV_NAME}
             qits.platform.deployments.extras.qits-platform-maintenance.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE BASE SYSTEM PANELS, AND THIS BLOCK IS THE THIRD GRANT OF THE HOST'S DOCKER SOCKET
@@ -2346,7 +2394,7 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-system.groups[0]=${DOCKER_GID}
             qits.platform.deployments.extras.qits-platform-system.env.DOCKER_CONFIG=/work/config
             qits.platform.deployments.extras.qits-platform-system.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
-            qits.platform.deployments.extras.qits-platform-system.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP}
+            qits.platform.deployments.extras.qits-platform-system.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
             qits.platform.deployments.extras.qits-platform-system.env.QITS_SYSTEM_GLANCES_IMAGE_REPO=mirror.${ENV_NAME}.localhost:${PORT}/hub/nicolargo/glances
             qits.platform.deployments.extras.qits-platform-system.env.QITS_SYSTEM_GLANCES_IMAGE_VERSION=4.5.6-full
             qits.platform.deployments.extras.qits-platform-system.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080

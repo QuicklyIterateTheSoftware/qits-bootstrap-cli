@@ -7,7 +7,7 @@ import java.time.Instant;
 import java.util.Map;
 
 /**
- * The issuer. The bootstrap presents the platform's own credentials because it IS the platform,
+ * The address. The bootstrap presents the platform's own credentials because it IS the platform,
  * before there is anything to go through: the replayed build-succeeded event and the environment
  * reconcile are the calls that need a token. The release replays needed one too, until they became
  * a tag push — a push authenticates with the git host's own token, not with a machine one.
@@ -20,15 +20,16 @@ import java.util.Map;
 public class IdpApi {
 
     private final Http http;
-    private final String issuer;
+    /** The idp's ADDRESS, not its issuer string: every use below is a base URL to dial. */
+    private final String address;
 
-    public IdpApi(Http http, String issuer) {
+    public IdpApi(Http http, String address) {
         this.http = http;
-        this.issuer = issuer;
+        this.address = address;
     }
 
     public Http.Response health() {
-        return http.get(issuer + "/q/health/ready", Map.of());
+        return http.get(address + "/q/health/ready", Map.of());
     }
 
     public boolean ready() {
@@ -74,7 +75,7 @@ public class IdpApi {
 
     /** @see #token(String, String, String) */
     public Token minted(String clientId, String secret, String audience) {
-        Http.Response response = http.postForm(issuer + "/token", clientId, secret,
+        Http.Response response = http.postForm(address + "/token", clientId, secret,
                 Map.of("grant_type", "client_credentials", "audience", audience));
         if (!response.ok()) {
             throw new IllegalStateException("the idp issued no token for " + clientId
@@ -110,7 +111,7 @@ public class IdpApi {
      * else in the platform waits on a person registering.
      */
     public Http.Response mintRegisterToken(String clientId, String secret) {
-        return http.postJson(issuer + "/api/register-tokens", "{}",
+        return http.postJson(address + "/api/register-tokens", "{}",
                 Map.of("Authorization", Http.basic(clientId, secret)));
     }
 }

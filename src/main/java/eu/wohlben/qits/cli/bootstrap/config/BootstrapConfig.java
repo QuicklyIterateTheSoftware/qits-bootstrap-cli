@@ -194,9 +194,17 @@ public interface BootstrapConfig {
     /** Existing Swarm secret containing the Hetzner token, for repeat bootstraps. */
     Optional<String> dnsHetznerSecret();
 
-    /** Legacy HTTP-01 helper URL, retained only while old bootstrap compatibility code compiles. */
+    /**
+     * Legacy HTTP-01 helper URL, retained only while old bootstrap compatibility code compiles.
+     * <p>
+     * The host is derived like every other address on qits-net, legacy or not: the dual alias is a
+     * property of the CONTAINER, so it covers the management port as readily as 8080, and a bare
+     * literal left in a corner nobody reads is exactly what the withdrawal of the bare alias will
+     * break silently.
+     */
     default String edgeLetsEncryptUrl() {
-        return "http://qits-platform-edge:9000/q/lets-encrypt";
+        return "http://" + PlatformModel.dialAlias("platform-edge", envName())
+                + ":9000/q/lets-encrypt";
     }
 
     /**
@@ -438,9 +446,34 @@ public interface BootstrapConfig {
     // every platform this program touches. main is the trunk, a tag is the release, and there is no
     // third ref.
 
-    /** The issuer string, and the address consumers dial. One value, on qits-net. */
+    /**
+     * <b>The issuer string alone.</b> It is the {@code iss} claim of every token the platform mints
+     * and the base of every endpoint the discovery document advertises — a value consumers COMPARE,
+     * not a name they resolve.
+     * <p>
+     * It used to be the dialled address as well, and the two parted company when the platform
+     * service lost its bare address. {@link #idpDialUrl} is the address now. The issuer keeps the
+     * bare spelling for exactly as long as it takes every consumer to be discovering from the
+     * qualified one: a string compared for equality cannot be covered by a second DNS alias, and it
+     * cannot hold two values, so moving it with the addresses would reject every token in flight.
+     */
     default String idpIssuer() {
         return "http://qits-platform-idp:8080/idp";
+    }
+
+    /**
+     * <b>The idp's address</b> — what a consumer dials for discovery and what this program dials for
+     * every call it makes. Environment-qualified like every other address on qits-net, because
+     * qits-deployments gives a platform service the {@code <env>-<app>} alias beside its bare name
+     * and the seed stack declares the same pair.
+     * <p>
+     * Derived rather than spelled, so it follows {@link PlatformModel#PLATFORM_SERVICES} the way
+     * {@link #platformDeploymentsUrl} and {@link #eventsUrl} do — with the difference that
+     * {@link PlatformModel#dialAlias} qualifies EVERY plane, which is the whole direction of
+     * travel.
+     */
+    default String idpDialUrl() {
+        return "http://" + PlatformModel.dialAlias("platform-idp", envName()) + ":8080/idp";
     }
 
     /**
@@ -475,7 +508,7 @@ public interface BootstrapConfig {
      * here when the rest went back to being per-tier.
      */
     default String mirrorUrl() {
-        return "http://qits-platform-mirror:8080";
+        return "http://" + PlatformModel.dialAlias("platform-mirror", envName()) + ":8080";
     }
 
     /**
@@ -527,7 +560,7 @@ public interface BootstrapConfig {
      * — would have gone to a name nothing answers to.
      */
     default String platformDeploymentsUrl() {
-        return "http://" + PlatformModel.wireAlias("deployments", envName())
+        return "http://" + PlatformModel.dialAlias("deployments", envName())
                 + ":8080/platform-deployments";
     }
 
@@ -542,7 +575,7 @@ public interface BootstrapConfig {
      * Derived for the same reason the deployer's url is: the bus moved plane on the same day.
      */
     default String eventsUrl() {
-        return "http://" + PlatformModel.wireAlias("events", envName()) + ":8080/events";
+        return "http://" + PlatformModel.dialAlias("events", envName()) + ":8080/events";
     }
 
     /**
@@ -567,7 +600,7 @@ public interface BootstrapConfig {
      * no-path shape above nor the not-the-edge argument changed with the plane; only the host did.
      */
     default String configurationUrl() {
-        return "http://" + PlatformModel.wireAlias("configuration", envName()) + ":8080";
+        return "http://" + PlatformModel.dialAlias("configuration", envName()) + ":8080";
     }
 
     /**

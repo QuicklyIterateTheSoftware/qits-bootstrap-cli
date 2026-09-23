@@ -496,7 +496,7 @@ class PipelinePhasesTest {
                 .contains("--staging")
                 .contains("--domain=qits-dev.eu")
                 .contains("--email=hostmaster@qits-dev.eu")
-                .contains("--management-url=http://qits-platform-edge:9000");
+                .contains("--management-url=http://" + ENV + "-qits-platform-edge:9000");
     }
 
     /** Issuance off is a choice, so it reads as one rather than as a failure. */
@@ -693,7 +693,7 @@ class PipelinePhasesTest {
         List<String> env = PipelinePhases.flipEnv(renderedExtras(), "qits-deployments");
 
         assertThat(env).containsExactly(
-                "QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://qits-configuration:8080");
+                "QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://prod-qits-configuration:8080");
     }
 
     /**
