@@ -341,27 +341,50 @@ public final class ComposeTemplate {
                   # service, so one edge serves every environment on this machine. The mirror carries
                   # no {env} because it is a platform service — one cache per machine.
                   #
-                  # EVERY METHOD ON ALL THREE NAMES NEEDS A BEARER, and the absence below is what
-                  # says so: QITS_EDGE_AUTH_ANONYMOUS_READ_APPS is a LIST, and a list nobody sets
-                  # is the empty one. There is no key here to read as "reads are open".
+                  # EVERY METHOD ON ALL THREE NAMES STILL NEEDS A BEARER, and the one-label list
+                  # below is what says so. QITS_EDGE_AUTH_ANONYMOUS_READ_APPS is a LIST keyed by
+                  # APP LABEL, and the only label on it is `landing`. registry and mirror are NOT
+                  # on it and must not be put back: the byte plane is gated on every method,
+                  # reads included.
                   #
-                  # THE FLIP, LANDED 2026-08-14. It is past tense now: reads were anonymous on the
-                  # two registry names until that day, because every puller was a machine holding
-                  # no credential. Each one holds its own now — the deployer and the orchestrator
-                  # from the config.json files this bootstrap writes, a ci step from the
-                  # credential ci commissions for its run — so the door was closed by removing
-                  # three values and adding two, with no release:
+                  # THE FLIP OF 2026-08-14 STANDS. Reads were anonymous on the two registry names
+                  # until that day, because every puller was a machine holding no credential. Each
+                  # one holds its own now — the deployer and the orchestrator from the config.json
+                  # files this bootstrap writes, a ci step from the credential ci commissions for
+                  # its run — so the door was closed by dropping the two byte-plane values and
+                  # adding two others, and those two others are the OTHER HALF of the same change
+                  # and stay exactly as they are:
                   #
-                  #   QITS_EDGE_AUTH_ANONYMOUS_READ_APPS       registry,mirror  ->  gone
+                  #   QITS_EDGE_AUTH_ANONYMOUS_READ_APPS       registry,mirror  ->  landing
                   #   QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH  unset (false)    ->  true
                   #   QITS_CI_DOCKER_AUTH_HOSTS                unset            ->  the two
                   #                                                                 registry names
                   #
-                  # THE ROLLBACK IS THIS LINE COMING BACK: re-add
-                  # QITS_EDGE_AUTH_ANONYMOUS_READ_APPS: "registry,mirror" here and the matching
-                  # key in the extras, and reads are anonymous again with nothing else to undo.
-                  # Undoing one half only is a platform whose deployer cannot pull, or step
-                  # containers authenticating against a door that never asks.
+                  # WHY `landing` IS OPEN AND NOTHING ELSE IS. qits-landing is the tier's public
+                  # front door at landing.<env>.<domain>: a marketing page with no machine
+                  # surface, no authenticated data and no write path. Gated, it answered every
+                  # anonymous browser with a 302 to the idp login — a front door that demands a
+                  # login before it says what the product is, which defeats the only purpose it
+                  # has.
+                  #
+                  # WHAT THE EXEMPTION PERMITS, EXACTLY. It is per LABEL, so it reaches nothing
+                  # but this one app; it is GET/HEAD only, so every other method on the same vhost
+                  # still needs a bearer; it is WHOLE-VHOST, so there is no path carve-out to get
+                  # wrong; and the edge STRIPS IDENTITY before forwarding, so an authenticated
+                  # browser's session never reaches the app and the app can never read one.
+                  #
+                  # IT IS REACHED WITHOUT BEING A qits.edge.apps ENTRY. landing is routed
+                  # dynamically, from the DeploymentActive projection rather than from a host
+                  # pattern spelled here — and EdgeRouter.target() rebuilds the Route with the
+                  # projection's LABEL as the app, which is the key EdgeAuth.anonymousRead tests
+                  # its list against. So a label suffices and no host pattern is added below.
+                  #
+                  # THE ROLLBACK IS THIS KEY GOING AWAY: delete it here and delete the matching
+                  # key in the extras, and landing is gated again with nothing else to undo.
+                  # Adding a BYTE-PLANE name back to the list is the change that would undo the
+                  # flip, and it is not a rollback of anything here: it reopens anonymous pulls,
+                  # and its other half is a platform whose deployer authenticates against a door
+                  # that no longer asks. Do not do it casually.
                   #
                   # WHY NO BOOT NEEDS A DOOR THAT IS NOT YET OPEN. The seed phases before this
                   # stack pull nothing through the edge — they build local images and dial
@@ -370,6 +393,7 @@ public final class ComposeTemplate {
                   # config.json is on its config volume before its first deploy pulls, written by
                   # the same phase that writes the extras beside this file. ci needs nothing
                   # standing at boot: it commissions a credential per run against the live idp.
+                  QITS_EDGE_AUTH_ANONYMOUS_READ_APPS: "landing"
                   QITS_EDGE_APPS_REGISTRY_HOST_PATTERN: "{env}-qits-artifacts"
                   QITS_EDGE_APPS_MIRROR_HOST_PATTERN: "qits-platform-mirror"
                   QITS_EDGE_APPS_GITHOST_HOST_PATTERN: "{env}-qits-githost"
@@ -1423,9 +1447,9 @@ public final class ComposeTemplate {
             # githost are matched by HOST NAME rather than by path prefix, because a docker client and a
             # git client own their own roots (/v2, /git) and cannot be given one. {env} is the edge's own
             # placeholder, read at runtime, so one edge serves every tier on this machine; the mirror
-            # carries none because one cache serves them all. There is no anonymous-read key: since the
-            # flip landed on 2026-08-14 every method on all three names needs a bearer, and the key's
-            # ABSENCE is what states it — see the seed stack's edge block for the flip and its rollback.
+            # carries none because one cache serves them all. NONE OF THE THREE IS ON THE ANONYMOUS-READ
+            # LIST below: since the flip landed on 2026-08-14 every method on all three names needs a
+            # bearer — see the seed stack's edge block, which spells the same pair of keys.
             ${EDGE_TLS_NOTE}qits.platform.deployments.extras.qits-platform-edge.publishes[0]=${PORT}:8080
             # AND THE SAME THREE NAMES AS NETWORK ALIASES, because the deployed edge has to answer them
             # on qits-net as well as at the host's port. Docker's embedded DNS holds no wildcard, so
@@ -1443,6 +1467,36 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_ENVIRONMENTS=${ENV_NAME}
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_DEFAULT_ENVIRONMENT=${ENV_NAME}
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EVENTS_URL=http://${ALIAS_EVENTS}:8080
+            # THE ANONYMOUS-READ LIST IS NOT EMPTY ANY MORE, AND IT HOLDS EXACTLY ONE LABEL. The key is
+            # keyed by APP LABEL, and `landing` is the only entry: qits-landing is the tier's public
+            # front door at landing.<env>.<domain>, a marketing page with no machine surface, no
+            # authenticated data and no write path, and gated it answered every anonymous browser with
+            # a 302 to the idp login — a front door nobody can read without an account, which defeats
+            # the only purpose it has.
+            #
+            # THE TWO BYTE-PLANE NAMES ARE NOT ON IT AND THE 2026-08-14 FLIP STANDS. registry and mirror
+            # stay gated on EVERY method, reads included, because every puller now holds its own
+            # commissioned credential: the deployer and the orchestrator from the config.json files this
+            # bootstrap writes, a ci step from the credential ci commissions for its run. The other half
+            # of that flip is unchanged beside it — QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH=true on the
+            # deployer and QITS_CI_DOCKER_AUTH_HOSTS naming both registry vhosts on ci — and half of it
+            # is a platform whose deployer cannot pull, or step containers authenticating against a door
+            # that never asks.
+            #
+            # WHAT THE EXEMPTION PERMITS, EXACTLY: per LABEL, so it reaches this app and no other;
+            # GET/HEAD only, so every other method on the same vhost still needs a bearer; WHOLE-VHOST,
+            # so there is no path carve-out to get wrong; and the edge STRIPS IDENTITY before
+            # forwarding, so an authenticated browser's session never reaches the app.
+            #
+            # IT IS REACHED WITHOUT A qits.edge.apps ENTRY. landing is routed dynamically off the
+            # DeploymentActive projection rather than a host pattern spelled here, and EdgeRouter
+            # rebuilds the Route with the projection's LABEL as the app — which is the key
+            # EdgeAuth.anonymousRead tests its list against. So the label alone is enough.
+            #
+            # THE ROLLBACK IS THIS KEY GOING AWAY: delete it here and in the seed stack's edge block and
+            # landing is gated again, with nothing else to undo. Adding a byte-plane name back to this
+            # list is the change that WOULD undo the flip, and must not be done casually.
+            qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_AUTH_ANONYMOUS_READ_APPS=landing
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_REGISTRY_HOST_PATTERN={env}-qits-artifacts
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN=qits-platform-mirror
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost

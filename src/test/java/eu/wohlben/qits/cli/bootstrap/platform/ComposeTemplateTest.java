@@ -1087,27 +1087,51 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>THE FLIP IS ON, in both files, and it landed on 2026-08-14.</b> Its three values are one
-     * absence and two presences: no anonymous-read list anywhere, so every method on all three
-     * vhosts needs a bearer; the deployer told to authenticate its pulls; and ci told which
-     * registries a step must log in to. Half of it is a platform whose deployer cannot pull, or
-     * step containers authenticating against a door that never asks — so all three are asserted
-     * together. The rollback is re-adding the anonymous-read env to the two files.
+     * <b>THE FLIP STILL STANDS ON THE BYTE PLANE, in both files, and it landed on 2026-08-14.</b>
+     * What changed is that the anonymous-read list is no longer EMPTY: it holds exactly one
+     * browser-facing label, {@code landing} — the tier's public front door, a marketing page with
+     * no machine surface, no authenticated data and no write path, which gated answered every
+     * anonymous browser with a 302 to the idp login. The exemption is per LABEL, GET/HEAD only, and
+     * the edge strips identity before forwarding, so it reaches that one app and nothing else.
+     * <p>
+     * <b>This test is what stops a byte-plane name being smuggled onto that list.</b> registry and
+     * mirror stay gated on every method, so the value is asserted to be exactly {@code landing} in
+     * both files and to contain neither name — and the key is asserted to appear exactly ONCE in
+     * each, because a stray second copy anywhere reopens the door. Beside it stand the flip's other
+     * two values: the deployer told to authenticate its pulls, and ci told which registries a step
+     * must log in to. Half of it is a platform whose deployer cannot pull, or step containers
+     * authenticating against a door that never asks — so all three are asserted together.
      */
     @Test
-    void theFlipIsOn() {
+    void theBytePlaneStaysClosedAndOnlyLandingIsAnonymous() {
         String compose = ComposeTemplate.compose(tokens());
         String extras = ComposeTemplate.extras(tokens());
         String vhosts = "registry.prod.localhost:8080,mirror.prod.localhost:8080";
+        String key = "QITS_EDGE_AUTH_ANONYMOUS_READ_APPS";
 
-        // The absence, and it is the whole of the edge's half: the key is a LIST, and a list
-        // nobody sets is the empty one. Asked of both files whole, because a stray copy anywhere
-        // reopens the door.
-        assertThat(compose.lines().filter(line -> line.strip().startsWith("QITS_")).toList())
-                .allSatisfy(line -> assertThat(line)
-                        .doesNotContain("QITS_EDGE_AUTH_ANONYMOUS_READ_APPS"));
-        assertThat(extrasKeys()).allSatisfy(line -> assertThat(line)
-                .doesNotContain("QITS_EDGE_AUTH_ANONYMOUS_READ_APPS"));
+        // Exactly one declaration per file. Asked of the KEY lines rather than of the file whole,
+        // so the prose above a block is free to name the key while a second assignment is not.
+        List<String> composeLines = compose.lines()
+                .map(String::strip)
+                .filter(line -> line.startsWith(key + ":"))
+                .toList();
+        assertThat(composeLines).as("seed edge anonymous-read declarations").hasSize(1);
+        List<String> extrasLines = extrasKeys().stream()
+                .filter(line -> line.contains("env." + key + "="))
+                .toList();
+        assertThat(extrasLines).as("extras anonymous-read declarations").hasSize(1);
+
+        // The VALUE, parsed rather than matched: the seed file quotes it, the extras file does not,
+        // and what matters is the token, which is one label and not three.
+        String seedValue = composeLines.get(0)
+                .substring((key + ":").length()).strip().replace("\"", "");
+        String extrasValue = extrasLines.get(0)
+                .substring(extrasLines.get(0).indexOf("env." + key + "=") + ("env." + key + "=").length())
+                .strip();
+        assertThat(seedValue).isEqualTo("landing");
+        assertThat(extrasValue).isEqualTo("landing");
+        assertThat(seedValue).doesNotContain("registry").doesNotContain("mirror");
+        assertThat(extrasValue).doesNotContain("registry").doesNotContain("mirror");
 
         // The deployer authenticates its own pull AND serialises the credential into every service
         // spec it creates. Spelled in the seed too: that deployer pulls before it reads any extras.
