@@ -204,26 +204,24 @@ there and points at `unwrap`. Moving the plane on a live platform is a PATCH on 
 `pd_environment.platform`, with the undeploy and redeploy that implies, and nothing here does it.
 
 **An environment may not be named after a project, and a project may not be named after an
-environment.** They are read at the same place. The edge takes at most the first three labels of a
-host — `<env>.<domain>` is a gateway, `<app>.<env>.<domain>` is one of its applications, and
-`<app>.<project>.<env>.<domain>` is the project tier — and it asks the label after the application
-whether it names an environment BEFORE it reads it as a project. So a project called after a tier
-loses that label: `editor.<slug>.<env>.<domain>` is read as the app `editor` in the tier `<slug>`,
-over an apex of `<env>.<domain>`, which is the wrong environment at a domain that is not the domain.
-Creating a new environment into that collision is
-refused here, on the create arm only, because an environment row that already stands is a platform
-already running under that name and refusing its rerun would strand rather than repair it. The other
-direction is closed at the source: qits-projects is handed `QITS_PROJECTS_RESERVED_SLUGS` and
-refuses every name on it.
+environment** — not because either would misroute, but because neither name can then be told from
+the other. The edge reads a host RIGHT TO LEFT, `<app>[.<env>].<project>.<domain>`, every label
+inside the one to its right: the domain holds projects, a project holds its environments, an
+environment holds its apps. The project label is mandatory, so the reading is positional and a
+label's meaning comes from where it sits — `editor.<env>.<slug>.<domain>` is that project's editor
+and nothing else can take the name. What is left is a pair of names a person cannot read apart, and
+creating a new environment into that collision is refused here, on the create arm only, because an
+environment row that already stands is a platform already running under that name and refusing its
+rerun would strand rather than repair it. The other direction is closed at the source:
+qits-projects is handed `QITS_PROJECTS_RESERVED_SLUGS` and refuses every name on it.
 
 **That list is the environment name plus every label this platform publishes** — `registry`,
 `editor`, `idp`, `edge`, `ci`, `artifacts` and the rest, derived by `PlatformModel.reservedSlugs`
 from the deployables' own browser labels and the edge's four configured apps, environment first and
-the labels sorted. The service labels are there for a second collision, at position 0 rather than
-position 1: an app entry is matched before any project is read, so a project called `registry`
-cannot take `registry.<env>.<domain>` from the registry — the service wins, silently, and the
-project is left holding a name it is unreachable at. Nothing misroutes; the slug is refused because
-the moment it is created is the last moment it can be changed. Both generated files carry the value,
+the labels sorted. The service labels are there for the same reason the environment name is: an app
+label and a project slug are read at different positions, so a project called `registry` routes
+perfectly well — it is simply a name people will read as the registry's. Nothing misroutes; the slug
+is refused because the moment it is created is the last moment it can be changed. Both generated files carry the value,
 and it is derived rather than written so an application this bootstrap gains reserves its own label.
 
 `--domain <domain>` and `--public-ip <ipv4>` are checked before the payload image is built, because
@@ -235,14 +233,16 @@ an address is refused, and so is an address without a domain.
 `<domain>`, as A records for `<QITS_PUBLIC_IP>`:
 
     @        the apex — the browser door, and no wildcard covers it
-    *        every <env>.<domain> gateway
-    *.*      every <app>.<env>.<domain> vhost
-    *.*.*    every <app>.<project>.<env>.<domain> host — the project tier, the web editor above all
+    *        every <project>.<domain> door
+    *.*      every <env>.<project>.<domain> door, and the <app>.<project>.<domain> host of a
+             project with no environments
+    *.*.*    every <app>.<env>.<project>.<domain> host — each service's UI and its wire routes,
+             the editor above all
 
 A wildcard per depth rather than a record per name, which is what the edge's routing actually needs:
-it reads at most the first three labels of a Host header, so `<env>.<domain>`,
-`<app>.<env>.<domain>` and `<app>.<project>.<env>.<domain>` are covered for every environment, every
-app and every project there will ever be, and adding any of them needs no dns step. The last record
+the grammar is `<app>[.<env>].<project>.<domain>`, so every project door, every environment door and
+every application of every project there will ever be is covered, and adding any of them needs no
+dns step. The last record
 is the one that matters most in practice: a project is created by a person on a running platform, so
 without it every new project would be a dns edit. The apex is written out because no wildcard matches
 an apex, and depth five and beyond is left to answer NXDOMAIN — the edge stops reading after three
@@ -271,14 +271,16 @@ the name that matters: it is the browser's door and the passkey's relying party.
 wants a wildcard, a wildcard wants DNS-01, and DNS-01 wants a TXT record written at the dns provider
 mid-order — so it needs a provider API this program has no hook for yet.
 
-**A wildcard covers ONE label, and the edge derives one per depth it routes at.** The name set is the
-apex, `*.<domain>`, `*.<env>.<domain>` per environment, and `*.<project>.<domain>` plus
-`*.<project>.<env>.<domain>` per project — every depth its Host reading has, the project tier
-included. **The per-project half is a LIVE read now**: the edge learns the projects from
-qits-projects' own `ProjectCreated` events, so a project created after this boot reaches the
-certificate at the edge's next order — which its creation event triggers. There is no bootstrap step
-behind it, no restart, and no name to write down. The web editor at
-`editor.<project>.<env>.<domain>` is covered by construction.
+**A wildcard covers ONE label, and the edge derives one per depth it routes at.** Names are read
+right to left, `<app>[.<env>].<project>.<domain>`, so the set is the apex, `*.<domain>` for every
+project's door, `*.<project>.<domain>` per project and `*.<env>.<project>.<domain>` per environment
+of a project that has environments — every depth its Host reading has. The old top-level
+`*.<env>.<domain>` tier is gone with the grammar: an environment only exists inside a project.
+**The per-project half is a LIVE read**: the edge learns the projects from qits-projects' own
+`ProjectCreated` events, so a project created after this boot reaches the certificate at the edge's
+next order — which its creation event triggers. There is no bootstrap step behind it, no restart,
+and no name to write down. The web editor at `editor.<env>.<project>.<domain>` is covered by
+construction.
 
 **`QITS_ACME_EXTRA_SANS` is what covers names outside those shapes, and nothing else.**
 
@@ -452,25 +454,27 @@ that, each measured on this host rather than assumed:
   `psql` goes in through `docker exec`. No publish binds loopback — neither mode has an ip field.
 - **User sessions use canonical SSO, and one session covers every service host.** Both generated
   formats seed the edge's own IdP client (`<env>-qits-edge`) and enable the session gate. They
-  configure the idp's one WebAuthn/login origin — its OWN host, `idp.` of the environment authority
-  on both kinds of platform: `http://idp.<env>.localhost:<port>` locally, `https://idp.<env>.<domain>`
-  in domain mode, because the door serves no `/idp/...` path any more and the short `idp.<domain>`
-  form no longer routes — plus the return-host allow-list: the environment authority and `*.` of it,
-  exactly one extra label on the same port. The edge's canonical origin stays the door: it derives
-  the apex from it and reads the login host out of the deployment projection. Domain mode still names
-  four shapes (`<domain>,<env>.<domain>,*.<domain>,*.<env>.<domain>`), but `*.<domain>` is the wider
-  entry now rather than a second spelling of one host: the environment label used to be optional for
-  the default tier, so `ci.<domain>` and `ci.<env>.<domain>` were the same host, and that
-  fallthrough is retired — every public name spells its environment and only the bare apex serves
-  the default one. The short shape is left on the list because an allow-list is not a router: an
-  entry for a name the edge does not serve admits nobody. `*.<env>.<domain>` is what carries a login
-  onto every app host, where each service serves its own UI. **The WebAuthn relying party does not
-  move with any of this**: it is the bare apex, a credential asserts on the rp id and its children,
-  and changing it would invalidate every passkey. The cookie is scoped to the parent both sides share — the domain, or
-  `<env>.localhost` locally, because bare `localhost` is a public suffix and a cookie scoped to it
-  is dropped. The edge strips that named cookie before proxying to a machine's own routes. The boot
-  mints the one-time token the first account registers with, and a passkey made on an older local
-  platform — rp id `localhost` — asserts on neither door and has to be registered again.
+  configure the idp's one WebAuthn/login origin — its OWN host, an application of this platform's
+  project like any other: `https://idp.<env>.qits.<domain>` in domain mode,
+  `http://idp.<env>.qits.localhost:<port>` locally, because a door serves no `/idp/...` path — plus
+  the return-host allow-list. **The edge's canonical origin is this platform's PROJECT DOOR**,
+  `https://qits.<domain>`: names are read right to left and every application address carries a
+  project label, so an edge pointed at the bare apex composes no application name and the front door
+  404s. The LOCAL half stays the bare apex on purpose — with ACME off, the edge takes the stated
+  domain from this value's authority, so `qits.localhost` there would make `qits.localhost` the
+  domain and read every name one tier out. The allow-list names the project door and a wildcard in
+  front of each door under it (`qits.<domain>,*.qits.<domain>,*.<env>.qits.<domain>`), exactly one
+  extra label on the same port. **BOTH depths are listed on purpose**: whether an application of
+  `qits` is `<app>.qits.<domain>` or `<app>.<env>.qits.<domain>` is that project's live
+  `supportsEnvironments` flag, and an allow-list is not a router — an entry for a name the edge does
+  not serve admits nobody, so covering both means a flip never strands a person mid-login.
+  **The WebAuthn relying party does not move with any of this**: it is the bare apex, a credential
+  asserts on the rp id and its children, and changing it would invalidate every passkey. The cookie
+  is scoped to the parent both sides share — the domain, or `qits.localhost` locally, because bare
+  `localhost` is a public suffix and a cookie scoped to it is dropped. The edge strips that named
+  cookie before proxying to a machine's own routes. The boot mints the one-time token the first
+  account registers with, and a passkey made on an older local platform — rp id `localhost` or
+  `<env>.localhost` — asserts on neither door and has to be registered again.
 - **A rerun deploys a SUBSET by leaving services out of the file**, because `docker stack deploy`
   takes no service list. Nothing is pruned — what the file omits is the deployer's — and a seed
   service whose application the deployer has taken over is removed outright: swarm restarts a task

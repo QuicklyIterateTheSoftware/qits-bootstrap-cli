@@ -486,13 +486,15 @@ public class PipelinePhases {
             lines.add("             " + pad(record.name()) + " A  " + record.value() + "   "
                     + record.why());
         }
-        lines.add("           A wildcard per DEPTH, not a record per name: the edge reads at most "
-                + "the first three");
-        lines.add("           labels of a Host header, so a new environment, a new app vhost or a "
-                + "new PROJECT needs");
-        lines.add("           no dns step. *.*.* is the project tier — <app>.<project>.<env>."
-                + domain + " — and it is");
-        lines.add("           the record that makes creating a project cost nobody an edit here.");
+        lines.add("           A wildcard per DEPTH, not a record per name: a host is read RIGHT TO "
+                + "LEFT as");
+        lines.add("           <app>[.<env>].<project>." + domain + ", so a new environment, a new "
+                + "app vhost or a new");
+        lines.add("           PROJECT needs no dns step. *.*.* answers an application of a project "
+                + "that has");
+        lines.add("           environments — <app>.<env>.<project>." + domain + " — and it is the "
+                + "record that makes");
+        lines.add("           creating a project cost nobody an edit here.");
         lines.add("           Names are relative to the apex — @ is the apex, and no wildcard "
                 + "matches it.");
         lines.add("           Every one carries " + publicIp + ", the address this run was given.");
@@ -523,12 +525,15 @@ public class PipelinePhases {
     private static List<String> editorLines(String domain, String environment,
             List<String> projectSlugs, List<String> extraSans) {
         List<String> lines = new ArrayList<>();
-        lines.add("editor:    the web editor is one origin per project, editor.<project>."
-                + environment + "." + domain + " — the");
-        lines.add("           PROJECT TIER, and nothing about it is a bootstrap step. The *.*.* "
-                + "record above answers");
-        lines.add("           the name, and the edge derives *.<project>." + domain + " and "
-                + "*.<project>." + environment + "." + domain);
+        lines.add("editor:    the web editor is one origin per project, editor.<env>.<project>."
+                + domain + " — an");
+        lines.add("           APPLICATION of that project like any other, and nothing about it is "
+                + "a bootstrap step.");
+        lines.add("           A project with no environments has it one label shorter, "
+                + "editor.<project>." + domain + ".");
+        lines.add("           The *.*.* record above answers the name, and the edge derives "
+                + "*.<project>." + domain);
+        lines.add("           and *.<env>.<project>." + domain);
         lines.add("           as certificate names from qits-projects' own ProjectCreated events "
                 + "— so the editor host");
         lines.add("           is covered by construction. A PROJECT CREATED LATER IS COVERED TOO: "
@@ -545,7 +550,7 @@ public class PipelinePhases {
             lines.add("           The projects this run saw, for information — each already has "
                     + "its editor host:");
             for (String slug : projectSlugs) {
-                lines.add("             editor." + slug + "." + environment + "." + domain);
+                lines.add("             editor." + environment + "." + slug + "." + domain);
             }
         }
         lines.addAll(sanBudgetLines(projectSlugs, extraSans));
@@ -564,20 +569,24 @@ public class PipelinePhases {
      */
     private static List<String> sanBudgetLines(List<String> projectSlugs, List<String> extraSans) {
         List<String> lines = new ArrayList<>();
-        lines.add("sans:      the certificate holds 2 + E + P + P*E + extras names — the apex and "
-                + "*.<domain>, one");
-        lines.add("           per environment, one per project, one per project AND environment. "
-                + "Let's Encrypt caps");
-        lines.add("           a certificate at 100, and an order over the cap fails WHOLE, taking "
-                + "the names that");
-        lines.add("           would have worked with it.");
+        lines.add("sans:      the certificate holds 2 + P + P*E + extras names — the apex and "
+                + "*.<domain>, one per");
+        lines.add("           project, and one per project AND environment for the projects that "
+                + "HAVE environments.");
+        lines.add("           The old top-level per-environment tier is gone: an environment only "
+                + "exists inside a");
+        lines.add("           project. Let's Encrypt caps a certificate at 100, and an order over "
+                + "the cap fails WHOLE,");
+        lines.add("           taking the names that would have worked with it.");
         if (!projectSlugs.isEmpty()) {
             // E is this platform's environment count, and the edge is configured with exactly one:
-            // QITS_EDGE_ENVIRONMENTS is ${ENV_NAME} on the seed stack and in the extras both.
+            // QITS_EDGE_ENVIRONMENTS is ${ENV_NAME} on the seed stack and in the extras both. The
+            // P*E term is an upper bound: a project that supports no environments pays none of it,
+            // and which projects do is a live read this report does not make.
             int projects = projectSlugs.size();
-            int total = 2 + 1 + projects + projects + extraSans.size();
+            int total = 2 + projects + projects + extraSans.size();
             lines.add("           Here E=1 and P=" + projects + " with " + extraSans.size()
-                    + " extra, so " + total + " of 100.");
+                    + " extra, so at most " + total + " of 100.");
         }
         lines.add("           QITS_ACME_EXTRA_SANS is AD-HOC NAMES ONLY now — names outside those "
                 + "shapes. The per-");
@@ -1335,13 +1344,14 @@ public class PipelinePhases {
                 .filter(slug -> slug.strip().toLowerCase(Locale.ROOT).equals(name))
                 .findFirst()
                 .map(slug -> "A project on this platform is already called '" + slug + "', and "
-                        + "this boot asks for an environment of the same name. They are read at the "
-                        + "same place: the edge asks the label after the application whether it "
-                        + "names an ENVIRONMENT before it reads it as a PROJECT — so editor."
-                        + slug + ".<env>.<domain>, that project's own web editor, would be read as "
-                        + "the editor of the '" + name + "' tier over an apex of <env>.<domain> "
-                        + "instead. Bootstrap with --platform-env under another name, or rename "
-                        + "the project first.");
+                        + "this boot asks for an environment of the same name. The edge reads a "
+                        + "host positionally now — <app>[.<env>].<project>.<domain> — so neither "
+                        + "name takes the other's place and nothing misroutes; what is left is a "
+                        + "pair of names no person can tell apart, editor." + name + "." + slug
+                        + ".<domain> being that project's own editor in an environment called "
+                        + "after it. This is the only moment either name can still be changed: "
+                        + "bootstrap with --platform-env under another name, or rename the project "
+                        + "first.");
     }
 
     private void patch(String id, String json) {
@@ -2462,22 +2472,20 @@ public class PipelinePhases {
             }
             String env = boot.config.envName();
             report.add("");
-            // THE BROWSER DOOR CARRIES THE ENVIRONMENT'S NAME NOW, on both kinds of platform,
-            // because every service has a host of its own under it and one session has to cover
-            // them all. A cookie is shared with a name's CHILDREN only, and bare localhost can
-            // parent nothing — it is a public suffix, so browsers drop a cookie scoped to it.
+            // THE BROWSER DOOR IS THIS PLATFORM'S OWN PROJECT DOOR where there is a domain, and
+            // the bare apex locally — see BootstrapConfig.publicOrigin, which says why the local
+            // half cannot carry the project label.
             String door = boot.config.publicOrigin();
-            // THE LOGIN IS A SERVICE HOST NOW, like every other. The door serves no /idp path.
+            // THE LOGIN IS A SERVICE HOST, like every other. A door serves no /idp path.
             String idp = boot.config.idpOrigin();
             String authority = boot.config.envAuthority();
-            // EVERY PUBLIC NAME SPELLS ITS ENVIRONMENT, on both kinds of platform. The short
-            // <app>.<domain> form is retired with the project tier: the edge used to give an
-            // unrecognised first label to the default environment, and that fallthrough is gone —
-            // only the bare apex still serves the default tier. So an app host is <app>. of the
-            // ENVIRONMENT AUTHORITY and nothing else, which is what it always was locally.
+            // EVERY PUBLIC NAME IS READ RIGHT TO LEFT, <app>[.<env>].<project>.<domain>, and the
+            // PROJECT LABEL IS MANDATORY: there is no unqualified application tier and no
+            // top-level <env>.<domain> tier. This platform is simply the project called `qits`, so
+            // an app host is <app>. of ITS innermost door and nothing else.
             String apex = DomainName.of(boot.config).orElse(null);
             String appHost = (apex == null ? "http://<app>." : "https://<app>.") + authority;
-            String returns = apex == null ? "*." + authority : "*." + apex + " and *." + authority;
+            String returns = "*." + boot.config.projectAuthority() + " and *." + authority;
             report.add("edge:      " + door + "/  — the host's one HTTP port, in front of every "
                     + "environment. The");
             report.add("           DOOR ITSELF SERVES ONE ROUTE: GET / redirects to the projects "
@@ -2495,11 +2503,15 @@ public class PipelinePhases {
                     + "deployments, system, and the");
             report.add("           three above.");
             if (apex != null) {
-                report.add("           EVERY NAME SPELLS ITS TIER: <app>." + apex + " is retired "
-                        + "and serves nothing — only");
-                report.add("           the apex still answers for " + env + ". A project's hosts "
-                        + "go one label deeper again:");
-                report.add("           <app>.<project>." + authority + ".");
+                report.add("           EVERY NAME CARRIES ITS PROJECT: <app>." + apex + " and "
+                        + "<app>." + env + "." + apex + " are retired");
+                report.add("           and serve nothing, and so is the bare apex " + apex
+                        + " — a name is read right to");
+                report.add("           left, <app>[.<env>].<project>." + apex + ". Another "
+                        + "project's hosts have the same");
+                report.add("           shape with its own slug: <app>.<env>.<project>." + apex
+                        + ", or <app>.<project>." + apex);
+                report.add("           where that project supports no environments.");
             }
             report.add("           ONE LOGIN COVERS THEM ALL: the session cookie is scoped to "
                     + boot.config.browserSsoCookieDomain() + " and the");
@@ -2515,10 +2527,13 @@ public class PipelinePhases {
                         + "(Chromium, Firefox and");
                 report.add("           nss-myhostname), so there is nothing to add. Ask this "
                         + "host's resolver:");
-                report.add("             getent hosts ci." + env + ".localhost");
+                // The names themselves, without the port an authority carries and a resolver
+                // does not: ci.<env>.qits.localhost.
+                String name = authority.replace(":" + boot.config.port(), "");
+                report.add("             getent hosts ci." + name);
                 report.add("           An empty answer is the one case that needs /etc/hosts, one "
                         + "line per name:");
-                report.add("             127.0.0.1  <app>." + env + ".localhost");
+                report.add("             127.0.0.1  <app>." + name);
             }
             report.add("registry:  " + boot.config.registryVhost()
                     + " — the platform's OWN images and packages (" + env + "-qits-artifacts)");
@@ -2561,15 +2576,16 @@ public class PipelinePhases {
                     boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME).toString()));
             if (apex == null) {
                 // A passkey is bound to the rp id it was made under and asserts on that host and
-                // its children. The local rp id was bare localhost until the per-service hosts
-                // landed, and dev.localhost is not a child of it — those credentials assert
-                // nowhere now, and nothing about them can be migrated.
-                report.add("passkeys:  the local door moved from localhost to " + authority
-                        + ", and the passkey binding");
-                report.add("           moved with it. A passkey made on an older local platform, "
-                        + "under the rp id");
-                report.add("           'localhost', asserts here for nobody. Register it again "
-                        + "at");
+                // its children. The local rp id is the PROJECT's door now that every name carries
+                // a project label; an older platform's 'localhost' or '<env>.localhost' parents
+                // nothing served here, so those credentials assert nowhere and nothing about them
+                // can be migrated.
+                report.add("passkeys:  the local names carry a project label now, so the passkey "
+                        + "binding is");
+                report.add("           " + boot.config.webauthnRpId() + ". A passkey made on an "
+                        + "older local platform, under the rp id");
+                report.add("           'localhost' or '" + env + ".localhost', asserts here for "
+                        + "nobody. Register it again at");
                 report.add("             " + idp + "/idp/register");
             }
             report.add("ipv6:      ONE HOST RULE, and without it every vhost client HANGS rather "

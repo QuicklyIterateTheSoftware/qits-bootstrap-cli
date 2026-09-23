@@ -899,11 +899,11 @@ public final class PlatformModel {
     }
 
     /**
-     * <b>The label an application publishes itself at</b> — position 0 of
-     * {@code <app>.<env>.<domain>} and of {@code <app>.<project>.<env>.<domain>}. It is the
+     * <b>The label an application publishes itself at</b> — the leftmost label of
+     * {@code <app>[.<env>].<project>.<domain>}, which is how every browser name is read. It is the
      * application name with the {@code qits-} and {@code platform-} prefixes stripped, so
-     * {@code platform-idp} is reached at {@code idp.<env>.<domain>} and {@code ci} at
-     * {@code ci.<env>.<domain>}.
+     * {@code platform-idp} is reached at {@code idp.<env>.<project>.<domain>} and {@code ci} at
+     * {@code ci.<env>.<project>.<domain>}.
      * <p>
      * <b>The derivation is qits-deployments', restated.</b> {@code DeployService.browserHost} builds
      * the host the deployer projects for an application and strips exactly these two prefixes; this
@@ -913,8 +913,8 @@ public final class PlatformModel {
      * side hands out as a project slug.
      * <p>
      * The plane prefix goes because it is a fact about where a service RUNS, not about where it is
-     * reached: there is one idp for the platform and it answers at {@code idp.<env>}, not at
-     * {@code platform-idp.<env>}.
+     * reached: there is one idp for the platform and it answers at {@code idp.<env>.<project>},
+     * not at {@code platform-idp.<env>.<project>}.
      */
     public static String browserLabel(String name) {
         String label = application(name);

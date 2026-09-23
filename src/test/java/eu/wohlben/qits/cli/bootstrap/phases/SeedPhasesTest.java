@@ -138,10 +138,10 @@ class SeedPhasesTest {
         // provider is reading this list and nothing else.
         assertThat(records).extracting(SeedPhases.ZoneRecord::why)
                 .anySatisfy(why -> assertThat(why).contains("apex"))
-                .anySatisfy(why -> assertThat(why).contains("<env>.qits-dev.eu gateway"))
-                .anySatisfy(why -> assertThat(why).contains("<app>.<env>.qits-dev.eu"))
+                .anySatisfy(why -> assertThat(why).contains("<project>.qits-dev.eu door"))
+                .anySatisfy(why -> assertThat(why).contains("<env>.<project>.qits-dev.eu"))
                 .anySatisfy(why -> assertThat(why)
-                        .contains("<app>.<project>.<env>.qits-dev.eu")
+                        .contains("<app>.<env>.<project>.qits-dev.eu")
                         .contains("editor"));
     }
 
@@ -688,44 +688,50 @@ class SeedPhasesTest {
         // And the id beside it is the WIRE ALIAS, which the model already answers: there is no
         // second token for it, because a second spelling could not follow a plane change.
         assertThat(tokens).containsEntry("ALIAS_PLATFORM_EDGE", "qits-platform-edge");
-        // The passkey binding travels in the same map. The rp id is the ENVIRONMENT's label, and
-        // the ceremony's origin is the idp's own host — a child of it, so the binding holds.
-        assertThat(tokens).containsEntry("WEBAUTHN_RP_ID", "prod.localhost")
-                .containsEntry("WEBAUTHN_ORIGINS", "http://idp.prod.localhost:8080");
-        // And the session travels with it: the door, the login host, one label under the door, and
-        // the shared parent. The door and the login host are NOT the same name.
-        assertThat(tokens).containsEntry("PUBLIC_ORIGIN", "http://prod.localhost:8080")
-                .containsEntry("IDP_ORIGIN", "http://idp.prod.localhost:8080")
-                .containsEntry("BROWSER_HOSTS", "prod.localhost:8080,*.prod.localhost:8080")
-                .containsEntry("SESSION_COOKIE_DOMAIN", "prod.localhost");
+        // The passkey binding travels in the same map. Locally the rp id is the PROJECT's door,
+        // which parents the idp's own host either way the supportsEnvironments flag stands.
+        assertThat(tokens).containsEntry("WEBAUTHN_RP_ID", "qits.localhost")
+                .containsEntry("WEBAUTHN_ORIGINS", "http://idp.prod.qits.localhost:8080");
+        // And the session travels with it: the door, the login host, the allow-list and the shared
+        // parent. The door and the login host are NOT the same name, and the local door is the
+        // BARE APEX — with ACME off the edge reads the stated domain out of it.
+        assertThat(tokens).containsEntry("PUBLIC_ORIGIN", "http://localhost:8080")
+                .containsEntry("IDP_ORIGIN", "http://idp.prod.qits.localhost:8080")
+                .containsEntry("BROWSER_HOSTS", "localhost:8080,qits.localhost:8080,"
+                        + "*.qits.localhost:8080,*.prod.qits.localhost:8080")
+                .containsEntry("SESSION_COOKIE_DOMAIN", "qits.localhost");
     }
 
     /**
-     * <b>A domain platform's login host is {@code idp.} of the ENVIRONMENT AUTHORITY</b>, the same
-     * shape a local platform always had. It was {@code idp.} of the apex, because the environment
-     * label was optional for the default tier; that fallthrough is retired with the project tier,
-     * so the short name would be a login page nobody can reach.
+     * <b>A domain platform's door is this platform's own PROJECT door, {@code qits.<domain>}</b>,
+     * and its login host is {@code idp.} of the environment's door inside that project. Names are
+     * read right to left now — {@code <app>[.<env>].<project>.<domain>} — and the project label is
+     * mandatory, so the bare apex composes no application name at all: pointed there, the edge
+     * answers an honest 404 instead of a front door.
      * <p>
      * <b>The rp id does NOT move with it.</b> A passkey is bound to the rp id and asserts on it and
-     * its children, so the bare apex covers {@code idp.<env>.<domain>} exactly as it covered
+     * its children, so the bare apex covers {@code idp.<env>.qits.<domain>} exactly as it covered
      * {@code idp.<domain>} — and changing it would invalidate every passkey this platform ever
      * registered.
      */
     @Test
-    void aDomainPlatformsLoginHostIsIdpOfTheEnvironmentAuthority() {
+    void aDomainPlatformsDoorIsItsProjectDoorAndItsLoginHostIsInside() {
         Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev",
                 "QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7")),
                 new RunLog(temp.resolve("run.log")));
 
         Map<String, String> tokens = new SeedPhases(boot).tokens();
 
-        assertThat(tokens).containsEntry("PUBLIC_ORIGIN", "https://qits-dev.eu")
-                .containsEntry("IDP_ORIGIN", "https://idp.dev.qits-dev.eu")
-                .containsEntry("WEBAUTHN_ORIGINS", "https://idp.dev.qits-dev.eu")
+        assertThat(tokens).containsEntry("PUBLIC_ORIGIN", "https://qits.qits-dev.eu")
+                .containsEntry("IDP_ORIGIN", "https://idp.dev.qits.qits-dev.eu")
+                .containsEntry("WEBAUTHN_ORIGINS", "https://idp.dev.qits.qits-dev.eu")
                 // The rp id stays the apex: a credential asserts on it and every label under it.
                 .containsEntry("WEBAUTHN_RP_ID", "qits-dev.eu");
-        // No entry of its own is needed for the idp host — the wildcards already admit it.
-        assertThat(tokens.get("BROWSER_HOSTS")).contains("*.qits-dev.eu");
+        // BOTH DEPTHS OF THE PROJECT, because supportsEnvironments is live data this file is
+        // written long before: the applications sit under the environment's door today and under
+        // the project's the moment the flag flips. No entry of its own is needed for the idp host.
+        assertThat(tokens).containsEntry("BROWSER_HOSTS", "qits.qits-dev.eu,*.qits.qits-dev.eu,"
+                + "*.dev.qits.qits-dev.eu");
     }
 
     @Test

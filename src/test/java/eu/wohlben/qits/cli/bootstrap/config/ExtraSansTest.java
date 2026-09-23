@@ -11,10 +11,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * The names the edge's certificate carries beyond the wildcards it derives.
  * <p>
- * A wildcard covers ONE label, and the edge derives one per depth it routes at: the apex,
- * {@code *.<domain>}, {@code *.<env>.<domain>} per environment, and {@code *.<project>.<domain>}
- * plus {@code *.<project>.<env>.<domain>} per project. This knob is what carries a name of some
- * OTHER shape, and it is empty on an ordinary platform.
+ * A wildcard covers ONE label, and the edge derives one per depth the right-to-left grammar
+ * {@code <app>[.<env>].<project>.<domain>} has: the apex, {@code *.<domain>},
+ * {@code *.<project>.<domain>} per project and {@code *.<env>.<project>.<domain>} per environment
+ * of a project that has them. This knob is what carries a name of some OTHER shape, and it is
+ * empty on an ordinary platform.
  * <p>
  * <b>It used to hold one name per project</b>, because no derived wildcard could reach
  * {@code editor.<project>.<domain>}. The per-project half is a live read off qits-projects' events
@@ -35,6 +36,22 @@ class ExtraSansTest {
     void nothingConfiguredIsNoExtraNames() {
         assertThat(ExtraSans.of(TestConfig.from(Map.of()), Optional.of(DOMAIN))).isEmpty();
         assertThat(ExtraSans.of(config("   "), Optional.of(DOMAIN))).isEmpty();
+    }
+
+    /**
+     * <b>And that is what makes the rendered key come out empty on an ordinary platform</b> — every
+     * name this platform serves is inside a tier the edge derives, so nothing reaches
+     * {@code QITS_EDGE_ACME_ADDITIONAL_NAMES} and the key is not spelled at all. Asserted from the
+     * CONFIG rather than from a token map, because the empty rendering is only worth anything if
+     * the knob a real run reads is what feeds it.
+     */
+    @Test
+    void anOrdinaryPlatformOrdersNoAdditionalNames() {
+        Map<String, String> tokens = eu.wohlben.qits.cli.bootstrap.platform.DomainTokens.of(
+                Optional.of(DOMAIN), "staging", "hostmaster@" + DOMAIN, "token", Optional.empty(),
+                ExtraSans.of(TestConfig.from(Map.of()), Optional.of(DOMAIN)));
+
+        assertThat(tokens.values()).noneMatch(value -> value.contains("ADDITIONAL_NAMES"));
     }
 
     /**

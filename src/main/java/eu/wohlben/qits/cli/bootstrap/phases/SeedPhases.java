@@ -2755,28 +2755,24 @@ public class SeedPhases {
      * the closing report prints it — nothing here writes a record. At Hetzner they are typed in by
      * hand, once.
      * <p>
-     * The edge reads at most the first THREE labels of a Host header, and every public name spells
-     * its environment: {@code <env>.<domain>} is an environment's gateway,
-     * {@code <app>.<env>.<domain>} is one of its applications — its UI and its wire routes both,
-     * registry, mirror and githost among them — and {@code <app>.<project>.<env>.<domain>} is the
-     * PROJECT tier, one origin per project per environment, the web editor above all. Only the bare
-     * apex still falls through to the default environment; the short {@code <app>.<domain>} reading
-     * and the short {@code <app>.<project>.<domain>} reading are both retired, so a name says which
-     * tier it wants or it is not served. The durable answer is a wildcard per DEPTH, not a record
-     * per name:
+     * Names are read RIGHT TO LEFT, {@code <app>[.<env>].<project>.<domain>}, each label inside the
+     * one to its right: the domain holds projects, a project holds its environments, an environment
+     * holds its apps. The project label is mandatory — there is no unqualified application tier and
+     * no top-level {@code <env>.<domain>} tier — so a name says which project it wants or it is not
+     * served. The durable answer is a wildcard per DEPTH, not a record per name, and the depths
+     * have not changed even though what sits at each of them has:
      * <ul>
      * <li>{@code @} — the apex, and it is not decoration. A wildcard never matches the apex, and the
      *     apex is the address a person types, so without this record the front door has no answer.
-     * <li>{@code *} — every one-label name: {@code <env>.<domain>} for every environment there will
-     *     ever be, and anything else at that depth.
-     * <li>{@code *.*} — every two-label name: {@code <app>.<env>.<domain>} for every application the
-     *     edge gains a vhost for, which is now every application there is. Adding an environment or
-     *     an app is then a deploy and no dns step, which is the whole reason this is a wildcard —
-     *     the per-service hosts needed no record of their own.
-     * <li>{@code *.*.*} — every three-label name: {@code <app>.<project>.<env>.<domain>}, the
-     *     project tier. A project is created by a person on a running platform, so this is the one
-     *     depth where a record per name would mean a dns edit per project. The wildcard is what
-     *     makes creating a project a platform act with no operator step behind it.
+     * <li>{@code *} — every one-label name: {@code <project>.<domain>}, every project's own door.
+     * <li>{@code *.*} — every two-label name: {@code <env>.<project>.<domain>} where a project
+     *     supports environments, and {@code <app>.<project>.<domain>} — its applications — where it
+     *     does not.
+     * <li>{@code *.*.*} — every three-label name: {@code <app>.<env>.<project>.<domain>}, an
+     *     application of an env-supporting project, the web editor among them. A project is created
+     *     by a person on a running platform, so these are the depths where a record per name would
+     *     mean a dns edit per project. The wildcards are what make creating a project a platform act
+     *     with no operator step behind it.
      * </ul>
      * Every value is the same address, because every one of these names is this one host: the edge
      * is a single front door and the routing is by Host header behind it.
@@ -2789,12 +2785,14 @@ public class SeedPhases {
     public static List<ZoneRecord> zoneRecords(String domain, String publicIp) {
         return List.of(
                 new ZoneRecord("@", publicIp, "the apex — the browser door, and no wildcard covers it"),
-                new ZoneRecord("*", publicIp, "every <env>." + domain + " gateway"),
+                new ZoneRecord("*", publicIp, "every <project>." + domain + " door"),
                 new ZoneRecord("*.*", publicIp,
-                        "every <app>.<env>." + domain + " host — each service's UI and its wire routes"),
+                        "every <env>.<project>." + domain + " door, and the <app>.<project>."
+                                + domain + " host of a project with no environments"),
                 new ZoneRecord("*.*.*", publicIp,
-                        "every <app>.<project>.<env>." + domain
-                                + " host — the project tier, the web editor above all"));
+                        "every <app>.<env>.<project>." + domain
+                                + " host — each service's UI and its wire routes, the editor "
+                                + "above all"));
     }
 
     /**

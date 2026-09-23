@@ -259,18 +259,26 @@ public final class ComposeTemplate {
                   # may differ: discovery is addressed, validation is compared, and only the second
                   # one reads this line.
                   QITS_IDP_ISSUER: ${IDP}
-                  # THE IDP'S OWN HOST, not the door: the login page is served at idp.<domain> /
-                  # idp.<env>.localhost, the shape every service host has. The door serves nothing
-                  # but a redirect off /.
+                  # THE IDP'S OWN HOST, not the door: the login page is an application of the
+                  # `qits` project like every other, at idp.<env>.qits.<domain> — or
+                  # idp.<env>.qits.localhost:<port> locally. A door serves nothing but a redirect
+                  # off /.
                   #
-                  # The return-host list is the ENVIRONMENT's authority and a *. of it, so one
-                  # session covers every <app>.<env> host — the idp's own included, since that is
-                  # one extra label — plus the apex and *.<domain> where there is a domain, because
-                  # the environment label is optional for the default tier and <app>.<domain> is the
-                  # same host as <app>.<env>.<domain>. The cookie is scoped to the parent every one
-                  # of those shapes shares: the domain, or <env>.localhost locally — bare localhost
-                  # is a public suffix and a cookie scoped to it is dropped, which is why the local
-                  # door carries the environment name at all.
+                  # EVERY NAME IS READ RIGHT TO LEFT, <app>[.<env>].<project>.<domain>, each label
+                  # inside the one to its right, and the PROJECT LABEL IS MANDATORY. There is no
+                  # unqualified application tier and no top-level <env>.<domain> tier: the platform
+                  # is simply the project called `qits`. Whether the env label is there at all is
+                  # that project's supportsEnvironments flag — it stands today, so these names
+                  # carry it.
+                  #
+                  # The return-host list is the project's door, *. of it and *. of the
+                  # environment's door — one wildcard is exactly one extra label on the same port,
+                  # which is what carries one session across every <app> host, the idp's own
+                  # included. Both depths are listed because the flag is live data and this file is
+                  # written long before it is read: an allow-list entry for a name the edge does
+                  # not serve admits nobody. The cookie is scoped to the parent every shape shares
+                  # — the domain, or qits.localhost locally, since bare localhost is a public
+                  # suffix and a cookie scoped to it is dropped.
                   QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN: ${IDP_ORIGIN}
                   QITS_IDP_BROWSER_SSO_BROWSER_HOSTS: "${BROWSER_HOSTS}"
                   QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN: "${SESSION_COOKIE_DOMAIN}"
@@ -293,13 +301,16 @@ public final class ComposeTemplate {
                   QITS_IDP_SEED_CLIENT_ID: "${BOOTSTRAP_CLIENT_ID}"
                   QITS_IDP_SEED_CLIENT_SECRET: "${BOOTSTRAP_CLIENT_SECRET}"
                   # THE PASSKEY BINDING. A credential is bound to the rp id and asserts on that
-                  # host AND its children: the rp id is <env>.localhost, or the domain when there is
-                  # one. The origins are what the browser's ceremony is checked against, and that is
-                  # the idp's own host — a child of the rp id, so the login moving there broke no
-                  # credential. Every *.localhost name is a secure context by itself, so a passkey
-                  # works there with no certificate; a raw IP is not one, and from it only the
-                  # password fallback logs in. A passkey registered under the older bare-localhost
-                  # rp id asserts on neither door and has to be registered again.
+                  # host AND its children: the rp id is the domain where there is one, and
+                  # qits.localhost — the PROJECT's door — locally. The project's door rather than
+                  # the environment's on purpose: it is a parent of every name either way the
+                  # supportsEnvironments flag stands, so a flip cannot invalidate a passkey. The
+                  # origins are what the browser's ceremony is checked against, and that is the
+                  # idp's own host, a child of the rp id. Every *.localhost name is a secure
+                  # context by itself, so a passkey works there with no certificate; a raw IP is
+                  # not one, and from it only the password fallback logs in. A passkey registered
+                  # under an older local rp id — bare localhost, or <env>.localhost — asserts on
+                  # neither door and has to be registered again.
                   QITS_IDP_WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID}
                   QITS_IDP_WEBAUTHN_ORIGINS: "${WEBAUTHN_ORIGINS}"
                   # WHERE TELEMETRY GOES, and it has to be spelled in every service below. The
@@ -387,8 +398,10 @@ public final class ComposeTemplate {
                   #                                                                 registry names
                   #
                   # WHY `landing` IS OPEN AND NOTHING ELSE IS. qits-landing is the tier's public
-                  # front door at landing.<env>.<domain>: a marketing page with no machine
-                  # surface, no authenticated data and no write path. Gated, it answered every
+                  # front door, and `landing` is the reserved label that means THIS PROJECT'S ROOT
+                  # — what it answers is the project's own door, qits.<domain>, rather than a name
+                  # of its own: a marketing page with no machine surface, no authenticated data
+                  # and no write path. Gated, it answered every
                   # anonymous browser with a 302 to the idp login — a front door that demands a
                   # login before it says what the product is, which defeats the only purpose it
                   # has.
@@ -424,31 +437,21 @@ public final class ComposeTemplate {
                   QITS_EDGE_APPS_MIRROR_HOST_PATTERN: "{env}-qits-platform-mirror"
                   QITS_EDGE_APPS_GITHOST_HOST_PATTERN: "{env}-qits-githost"
                   QITS_EDGE_APPS_GITHOST_AUDIENCE_PATTERN: "{env}-qits-githost"
-                  # A FOURTH NAME, AND IT IS READ AT A DIFFERENT DEPTH. The three above are
-                  # <app>.<env>.<domain>; the web editor is editor.<project>.<env>.<domain>, one
-                  # origin per PROJECT per environment. The edge needs no code for it: it reads at
-                  # most the first three labels, `editor` is a configured app, `<project>` is the
-                  # project tier and the environment is spelled by the name itself — position 2 —
-                  # so {env} resolves out of the HOST rather than out of a default. The short
-                  # editor.<project>.<domain> form is retired with the generic <app>.<domain>
-                  # fallthrough: every public name spells its environment now, and only the bare
-                  # apex still serves the default one.
+                  # A FOURTH NAME, AND IT IS AN APP LABEL LIKE THE THREE ABOVE. The web editor is
+                  # editor[.<env>].<project>.<domain> — one origin per PROJECT, per environment
+                  # where that project has them — and under the right-to-left grammar that is the
+                  # ordinary application shape rather than a depth of its own. The edge needs no
+                  # code for it: `editor` is a configured app at the leftmost position and the
+                  # environment is read out of the HOST rather than out of a default, so {env}
+                  # resolves per request.
                   #
-                  # A PROJECT SLUG THAT SPELLS AN ENVIRONMENT NAME STILL BREAKS THIS, which is why
-                  # the reserved slugs stay. The edge asks position 1 whether it is an environment
-                  # before it reads it as a project, so a project called `prod` would make
-                  # editor.prod.<env>.<domain> parse as the app `editor` in the tier `prod` over an
-                  # apex of `<env>.<domain>` — the wrong tier and a domain that is not the domain.
-                  # qits-projects refuses those slugs (QITS_PROJECTS_RESERVED_SLUGS) and the
-                  # `environment` phase refuses the mirror image of the same collision.
-                  #
-                  # A PROJECT SLUG THAT SPELLS AN APP LABEL BREAKS NOTHING AND IS RESERVED ANYWAY.
-                  # `editor` is matched here, at position 0, before any project is read — so a
-                  # project called `editor` or `registry` cannot take the name from the app; the
-                  # app wins, silently and for ever. What the project loses is every address of its
-                  # own, at every depth. So the same reserved list carries the four app labels
-                  # above and every label the deployer projects: shadowing is not a routing bug to
-                  # fix here, it is a name to refuse before it is handed out.
+                  # A PROJECT SLUG CAN NO LONGER COLLIDE WITH AN ENVIRONMENT NAME OR AN APP LABEL,
+                  # because the reading is POSITIONAL: a label's meaning comes from where it sits,
+                  # so an app called `prod`, a project called `registry` and an environment called
+                  # `acme` are three ordinary names that are never read at the same position. The
+                  # reserved slugs stay for what they still buy — a project whose slug is a
+                  # published label keeps a name nobody types by mistake — and the `environment`
+                  # phase keeps the mirror image of the same refusal.
                   #
                   # No port key: 8080 is the edge's default for an app, the same silence the three
                   # above keep.
@@ -473,14 +476,30 @@ public final class ComposeTemplate {
                   # so the session gate needs no pair of its own any more. It introspects with Basic
                   # and asks for no token, so there is no oidc-client here either.
                   QITS_EDGE_SESSIONS_ENABLED: "true"
-                  # THE EDGE'S CANONICAL ORIGIN IS THE DOOR, and stays the door: the edge reads
-                  # the default environment's apex out of it and finds the login host — idp.<apex>
-                  # — in the deployment projection by itself. A person may return to an authority
-                  # on the list below or to any ONE label under it, on the same port. That wildcard is what carries a session onto every
-                  # <app>.<env> host, registry, mirror and git host included: a service host serves
-                  # that service's SPA as well as its wire routes now. With a domain the list holds
-                  # both depths — <domain> and <env>.<domain>, each with its wildcard — because the
-                  # default tier may be addressed without its label.
+                  # THE EDGE'S CANONICAL ORIGIN IS A DOOR, AND IT IS THE PLATFORM PROJECT'S:
+                  # https://qits.<domain>. It was the bare apex, and the apex is not a name any
+                  # more — every application address carries a project label, so a canonical origin
+                  # that carries none leaves the edge nothing to compose and the door answers an
+                  # honest 404 instead of a redirect. The edge reads THIS VALUE by the same
+                  # right-to-left grammar as a request's own Host, and a name that names no project
+                  # falls back to it, so naming the project's door is what puts a front door back
+                  # on the apex.
+                  #
+                  # IT IS ALSO WHERE THE STATED DOMAIN COMES FROM WHERE ACME IS OFF — the grammar
+                  # is positional and the domain cannot be derived (example.co.uk is two labels,
+                  # localhost is one), so the edge takes it from qits.edge.acme.domain and, failing
+                  # that, from this authority. That is why the LOCAL value is the bare
+                  # http://localhost:<port> and not qits.localhost: the latter would make
+                  # qits.localhost the domain and every name would be read one tier out. With a
+                  # domain the two sources are independent and this names the door.
+                  #
+                  # A person may return to an authority on the list below or to any ONE label under
+                  # it, on the same port. That wildcard is what carries a session onto every <app>
+                  # host of this project: a service host serves that service's SPA as well as its
+                  # wire routes. Both depths are listed — *.qits.<domain> and *.<env>.qits.<domain>
+                  # — because which one an application sits at is the project's live
+                  # supportsEnvironments flag, and an allow-list entry for a name the edge does not
+                  # serve admits nobody.
                   QITS_EDGE_SESSIONS_CANONICAL_ORIGIN: ${PUBLIC_ORIGIN}
                   QITS_EDGE_SESSIONS_BROWSER_HOSTS: "${BROWSER_HOSTS}"
                   # THE IDP CLIENT THIS SERVICE HOLDS, AND IT IS A RESOURCE LIKE A DATABASE IS.
@@ -993,25 +1012,15 @@ public final class ComposeTemplate {
                   # THE SLUGS NO PROJECT MAY TAKE, AND THERE ARE TWO KINDS OF THEM: this platform's
                   # environment name, and every LABEL this platform already publishes.
                   #
-                  # THE ENVIRONMENT NAME closes a real misroute. A project slug is the SECOND label
-                  # of editor.<project>.<env>.<domain>, and that is the position the edge reads an
-                  # environment at in the shorter <app>.<env>.<domain> shape — it asks "is this an
-                  # environment" before it asks "is this a project". So a project called `prod`
-                  # would make editor.prod.<env>.<domain> parse as the app `editor` in the tier
-                  # `prod` over an apex of `<env>.<domain>`, and the same collision would take
-                  # <app>.<project>.<env>.<domain> for every other app with it. qits-projects
-                  # refuses these slugs; the `environment` phase refuses the mirror image, an
-                  # environment named after a project that already exists.
-                  #
-                  # THE SERVICE LABELS close a shadowing instead, at position 0, and they joined
-                  # this list with the project tier. `registry`, `editor`, `idp`, `ci` and the rest
-                  # are what the edge's configured apps and the deployer's projected hosts answer
-                  # at, and a matched app entry wins before any project is looked at — so a project
-                  # called `registry` can never claim registry.<env>.<domain>. Nothing misroutes:
-                  # the service simply keeps its own name, for ever, and the project holds a slug
-                  # that is unreachable at every depth. The edge's routing javadoc points here for
-                  # exactly this reason. Refusing the slug is the only moment the name can still be
-                  # changed.
+                  # NEITHER KIND IS A MISROUTE ANY MORE, and the list is kept for what it still
+                  # buys. The edge reads <app>[.<env>].<project>.<domain> POSITIONALLY — a label's
+                  # meaning comes from where it sits — so a project called `prod` and a project
+                  # called `registry` both route correctly: the project label is read at the
+                  # project position and nowhere else. What a slug that spells a published label
+                  # still costs is a name people mistype and a door that reads like an app's, so
+                  # the refusal stands; it is the only moment the name can still be changed. The
+                  # `environment` phase refuses the mirror image, an environment named after a
+                  # project that already exists.
                   #
                   # DERIVED, NOT WRITTEN — PlatformModel.reservedSlugs builds it from the
                   # deployables' own browser labels plus the edge's four app entries, so an
@@ -1508,7 +1517,8 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EVENTS_URL=http://${DIAL_EVENTS}:8080
             # THE ANONYMOUS-READ LIST IS NOT EMPTY ANY MORE, AND IT HOLDS EXACTLY ONE LABEL. The key is
             # keyed by APP LABEL, and `landing` is the only entry: qits-landing is the tier's public
-            # front door at landing.<env>.<domain>, a marketing page with no machine surface, no
+            # front door — `landing` is the reserved label meaning THIS PROJECT'S ROOT, so what it
+            # answers is the project's own door qits.<domain> — a marketing page with no machine surface, no
             # authenticated data and no write path, and gated it answered every anonymous browser with
             # a 302 to the idp login — a front door nobody can read without an account, which defeats
             # the only purpose it has.
@@ -1540,16 +1550,23 @@ public final class ComposeTemplate {
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN={env}-qits-platform-mirror
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_GITHOST_AUDIENCE_PATTERN={env}-qits-githost
-            # THE EDITOR VHOST, editor.<project>.<env>.<domain>, onto qits-workspaces. Same generic
-            # app alias as the three above and no edge code: the edge reads three labels, so the
-            # project sits in position 1 and the environment the editor is served out of is the
-            # host's OWN label at position 2 — not a default. The audience is spelled rather than
+            # THE EDITOR VHOST, editor[.<env>].<project>.<domain>, onto qits-workspaces. Same
+            # generic app alias as the three above and no edge code: `editor` is an app label at
+            # the leftmost position like any other, and the environment it is served out of is the
+            # host's own label — read out of the name, not from a default. The audience is spelled rather than
             # defaulted — an unspelled one is the REGISTRY's, which would let a docker pull token
             # open a project's editor.
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_EDITOR_HOST_PATTERN={env}-qits-workspaces
             qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_APPS_EDITOR_AUDIENCE_PATTERN={env}-qits-workspaces
-            # USER SESSIONS ARE ENFORCED at the public environment vhost; IdP routes remain the
+            # USER SESSIONS ARE ENFORCED on every application vhost; IdP routes remain the
             # protocol-required anonymous carve-out.
+            #
+            # THE CANONICAL ORIGIN IS THIS PLATFORM'S PROJECT DOOR, https://qits.<domain>, and the
+            # bare apex locally. The seed block says why at length: the apex carries no project
+            # label, so an edge pointed at it composes no application name and the door 404s; and
+            # with ACME off this same value is where the STATED DOMAIN comes from, which is why the
+            # local half must stay the apex. The return-host list carries the project's door and a
+            # wildcard at both depths — one extra label each, same port.
             #
             # NO CREDENTIAL HERE, AND THAT IS THE RULE THIS WHOLE FILE NOW KEEPS: identity is
             # created against the running idp and INJECTED by the deployer, as
@@ -2031,16 +2048,20 @@ public final class ComposeTemplate {
             # block says the same thing at more length.
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_ISSUER=${IDP}
             # Browser SSO is configured in both halves, and the canonical origins DIFFER. The idp
-            # is served on a host of its own, so its canonical origin is that host; the edge's stays
-            # the door, from which it derives the apex and looks the login host up. The return-host
-            # list is the same on both sides.
+            # is served on a host of its own — idp.<env>.qits.<domain>, an application of the
+            # `qits` project like every other — so its canonical origin is that host; the edge's is
+            # the PROJECT'S DOOR, qits.<domain>, which is what lets it compose application names at
+            # all under the right-to-left grammar. The return-host list is the same on both sides,
+            # and names both depths of the project because supportsEnvironments is live data.
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN=${IDP_ORIGIN}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_BROWSER_SSO_BROWSER_HOSTS=${BROWSER_HOSTS}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN=${SESSION_COOKIE_DOMAIN}
             # The passkey binding, as on the seed block: the rp id is a HOST a credential is bound
-            # to (and every label under it) — <env>.localhost or the domain — and the origins are
-            # what a ceremony is checked against, which is the idp's own host. A credential bound to
-            # the parent asserts on the child, so moving the login there changed no binding.
+            # to (and every label under it) — the domain, or the project's door qits.localhost
+            # locally — and the origins are what a ceremony is checked against, which is the idp's
+            # own host. A credential bound to the parent asserts on the child, so the login sitting
+            # one project label deeper changed no binding on a domain platform; the LOCAL rp id did
+            # move, because <env>.localhost parents nothing the platform serves now.
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_WEBAUTHN_RP_ID=${WEBAUTHN_RP_ID}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_WEBAUTHN_ORIGINS=${WEBAUTHN_ORIGINS}
             qits.platform.deployments.extras.qits-platform-idp.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
@@ -2193,12 +2214,10 @@ public final class ComposeTemplate {
             # seed window, so there is no consumed branch and no workspace to resolve.
             qits.platform.deployments.extras.qits-projects.env.QITS_PROJECTS_RELEASE_REQUESTS_WORKSPACES_URL=http://${ENV_NAME}-qits-workspaces:8080
             # THE SLUGS NO PROJECT MAY TAKE: this platform's environment name and every label it
-            # publishes. The environment name because a project slug sits at the label the edge
-            # reads a tier at — position 1 of editor.<project>.<env>.<domain>, which is where
-            # <app>.<env>.<domain> spells its environment, and a project there is a genuine
-            # misroute. The SERVICE labels because position 0 is already taken: a matched app entry
-            # wins before any project is read, so a project called `registry` or `editor` keeps a
-            # slug it can never be reached at. The seed block says both at length.
+            # publishes. Neither is a misroute since the edge started reading
+            # <app>[.<env>].<project>.<domain> positionally — a project label is read at the
+            # project position and nowhere else — so what the list buys now is names people do not
+            # mistype for an environment or for an application. The seed block says it at length.
             #
             # The value is PlatformModel.reservedSlugs — the deployables' browser labels plus the
             # edge's four app entries, environment first and the rest sorted — so it is the same

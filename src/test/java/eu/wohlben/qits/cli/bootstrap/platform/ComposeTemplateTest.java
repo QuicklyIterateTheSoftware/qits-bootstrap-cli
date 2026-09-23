@@ -84,16 +84,20 @@ class ComposeTemplateTest {
             values.put("IDP_CLIENT_SECRET_" + PlatformModel.clientKey(app),
                     "secret-" + PlatformModel.wireAlias(app, ENV));
         }
-        // The passkey binding of a platform with no domain: every *.localhost name is a secure
-        // context by itself, so the ceremony works on the edge's plain HTTP port. The rp id carries
-        // the ENVIRONMENT's label, which is what each service's own host is a child of — the idp's
-        // included, and that is where the ceremony happens.
-        values.put("WEBAUTHN_RP_ID", ENV + ".localhost");
-        values.put("WEBAUTHN_ORIGINS", "http://idp." + ENV + ".localhost:8080");
-        values.put("PUBLIC_ORIGIN", "http://" + ENV + ".localhost:8080");
-        values.put("IDP_ORIGIN", "http://idp." + ENV + ".localhost:8080");
-        values.put("BROWSER_HOSTS", ENV + ".localhost:8080,*." + ENV + ".localhost:8080");
-        values.put("SESSION_COOKIE_DOMAIN", ENV + ".localhost");
+        // The browser names of a local platform, in the grammar the edge reads right to left:
+        // <app>[.<env>].<project>.<domain>, with `localhost` as the stated domain and `qits` as
+        // this platform's own project. The door is the BARE APEX and must be: with ACME off the
+        // edge takes the stated domain from this value's authority, so qits.localhost here would
+        // make qits.localhost the domain. The rp id is the PROJECT's door — a parent of every name
+        // either way the supportsEnvironments flag stands — and every *.localhost name is a secure
+        // context by itself, so the ceremony works on the edge's plain HTTP port.
+        values.put("WEBAUTHN_RP_ID", "qits.localhost");
+        values.put("WEBAUTHN_ORIGINS", "http://idp." + ENV + ".qits.localhost:8080");
+        values.put("PUBLIC_ORIGIN", "http://localhost:8080");
+        values.put("IDP_ORIGIN", "http://idp." + ENV + ".qits.localhost:8080");
+        values.put("BROWSER_HOSTS", "localhost:8080,qits.localhost:8080,*.qits.localhost:8080,*."
+                + ENV + ".qits.localhost:8080");
+        values.put("SESSION_COOKIE_DOMAIN", "qits.localhost");
         // No domain: every fragment is empty, which is the ordinary platform.
         values.putAll(DomainTokens.of(Optional.empty()));
         return values;
@@ -103,16 +107,16 @@ class ComposeTemplateTest {
     static Map<String, String> tokens(String domain) {
         Map<String, String> values = tokens();
         // The binding follows the address a browser arrives at, which a domain moves to TLS. The
-        // login is idp. of the ENVIRONMENT AUTHORITY on both kinds of platform: every public name
-        // spells its environment, and the short idp.<domain> form no longer routes. The RP ID stays
-        // the bare apex — a credential asserts on it and its children, and moving it would
-        // invalidate every passkey.
+        // door is this platform's own PROJECT door, qits.<domain>, because the apex carries no
+        // project label and an edge pointed at it can compose no application name. The login is
+        // idp. of the environment's door inside that project. The RP ID stays the bare apex — a
+        // credential asserts on it and its children, and moving it would invalidate every passkey.
         values.put("WEBAUTHN_RP_ID", domain);
-        values.put("WEBAUTHN_ORIGINS", "https://idp." + ENV + "." + domain);
-        values.put("PUBLIC_ORIGIN", "https://" + domain);
-        values.put("IDP_ORIGIN", "https://idp." + ENV + "." + domain);
-        values.put("BROWSER_HOSTS", domain + "," + ENV + "." + domain
-                + ",*." + domain + ",*." + ENV + "." + domain);
+        values.put("WEBAUTHN_ORIGINS", "https://idp." + ENV + ".qits." + domain);
+        values.put("PUBLIC_ORIGIN", "https://qits." + domain);
+        values.put("IDP_ORIGIN", "https://idp." + ENV + ".qits." + domain);
+        values.put("BROWSER_HOSTS", "qits." + domain + ",*.qits." + domain
+                + ",*." + ENV + ".qits." + domain);
         values.put("SESSION_COOKIE_DOMAIN", domain);
         values.putAll(DomainTokens.of(Optional.of(domain)));
         return values;
@@ -562,11 +566,12 @@ class ComposeTemplateTest {
 
     /**
      * <b>The extra SANs reach the edge as one generic key, in both files.</b> The edge derives the
-     * apex, {@code *.<domain>}, {@code *.<env>.<domain>} per environment and
-     * {@code *.<project>.<domain>} plus {@code *.<project>.<env>.<domain>} per project for itself —
-     * so this key is for a name at some OTHER shape. It used to carry the editor hosts, one per
-     * project; the per-project wildcards are a live read off qits-projects' events now, and the key
-     * says nothing about editors either way — it is a list of names.
+     * apex, {@code *.<domain>}, {@code *.<project>.<domain>} per project and
+     * {@code *.<env>.<project>.<domain>} per environment of a project that has them — every depth
+     * the right-to-left grammar has — so this key is for a name at some OTHER shape. It used to
+     * carry the editor hosts, one per project; the per-project wildcards are a live read off
+     * qits-projects' events now, and the key says nothing about editors either way — it is a list
+     * of names.
      */
     @Test
     void theExtraSansReachTheEdgeAsAdditionalCertificateNames() {
@@ -1093,64 +1098,75 @@ class ComposeTemplateTest {
 
     /**
      * <b>THE PASSKEY BINDING, in both files.</b> A credential is bound to the rp id and asserts on
-     * that host and its children: the rp id is {@code <env>.localhost}, or the domain once there is
-     * one. The ceremony's origin is the idp's own host, a child of the rp id — so moving the login
-     * off the door broke no credential.
+     * that host and its children: the rp id is the domain where there is one, and this platform's
+     * own PROJECT door {@code qits.localhost} locally. The project's door rather than the
+     * environment's, so the {@code supportsEnvironments} flag cannot invalidate a passkey by
+     * flipping. The ceremony's origin is the idp's own host, a child of the rp id either way.
      */
     @Test
     void theIdpIsToldWhichHostAPasskeyIsBoundTo() {
         String idp = serviceBlock(ComposeTemplate.compose(tokens()), "qits-platform-idp");
 
-        assertThat(idp).contains("QITS_IDP_WEBAUTHN_RP_ID: prod.localhost")
-                .contains("QITS_IDP_WEBAUTHN_ORIGINS: \"http://idp.prod.localhost:8080\"");
+        assertThat(idp).contains("QITS_IDP_WEBAUTHN_RP_ID: qits.localhost")
+                .contains("QITS_IDP_WEBAUTHN_ORIGINS: \"http://idp.prod.qits.localhost:8080\"");
         assertThat(extras("qits-platform-idp"))
-                .contains("env.QITS_IDP_WEBAUTHN_RP_ID=prod.localhost")
-                .contains("env.QITS_IDP_WEBAUTHN_ORIGINS=http://idp.prod.localhost:8080");
+                .contains("env.QITS_IDP_WEBAUTHN_RP_ID=qits.localhost")
+                .contains("env.QITS_IDP_WEBAUTHN_ORIGINS=http://idp.prod.qits.localhost:8080");
 
         String withDomain = serviceBlock(ComposeTemplate.compose(tokens(DOMAIN)),
                 "qits-platform-idp");
         assertThat(withDomain).contains("QITS_IDP_WEBAUTHN_RP_ID: " + DOMAIN)
-                .contains("QITS_IDP_WEBAUTHN_ORIGINS: \"https://idp." + ENV + "." + DOMAIN + "\"");
+                .contains("QITS_IDP_WEBAUTHN_ORIGINS: \"https://idp." + ENV + ".qits." + DOMAIN
+                        + "\"");
         assertThat(ComposeTemplate.extras(tokens(DOMAIN)))
                 .contains("env.QITS_IDP_WEBAUTHN_RP_ID=" + DOMAIN)
-                .contains("env.QITS_IDP_WEBAUTHN_ORIGINS=https://idp." + ENV + "." + DOMAIN);
+                .contains("env.QITS_IDP_WEBAUTHN_ORIGINS=https://idp." + ENV + ".qits." + DOMAIN);
     }
 
     /**
-     * <b>ONE SESSION, EVERY SERVICE HOST.</b> The allow-list is the environment's door and one label
-     * under it — {@code *.<authority>}, same port — because each service serves its own UI at
-     * {@code <app>.<env>.<authority>}. The cookie is scoped to the parent both share, which is the
-     * environment's name locally and the domain when there is one.
+     * <b>ONE SESSION, EVERY SERVICE HOST, IN THE PROJECT-FIRST GRAMMAR.</b> Names are read right to
+     * left — {@code <app>[.<env>].<project>.<domain>} — so the allow-list names this platform's own
+     * project door and a wildcard in front of each door under it. A wildcard is exactly one label
+     * on the same port, which is what carries one session onto every {@code <app>} host.
+     * <p>
+     * <b>BOTH DEPTHS ARE LISTED, and that is the assertion.</b> Whether an application of
+     * {@code qits} is {@code <app>.qits.<domain>} or {@code <app>.<env>.qits.<domain>} is the
+     * project's live {@code supportsEnvironments} flag — true today, and due to flip — so the list
+     * covers it either way. An allow-list entry for a name the edge does not serve admits nobody.
      * <p>
      * <b>The two canonical origins DIFFER.</b> The idp's is its own host, where the login page is;
-     * the edge's stays the door, from which it derives the apex and looks the login host up.
+     * the edge's is the PROJECT'S DOOR, which is what lets it compose application names at all —
+     * the apex carries no project label. Locally the edge's is the bare apex instead, because with
+     * ACME off that value is also where the stated domain comes from.
      */
     @Test
     void browserSsoCarriesOneSessionOntoEveryServiceHost() {
+        String localHosts = "localhost:8080,qits.localhost:8080,*.qits.localhost:8080,"
+                + "*.prod.qits.localhost:8080";
         String local = ComposeTemplate.compose(tokens());
         assertThat(serviceBlock(local, "qits-platform-idp"))
-                .contains("QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN: http://idp.prod.localhost:8080")
-                .contains("QITS_IDP_BROWSER_SSO_BROWSER_HOSTS: "
-                        + "\"prod.localhost:8080,*.prod.localhost:8080\"")
-                .contains("QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN: \"prod.localhost\"");
+                .contains("QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN: "
+                        + "http://idp.prod.qits.localhost:8080")
+                .contains("QITS_IDP_BROWSER_SSO_BROWSER_HOSTS: \"" + localHosts + "\"")
+                .contains("QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN: \"qits.localhost\"");
         assertThat(serviceBlock(local, "qits-platform-edge"))
-                .contains("QITS_EDGE_SESSIONS_CANONICAL_ORIGIN: http://prod.localhost:8080")
-                .contains("QITS_EDGE_SESSIONS_BROWSER_HOSTS: "
-                        + "\"prod.localhost:8080,*.prod.localhost:8080\"");
+                .contains("QITS_EDGE_SESSIONS_CANONICAL_ORIGIN: http://localhost:8080")
+                .contains("QITS_EDGE_SESSIONS_BROWSER_HOSTS: \"" + localHosts + "\"");
 
-        // Four shapes with a domain, and *.<domain> is the wider one rather than a second spelling
-        // of one host. The environment label used to be optional for the default tier, so
-        // <app>.<domain> and <app>.<env>.<domain> were one host; that fallthrough is retired with
-        // the project tier. The entry stays because an allow-list is not a router — an entry for a
-        // name the edge does not serve admits nobody — and *.<env>.<domain> is what admits the idp.
-        String hosts = DOMAIN + ",prod." + DOMAIN + ",*." + DOMAIN + ",*.prod." + DOMAIN;
+        // Three shapes with a domain: the project's door, one label under it — which covers the
+        // environment door and, after the flag flips, every application — and one label under the
+        // environment's door, which is where an application is today. Neither the apex nor
+        // *.<domain> is on it: the top-level environment tier and the unqualified application tier
+        // are gone from the grammar, and another project's names are another project's to allow.
+        String hosts = "qits." + DOMAIN + ",*.qits." + DOMAIN + ",*.prod.qits." + DOMAIN;
         String domain = ComposeTemplate.compose(tokens(DOMAIN));
         assertThat(serviceBlock(domain, "qits-platform-idp"))
-                .contains("QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN: https://idp." + ENV + "." + DOMAIN)
+                .contains("QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN: https://idp." + ENV + ".qits."
+                        + DOMAIN)
                 .contains("QITS_IDP_BROWSER_SSO_BROWSER_HOSTS: \"" + hosts + "\"")
                 .contains("QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN: \"" + DOMAIN + "\"");
         assertThat(serviceBlock(domain, "qits-platform-edge"))
-                .contains("QITS_EDGE_SESSIONS_CANONICAL_ORIGIN: https://" + DOMAIN)
+                .contains("QITS_EDGE_SESSIONS_CANONICAL_ORIGIN: https://qits." + DOMAIN)
                 .contains("QITS_EDGE_SESSIONS_BROWSER_HOSTS: \"" + hosts + "\"");
         assertThat(ComposeTemplate.extras(tokens(DOMAIN)))
                 .contains("qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN=" + DOMAIN)
@@ -1159,14 +1175,23 @@ class ComposeTemplateTest {
         // is the door.
         assertThat(ComposeTemplate.extras(tokens()))
                 .contains("qits.platform.deployments.extras.qits-platform-idp.env."
-                        + "QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN=http://idp.prod.localhost:8080")
+                        + "QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN=http://idp.prod.qits.localhost:8080")
                 .contains("qits.platform.deployments.extras.qits-platform-edge.env."
-                        + "QITS_EDGE_SESSIONS_CANONICAL_ORIGIN=http://prod.localhost:8080");
+                        + "QITS_EDGE_SESSIONS_CANONICAL_ORIGIN=http://localhost:8080")
+                .contains("qits.platform.deployments.extras.qits-platform-edge.env."
+                        + "QITS_EDGE_SESSIONS_BROWSER_HOSTS=" + localHosts);
         assertThat(ComposeTemplate.extras(tokens(DOMAIN)))
                 .contains("qits.platform.deployments.extras.qits-platform-idp.env."
-                        + "QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN=https://idp." + ENV + "." + DOMAIN)
+                        + "QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN=https://idp." + ENV + ".qits."
+                        + DOMAIN)
                 .contains("qits.platform.deployments.extras.qits-platform-edge.env."
-                        + "QITS_EDGE_SESSIONS_CANONICAL_ORIGIN=https://" + DOMAIN);
+                        + "QITS_EDGE_SESSIONS_CANONICAL_ORIGIN=https://qits." + DOMAIN);
+        // The apex is not the canonical origin any more, on either file: it carries no project
+        // label, so an edge pointed at it composes no application name and 404s the front door.
+        assertThat(domain)
+                .doesNotContain("QITS_EDGE_SESSIONS_CANONICAL_ORIGIN: https://" + DOMAIN + "\n");
+        assertThat(ComposeTemplate.extras(tokens(DOMAIN)))
+                .doesNotContain("QITS_EDGE_SESSIONS_CANONICAL_ORIGIN=https://" + DOMAIN + "\n");
     }
 
     /**
@@ -2085,19 +2110,21 @@ class ComposeTemplateTest {
         // fragment: an rp id is the HOST a credential is bound to and the origins are the door a
         // browser arrives at, so a domain replaces both values instead of appending to a line.
         // Put back, so that what is left to compare is everything else.
-        // The idp's own host first, because it is the longer spelling of the same name.
-        compose = compose.replace("https://idp." + ENV + "." + DOMAIN, "http://idp.prod.localhost:8080")
-                .replace("https://" + DOMAIN, "http://prod.localhost:8080")
-                .replace("RP_ID: " + DOMAIN, "RP_ID: prod.localhost")
-                .replace(DOMAIN + ",prod." + DOMAIN + ",*." + DOMAIN + ",*.prod." + DOMAIN,
-                        "prod.localhost:8080,*.prod.localhost:8080")
-                .replace("COOKIE_DOMAIN: \"" + DOMAIN + "\"", "COOKIE_DOMAIN: \"prod.localhost\"");
-        extras = extras.replace("https://idp." + ENV + "." + DOMAIN, "http://idp.prod.localhost:8080")
-                .replace("https://" + DOMAIN, "http://prod.localhost:8080")
-                .replace("RP_ID=" + DOMAIN, "RP_ID=prod.localhost")
-                .replace(DOMAIN + ",prod." + DOMAIN + ",*." + DOMAIN + ",*.prod." + DOMAIN,
-                        "prod.localhost:8080,*.prod.localhost:8080")
-                .replace("COOKIE_DOMAIN=" + DOMAIN, "COOKIE_DOMAIN=prod.localhost");
+        // The allow-list first, because it holds the other names as substrings, then the idp's own
+        // host, which is the longer spelling of the door's.
+        String hosts = "qits." + DOMAIN + ",*.qits." + DOMAIN + ",*.prod.qits." + DOMAIN;
+        String localHosts = "localhost:8080,qits.localhost:8080,*.qits.localhost:8080,"
+                + "*.prod.qits.localhost:8080";
+        compose = compose.replace(hosts, localHosts)
+                .replace("https://idp." + ENV + ".qits." + DOMAIN, "http://idp.prod.qits.localhost:8080")
+                .replace("https://qits." + DOMAIN, "http://localhost:8080")
+                .replace("RP_ID: " + DOMAIN, "RP_ID: qits.localhost")
+                .replace("COOKIE_DOMAIN: \"" + DOMAIN + "\"", "COOKIE_DOMAIN: \"qits.localhost\"");
+        extras = extras.replace(hosts, localHosts)
+                .replace("https://idp." + ENV + ".qits." + DOMAIN, "http://idp.prod.qits.localhost:8080")
+                .replace("https://qits." + DOMAIN, "http://localhost:8080")
+                .replace("RP_ID=" + DOMAIN, "RP_ID=qits.localhost")
+                .replace("COOKIE_DOMAIN=" + DOMAIN, "COOKIE_DOMAIN=qits.localhost");
 
         assertThat(compose).isEqualTo(ComposeTemplate.compose(tokens()));
         assertThat(extras).isEqualTo(ComposeTemplate.extras(tokens()));

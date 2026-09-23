@@ -13,17 +13,18 @@ class LoginCommandTest {
     @Test
     void theDefaultsAreTheIdpsAndTheGitHostsOwnNames() {
         assertThat(LoginCommand.serviceHost("idp", "", "dev"))
-                .isEqualTo("http://idp.dev.localhost:8080");
+                .isEqualTo("http://idp.dev.qits.localhost:8080");
         assertThat(LoginCommand.serviceHost("githost", "", "dev"))
-                .isEqualTo("http://githost.dev.localhost:8080");
+                .isEqualTo("http://githost.dev.qits.localhost:8080");
 
-        // EVERY PUBLIC NAME SPELLS ITS ENVIRONMENT. The short idp.<domain> form used to reach the
-        // default tier by fallthrough; that reading is retired with the project tier, so the
-        // domain arm carries the same environment label the local one always did.
+        // EVERY PUBLIC NAME CARRIES ITS PROJECT, on both arms. Names are read right to left —
+        // <app>[.<env>].<project>.<domain> — and the project label is mandatory: this platform is
+        // the project called `qits`, so both the short idp.<domain> and the project-less
+        // idp.<env>.<domain> are names the edge does not serve.
         assertThat(LoginCommand.serviceHost("idp", "qits-dev.eu", "dev"))
-                .isEqualTo("https://idp.dev.qits-dev.eu");
+                .isEqualTo("https://idp.dev.qits.qits-dev.eu");
         assertThat(LoginCommand.serviceHost("githost", "qits-dev.eu", "dev"))
-                .isEqualTo("https://githost.dev.qits-dev.eu");
+                .isEqualTo("https://githost.dev.qits.qits-dev.eu");
     }
 
     /**
@@ -38,7 +39,7 @@ class LoginCommandTest {
         assertThat(LoginCommand.environmentName("qits-dev.eu", "  ")).isNull();
         assertThat(LoginCommand.environmentRefusal("qits-dev.eu"))
                 .contains("QITS_ENV_NAME")
-                .contains("idp.<env>.qits-dev.eu")
+                .contains("idp.<env>.qits.qits-dev.eu")
                 .contains("--platform-env");
     }
 

@@ -438,7 +438,8 @@ class PipelinePhasesTest {
         assertThat(report).contains("@").contains("*").contains("*.*").contains("*.*.*");
         assertThat(report).contains("203.0.113.7");
         // The reading they follow, so the person typing them in knows why there are four.
-        assertThat(report).contains("first three");
+        assertThat(report).contains("RIGHT TO LEFT")
+                .contains("<app>[.<env>].<project>.qits-dev.eu");
     }
 
     /**
@@ -518,19 +519,17 @@ class PipelinePhasesTest {
     // --- an environment may not be called after a project -----------------------------------------
 
     /**
-     * <b>An environment name and a project slug are read at the same place, and the project tier
-     * did not change that.</b> The edge takes at most the first three labels of a host and asks the
-     * label after the application whether it names an ENVIRONMENT before it reads it as a PROJECT —
-     * so a project called after a tier loses that label: {@code editor.acme.<env>.<domain>} is read
-     * as the app {@code editor} in the tier {@code acme}, over an apex that is not the apex. A new
-     * environment named after an existing project would take that project's names for its own tier.
+     * <b>An environment name and a project slug no longer collide in the ROUTING, and the refusal
+     * stands anyway.</b> The edge reads a host positionally — {@code <app>[.<env>].<project>.<domain>}
+     * — so neither name can take the other's place. What is left is a pair of names no person can
+     * tell apart, and this is the one moment either of them can still be changed.
      */
     @Test
     void anEnvironmentNamedAfterAProjectIsRefusedAndTheMessageSaysWhy() {
         assertThat(PipelinePhases.environmentNameRefusal("acme", List.of("qits", "acme")))
                 .get(org.assertj.core.api.InstanceOfAssertFactories.STRING)
                 .contains("acme")
-                .contains("editor.acme.<env>.<domain>")
+                .contains("editor.acme.acme.<domain>")
                 .contains("--platform-env");
     }
 
@@ -554,9 +553,9 @@ class PipelinePhasesTest {
     // --- the project tier, beside the records ------------------------------------------------------
 
     /**
-     * <b>The editor host is the project tier's, and both halves of it are answered without an
-     * operator.</b> {@code editor.<project>.<env>.<domain>} is the {@code *.*.*} depth, so dns
-     * needs no step per project, and the edge derives the per-project wildcards from
+     * <b>The editor is an application of its project, and both halves of its name are answered
+     * without an operator.</b> {@code editor.<env>.<project>.<domain>} is the {@code *.*.*} depth,
+     * so dns needs no step per project, and the edge derives the per-project wildcards from
      * qits-projects' events, so the certificate needs none either.
      */
     @Test
@@ -564,8 +563,8 @@ class PipelinePhasesTest {
         String report = domainReport(Acme.Mode.PRODUCTION, "production",
                 List.of("qits", "acme"), List.of());
 
-        assertThat(report).contains("editor.qits.prod.qits-dev.eu");
-        assertThat(report).contains("editor.acme.prod.qits-dev.eu");
+        assertThat(report).contains("editor.prod.qits.qits-dev.eu");
+        assertThat(report).contains("editor.prod.acme.qits-dev.eu");
         assertThat(report).contains("ProjectCreated");
     }
 
@@ -610,7 +609,7 @@ class PipelinePhasesTest {
     void withNoProjectListTheReportSaysNothingTurnsOnIt() {
         String report = domainReport(Acme.Mode.PRODUCTION, "production");
 
-        assertThat(report).contains("editor.<project>.prod.qits-dev.eu")
+        assertThat(report).contains("editor.<env>.<project>.qits-dev.eu")
                 .contains("No project list was read")
                 .contains("follows the events");
     }
@@ -625,9 +624,11 @@ class PipelinePhasesTest {
         String report = domainReport(Acme.Mode.PRODUCTION, "production",
                 List.of("qits", "acme"), List.of("status.support.qits-dev.eu"));
 
-        assertThat(report).contains("2 + E + P + P*E + extras").contains("100");
-        // 2 + 1 environment + 2 projects + 2 project-environments + 1 extra.
-        assertThat(report).contains("E=1 and P=2 with 1 extra, so 8 of 100");
+        assertThat(report).contains("2 + P + P*E + extras").contains("100");
+        // The apex and *.<domain>, 2 projects, 2 project-environments, 1 extra — and "at most",
+        // because a project that supports no environments pays none of the P*E term and which
+        // ones do is a live read this report does not make.
+        assertThat(report).contains("E=1 and P=2 with 1 extra, so at most 7 of 100");
         assertThat(report).contains("status.support.qits-dev.eu");
     }
 
@@ -1279,12 +1280,11 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>The report hands over the browser door and the hosts under it.</b> The local door carries
-     * the environment's label since every service gained a host of its own — a session cookie is
-     * shared with a name's children, and bare localhost is a public suffix that can parent none of
-     * them. What a person needs from this block is the door, the shape of an app host, the one
-     * check for a resolver that does not synthesise *.localhost, and the fact that an old passkey
-     * is dead.
+     * <b>The report hands over the browser door and the hosts under it.</b> Every name carries this
+     * platform's project label now — {@code <app>.<env>.qits.localhost} — while the local DOOR is
+     * the bare apex, because with ACME off the edge reads the stated domain out of it. What a
+     * person needs from this block is the door, the shape of an app host, the one check for a
+     * resolver that does not synthesise *.localhost, and the fact that an old passkey is dead.
      */
     @Test
     void theReportHandsOverTheBrowserDoorAndTheHostsUnderIt(@TempDir Path temp) throws Exception {
@@ -1296,39 +1296,40 @@ class PipelinePhasesTest {
 
         new PipelinePhases(boot).summary().action().run(ctx);
 
-        assertThat(ctx.lines).anyMatch(line -> line.startsWith("edge:      http://dev.localhost:8080/"));
-        assertThat(ctx.lines).anyMatch(line -> line.contains("http://<app>.dev.localhost:8080/"));
+        assertThat(ctx.lines).anyMatch(line -> line.startsWith("edge:      http://localhost:8080/"));
+        assertThat(ctx.lines).anyMatch(line ->
+                line.contains("http://<app>.dev.qits.localhost:8080/"));
         // The session is the point of the move, so the report says what carries it.
-        assertThat(ctx.lines).anyMatch(line -> line.contains("scoped to dev.localhost"));
-        assertThat(ctx.lines).anyMatch(line -> line.contains("*.dev.localhost:8080"));
+        assertThat(ctx.lines).anyMatch(line -> line.contains("scoped to qits.localhost"));
+        assertThat(ctx.lines).anyMatch(line -> line.contains("*.dev.qits.localhost:8080"));
         // The resolver check, and the hosts-file line for the resolver that fails it.
-        assertThat(ctx.lines).anyMatch(line -> line.contains("getent hosts ci.dev.localhost"));
-        assertThat(ctx.lines).anyMatch(line -> line.contains("127.0.0.1  <app>.dev.localhost"));
-        // A passkey made under the old rp id asserts nowhere now.
+        assertThat(ctx.lines).anyMatch(line -> line.contains("getent hosts ci.dev.qits.localhost"));
+        assertThat(ctx.lines).anyMatch(line ->
+                line.contains("127.0.0.1  <app>.dev.qits.localhost"));
+        // A passkey made under an older rp id asserts nowhere now.
         assertThat(ctx.lines).anyMatch(line -> line.startsWith("passkeys:"));
         assertThat(ctx.lines).anyMatch(line ->
-                line.contains("http://idp.dev.localhost:8080/idp/register"));
-        // THE LOGIN IS ON THE IDP'S OWN HOST, and the door is nowhere given an /idp path: it
-        // redirects / and 404s everything else.
+                line.contains("http://idp.dev.qits.localhost:8080/idp/register"));
+        // THE LOGIN IS ON THE IDP'S OWN HOST, and no door is given an /idp path: it redirects /
+        // and 404s everything else.
         assertThat(ctx.lines).anyMatch(line ->
-                line.startsWith("sign in:   http://idp.dev.localhost:8080/idp/login"));
-        assertThat(ctx.lines).noneMatch(line ->
-                line.contains("http://dev.localhost:8080/idp"));
-        // And the door is nowhere spelled without the environment label.
-        assertThat(ctx.lines).noneMatch(line -> line.contains("http://localhost:8080/"));
+                line.startsWith("sign in:   http://idp.dev.qits.localhost:8080/idp/login"));
+        assertThat(ctx.lines).noneMatch(line -> line.contains("http://localhost:8080/idp"));
+        // And the retired local shape — an app host with no project label — is nowhere in it.
+        assertThat(ctx.lines).noneMatch(line -> line.contains("<app>.dev.localhost"));
     }
 
     /**
-     * <b>A domain platform prints the ENV-EXPLICIT app host, and says the short one is retired.</b>
-     * {@code ci.<domain>} and {@code ci.<env>.<domain>} used to be one host — the environment label
-     * was optional for the default tier — and that fallthrough went with the project tier: every
-     * public name spells its environment, and only the bare apex still serves the default one. The
-     * login host moved with the same rule, from {@code idp.<domain>} to {@code idp.<env>.<domain>}.
-     * The local blocks — the resolver check and the dead passkey — belong to a platform with no
-     * domain and are not printed here.
+     * <b>A domain platform prints the PROJECT-QUALIFIED app host, and names what it retired.</b>
+     * Names are read right to left — {@code <app>[.<env>].<project>.<domain>} — so {@code ci.<domain>}
+     * and {@code ci.<env>.<domain>} are both gone, and so is the bare apex as a door: the front
+     * door is this platform's own project door, {@code qits.<domain>}, and its login host sits
+     * inside it. The local blocks — the resolver check and the dead passkey — belong to a platform
+     * with no domain and are not printed here.
      */
     @Test
-    void theReportPrintsTheEnvExplicitAppHostOnADomainPlatform(@TempDir Path temp) throws Exception {
+    void theReportPrintsTheProjectQualifiedAppHostOnADomainPlatform(@TempDir Path temp)
+            throws Exception {
         ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
         Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev", "QITS_PORT", "8080",
                 "QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7")),
@@ -1338,21 +1339,25 @@ class PipelinePhasesTest {
 
         new PipelinePhases(boot).summary().action().run(ctx);
 
-        assertThat(ctx.lines).anyMatch(line -> line.startsWith("edge:      https://qits-dev.eu/"));
         assertThat(ctx.lines).anyMatch(line ->
-                line.startsWith("sign in:   https://idp.dev.qits-dev.eu/idp/login"));
-        assertThat(ctx.lines).anyMatch(line -> line.contains("https://<app>.dev.qits-dev.eu/"));
-        // The short form is named as RETIRED rather than left out: a person who knew the old
-        // platform will type it, and a report that says nothing about it reads as a broken edge.
+                line.startsWith("edge:      https://qits.qits-dev.eu/"));
         assertThat(ctx.lines).anyMatch(line ->
-                line.contains("<app>.qits-dev.eu is retired and serves nothing"));
-        assertThat(ctx.lines).noneMatch(line -> line.contains("are the same host"));
-        // The project tier is one label deeper again, and the report says where.
+                line.startsWith("sign in:   https://idp.dev.qits.qits-dev.eu/idp/login"));
         assertThat(ctx.lines).anyMatch(line ->
-                line.contains("<app>.<project>.dev.qits-dev.eu"));
-        // Both wildcards are still on the idp's return list: it is an allow-list, not a router.
+                line.contains("https://<app>.dev.qits.qits-dev.eu/"));
+        // The retired shapes are NAMED rather than left out: a person who knew the old platform
+        // will type them, and a report that says nothing about them reads as a broken edge.
         assertThat(ctx.lines).anyMatch(line ->
-                line.contains("*.qits-dev.eu and *.dev.qits-dev.eu"));
+                line.contains("<app>.qits-dev.eu and <app>.dev.qits-dev.eu are retired"));
+        assertThat(ctx.lines).anyMatch(line ->
+                line.contains("and so is the bare apex qits-dev.eu"));
+        // Another project's hosts have the same shape with its own slug.
+        assertThat(ctx.lines).anyMatch(line ->
+                line.contains("<app>.<env>.<project>.qits-dev.eu"));
+        // Both depths of this project are on the idp's return list: it is an allow-list, not a
+        // router, and supportsEnvironments is live data.
+        assertThat(ctx.lines).anyMatch(line ->
+                line.contains("*.qits.qits-dev.eu and *.dev.qits.qits-dev.eu"));
         // Nothing local: no hosts-file fallback and no passkey warning.
         assertThat(ctx.lines).noneMatch(line -> line.contains("getent hosts"));
         assertThat(ctx.lines).noneMatch(line -> line.startsWith("passkeys:"));

@@ -106,13 +106,16 @@ public final class DomainTokens {
      * The extra SANs, as one env line or as nothing.
      * <p>
      * <b>The certificate the edge derives is a wildcard set, and a wildcard covers ONE label.</b>
-     * The set is the apex, {@code *.<domain>}, {@code *.<env>.<domain>} per environment and
-     * {@code *.<project>.<domain>} plus {@code *.<project>.<env>.<domain>} per project — every
-     * depth the edge's Host reading has, the project tier included. This key is what carries a name
-     * of some OTHER shape.
+     * Names are read right to left — {@code <app>[.<env>].<project>.<domain>} — so the set is the
+     * apex, {@code *.<domain>} for every project's door, {@code *.<project>.<domain>} per project
+     * and {@code *.<env>.<project>.<domain>} per environment of a project that has them: every
+     * depth the edge's Host reading has. This key is what carries a name of some OTHER shape, and
+     * on an ordinary platform there is none — it comes out EMPTY, and an empty list spells no key
+     * at all.
      * <p>
-     * <b>The web editor is no longer one of them.</b> {@code editor.<project>.<env>.<domain>} sits
-     * inside the derived per-project wildcards, which the edge works out LIVE from qits-projects'
+     * <b>The web editor is no longer one of them.</b> {@code editor[.<env>].<project>.<domain>}
+     * sits inside the derived per-project wildcards, which the edge works out LIVE from
+     * qits-projects'
      * ProjectCreated events — so a project created after this file was written reaches the
      * certificate at the edge's next order, which its own creation event triggers. That is the
      * whole of what this key used to be filled with, and it is gone.

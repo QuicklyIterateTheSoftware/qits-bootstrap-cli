@@ -12,11 +12,17 @@ import java.util.regex.Pattern;
  * beyond the shapes it derives for itself.</b>
  * <p>
  * <b>Why there is a knob at all, and it is smaller than it was.</b> The edge orders one certificate
- * over a wildcard set it works out for itself — the apex, {@code *.<domain>},
- * {@code *.<env>.<domain>} per environment, and {@code *.<project>.<domain>} plus
- * {@code *.<project>.<env>.<domain>} per project. A wildcard is leftmost-only, so it covers one
- * label and no more, and that set is exactly the depths the edge's Host reading has. A name at any
- * OTHER shape has to be a SAN of its own, and this is where it is written.
+ * over a wildcard set it works out for itself. Names are read right to left —
+ * {@code <app>[.<env>].<project>.<domain>} — so the derived tiers are the apex, {@code *.<domain>}
+ * for every project's door, {@code *.<project>.<domain>} per project, and
+ * {@code *.<env>.<project>.<domain>} per environment of a project that supports environments. A
+ * wildcard is leftmost-only, so it covers one label and no more, and that set is exactly the depths
+ * the edge's Host reading has. A name at any OTHER shape has to be a SAN of its own, and this is
+ * where it is written.
+ * <p>
+ * <b>The top-level {@code *.<env>.<domain>} tier is gone with the grammar.</b> An environment only
+ * exists inside a project, so {@code dev.<domain>} is not a name and the certificate stops paying
+ * for it.
  * <p>
  * <b>It is deliberately not editor machinery.</b> This knob says "put these names on the
  * certificate" and knows nothing about projects, editors or workspaces. It never did — the editor
@@ -35,8 +41,9 @@ import java.util.regex.Pattern;
  * an ordinary platform.
  * <p>
  * <b>The 100-name cap is the live set's cost, and it belongs beside the knob.</b> A certificate
- * carries {@code 2 + E + P + P*E + extras} names — Let's Encrypt allows 100, and an order over the
- * cap fails whole. Every name written here spends one of those, which is the reason to keep this
+ * carries {@code 2 + P + P*E + extras} names, where the {@code P*E} term is paid only by the
+ * projects that support environments — Let's Encrypt allows 100, and an order over the cap fails
+ * whole. Every name written here spends one of those, which is the reason to keep this
  * list to names nothing derives.
  * <p>
  * <b>Names may be written whole or relative to the domain.</b> {@code status.support} and
@@ -125,9 +132,10 @@ public final class ExtraSans {
                     + ". Every extra name must be a LOWERCASE DNS name under " + domain
                     + " and may be written relative to it — `status.support` is `status.support."
                     + domain + "`. Wildcards are not accepted here: the edge derives its own — "
-                    + domain + ", *." + domain + ", *.<env>." + domain + ", *.<project>." + domain
-                    + " and *.<project>.<env>." + domain + " — from the environments it serves and "
-                    + "from qits-projects' project events, so this knob is for names outside those "
+                    + domain + ", *." + domain + ", *.<project>." + domain
+                    + " and *.<env>.<project>." + domain + " — from qits-projects' project events "
+                    + "and the environments each project has, so this knob is for names outside "
+                    + "those "
                     + "shapes and nothing else. One bad name fails the whole order, which is why "
                     + "this is refused before the run rather than by Let's Encrypt during it.");
         }

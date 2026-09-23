@@ -1,5 +1,6 @@
 package eu.wohlben.qits.cli.bootstrap;
 
+import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.workstation.CredentialStore;
 import eu.wohlben.qits.cli.bootstrap.workstation.GitOrigin;
 import eu.wohlben.qits.cli.bootstrap.workstation.LoopbackCallback;
@@ -35,10 +36,11 @@ public class LoginCommand implements Callable<Integer> {
     @Override
     public Integer call() throws Exception {
         // EVERY SERVICE HAS A HOST OF ITS OWN, the idp and the git host included, and EVERY PUBLIC
-        // NAME SPELLS ITS ENVIRONMENT: idp.<env>.<domain> and githost.<env>.<domain> with a domain,
-        // idp.<env>.localhost and githost.<env>.localhost without one. The door serves neither — it
-        // redirects / to the projects host and 404s every path — so both defaults name the service
-        // host directly.
+        // NAME IS READ RIGHT TO LEFT: <app>[.<env>].<project>.<domain>. This platform is the
+        // project called `qits`, so the names are idp.<env>.qits.<domain> and
+        // githost.<env>.qits.<domain> with a domain, and the same under qits.localhost without
+        // one. A door serves neither — it redirects / to the projects host and 404s every path —
+        // so both defaults name the service host directly.
         //
         // QITS_DOMAIN is read the same way QITS_ENV_NAME is: set, this workstation talks to a
         // domain platform over TLS; unset, to the local one on the edge's port.
@@ -83,19 +85,21 @@ public class LoginCommand implements Callable<Integer> {
     }
 
     /**
-     * One service's public origin, and <b>both arms spell the environment</b>:
-     * {@code https://<app>.<env>.<domain>} when {@code QITS_DOMAIN} is set,
-     * {@code http://<app>.<env>.localhost:8080} otherwise.
+     * One service's public origin, and <b>both arms carry the platform's PROJECT label as well as
+     * its environment</b>: {@code https://<app>.<env>.qits.<domain>} when {@code QITS_DOMAIN} is
+     * set, {@code http://<app>.<env>.qits.localhost:8080} otherwise.
      * <p>
-     * The short {@code <app>.<domain>} form is retired. It used to reach the default environment by
-     * fallthrough — the edge read two labels and gave an unrecognised one to the default tier — and
-     * that reading is gone with the project tier: every public name says which environment it wants,
-     * and only the bare apex still serves the default one.
+     * Names are read right to left now — {@code <app>[.<env>].<project>.<domain>}, each label
+     * inside the one to its right — and the project label is MANDATORY: there is no unqualified
+     * application tier and no top-level {@code <env>.<domain>} tier. The platform this command logs
+     * a workstation in to is simply the project called {@code qits}, which is why that slug is
+     * spelled here and nowhere else in this file.
      */
     static String serviceHost(String app, String domain, String environment) {
+        String project = PlatformModel.PROJECT;
         return domain == null || domain.isBlank()
-                ? "http://" + app + "." + environment + ".localhost:8080"
-                : "https://" + app + "." + environment + "." + domain;
+                ? "http://" + app + "." + environment + "." + project + ".localhost:8080"
+                : "https://" + app + "." + environment + "." + project + "." + domain;
     }
 
     /**
@@ -128,7 +132,8 @@ public class LoginCommand implements Callable<Integer> {
     static String environmentRefusal(String domain) {
         return "QITS_DOMAIN is set to '" + domain + "' and QITS_ENV_NAME is not, and on a domain "
                 + "platform every public name spells its environment: this workstation would ask "
-                + "idp.<env>." + domain + " and githost.<env>." + domain + " without knowing what "
+                + "idp.<env>." + PlatformModel.PROJECT + "." + domain + " and githost.<env>."
+                + PlatformModel.PROJECT + "." + domain + " without knowing what "
                 + "<env> is. There is no safe default — a guess resolves, reaches the edge and "
                 + "comes back a 404 from the right host, which reads as a broken platform rather "
                 + "than as a wrong name. Set QITS_ENV_NAME to that platform's environment (the "

@@ -628,10 +628,13 @@ public interface BootstrapConfig {
      * the edge, which routes by the NAME rather than by a path — a docker client and a git client
      * own their own roots ({@code /v2}, {@code /git}) and cannot be given a prefix.
      * <p>
-     * It is the shape EVERY application has now, browser side included: {@link #envAuthority()}
-     * carries the same {@code <env>.localhost:<port>} authority and each service's SPA answers at
-     * {@code <app>.} of it. These three are named here because they are the ones a person has to
-     * configure by hand — dockerd's insecure registries and mirror list, and a clone url.
+     * <b>These three are the MACHINE plane's names and they have not moved with the browser
+     * ones.</b> A browser name is now {@code <app>[.<env>].<project>.<domain>} — see
+     * {@link #envAuthority()} — while these stay {@code <app>.<env>.localhost:<port>}, because
+     * moving them moves dockerd's configuration on every workstation, the {@code FROM} line of
+     * every committed Dockerfile and every clone url at once. They are named here because they are
+     * the ones a person has to configure by hand: dockerd's insecure registries and mirror list,
+     * and a clone url.
      * <p>
      * <b>Nothing in this CLI dials them.</b> The run is a container on qits-net and reaches all
      * three at their aliases. They are here for the two things that speak to a person: the
@@ -653,72 +656,113 @@ public interface BootstrapConfig {
     }
 
     /**
-     * <b>The authority every one of this environment's browser names sits under</b>:
-     * {@code <env>.<domain>} with a domain, {@code <env>.localhost:<port>} without one.
+     * <b>The STATED DOMAIN, as an authority</b>: {@code <domain>} where one is configured,
+     * {@code localhost:<port>} where there is none.
      * <p>
-     * <b>Each application has its own host now</b> — {@code <app>.<env>.<authority>} serves that
-     * service's SPA at {@code /} and its wire routes beside it, the shape
-     * {@link #registryVhost()}, {@link #mirrorVhost()} and {@link #gitHostVhost()} already have. One
-     * browser session has to cover them all, and a cookie is shared with a host's CHILDREN only. So
-     * the local door moved off bare {@code localhost}, which can parent nothing: {@code localhost}
-     * is a public suffix, browsers DROP a {@code Domain=localhost} cookie, while
-     * {@code Domain=dev.localhost} is accepted and reaches {@code ci.dev.localhost} with it.
-     * <p>
-     * Nothing has to resolve it: every {@code *.localhost} name answers loopback in Chromium and
-     * Firefox, and on the host through nss-myhostname or systemd-resolved — no hosts-file entry. It
-     * stays a secure context too, so passkeys work over plain HTTP exactly as they did.
+     * <b>The edge reads every name it serves right to left against this value</b>, and it has to be
+     * stated because it cannot be derived — {@code example.co.uk} is two labels of domain and
+     * {@code localhost} is one. The edge takes it from {@code qits.edge.acme.domain}, which
+     * {@code DomainTokens} writes whenever a domain is configured, and with ACME off from the
+     * authority of {@link #publicOrigin()}. Both sources are this one value, which is why the local
+     * door is the bare apex: see {@link #publicOrigin()}.
      */
-    default String envAuthority() {
-        return DomainName.of(this).map(domain -> envName() + "." + domain)
-                .orElse(envName() + ".localhost:" + port());
+    default String domainAuthority() {
+        return DomainName.of(this).orElse("localhost:" + port());
     }
 
     /**
-     * <b>The address a person's browser arrives at</b>, which is the edge's and no other: the
-     * environment's own name and the published port, or the domain's apex over TLS when there is
-     * one — the name the edge's certificate is issued for.
+     * <b>This platform's own project door</b>, {@code qits.<domain>} — and under the hostname
+     * grammar the edge now reads, every browser name this platform serves sits inside it.
+     * <p>
+     * The grammar is {@code <app> [ .<env> ] .<project> .<domain>}, read right to left, each label
+     * inside the one to its right: the domain holds projects, a project holds its environments, an
+     * environment holds its apps. <b>The project label is MANDATORY</b> — there is no unqualified
+     * application tier and no top-level {@code <env>.<domain>} tier any more — so the platform is
+     * not a special case in the names: it is simply the project called {@code qits}, and
+     * {@link PlatformModel#PROJECT} is that slug.
+     */
+    default String projectAuthority() {
+        return PlatformModel.PROJECT + "." + domainAuthority();
+    }
+
+    /**
+     * <b>The INNERMOST DOOR of this platform's own project, and the one place the environment label
+     * lives</b>: {@code <env>.qits.<domain>}, or {@code <env>.qits.localhost:<port>} locally. An
+     * application of this platform is exactly one label in front of it —
+     * {@code ci.<env>.qits.<domain>}.
+     * <p>
+     * <b>Which door is innermost is decided by the project's {@code supportsEnvironments} flag and
+     * by nothing else.</b> An env-supporting project's innermost door is its environment's, an
+     * env-less project's is its own — one rule, because the grammar nests. The {@code qits} project
+     * supports environments today, so the env label is here; when its {@code project.yml} declares
+     * otherwise this method loses that label and every browser name below follows it, which is why
+     * there is one method rather than a spelling per key.
+     * <p>
+     * <b>The allow-list does not wait for that.</b> {@link #browserSsoHosts()} names both shapes on
+     * purpose, so a flag that flips under a running platform opens no hole and closes no door; the
+     * values that must move with the flag are {@link #idpOrigin()} and {@link #webauthnOrigins()},
+     * which name ONE host each and cannot hold two.
+     * <p>
+     * Nothing has to resolve the local form: every {@code *.localhost} name answers loopback in
+     * Chromium and Firefox, and on the host through nss-myhostname or systemd-resolved — no
+     * hosts-file entry. It stays a secure context too, so passkeys work over plain HTTP.
+     */
+    default String envAuthority() {
+        return envName() + "." + projectAuthority();
+    }
+
+    /**
+     * <b>The address a person's browser arrives at</b>, which is the edge's canonical session
+     * origin: this platform's own PROJECT DOOR over TLS where there is a domain,
+     * {@code https://qits.<domain>}, and the bare apex {@code http://localhost:<port>} where there
+     * is none.
      * <p>
      * Derived rather than configured, because it is decided twice already: the port is the edge's
      * publish and the domain is the certificate's name. A third address told to a browser would be
      * a login page nobody can reach.
      * <p>
-     * The two halves are not the same shape on purpose. A domain platform's door is the APEX and
-     * the environments are its children; a local platform has no apex, so the environment
-     * authority is the door itself — {@link #envAuthority()} says why it carries the environment's
-     * name at all.
+     * <b>It was the bare apex on a domain platform, and the apex is not a name any more.</b> Every
+     * application address carries a project label now, so a canonical origin that carries none
+     * leaves the edge nothing to compose: the apex answers an honest 404 rather than a redirect to
+     * a name that 404s one hop later. Naming the project's door is what puts a front door back —
+     * the edge reads THIS value by the same right-to-left grammar as a request's own Host, and a
+     * name that names no project falls back to it.
      * <p>
-     * <b>NOTHING IS SERVED HERE BUT A REDIRECT.</b> The door answers {@code GET /} with a 302 to
-     * the projects host and 404s every other path — the login moved to {@link #idpOrigin()} with
-     * the per-service hosts. It is still the edge's canonical session origin, because the edge
-     * derives the default environment's apex from it and reads the login host out of the
-     * deployment projection itself.
+     * <b>The local half must stay the bare apex, and that is not an inconsistency.</b> With ACME
+     * off the edge has no {@code qits.edge.acme.domain} and takes the stated domain from this
+     * value's authority — so {@code http://qits.localhost:8080} here would make
+     * {@code qits.localhost} the DOMAIN and the grammar would read every name one tier out. On a
+     * domain platform the two are independent, which is where naming the project's door is the
+     * useful spelling. See {@link #domainAuthority()}.
+     * <p>
+     * <b>NOTHING IS SERVED ON A DOOR BUT A REDIRECT.</b> It answers {@code GET /} with a 302 to the
+     * projects host and 404s every other path — the login is on the idp's own host, see
+     * {@link #idpOrigin()}.
      */
     default String publicOrigin() {
-        return DomainName.of(this).map(domain -> "https://" + domain)
-                .orElse("http://" + envAuthority());
+        return DomainName.of(this).map(domain -> "https://" + PlatformModel.PROJECT + "." + domain)
+                .orElse("http://" + domainAuthority());
     }
 
     /**
-     * <b>Where a person logs in</b>, and a service host like every other, which now means
-     * {@code idp.} of {@link #envAuthority()} on both kinds of platform:
-     * {@code idp.<env>.<domain>} with a domain, {@code idp.<env>.localhost:<port>} locally. The
-     * login page is {@code <idpOrigin>/idp/login}.
+     * <b>Where a person logs in</b>, and an application of the {@code qits} project like every
+     * other, which means {@code idp.} of {@link #envAuthority()} on both kinds of platform:
+     * {@code idp.<env>.qits.<domain>} with a domain, {@code idp.<env>.qits.localhost:<port>}
+     * locally. The login page is {@code <idpOrigin>/idp/login}.
      * <p>
      * It is the idp's canonical browser origin and the one origin a WebAuthn ceremony is accepted
-     * from. The door serves no {@code /idp/...} path any more, so an address built on
-     * {@link #publicOrigin()} would be a 404.
+     * from. A door serves no {@code /idp/...} path, so an address built on {@link #publicOrigin()}
+     * would be a 404.
      * <p>
-     * <b>It was {@code idp.<domain>}, and the environment label is not decoration.</b> The short
-     * form reached the default tier by fallthrough — the edge read two labels and gave an
-     * unrecognised first one to the default environment — and that reading is retired with the
-     * project tier: every public name spells its environment now, and only the bare apex still
-     * serves the default one. The short name would be a login page nobody can reach.
+     * <b>It names ONE host and cannot hold two</b>, so it is one of the two values that move when
+     * the {@code qits} project's {@code supportsEnvironments} flag flips — through
+     * {@link #envAuthority()}, which is where that label lives and the only place it is spelled.
      * <p>
      * <b>This does NOT move {@link #webauthnRpId()}, and moving it would be the expensive
-     * mistake.</b> A passkey is bound to the rp id, which stays the bare apex; a credential asserts
-     * on the rp id AND its children, so {@code idp.<env>.<domain>} is covered by {@code <domain>}
-     * exactly as {@code idp.<domain>} was. Changing the rp id invalidates every passkey ever
-     * registered against this platform.
+     * mistake.</b> A passkey is bound to the rp id; a credential asserts on the rp id AND its
+     * children, so {@code idp.<env>.qits.<domain>} is covered by {@code <domain>} exactly as
+     * {@code idp.<domain>} was. Changing the rp id invalidates every passkey ever registered
+     * against this platform.
      */
     default String idpOrigin() {
         return (DomainName.of(this).isPresent() ? "https://idp." : "http://idp.") + envAuthority();
@@ -738,72 +782,85 @@ public interface BootstrapConfig {
      * secure context is a raw IP, where the browser offers no ceremony at all and only a password
      * logs in.
      * <p>
-     * <b>It is {@code <env>.localhost} rather than {@code localhost} since the per-service hosts
-     * landed</b>, because a credential asserts on the rp id and its children: bound to
-     * {@code dev.localhost} it also asserts at {@code ci.dev.localhost}. A passkey registered
-     * against the old {@code localhost} rp id asserts nowhere on the new door and has to be
-     * registered again — the closing report says so.
+     * <b>Locally it is {@code qits.localhost}, the PROJECT's door</b>, because that is what the
+     * local login host is a child of: the ceremony happens at
+     * {@code idp.<env>.qits.localhost:<port>}, and a credential asserts on the rp id and every name
+     * under it. It was {@code <env>.localhost}, which the project label retired — that name is not
+     * a parent of anything the platform serves any more, so a passkey bound to it asserts nowhere
+     * and has to be registered again; the closing report says so. It is deliberately the project's
+     * door rather than the environment's, so the {@code supportsEnvironments} flag cannot invalidate
+     * a passkey by flipping.
      * <p>
      * The binding costs nothing here: accounts are per-installation, so a platform that gains a
      * domain registers its own from its own register token.
      */
     default String webauthnRpId() {
-        return DomainName.of(this).orElse(envName() + ".localhost");
+        return DomainName.of(this).orElse(PlatformModel.PROJECT + ".localhost");
     }
 
     /**
      * The origins a ceremony is accepted from — {@link #idpOrigin} and nothing else. It is a LIST on
-     * the idp's side and one entry here, because the login page has one address.
+     * the idp's side and one entry here, because the login page has one address; it moves with
+     * {@link #envAuthority()} for that reason.
      */
     default String webauthnOrigins() {
         return idpOrigin();
     }
 
     /**
-     * The browser authorities a completed IdP ceremony may return to: the environment's door, and
-     * {@code *.} of it for every application host under it. The apex leads the list where there is
-     * one, because every short host is a child of it.
+     * The browser authorities a completed IdP ceremony may return to, in this platform's own
+     * project: its door, {@code *.} of that door, and {@code *.} of its environment's door.
      * <p>
-     * <b>The idp host needs no entry of its own.</b> {@link #idpOrigin()} is {@code idp.} of the
-     * environment authority on both kinds of platform, so {@code *.<env>.<domain>} — or
-     * {@code *.<env>.localhost:<port>} — already admits it: one extra label, same port.
+     * <b>It is an ALLOW-LIST and not a parent-suffix check</b>, which is why it names shapes rather
+     * than describing one. The edge and the idp both read a {@code *.} entry as exactly ONE extra
+     * label on the same port, so {@code *.<env>.qits.<domain>} admits
+     * {@code ci.<env>.qits.<domain>} and nothing deeper. That single wildcard is what makes ONE
+     * session cover every service, since each application has a browser host of its own.
      * <p>
-     * <b>The wildcard is exactly one extra label and the port must match</b> — the edge and the idp
-     * both read it that way, so {@code *.dev.localhost:8080} admits {@code ci.dev.localhost:8080}
-     * and nothing deeper, on no other port. It is what makes ONE session cover every service:
-     * registry, mirror and git host are on this list now too, since a service's own host serves its
-     * SPA as well as its wire routes.
+     * <b>The canonical origin's own authority leads the list, because the edge refuses to start
+     * without it there.</b> With a domain that is the project door {@link #projectAuthority()};
+     * locally it is the bare apex, for the reason {@link #publicOrigin()} gives, and the project
+     * door is then named beside it.
      * <p>
-     * <b>A domain platform still names FOUR shapes, and {@code *.<domain>} is now the wider of
-     * them rather than the shorter spelling of one host.</b> It used to be the pair: the
-     * environment label was optional for the default tier, so {@code ci.<domain>} and
-     * {@code ci.<env>.<domain>} were one host and both wildcards had to be listed. That
-     * fallthrough is retired — every public name spells its environment, and only the bare apex
-     * still serves the default one — so the short shape routes nowhere and admits nothing. It is
-     * left on the list because this is an ALLOW-LIST and not a router: an entry for a name the
-     * edge does not serve lets nobody in, and trimming it is a change to make with the idp's own
-     * reading rather than beside the router's. What it does still carry is the apex's other
-     * children, {@code <env>.<domain>} among them.
+     * <b>BOTH depths of the project are listed, and that is deliberate.</b> Whether an application
+     * of {@code qits} is {@code <app>.qits.<domain>} or {@code <app>.<env>.qits.<domain>} is the
+     * project's live {@code supportsEnvironments} flag, which this file is written long before and
+     * which may flip under a running platform. An allow-list entry for a name the edge does not
+     * serve admits nobody — there is no router here to confuse — so naming both costs nothing and
+     * means a flip never strands a person mid-login on a host the idp will not return them to.
+     * The {@code *.qits.<domain>} entry also covers the environment door itself,
+     * {@code <env>.qits.<domain>}, which is one label under the project's.
+     * <p>
+     * <b>The idp host needs no entry of its own.</b> {@link #idpOrigin()} is {@code idp.} of
+     * {@link #envAuthority()}, which a listed wildcard already admits: one extra label, same port.
+     * <p>
+     * <b>What is NOT on the list any more is the apex and {@code *.<domain>}.</b> The top-level
+     * {@code <env>.<domain>} tier and the unqualified application tier are gone from the grammar,
+     * so neither shape is a name the edge serves — and another project's names are another
+     * project's to allow, which is what an allow-list is for.
      */
     default String browserSsoHosts() {
+        String project = projectAuthority();
         String environment = envAuthority();
         return DomainName.of(this)
-                .map(domain -> domain + "," + environment + ",*." + domain + ",*." + environment)
-                .orElse(environment + ",*." + environment);
+                .map(domain -> project + ",*." + project + ",*." + environment)
+                .orElse(domainAuthority() + "," + project + ",*." + project + ",*." + environment);
     }
 
     /**
-     * The parent a session cookie is shared with, which is the environment's own name on both kinds
-     * of platform — {@code Domain=<domain>} covers {@code <app>.<env>.<domain>}, and
-     * {@code Domain=<env>.localhost} covers {@code <app>.<env>.localhost}. A cookie domain carries
-     * no port, so the local value drops it.
+     * The parent a session cookie is shared with: the domain where there is one —
+     * {@code Domain=<domain>} covers {@code <app>.<env>.qits.<domain>} and every other project's
+     * names with it — and this platform's project door {@code qits.localhost} locally. A cookie
+     * domain carries no port, so the local value drops it.
      * <p>
-     * It was empty — host-only — while the local door was bare {@code localhost}: that name is a
-     * public suffix and browsers drop a cookie scoped to it. Moving the door under the environment
-     * label is what gave the local platform a parent to share.
+     * <b>It cannot be bare {@code localhost}</b>: that name is a public suffix and browsers drop a
+     * cookie scoped to it, which is what the local platform needed a parent label for at all. It is
+     * the PROJECT's door rather than the environment's for the same reason
+     * {@link #webauthnRpId()} is — one label further out costs nothing and survives the
+     * {@code supportsEnvironments} flag.
      */
     default String browserSsoCookieDomain() {
-        return DomainName.of(this).orElse(envName() + ".localhost");
+        return DomainName.of(this).orElse(PlatformModel.PROJECT + ".localhost");
     }
 
     /**

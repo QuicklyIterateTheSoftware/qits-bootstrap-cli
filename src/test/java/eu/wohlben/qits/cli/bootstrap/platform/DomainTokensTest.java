@@ -91,6 +91,24 @@ class DomainTokensTest {
         assertThat(DomainTokens.hetznerTokenRefusal(true, true, null, null)).isNull();
     }
 
+    /**
+     * <b>THE DOMAIN IS STATED FOR THE ROUTING, not only for the order.</b> The edge reads every
+     * name it serves right to left against a domain it cannot derive — {@code example.co.uk} is
+     * two labels and {@code localhost} is one — and it takes that value from
+     * {@code qits.edge.acme.domain}. So the key has to be spelled wherever a domain is configured,
+     * including with issuance OFF: the certificate is then a placeholder, and the GRAMMAR still
+     * needs the domain. Without it the edge would fall back to the canonical origin's authority
+     * and read this platform's own names one tier out.
+     */
+    @Test
+    void theEdgeIsToldTheDomainItReadsNamesAgainstEvenWithIssuanceOff() {
+        Map<String, String> off = DomainTokens.of(Optional.of("wohlben.dev"), "off",
+                "hostmaster@wohlben.dev", TOKEN, Optional.empty(), List.of());
+
+        assertThat(off.get("EDGE_TLS")).contains("QITS_EDGE_ACME_DOMAIN: wohlben.dev");
+        assertThat(off.get("EDGE_TLS_ARGS")).contains("env.QITS_EDGE_ACME_DOMAIN=wohlben.dev");
+    }
+
     /** A domainless platform spells none of it — the same answer it always gave. */
     @Test
     void noDomainSpellsNoTlsAtAll() {
