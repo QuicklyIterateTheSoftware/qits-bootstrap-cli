@@ -41,7 +41,7 @@ import static org.assertj.core.api.Assertions.fail;
  */
 class ComposeTemplateGoldenTest {
 
-    private static final String EXTRAS = "qits.platform.deployments.extras.";
+    private static final String EXTRAS = "qits.deployments.extras.";
 
     /**
      * The flag that rewrites the expectations. It always FAILS afterwards: a run that repaired its

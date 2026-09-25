@@ -78,7 +78,7 @@ public final class DomainTokens {
         return values;
     }
 
-    private static final String EDGE = "qits.platform.deployments.extras.qits-platform-edge.";
+    private static final String EDGE = "qits.deployments.extras.qits-platform-edge.";
 
     private static String letsEncryptVolume(String secretName) {
         return "\n"

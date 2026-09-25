@@ -1139,7 +1139,7 @@ public final class PlatformModel {
             tokens.put("SEED_NETWORKS_" + clientKey(app), seedNetworks(app, envName, "    "));
             tokens.put("TIER_ENV_" + clientKey(app), tierEnv(app, envName, "      ", ""));
             tokens.put("TIER_ENV_EXTRAS_" + clientKey(app), tierEnv(app, envName, "",
-                    "qits.platform.deployments.extras." + application(app) + ".env."));
+                    "qits.deployments.extras." + application(app) + ".env."));
         }
         tokens.put("RESERVED_SLUGS", reservedSlugs(envName));
         return tokens;

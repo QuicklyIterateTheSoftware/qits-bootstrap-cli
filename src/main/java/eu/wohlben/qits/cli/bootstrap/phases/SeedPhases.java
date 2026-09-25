@@ -2478,8 +2478,8 @@ public class SeedPhases {
             ProcessResult result = boot.docker.run(write, ctx::log);
             Boot.must(result, "writing the deployer's extras failed");
             ctx.log("  " + properties.lines()
-                    .filter(l -> l.startsWith("qits.platform.deployments.extras."))
-                    .map(l -> l.substring("qits.platform.deployments.extras.".length()).split("\\.")[0])
+                    .filter(l -> l.startsWith("qits.deployments.extras."))
+                    .map(l -> l.substring("qits.deployments.extras.".length()).split("\\.")[0])
                     .distinct().count()
                     + " applications configured on the qits-deployments-config volume");
             dockerConfig(ctx, "qits-deployments-config", "deployments",

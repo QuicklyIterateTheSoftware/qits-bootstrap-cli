@@ -63,7 +63,7 @@ import static org.assertj.core.api.Assertions.fail;
  */
 class ExtrasWiringGuardTest {
 
-    private static final String EXTRAS = "qits.platform.deployments.extras.";
+    private static final String EXTRAS = "qits.deployments.extras.";
 
     /**
      * <b>THE TRANSITION, AND IT ONLY SHRINKS.</b> Every application whose block still holds keys

@@ -816,16 +816,16 @@ class PipelinePhasesTest {
                 FIXTURE_PINS);
 
         assertThat(seeded).contains(
-                "qits.platform.deployments.extras.qits-projects.env."
+                "qits.deployments.extras.qits-projects.env."
                         + "QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION);
         assertThat(seeded).contains(
-                "qits.platform.deployments.extras.qits-workspaces.env."
+                "qits.deployments.extras.qits-workspaces.env."
                         + "QITS_WORKSPACE_IMAGE_VERSION=" + WORKSPACE_VERSION);
         assertThat(seeded).contains(
-                "qits.platform.deployments.extras.qits-projects.env."
+                "qits.deployments.extras.qits-projects.env."
                         + "QITS_PROJECTS_REFINEMENT_IMAGE_VERSION=" + WORKSPACE_VERSION);
         assertThat(seeded).contains(
-                "qits.platform.deployments.extras.qits-workspaces.env."
+                "qits.deployments.extras.qits-workspaces.env."
                         + "QITS_EDITOR_IMAGE_VERSION=" + EDITOR_VERSION);
         // The whole import is still there — the seeds are appended, not a replacement.
         assertThat(seeded).startsWith(renderedExtras().stripTrailing());
@@ -850,10 +850,10 @@ class PipelinePhasesTest {
     @Test
     void theSeedLineNamesTheApplicationsOwnKey() {
         assertThat(PipelinePhases.imageVersionSeed(FIXTURE_PINS.get(0), AGENT_VERSION))
-                .isEqualTo("qits.platform.deployments.extras.qits-projects.env."
+                .isEqualTo("qits.deployments.extras.qits-projects.env."
                         + "QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION);
         assertThat(PipelinePhases.imageVersionSeed(FIXTURE_PINS.get(3), EDITOR_VERSION))
-                .isEqualTo("qits.platform.deployments.extras.qits-workspaces.env."
+                .isEqualTo("qits.deployments.extras.qits-workspaces.env."
                         + "QITS_EDITOR_IMAGE_VERSION=" + EDITOR_VERSION);
     }
 

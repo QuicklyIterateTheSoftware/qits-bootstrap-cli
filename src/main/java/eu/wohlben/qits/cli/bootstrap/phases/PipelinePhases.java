@@ -2214,7 +2214,7 @@ public class PipelinePhases {
 
     /** The seed line: one pin's key in the deployment extras of the application that reads it. */
     static String imageVersionSeed(ImagePin pin, String version) {
-        return "qits.platform.deployments.extras." + PlatformModel.application(pin.application())
+        return "qits.deployments.extras." + PlatformModel.application(pin.application())
                 + ".env." + pin.key() + "=" + version;
     }
 
@@ -2289,7 +2289,7 @@ public class PipelinePhases {
      * deployer. So the flip moves one value, and the credential it presents is one it already has.
      */
     static List<String> flipEnv(String extras, String application) {
-        String prefix = "qits.platform.deployments.extras." + application + ".env.";
+        String prefix = "qits.deployments.extras." + application + ".env.";
         return extras.lines()
                 .filter(line -> line.startsWith(prefix))
                 .map(line -> line.substring(prefix.length()))

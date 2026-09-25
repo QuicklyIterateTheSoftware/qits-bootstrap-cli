@@ -30,7 +30,7 @@ import java.util.function.Supplier;
  * nothing: swarm starts another one. Every sweep that took a container has a sibling that takes a
  * service, and the service goes first.
  * <p>
- * <b>Two label namespaces, both forever.</b> {@code qits.platform.deployments.*} is what
+ * <b>Two label namespaces, both forever.</b> {@code qits.deployments.*} is what
  * qits-deployments writes; {@code qits.cd.*} is what the retired qits-cd wrote. Unwrap is how a
  * pre-v3 platform is taken off a machine, and a machine that has not been bootstrapped since the
  * merge-back carries only the old labels — so the old patterns stay, and dropping them would leave

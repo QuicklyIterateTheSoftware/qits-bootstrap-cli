@@ -178,7 +178,7 @@ class ComposeTemplateTest {
         return keys;
     }
 
-    private static final String EXTRAS = "qits.platform.deployments.extras.";
+    private static final String EXTRAS = "qits.deployments.extras.";
 
     /** Every generated extras key, without the comments that explain them. */
     private static List<String> extrasKeys() {
@@ -713,7 +713,7 @@ class ComposeTemplateTest {
         assertThat(PlatformModel.modelTokens(ENV).get("TIER_ENV_CI"))
                 .endsWith("      QITS_ENVIRONMENT: prod");
         assertThat(PlatformModel.modelTokens(ENV).get("TIER_ENV_EXTRAS_CI"))
-                .endsWith("qits.platform.deployments.extras.qits-ci.env.QITS_ENVIRONMENT=prod");
+                .endsWith("qits.deployments.extras.qits-ci.env.QITS_ENVIRONMENT=prod");
         // An empty fragment leaves no blank line and no orphan comment where it used to render.
         assertThat(compose).doesNotContain("\n\n\n");
         assertThat(extras).doesNotContain("\n\n\n");
@@ -1169,22 +1169,22 @@ class ComposeTemplateTest {
                 .contains("QITS_EDGE_SESSIONS_CANONICAL_ORIGIN: https://qits." + DOMAIN)
                 .contains("QITS_EDGE_SESSIONS_BROWSER_HOSTS: \"" + hosts + "\"");
         assertThat(ComposeTemplate.extras(tokens(DOMAIN)))
-                .contains("qits.platform.deployments.extras.qits-platform-idp.env.QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN=" + DOMAIN)
-                .contains("qits.platform.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_BROWSER_HOSTS=" + hosts);
+                .contains("qits.deployments.extras.qits-platform-idp.env.QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN=" + DOMAIN)
+                .contains("qits.deployments.extras.qits-platform-edge.env.QITS_EDGE_SESSIONS_BROWSER_HOSTS=" + hosts);
         // The extras carry the same split: the idp's canonical origin is its own host, the edge's
         // is the door.
         assertThat(ComposeTemplate.extras(tokens()))
-                .contains("qits.platform.deployments.extras.qits-platform-idp.env."
+                .contains("qits.deployments.extras.qits-platform-idp.env."
                         + "QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN=http://idp.prod.qits.localhost:8080")
-                .contains("qits.platform.deployments.extras.qits-platform-edge.env."
+                .contains("qits.deployments.extras.qits-platform-edge.env."
                         + "QITS_EDGE_SESSIONS_CANONICAL_ORIGIN=http://localhost:8080")
-                .contains("qits.platform.deployments.extras.qits-platform-edge.env."
+                .contains("qits.deployments.extras.qits-platform-edge.env."
                         + "QITS_EDGE_SESSIONS_BROWSER_HOSTS=" + localHosts);
         assertThat(ComposeTemplate.extras(tokens(DOMAIN)))
-                .contains("qits.platform.deployments.extras.qits-platform-idp.env."
+                .contains("qits.deployments.extras.qits-platform-idp.env."
                         + "QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN=https://idp." + ENV + ".qits."
                         + DOMAIN)
-                .contains("qits.platform.deployments.extras.qits-platform-edge.env."
+                .contains("qits.deployments.extras.qits-platform-edge.env."
                         + "QITS_EDGE_SESSIONS_CANONICAL_ORIGIN=https://qits." + DOMAIN);
         // The apex is not the canonical origin any more, on either file: it carries no project
         // label, so an edge pointed at it composes no application name and 404s the front door.
@@ -1292,7 +1292,7 @@ class ComposeTemplateTest {
         // The deployer's plain property is NOT how this is said: what starts a successor is the
         // application's extras, so the switch is an env key like every other value there.
         assertThat(extras.lines()
-                .filter(line -> line.startsWith("qits.platform.deployments.registry-auth"))
+                .filter(line -> line.startsWith("qits.deployments.registry-auth"))
                 .toList()).isEmpty();
     }
 
@@ -1371,7 +1371,7 @@ class ComposeTemplateTest {
         // runtime mutation begins, so this stays available for qits-githost's own cutover without
         // crossing the public edge.
         assertThat(ComposeTemplate.extras(tokens()))
-                .doesNotContain("\nqits.platform.deployments.git-host-url=")
+                .doesNotContain("\nqits.deployments.git-host-url=")
                 .contains(EXTRAS + "qits-deployments.env.QITS_PLATFORM_DEPLOYMENTS_GIT_HOST_URL="
                         + host + "\n");
         assertThat(ComposeTemplate.compose(tokens()))
@@ -1384,7 +1384,7 @@ class ComposeTemplateTest {
 
     /**
      * <b>The demoted file states extras and nothing else.</b> Every other line is a comment. A plain
-     * {@code qits.platform.deployments.<key>} here would be a setting the deployer still has to read
+     * {@code qits.deployments.<key>} here would be a setting the deployer still has to read
      * this file for, on a platform where the flip has made the file unread — so it would configure
      * nothing and the failure would be silent.
      */
@@ -1440,7 +1440,7 @@ class ComposeTemplateTest {
     /**
      * <b>ci's direct door to the deployer is gone from both files.</b> A green build travels the bus
      * now — ci -&gt; outbox -&gt; the bus -&gt; the deployer's durable subscriber — and qits-ci reads
-     * no {@code qits.platform.deployments.intake-url} any more. A generated line naming a key
+     * no {@code qits.deployments.intake-url} any more. A generated line naming a key
      * nothing reads outlives its reader and reads like configuration for years.
      * <p>
      * What replaces it is one address, and it has to be in both files for the same reason the intake
