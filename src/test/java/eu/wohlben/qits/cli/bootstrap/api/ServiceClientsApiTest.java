@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class ServiceClientsApiTest {
 
-    private static final String ISSUER = "http://qits-platform-idp:8080/idp";
+    private static final String ISSUER = "http://qits-idp:8080/idp";
 
     /**
      * <b>409 is a step, not a stop.</b> A row for this client already exists — an earlier boot made

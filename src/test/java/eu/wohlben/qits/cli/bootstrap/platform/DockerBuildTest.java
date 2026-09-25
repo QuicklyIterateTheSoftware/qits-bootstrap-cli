@@ -30,7 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * The build argument they all carry is asserted here for a second reason: the repositories declare
  * {@code ARG QITS_MAVEN_REPOSITORY_URL} and their maven settings read it, and the committed default
  * now names the edge vhost — the address of a platform that is RUNNING. A seed build runs minutes
- * before any edge exists, so a build that rode that default died at qits-platform-mirror with a
+ * before any edge exists, so a build that rode that default died at qits-mirror with a
  * connection refused.
  */
 class DockerBuildTest {
@@ -96,7 +96,7 @@ class DockerBuildTest {
         ScriptedRunner runner = coldHost();
 
         docker(runner, config(Map.of())).buildFromStdin("qits/platform-mirror:latest",
-                "FROM quay.io/x\n", Path.of("/src/qits-platform-mirror"), List.of(), null);
+                "FROM quay.io/x\n", Path.of("/src/qits-mirror"), List.of(), null);
 
         assertThat(runner.argv).containsSubsequence(
                 List.of("docker", "volume", "create", "qits-buildkitd-state"),
@@ -123,7 +123,7 @@ class DockerBuildTest {
                         : ScriptedRunner.ok("done"));
 
         docker(runner, config(Map.of())).buildFromStdin("qits/platform-mirror:latest",
-                "FROM quay.io/x\n", Path.of("/src/qits-platform-mirror"), List.of(), null);
+                "FROM quay.io/x\n", Path.of("/src/qits-mirror"), List.of(), null);
 
         assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker run -d"))
                 .noneMatch(line -> line.startsWith("docker start"));
@@ -135,7 +135,7 @@ class DockerBuildTest {
         ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok("done"));
 
         docker(runner, config(Map.of())).buildFromStdin("qits/platform-mirror:latest",
-                "FROM quay.io/x\n", Path.of("/src/qits-platform-mirror"), List.of(), null);
+                "FROM quay.io/x\n", Path.of("/src/qits-mirror"), List.of(), null);
 
         assertThat(runner.lines()).contains("docker start qits-buildkitd")
                 .noneMatch(line -> line.startsWith("docker run -d"));
@@ -163,7 +163,7 @@ class DockerBuildTest {
         });
 
         docker(runner, config(Map.of())).buildFromStdin("qits/platform-mirror:latest",
-                "FROM quay.io/x\n", Path.of("/src/qits-platform-mirror"), List.of(), null);
+                "FROM quay.io/x\n", Path.of("/src/qits-mirror"), List.of(), null);
 
         assertThat(runner.lines())
                 .contains("docker buildx rm qits-bootstrap-builder-v4",
@@ -184,11 +184,11 @@ class DockerBuildTest {
         ScriptedRunner runner = coldHost();
 
         docker(runner, config(Map.of())).buildFromStdin("qits/platform-mirror:latest",
-                "FROM quay.io/x\n", Path.of("/src/qits-platform-mirror"), List.of(), null);
+                "FROM quay.io/x\n", Path.of("/src/qits-mirror"), List.of(), null);
 
         assertThat(buildArgv(runner)).containsExactly(
                 "docker", "run", "--rm", "--network", "host",
-                "-v", "/src/qits-platform-mirror:/ctx:ro",
+                "-v", "/src/qits-mirror:/ctx:ro",
                 "-v", "<dockerfiles>:/dfdir:ro",
                 "-v", "<images>:/out",
                 "-v", "<secrets>:/secrets:ro",
@@ -217,7 +217,7 @@ class DockerBuildTest {
         });
 
         docker(runner, config(Map.of())).buildFromStdin("qits/platform-edge:latest",
-                "FROM quay.io/rewritten\n", Path.of("/src/qits-platform-edge"), List.of(), null);
+                "FROM quay.io/rewritten\n", Path.of("/src/qits-edge"), List.of(), null);
 
         assertThat(written).containsExactly("FROM quay.io/rewritten\n");
     }
@@ -228,7 +228,7 @@ class DockerBuildTest {
         ScriptedRunner runner = coldHost();
 
         docker(runner, config(Map.of())).buildFromStdin("qits/platform-edge:latest",
-                "FROM quay.io/x\n", Path.of("/src/qits-platform-edge"),
+                "FROM quay.io/x\n", Path.of("/src/qits-edge"),
                 List.of("QITS_VARIANT=local"), null);
 
         assertThat(buildArgv(runner)).containsSubsequence(
@@ -280,7 +280,7 @@ class DockerBuildTest {
 
         ProcessResult result = docker(runner, config(Map.of())).buildFromStdin(
                 "qits/platform-mirror:latest", "FROM quay.io/x\n",
-                Path.of("/src/qits-platform-mirror"), List.of(), null);
+                Path.of("/src/qits-mirror"), List.of(), null);
 
         assertThat(result.ok()).isFalse();
         assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker load"));
@@ -309,7 +309,7 @@ class DockerBuildTest {
                 "https://wohlben.eu/artifacts/maven/maven", "bootstrap", "run-secret");
 
         docker.buildFromStdin("qits/platform-edge:latest", "FROM quay.io/x\n",
-                Path.of("/src/qits-platform-edge"), List.of(), null);
+                Path.of("/src/qits-edge"), List.of(), null);
 
         assertThat(buildArgv(runner)).containsSubsequence(
                 "--opt", "build-arg:QITS_MAVEN_REPOSITORY_URL="

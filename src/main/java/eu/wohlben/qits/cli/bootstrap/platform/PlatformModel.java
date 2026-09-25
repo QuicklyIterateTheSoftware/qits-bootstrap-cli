@@ -88,8 +88,8 @@ public final class PlatformModel {
      * git host takes two — see {@link #seedStorageId}.
      */
     public static final List<String> CORE = List.of(
-            "platform-edge", "platform-mirror", "artifacts", "githost", "projects", "ci",
-            "containers", "deployments", "platform-idp", "events",
+            "edge", "mirror", "artifacts", "githost", "projects", "ci",
+            "containers", "deployments", "idp", "events",
             "oci-postgresql");
 
     /**
@@ -185,86 +185,34 @@ public final class PlatformModel {
      * deployer for the reason everything does. Not in the seed either: nothing calls it.
      */
     public static final List<String> DEPLOYABLES = List.of(
-            "observability", "platform-idp", "configuration", "stt", "projects",
-            "workspaces", "events", "platform-mirror", "artifacts", "githost", "docs",
-            "containers", "ci", "platform-orchestrator", "platform-maintenance", "platform-system",
-            "platform-edge", "deployments");
+            "observability", "idp", "configuration", "stt", "projects",
+            "workspaces", "events", "mirror", "artifacts", "githost", "docs",
+            "containers", "ci", "orchestrator", "maintenance", "system",
+            "edge", "deployments");
 
     /**
-     * The deployables on the PLATFORM plane: one instance for the whole platform, deployed once
-     * and joined to every environment's networks, rather than one copy per tier. The authority is
-     * each repo's {@code .config/qits/deployments.yml} ({@code deployment_target: platform}); this
-     * list is what tells the bootstrap which container name to expect and which wire alias to dial.
-     * <p>
-     * The word used to be 'singleton'. It named a cardinality where what is being said is which
-     * plane a service lives on.
-     * <p>
-     * <b>The set shrank to four on 2026-08-08 and every member now says so in its own name.</b>
-     * qits-ci, qits-events, qits-projects and qits-observability are environment services. What is left is
-     * what genuinely cannot be per-tier — the edge (one host port), the idp (one issuer and one
-     * signing key), qits-platform-artifacts (one registry, one git host, one blob store) and
-     * qits-platform-docs (one docs repository inside that store, so a second reader per tier would
-     * be two front doors onto one shelf).
-     * <p>
-     * <b>The byte-plane split settled that pair on 2026-08-10, and only the caches stayed up
-     * here.</b> qits-platform-artifacts held the pull-through caches, and THAT was the whole reason
-     * it could not be per-tier: a cache of Maven Central is one cache for a machine however many
-     * tiers it runs. Those caches are qits-platform-mirror now, so the hosted registries went back
-     * to being an environment service (qits-artifacts) and the docs reader followed the shelf it
-     * reads (qits-docs). The git host left with them, as qits-githost, and it is an environment
-     * service too: every one of its consumers already was one.
-     * <p>
-     * <b>It grew to five with a nameserver on 2026-08-09 and is back to three</b>: qits-platform-dns
-     * is gone, and the platform serves no dns of its own. A domain's records are held by an external
-     * provider now.
-     * <p>
-     * <b>qits-deployments and qits-events joined on 2026-08-17, and neither APPLICATION name says
-     * its plane</b> — their wire alias is the bare {@code qits-deployments} and {@code qits-events}
-     * rather than a {@code qits-platform-*} one, and it stays that way. Their repositories say it
-     * ({@code qits-events-platform-service}), which is what makes this list the authority rather
-     * than the spelling: a plane is decided here and read nowhere else.
-     * Two reasons, one each. The DEPLOYER: an environment is becoming a cross-environment entity —
-     * one tier gating another — and a hierarchy cannot live inside one tier's deployer. The BUS:
-     * scoping today is which broker instance a service dials, so a platform deployer on a per-tier
-     * bus could publish {@code DeploymentActive} onto one tier only.
-     * <p>
-     * There is no deploy ref on either plane any more. A green build deploys nothing; a RELEASE
-     * does, and both planes enter at the one designated environment — so {@code environment/<name>}
-     * and {@code platform/main} are both retired.
-     * <p>
-     * <b>qits-platform-orchestrator joined on 2026-08-21, and a technical process is
-     * platform-wide by construction.</b> Its first one is the deletion run, and what it deletes —
-     * the host's image store, its volumes, its build cache, the registry's blobs — is ONE machine's
-     * however many tiers run on it. A per-tier copy would be two schedulers pruning the same docker
-     * daemon on their own clocks, each blind to what the other pinned.
-     * <p>
-     * <b>qits-platform-maintenance joined on 2026-08-22, because a dependency inventory is one
-     * catalog's.</b> What it inventories is every repository of the platform and the versions their
-     * manifests pin — facts of the git host and the registries, and neither is per-tier. A second
-     * copy would scan the same repositories twice and push the same maintenance branch on two
-     * clocks. Which CI applies a bump IS a tier's, and that is one configured address
-     * ({@code QITS_MAINTENANCE_TARGETS_CI_URL}) rather than a second instance.
-     * <p>
-     * <b>qits-platform-system joined on 2026-08-23, because what it shows is a MACHINE.</b> The
-     * host, the swarm, this node's containers and the terminals into them are facts of one docker
-     * daemon, however many tiers run on it — there is no per-tier half of a node. Two copies would
-     * be two services holding the same socket and two boot sweeps deleting each other's terminal
-     * containers, which is why the sweep is scoped by an owner label even with one.
-     * <p>
-     * <b>qits-configuration joined on 2026-09-07, and it is the one entry that OVERTURNS the
-     * argument that kept it out.</b> The argument was that two tiers sharing one configuration
-     * store makes an edit in dev an edit in prod — and that stopped being true when an entry became
-     * ENV-KEYED. A value is stored under the environment it belongs to, {@code env} is a path
-     * segment on the service's own API, and a read for prod cannot see dev's row however many tiers
-     * the store holds. What is left of the sharing is the part that was always wanted: deployment
-     * configuration is platform state in the same sense the deployer's topology is, one store can
-     * answer what a key holds in EVERY environment at once, and a JOINING environment starts from
-     * the defaults already there rather than from a hand-seeded copy of somebody else's tier. One
-     * per tier could give neither answer — it could only be asked one tier at a time.
+     * <b>There is no platform plane, and this is where it used to be listed.</b>
+     *
+     * <p>A service was once one of two kinds. An ENVIRONMENT service got a copy per tier and
+     * answered at {@code <env>-<app>}; a PLATFORM service was one process for the whole estate and
+     * answered at the bare {@code <app>}, because there was nothing to qualify it against. That
+     * second kind is deleted: every service is an ordinary service in the one environment, so
+     * every address is {@code <env>-<app>} and {@link #wireAlias} needs no branch.
+     *
+     * <p><b>What the list cost while it survived the plane it named.</b> Nine entries kept
+     * answering "bare" after the plane was gone, so this program still named those seed services —
+     * and still minted their idp clients — at addresses that resolve nowhere. It was invisible
+     * because nothing here runs against a live platform except a bootstrap, and the last one
+     * predated the cutover.
+     *
+     * <p><b>The client ids move with it, and that is the part to sequence.</b>
+     * {@code SeedPhases.idpClients} uses {@link #wireAlias} as a client id and compares it for
+     * equality against the row already in the deployer's registry, so these nine are
+     * {@code qits-<app>} on a live platform and become {@code <env>-qits-<app>} here. Against a
+     * COLD platform there is nothing to collide with, which is the acceptance test this change is
+     * written for. Against a warm one it mints a second client beside the live row, and that is a
+     * cutover to run deliberately rather than a consequence to discover.
      */
-    public static final List<String> PLATFORM_SERVICES = List.of(
-            "platform-edge", "platform-idp", "platform-mirror", "deployments", "events",
-            "platform-orchestrator", "platform-maintenance", "platform-system", "configuration");
 
     /**
      * Repositories that need a repository on the platform git host and a main push, but are not
@@ -333,9 +281,9 @@ public final class PlatformModel {
             "userflows", "coding-agents", "spa-docs", "spa-deployments",
             "integrations-angular", "integrations-quarkus", "spa-projects",
             "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events",
-            "spa-ci", "spa-githost", "spa-configuration", "platform-spa-idp",
-            "platform-spa-mirror", "platform-spa-orchestrator", "platform-spa-maintenance",
-            "platform-spa-system",
+            "spa-ci", "spa-githost", "spa-configuration", "spa-idp",
+            "spa-mirror", "spa-orchestrator", "spa-maintenance",
+            "spa-system",
             "oci-workspace", "oci-workspace-editor", "workspace-daemon", "projects-daemon");
 
     /**
@@ -474,13 +422,12 @@ public final class PlatformModel {
             case "eventstream", "registries", "spa-ui-components", "userflows",
                  "integrations-angular", "integrations-quarkus", "coding-agents" ->
                     "libs/" + repo(name);
-            // Anything served at a URL is a frontend, whether it is spelled qits-spa-<x> or
-            // qits-platform-spa-<x>. Both spellings are live: the byte-plane split renamed two the
-            // first way (qits-spa-artifacts, qits-spa-docs) and qits-platform-spa-mirror was born
-            // the second way, because its service is on the platform plane. The second arm also
-            // catches a wrapper checked out before that rename, whose directories still carry the
-            // old names — and a path that resolves to nothing clones the org's copy in silence.
-            default -> name.startsWith("spa-") || name.startsWith("platform-spa-")
+            // Anything served at a URL is a frontend, and there is one spelling now. It was two
+            // while a client took its service's PLANE as well as its component — qits-spa-artifacts
+            // the first way, qits-platform-spa-mirror the second — and the plane is gone, so every
+            // client is spa-<x>. The model key is what is tested here; the angular project inside
+            // those five repositories is still named the old way and moves on its own.
+            default -> name.startsWith("spa-")
                     ? "frontends/" + repo(name)
                     : "services/" + repo(name);
         };
@@ -577,7 +524,7 @@ public final class PlatformModel {
         if (IMAGE_NAMES.contains(name)) {
             return "IMAGE";
         }
-        if (name.startsWith("spa-") || name.startsWith("platform-spa-")) {
+        if (name.startsWith("spa-")) {
             return "FRONTEND";
         }
         return "SERVICE";
@@ -648,12 +595,11 @@ public final class PlatformModel {
      * {@code qits-database-oci}. Renaming the model entry instead of adding it here would have
      * pointed the boot's own database at a host nothing answers to.
      * <p>
-     * <b>The plane is a MODIFIER on the repository and stays a LIST on the application.</b> A
-     * platform service's repository says {@code <component>-platform-<role>}, so the application
-     * {@code events} is the repository {@code qits-events-platform-service} — and the application
-     * still answers to the bare {@code qits-events}, which is its wire alias, its container name and
-     * its client id. {@link #PLATFORM_SERVICES} remains the only place a plane is decided; the
-     * repository name merely agrees with it.
+     * <b>The plane is gone from both halves.</b> A service's repository once said
+     * {@code <component>-platform-<role>} and its application answered at a bare
+     * {@code qits-<app>}; the repositories were renamed and the applications followed, so a model
+     * key is now simply the component and nothing decides a plane. The application name is still
+     * the wire alias, the container name and the client id — it just has one shape.
      * <p>
      * <b>Three applications keep one name</b>, and it is the same reason for all three: the daemons
      * are already in the grammar ({@code qits-ci-daemon}, {@code qits-workspace-daemon},
@@ -682,17 +628,16 @@ public final class PlatformModel {
             Map.entry("stt", "qits-stt-service"),
             Map.entry("workspaces", "qits-workspaces-service"),
 
-            // The platform tier's. The application names of six of them already carry the plane as a
-            // PREFIX and the repositories carry it as a modifier instead, so both halves move:
-            // platform-idp is qits-idp-platform-service. The deployer, the bus and the
-            // configuration store say no plane at all on the application side and never will —
-            // that is what PLATFORM_SERVICES is for.
-            Map.entry("platform-edge", "qits-edge-service"),
-            Map.entry("platform-idp", "qits-idp-service"),
-            Map.entry("platform-maintenance", "qits-maintenance-service"),
-            Map.entry("platform-mirror", "qits-mirror-service"),
-            Map.entry("platform-orchestrator", "qits-orchestrator-service"),
-            Map.entry("platform-system", "qits-system-service"),
+            // What used to be the platform tier. Both halves of the plane have moved: these
+            // repositories dropped the -platform- modifier and their applications dropped the
+            // qits-platform- prefix, so there is nothing left here to distinguish them from the
+            // nine above. They are kept as a block only because the history is worth reading.
+            Map.entry("edge", "qits-edge-service"),
+            Map.entry("idp", "qits-idp-service"),
+            Map.entry("maintenance", "qits-maintenance-service"),
+            Map.entry("mirror", "qits-mirror-service"),
+            Map.entry("orchestrator", "qits-orchestrator-service"),
+            Map.entry("system", "qits-system-service"),
             Map.entry("configuration", "qits-configuration-service"),
             Map.entry("deployments", "qits-deployments-service"),
             Map.entry("events", "qits-events-service"),
@@ -713,11 +658,11 @@ public final class PlatformModel {
             Map.entry("spa-configuration", "qits-configuration-frontend"),
             Map.entry("spa-deployments", "qits-deployments-frontend"),
             Map.entry("spa-events", "qits-events-frontend"),
-            Map.entry("platform-spa-idp", "qits-idp-frontend"),
-            Map.entry("platform-spa-maintenance", "qits-maintenance-frontend"),
-            Map.entry("platform-spa-mirror", "qits-mirror-frontend"),
-            Map.entry("platform-spa-orchestrator", "qits-orchestrator-frontend"),
-            Map.entry("platform-spa-system", "qits-system-frontend"));
+            Map.entry("spa-idp", "qits-idp-frontend"),
+            Map.entry("spa-maintenance", "qits-maintenance-frontend"),
+            Map.entry("spa-mirror", "qits-mirror-frontend"),
+            Map.entry("spa-orchestrator", "qits-orchestrator-frontend"),
+            Map.entry("spa-system", "qits-system-frontend"));
 
     /**
      * <b>The repository this name is hosted and checked out as</b> — the git-host repository, the
@@ -787,115 +732,66 @@ public final class PlatformModel {
         return UUID.randomUUID().toString();
     }
 
-    public static boolean isPlatformService(String name) {
-        return PLATFORM_SERVICES.contains(name);
-    }
-
     /**
      * The <b>wire alias</b>: the address peers dial, and the name a cutover finds its predecessor
      * by. It is the deployer's {@code PdNetworks.alias}, restated here because the seed containers
      * have to answer to the same names the deployed ones will — a run-arg that injects
      * {@code http://prod-qits-ci:8080} is wrong for the seven minutes before ci is deployed unless
      * the seed ci is already reachable under that name.
-     * <ul>
-     *   <li><b>An environment service</b> is {@code <env>-<app>} — {@code prod-qits-ci}. The
-     *       qualifier is what lets two tiers hold one application's address on the network they
-     *       share.
-     *   <li><b>A platform service</b> keeps the bare application name — {@code
-     *       qits-platform-idp}. There is one instance, so there is nothing to qualify it against,
-     *       and the repository name carries the plane already.
-     * </ul>
+     * <p>It is {@code <env>-<app>} for every application — {@code prod-qits-ci}, {@code
+     * dev-qits-idp} — and the qualifier is what lets two tiers hold one application's address on
+     * the network they share.
+     *
+     * <p><b>It used to have a second arm and does not need one.</b> A platform service kept the
+     * bare {@code qits-<app>}, because one instance has nothing to qualify it against; deleting
+     * that plane left one rule. The branch outlived the plane by long enough to matter: it went on
+     * naming nine seed services at bare addresses after the live estate had stopped answering on
+     * any of them.
+     *
+     * <p><b>This is also the idp CLIENT ID</b>, which is why the collapse is a cutover and not a
+     * tidy-up. {@code SeedPhases.idpClients} creates a client under this name and compares it for
+     * equality against the deployer's registry, so the nine move from {@code qits-<app>} to
+     * {@code <env>-qits-<app>}. Cold, there is nothing to collide with. Warm, it mints a second
+     * client beside the live row and every deployed peer still holds a credential for the first —
+     * a 401 whose cause is unreadable from either end.
      */
     public static String wireAlias(String name, String envName) {
-        return isPlatformService(name)
-                ? application(name)
-                : envName + "-" + application(name);
-    }
-
-    /**
-     * <b>The address a peer dials, qualified by the environment for EVERY application.</b> This is
-     * {@link #wireAlias} for an environment service and {@code <env>-<app>} for a platform one, and
-     * the difference is the whole point: a platform service now answers to BOTH spellings, so the
-     * qualified one is the address to write into configuration.
-     * <p>
-     * <b>Why this is a second method and not a change to {@link #wireAlias}.</b> That method has
-     * two other jobs the qualification must not touch, and each one breaks silently:
-     * <ul>
-     *   <li><b>It is the idp CLIENT ID.</b> {@code SeedPhases.idpClients} creates a client per seed
-     *       application under this name and compares it for EQUALITY against the row already in the
-     *       deployer's {@code pd_resource} registry. Qualifying it would not rename a client, it
-     *       would mint a second one beside the live row and leave every deployed peer holding a
-     *       credential for the first — a 401 nobody can read the cause of. A client id is not an
-     *       address and does not move with one.
-     *   <li><b>It is the seed stack's SERVICE NAME.</b> The seed services exist before any deployer
-     *       does, so they are the only thing answering during the seed window, and their name is
-     *       what docker's DNS answers. They keep the bare name and DECLARE the qualified one as a
-     *       network alias instead — see {@code ComposeTemplate} — which is how both spellings
-     *       resolve before the first deployment as well as after it.
-     * </ul>
-     * <p>
-     * <b>What makes the qualified spelling safe to write.</b> qits-deployments gives a platform
-     * service the {@code <env>-<app>} alias IN ADDITION to its bare name, and recreates a live
-     * service that lacks it, so both names resolve on qits-net. A reader on either spelling
-     * therefore reaches the same container, which is what lets a key that can hold only ONE value
-     * move without an intermediate step where it holds both.
-     */
-    public static String dialAlias(String name, String envName) {
         return envName + "-" + application(name);
     }
 
     /**
-     * The network aliases a SEED service declares beside its own name, so that the addresses this
-     * platform's configuration uses resolve during the seed window too.
-     * <p>
-     * Empty for an environment service, whose service name is already the qualified address. For a
-     * platform service it is the one qualified alias, because the service name is the bare one:
-     * together they are the same pair of names the deployer gives a deployed platform service, and
-     * they have to be the same pair or a boot would address a name that only starts answering once
-     * the seed service has been replaced.
-     */
-    public static List<String> seedAliases(String name, String envName) {
-        return wireAlias(name, envName).equals(dialAlias(name, envName))
-                ? List.of()
-                : List.of(dialAlias(name, envName));
-    }
-
-    /**
      * A seed service's whole {@code networks:} block, in the stack file's own words.
-     * <p>
-     * The short form {@code networks: [qits-net]} where the service name is already the address —
-     * every environment service — and the long form naming {@link #seedAliases} where it is not.
-     * A stack file has no way to add an alias to the short form, so the choice of form IS the
-     * choice of whether a second name answers.
-     * <p>
-     * The fragment carries the OUTPUT's indentation for its continuation lines, the way every
-     * conditional fragment in these templates does: a text block's own indent is stripped before a
-     * value is substituted into it, so an unindented second line would leave the block's keys at
-     * column zero and the file would not parse.
+     *
+     * <p>Always the short form {@code networks: [qits-net]}, because a seed service's NAME is
+     * already the address every consumer is configured with — {@link #wireAlias} is what both the
+     * stack file and the deployer use.
+     *
+     * <p><b>There was a long form, and it existed for the plane.</b> A platform service's seed
+     * container was named bare while configuration had begun addressing it as {@code <env>-<app>},
+     * so it declared that second name as a network alias to make both spellings resolve during the
+     * seed window. One name now, so there is no second one to declare. The method survives the
+     * fragment it used to choose between because {@code ComposeTemplate} substitutes a whole
+     * {@code networks:} block here, and a template that spelled it inline would be a copy of this
+     * decision rather than a use of it.
+     *
+     * <p>The parameters are kept for that same reason — a caller passes the application and the
+     * environment without having to know that the answer no longer varies by either.
      */
     public static String seedNetworks(String name, String envName, String indent) {
-        List<String> aliases = seedAliases(name, envName);
-        if (aliases.isEmpty()) {
-            return "networks: [qits-net]";
-        }
-        return "networks:\n"
-                + indent + "  qits-net:\n"
-                + indent + "    aliases: [" + String.join(", ", aliases) + "]";
+        return "networks: [qits-net]";
     }
 
     /**
      * What qits-deployments names the container it manages for this application — the twin of its
-     * own {@code ContainerNames.of}. Two shapes because the model has two: an environment service
-     * carries its tier's name, a platform service has no tier and so DROPS the segment rather than
-     * filling it. It used to read {@code qits-pd-platform-<app>-}, which said the word twice once
-     * the repositories carried the plane themselves ({@code qits-pd-platform-qits-platform-idp-}).
+     * own {@code ContainerNames.of}. One shape, because the model has one: every application
+     * carries its tier's name. There was a second for a service with no tier, which DROPPED the
+     * segment rather than filling it — and before that a {@code qits-pd-platform-<app>-} that said
+     * the word twice ({@code qits-pd-platform-qits-platform-idp-}).
      * <p>
      * The prefix is {@code qits-pd-}; the retired qits-cd's was {@code qits-cd-}.
      */
     public static String pdNamePrefix(String name, String envName) {
-        return isPlatformService(name)
-                ? "qits-pd-" + application(name) + "-"
-                : "qits-pd-" + envName + "-" + application(name) + "-";
+        return "qits-pd-" + envName + "-" + application(name) + "-";
     }
 
     /**
@@ -961,8 +857,8 @@ public final class PlatformModel {
      * be changed.
      * <p>
      * <b>Derived, never copied.</b> The labels are the {@link #browserLabel}s of everything this
-     * bootstrap deploys ({@link #DEPLOYABLES}, which contains every {@link #PLATFORM_SERVICES}
-     * entry) plus the edge's own four ({@link #EDGE_APPS}). {@code idp} and {@code edge} are named
+     * bootstrap deploys ({@link #DEPLOYABLES}, which is now every deployable there is) plus the
+     * edge's own four ({@link #EDGE_APPS}). {@code idp} and {@code edge} are named
      * again below because the platform is not reachable without them — the login host and the
      * gateway itself — and a list that lost them to a refactor of the deployables would hand the
      * login name to a project. They are already derived; the restatement costs a deduplication and
@@ -984,12 +880,11 @@ public final class PlatformModel {
     public static List<String> reservedSlugList(String envName) {
         SortedSet<String> labels = new TreeSet<>();
         DEPLOYABLES.forEach(app -> labels.add(browserLabel(app)));
-        PLATFORM_SERVICES.forEach(app -> labels.add(browserLabel(app)));
         labels.addAll(EDGE_APPS);
         // The login host and the door. Both are already above; naming them is what stops a
         // refactor of the deployables from quietly handing either one to a project.
-        labels.add(browserLabel("platform-idp"));
-        labels.add(browserLabel("platform-edge"));
+        labels.add(browserLabel("idp"));
+        labels.add(browserLabel("edge"));
         labels.remove(envName);
         List<String> slugs = new ArrayList<>();
         slugs.add(envName);
@@ -1032,11 +927,11 @@ public final class PlatformModel {
             // reactor and its application is the `service` module, while qits-platform-mirror is
             // one module and its webui sits at the root.
             case "githost" -> "service/src/main/webui/dist/qits-spa-githost/browser";
-            case "platform-mirror" -> "src/main/webui/dist/qits-platform-spa-mirror/browser";
+            case "mirror" -> "src/main/webui/dist/qits-platform-spa-mirror/browser";
             // The idp grew its login/register client on 2026-08-14, in the prebuilt-dist shape
             // like the rest — found by the first bare-server boot, whose seed build stopped at
             // the Dockerfile's `test -f` on this path.
-            case "platform-idp" -> "service/src/main/webui/dist/qits-platform-spa-idp/browser";
+            case "idp" -> "service/src/main/webui/dist/qits-platform-spa-idp/browser";
             // qits-projects joined the seed on 2026-08-21 and it has had a client all along, in the
             // same prebuilt-dist shape: its Dockerfile stops the build with a `test -f` on this path
             // before the native compile, because the bundle depends on @qits/ui-components and a
@@ -1065,7 +960,7 @@ public final class PlatformModel {
      * of this model carries.
      */
     public static final List<String> SEED_IDP_CLIENT_APPS =
-            List.of("projects", "ci", "containers", "deployments", "platform-edge");
+            List.of("projects", "ci", "containers", "deployments", "edge");
 
     /**
      * <b>The one client whose secret this program still records itself</b>, and the reason it is
@@ -1089,25 +984,28 @@ public final class PlatformModel {
 
     /**
      * <b>Everything the generated files must not decide for themselves.</b> A wire alias, a
-     * client-id-derived config key and whether an application is told its tier all change when an
-     * application moves plane, so the templates carry placeholders and this method answers them —
-     * which is what makes {@link #PLATFORM_SERVICES} the one place a plane is decided.
+     * client-id-derived config key and whether an application is told its tier used to change when
+     * an application moved plane, so the templates carry placeholders and this method answers them.
+     * Nothing moves plane any more — there is one — but the placeholders stay earned: a wire alias
+     * is still derived rather than spelled, and a template that pasted one would be a second copy
+     * of {@link #wireAlias} that cannot follow it.
      * <p>
      * Two families keyed by the APPLICATION, because that name never moves:
      * <ul>
      *   <li>{@code ALIAS_<APP>} — the seed stack's SERVICE NAME, which is also the client id: an
      *       idp client is named after the wire alias, so a template that wants one asks for the
-     *       other. It is NOT the address to dial any more — see the next entry.
-     *   <li>{@code DIAL_<APP>} — the address peers dial, environment-qualified for every
-     *       application. It differs from {@code ALIAS_<APP>} for the nine platform services alone,
-     *       and it is what every URL in a generated file must carry. See {@link #dialAlias} for why
-     *       the two parted company rather than one of them moving.
-     *   <li>{@code SEED_NETWORKS_<APP>} — the seed service's whole {@code networks:} block, which
-     *       declares the qualified alias so that the address in {@code DIAL_<APP>} resolves before
-     *       there is a deployer. See {@link #seedNetworks}.
+     *       other.
+     *   <li>{@code DIAL_<APP>} — the address peers dial, and what every URL in a generated file
+     *       must carry. <b>It is the same string as {@code ALIAS_<APP>} now</b>, and both survive
+     *       because they are still two questions: what a service is CALLED and where it is
+     *       REACHED. They parted company for the nine platform services, whose bare name was a
+     *       client id long after it had stopped being an address, and they came back together when
+     *       the plane was deleted. A template asking the wrong one would read correctly today and
+     *       be wrong the moment they diverge again.
+     *   <li>{@code SEED_NETWORKS_<APP>} — the seed service's whole {@code networks:} block. See
+     *       {@link #seedNetworks}.
      *   <li>{@code TIER_ENV_<APP>} and {@code TIER_ENV_EXTRAS_<APP>} — the {@code QITS_ENVIRONMENT}
-     *       line in the stack file's words and in the extras', or NOTHING at all. See
-     *       {@link #tierEnv}.
+     *       line in the stack file's words and in the extras'. See {@link #tierEnv}.
      * </ul>
      * <p>
      * A third family went with the idp's config-file registry: {@code CLIENT_KEY_<APP>} was the
@@ -1118,8 +1016,8 @@ public final class PlatformModel {
      *   <li>{@code RESERVED_SLUGS} — the names no project may take, which is this environment plus
      *       every label the platform already publishes. See {@link #reservedSlugs}. It is here
      *       rather than in {@code SeedPhases.tokens} for the reason the three above are: it is
-     *       derived from {@link #DEPLOYABLES} and {@link #PLATFORM_SERVICES}, so an application
-     *       added to either has to reserve its own label without anybody remembering to.
+     *       derived from {@link #DEPLOYABLES}, so an application added there reserves its own
+     *       label without anybody remembering to.
      * </ul>
      * <p>
      * It replaced a single {@code ENV_KEY} token the templates pasted a repository name after —
@@ -1135,7 +1033,7 @@ public final class PlatformModel {
         CORE.stream().filter(app -> !applications.contains(app)).forEach(applications::add);
         for (String app : applications) {
             tokens.put("ALIAS_" + clientKey(app), wireAlias(app, envName));
-            tokens.put("DIAL_" + clientKey(app), dialAlias(app, envName));
+            tokens.put("DIAL_" + clientKey(app), wireAlias(app, envName));
             tokens.put("SEED_NETWORKS_" + clientKey(app), seedNetworks(app, envName, "    "));
             tokens.put("TIER_ENV_" + clientKey(app), tierEnv(app, envName, "      ", ""));
             tokens.put("TIER_ENV_EXTRAS_" + clientKey(app), tierEnv(app, envName, "",
@@ -1146,36 +1044,35 @@ public final class PlatformModel {
     }
 
     /**
-     * <b>{@code QITS_ENVIRONMENT} states which tier an application belongs to, and a platform
-     * service belongs to none</b> — so this is the whole line for an environment application and
-     * the EMPTY STRING for a platform one. It is appended to the end of the line above it, the way
-     * every conditional fragment in these templates is, so the absent case leaves no blank line and
-     * no orphan comment behind. The fragment carries the OUTPUT's indentation, because a text
-     * block's own indent is stripped before a value is substituted into it.
-     * <p>
-     * <b>The absence is load-bearing, and this is the hazard it exists to prevent.</b>
-     * qits-deployments records a resource row per application under the environment this variable
-     * names, {@code orElse(null)} — and it looks a PLATFORM-target service's rows up by that null
-     * key, which the unique index treats as one value rather than as many. A platform service
-     * handed a tier therefore records rows nothing will look for again: its first self-deploy finds
-     * no null-keyed row, takes the reconcile arm instead, and rotates the deployer's own database
-     * passwords in the middle of a boot. The rows the bootstrap records exist to prevent exactly
-     * that, so a fresh boot must never write this line for a platform service.
-     * <p>
-     * It is not how a postgres HOST is resolved, which is what this comment used to claim: the
-     * deployer reads the TARGET application's environment for that, or the platform-designated
-     * environment's row for a platform target — never its own {@code QITS_ENVIRONMENT}.
+     * <b>{@code QITS_ENVIRONMENT} states which tier an application belongs to</b>, and every
+     * application belongs to one now, so this is the whole line for all of them. The fragment
+     * carries the OUTPUT's indentation, because a text block's own indent is stripped before a
+     * value is substituted into it.
+     *
+     * <p><b>It used to be the empty string for a platform service, and the absence was
+     * load-bearing.</b> qits-deployments records a resource row per application under the
+     * environment this variable names, {@code orElse(null)}, and it looked a PLATFORM-target
+     * service's rows up by that null key — which the unique index treats as one value rather than
+     * as many. A platform service handed a tier therefore recorded rows nothing would look for
+     * again: its first self-deploy found no null-keyed row, took the reconcile arm instead, and
+     * rotated the deployer's own database passwords in the middle of a boot.
+     *
+     * <p><b>The hazard goes with the plane rather than being defused.</b> There is no PLATFORM
+     * target left for a row to be keyed null under, so every row is keyed by a real environment
+     * and every lookup finds it. Emitting the line for all of them is what makes that true rather
+     * than merely likely — an application that got no line would be exactly the null-keyed case
+     * again.
+     *
+     * <p>It is not how a postgres HOST is resolved, which is what this comment used to claim: the
+     * deployer reads the TARGET application's environment for that.
      */
     private static String tierEnv(String app, String envName, String indent, String keyPrefix) {
-        if (isPlatformService(app)) {
-            return "";
-        }
         return "\n"
-                + indent + "# WHICH TIER THIS APPLICATION BELONGS TO. A PLATFORM SERVICE GETS NO\n"
-                + indent + "# SUCH LINE: it belongs to no tier, and the deployer keys its platform\n"
-                + indent + "# resource rows by the absence of this value. Written for one, those\n"
-                + indent + "# rows land under a tier instead, the next self-deploy does not find\n"
-                + indent + "# them, and it rotates the database passwords the bootstrap issued.\n"
+                + indent + "# WHICH TIER THIS APPLICATION BELONGS TO. Every application has one:\n"
+                + indent + "# the deployer keys each resource row by this value, and a row written\n"
+                + indent + "# without it is keyed null — which the unique index treats as ONE row\n"
+                + indent + "# however many applications share it. That was the platform plane's\n"
+                + indent + "# shape and it is gone; the line is unconditional so it cannot return.\n"
                 + indent + keyPrefix + "QITS_ENVIRONMENT" + (keyPrefix.isEmpty() ? ": " : "=")
                 + envName;
     }

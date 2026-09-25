@@ -137,7 +137,7 @@ class PublishCredentialLifetimeTest {
     /** The idp as this test needs it: it commissions, it mints, and it remembers what came back. */
     private static final class FakeIdp extends Http {
 
-        private static final String ISSUER = "http://qits-platform-idp:8080/idp";
+        private static final String ISSUER = "http://qits-idp:8080/idp";
 
         private final List<String> deleted = new ArrayList<>();
 

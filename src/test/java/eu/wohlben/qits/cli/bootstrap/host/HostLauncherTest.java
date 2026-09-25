@@ -157,14 +157,14 @@ class HostLauncherTest {
         Path wrapperSlice = Files.createDirectories(common.resolve("worktrees/w"));
         Files.writeString(wrapperSlice.resolve("commondir"), "../..\n", StandardCharsets.UTF_8);
         Path embedded = Files.createDirectories(
-                temp.resolve("primary/services/qits-platform-edge/.git"));
+                temp.resolve("primary/services/qits-edge/.git"));
         Path embeddedSlice = Files.createDirectories(embedded.resolve("worktrees/w"));
         Files.writeString(embeddedSlice.resolve("commondir"), "../..\n", StandardCharsets.UTF_8);
 
         Path wrapper = Files.createDirectories(temp.resolve("w"));
         Files.writeString(wrapper.resolve(".git"), "gitdir: " + wrapperSlice + "\n",
                 StandardCharsets.UTF_8);
-        Path sub = Files.createDirectories(wrapper.resolve("services/qits-platform-edge"));
+        Path sub = Files.createDirectories(wrapper.resolve("services/qits-edge"));
         Files.writeString(sub.resolve(".git"), "gitdir: " + embeddedSlice + "\n",
                 StandardCharsets.UTF_8);
         // An ordinary submodule directory without a pointer file answers nothing.

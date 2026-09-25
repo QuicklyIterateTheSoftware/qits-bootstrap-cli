@@ -145,13 +145,13 @@ class StackFileTest {
     void onlyTheEdgePublishesAndItGoesThroughIngress() {
         String stack = stack();
 
-        assertThat(block(stack, alias("platform-edge"))).contains("""
+        assertThat(block(stack, alias("edge"))).contains("""
                       - target: 8080
                         published: 8080
                         protocol: tcp
                         mode: ingress
                 """.stripTrailing());
-        for (String app : List.of("artifacts", "platform-mirror", "githost")) {
+        for (String app : List.of("artifacts", "mirror", "githost")) {
             assertThat(block(stack, alias(app))).as("the ports of %s", app)
                     .doesNotContain("ports:");
         }
@@ -167,7 +167,7 @@ class StackFileTest {
     @Test
     void theTlsPortsAreHostModeAndTheManagementPortIsNotPublished() {
         String edge = block(ComposeTemplate.compose(ComposeTemplateTest.tokens("qits-dev.eu")),
-                alias("platform-edge"));
+                alias("edge"));
 
         assertThat(edge).contains("published: 80").contains("published: 443")
                 .contains("mode: host");
@@ -184,9 +184,9 @@ class StackFileTest {
     @Test
     void onlyKeepsTheNamedServicesAndTheFileTheyNeed() {
         String subset = ComposeTemplate.only(stack(),
-                List.of("qits-platform-idp", alias("ci"), alias("oci-postgresql")));
+                List.of(ENV + "-qits-idp", alias("ci"), alias("oci-postgresql")));
 
-        assertThat(subset).contains("  qits-platform-idp:\n")
+        assertThat(subset).contains("  " + ENV + "-qits-idp:\n")
                 .contains("  " + alias("ci") + ":\n")
                 .contains("  " + alias("oci-postgresql") + ":\n");
         assertThat(subset).doesNotContain("  " + alias("deployments") + ":\n")

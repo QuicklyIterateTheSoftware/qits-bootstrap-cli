@@ -203,7 +203,7 @@ public interface BootstrapConfig {
      * break silently.
      */
     default String edgeLetsEncryptUrl() {
-        return "http://" + PlatformModel.dialAlias("platform-edge", envName())
+        return "http://" + PlatformModel.wireAlias("edge", envName())
                 + ":9000/q/lets-encrypt";
     }
 
@@ -473,7 +473,7 @@ public interface BootstrapConfig {
      * travel.
      */
     default String idpDialUrl() {
-        return "http://" + PlatformModel.dialAlias("platform-idp", envName()) + ":8080/idp";
+        return "http://" + PlatformModel.wireAlias("idp", envName()) + ":8080/idp";
     }
 
     /**
@@ -508,7 +508,7 @@ public interface BootstrapConfig {
      * here when the rest went back to being per-tier.
      */
     default String mirrorUrl() {
-        return "http://" + PlatformModel.dialAlias("platform-mirror", envName()) + ":8080";
+        return "http://" + PlatformModel.wireAlias("mirror", envName()) + ":8080";
     }
 
     /**
@@ -560,7 +560,7 @@ public interface BootstrapConfig {
      * — would have gone to a name nothing answers to.
      */
     default String platformDeploymentsUrl() {
-        return "http://" + PlatformModel.dialAlias("deployments", envName())
+        return "http://" + PlatformModel.wireAlias("deployments", envName())
                 + ":8080/platform-deployments";
     }
 
@@ -575,7 +575,7 @@ public interface BootstrapConfig {
      * Derived for the same reason the deployer's url is: the bus moved plane on the same day.
      */
     default String eventsUrl() {
-        return "http://" + PlatformModel.dialAlias("events", envName()) + ":8080/events";
+        return "http://" + PlatformModel.wireAlias("events", envName()) + ":8080/events";
     }
 
     /**
@@ -600,7 +600,7 @@ public interface BootstrapConfig {
      * no-path shape above nor the not-the-edge argument changed with the plane; only the host did.
      */
     default String configurationUrl() {
-        return "http://" + PlatformModel.dialAlias("configuration", envName()) + ":8080";
+        return "http://" + PlatformModel.wireAlias("configuration", envName()) + ":8080";
     }
 
     /**

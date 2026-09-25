@@ -59,10 +59,10 @@ class DockerStackTest {
     /** What {@code docker ps} used to answer, now that a task's container carries a made-up name. */
     @Test
     void theServiceNamesAreListedByName() {
-        ScriptedRunner runner = answering("qits_prod-qits-ci", "qits_qits-platform-idp");
+        ScriptedRunner runner = answering("qits_prod-qits-ci", "qits_qits-idp");
 
         assertThat(new Docker(runner).serviceNames())
-                .containsExactly("qits_prod-qits-ci", "qits_qits-platform-idp");
+                .containsExactly("qits_prod-qits-ci", "qits_qits-idp");
         assertThat(runner.argv.getLast()).containsExactly(
                 "docker", "service", "ls", "--format", "{{.Name}}");
     }

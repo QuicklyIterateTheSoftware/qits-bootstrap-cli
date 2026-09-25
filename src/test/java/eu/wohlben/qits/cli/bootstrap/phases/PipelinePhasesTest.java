@@ -47,7 +47,7 @@ class PipelinePhasesTest {
         assertThat(PipelinePhases.serving("Up 2 minutes (unhealthy)")).isFalse();
     }
 
-    /** The one that reported qits-platform-idp live while the deployer was failing it. */
+    /** The one that reported qits-idp live while the deployer was failing it. */
     @Test
     void restartingDoesNotServe() {
         assertThat(PipelinePhases.serving("Restarting (1) 4 seconds ago")).isFalse();
@@ -333,27 +333,33 @@ class PipelinePhasesTest {
      * run start a seed deployer beside the one that already manages the application.
      */
     @Test
-    void theDeployerIsRecognisedUnderItsPlatformNames() {
+    void theDeployerIsRecognisedUnderItsDeployedName() {
         PipelinePhases.SeedPlan plan = PipelinePhases.seedPlan(
-                List.of("qits-pd-qits-deployments-a1b2c3d4"),
-                List.of("qits_qits-deployments"), ENV);
+                List.of("qits-pd-" + ENV + "-qits-deployments-a1b2c3d4"),
+                List.of("qits_" + ENV + "-qits-deployments"), ENV);
 
-        assertThat(plan.managed()).contains("qits-deployments");
-        assertThat(plan.deploy()).doesNotContain("qits-deployments");
-        assertThat(plan.stale()).containsExactly("qits_qits-deployments");
+        assertThat(plan.managed()).contains(ENV + "-qits-deployments");
+        assertThat(plan.deploy()).doesNotContain(ENV + "-qits-deployments");
+        assertThat(plan.stale()).containsExactly("qits_" + ENV + "-qits-deployments");
     }
 
-    /** A platform service's container drops the tier segment, and the prefix has to match that. */
+    /**
+     * Every container carries the tier segment, and the prefix has to match that.
+     *
+     * <p>One did not, once: a platform service DROPPED the segment rather than filling it, so
+     * qits-pd-qits-idp- was the prefix and the sweep had to know which kind it was looking at. The
+     * plane is gone and so is the second prefix shape.
+     */
     @Test
-    void aPlatformServiceIsRecognisedByItsOwnPrefix() {
+    void aDeployedContainerIsRecognisedByItsTierQualifiedPrefix() {
         PipelinePhases.SeedPlan plan = PipelinePhases.seedPlan(
-                List.of("qits-pd-qits-platform-idp-f325ef80"), List.of("qits-platform-idp"), ENV);
+                List.of("qits-pd-" + ENV + "-qits-idp-f325ef80"), List.of(ENV + "-qits-idp"), ENV);
 
-        assertThat(plan.managed()).containsExactly("qits-platform-idp");
+        assertThat(plan.managed()).containsExactly(ENV + "-qits-idp");
         // The bare-alias service is the DEPLOYER'S OWN — the swarm driver deploys under the wire
         // alias — so it is never swept. Only the qits_-qualified twin is a seed leftover.
         assertThat(plan.stale()).isEmpty();
-        assertThat(plan.deploy()).doesNotContain("qits-platform-idp");
+        assertThat(plan.deploy()).doesNotContain("qits-idp");
     }
 
     /**
@@ -497,7 +503,7 @@ class PipelinePhasesTest {
                 .contains("--staging")
                 .contains("--domain=qits-dev.eu")
                 .contains("--email=hostmaster@qits-dev.eu")
-                .contains("--management-url=http://" + ENV + "-qits-platform-edge:9000");
+                .contains("--management-url=http://" + ENV + "-qits-edge:9000");
     }
 
     /** Issuance off is a choice, so it reads as one rather than as a failure. */

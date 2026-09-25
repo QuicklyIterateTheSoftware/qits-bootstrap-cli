@@ -78,7 +78,7 @@ class BootstrapPlanTest {
                 // they resolve is already in the store.
                 "publish-qits-containers-client", "publish-ui-components",
                 "publish-angular", "seed-image-ci", "seed-image-deployments",
-                "seed-image-platform-idp", "seed-image-containers", "seed-image-projects",
+                "seed-image-idp", "seed-image-containers", "seed-image-projects",
                 "ci-daemon");
         // BEFORE the ci image, because ci pins qits-containers-client and a step-container image
         // build resolves from the platform's own Maven registry — there is no host ~/.m2 in this
@@ -92,16 +92,16 @@ class BootstrapPlanTest {
         // started: each is built out of qits-blobstore and qits-registries, which the maven seed
         // put in the temporary registry before the first image. There is nothing they could wait
         // for — the real store does not exist until one of them is running.
-        assertThat(ids).containsSubsequence("maven-seed", "seed-image-platform-mirror",
+        assertThat(ids).containsSubsequence("maven-seed", "seed-image-mirror",
                 "seed-image-artifacts", "seed-image-githost", "seed-artifacts");
         // THE MIRROR IS STARTED BEFORE THE STORE, because every publish after it resolves its
         // third-party half through the mirror's caches — and postgres before the mirror, which
         // refuses to boot without its database.
-        assertThat(ids).containsSubsequence("seed-image-platform-mirror", "seed-postgres",
+        assertThat(ids).containsSubsequence("seed-image-mirror", "seed-postgres",
                 "seed-mirror", "seed-artifacts", "publish-qits-registries-oci");
         // The edge needs nothing from the platform — no client bundle, no qits dependency — so its
         // image is built in the first half and needs no service image before it.
-        assertThat(ids).containsSubsequence("seed-image-platform-edge", "seed-image-artifacts");
+        assertThat(ids).containsSubsequence("seed-image-edge", "seed-image-artifacts");
         // The bus is in the first half too: qits-events declares no qits Maven dependency, so it
         // waits on none of the publishes below it.
         assertThat(ids).containsSubsequence("seed-image-events", "seed-artifacts");
@@ -138,10 +138,10 @@ class BootstrapPlanTest {
         List<String> ids = ids(plan(Map.of()));
 
         assertThat(ids).containsSubsequence("environment", "deploy-observability",
-                "deploy-platform-idp", "deploy-configuration",
+                "deploy-idp", "deploy-configuration",
                 "deploy-stt", "deploy-projects", "deploy-workspaces",
                 "deploy-events",
-                "deploy-platform-mirror", "deploy-artifacts", "deploy-githost",
+                "deploy-mirror", "deploy-artifacts", "deploy-githost",
                 // docs after artifacts: its declared serviceAddress key names that service, and
                 // qits-configuration renders it only once the target has deployed.
                 "deploy-docs",
@@ -153,15 +153,15 @@ class BootstrapPlanTest {
                 // technical processes, the dependency inventory, then the base system panels —
                 // which call no peer at all and go last because their cutover drops every open
                 // terminal.
-                "deploy-platform-orchestrator", "deploy-platform-maintenance",
-                "deploy-platform-system",
-                "deploy-platform-edge", "deploy-deployments");
+                "deploy-orchestrator", "deploy-maintenance",
+                "deploy-system",
+                "deploy-edge", "deploy-deployments");
         assertThat(ids).doesNotContain("deploy-cd", "deploy-serviceregistry");
         // postgres is the seed database, never a train phase: re-reading its spec from qits-githost
         // (whose storage is postgres) is a circular dependency that crash-loops it.
         assertThat(ids).doesNotContain("deploy-oci-postgresql");
         // Pre-rename spellings deploy nothing and would push to repositories nobody reads.
-        assertThat(ids).doesNotContain("deploy-idp", "deploy-platform-deployments",
+        assertThat(ids).doesNotContain("deploy-platform-idp", "deploy-platform-deployments",
                 "deploy-platform-artifacts", "deploy-platform-docs");
     }
 
@@ -192,11 +192,11 @@ class BootstrapPlanTest {
                 .isGreaterThan(ids.indexOf("deploy-configuration"));
         // The issuer it validates against is already cut over, and its store is the seed postgres,
         // up before the train starts.
-        assertThat(ids).containsSubsequence("deploy-platform-idp", "deploy-configuration");
+        assertThat(ids).containsSubsequence("deploy-idp", "deploy-configuration");
         // Everything after the flip is deployed from what the service serves. The train is long
         // enough that this is a real proof rather than one deployment's.
         assertThat(ids).containsSubsequence("configuration-flip", "deploy-ci",
-                "deploy-platform-edge", "deploy-deployments");
+                "deploy-edge", "deploy-deployments");
     }
 
     /**
@@ -222,7 +222,7 @@ class BootstrapPlanTest {
                 "preseed");
         // And the whole train that follows pushes through the address it created.
         assertThat(ids).containsSubsequence("git-repos", "deploy-projects", "deploy-githost",
-                "deploy-ci", "deploy-platform-edge", "deploy-deployments");
+                "deploy-ci", "deploy-edge", "deploy-deployments");
         // The phase that used to hang off qits-projects' deployment is gone with the wait it was:
         // the alias table answers from the seed on.
         assertThat(ids).doesNotContain("register-repos");
@@ -343,7 +343,7 @@ class BootstrapPlanTest {
         List<String> warm = ids(plan(Map.of("QITS_SKIP_BUILD", "1")));
 
         assertThat(warm).contains("seed-skipped")
-                .doesNotContain("ci-daemon", "seed-image-ci", "seed-image-platform-edge",
+                .doesNotContain("ci-daemon", "seed-image-ci", "seed-image-edge",
                         "seed-image-oci-postgresql", "seed-image-events",
                         "seed-image-containers", "publish-qits-containers-client", "maven-seed",
                         // The mirror is started by hand only on the build path; a warm rerun's

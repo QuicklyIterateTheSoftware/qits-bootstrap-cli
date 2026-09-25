@@ -503,7 +503,7 @@ class SeedPhasesTest {
         // The two registries are unchanged: @qits to the store, everything else to the mirror's
         // cache of npmjs, and the DEFAULT must not be the qits one.
         assertThat(npmrc).contains("@qits:registry=http://prod-qits-artifacts:8080/artifacts/npm/npm/")
-                .contains("registry=http://prod-qits-platform-mirror:8080/artifacts/npm/npmjs/\n");
+                .contains("registry=http://prod-qits-mirror:8080/artifacts/npm/npmjs/\n");
     }
 
     /** No credential, no auth line — and the two registries still stand. */
@@ -670,7 +670,7 @@ class SeedPhasesTest {
 
     /**
      * <b>ONE VALUE, TWO SPELLINGS, and the pair is the whole credential.</b> The {@code idp-clients}
-     * phase records a secret under the APPLICATION — {@code qits-platform-edge}, which is the key
+     * phase records a secret under the APPLICATION — {@code qits-edge}, which is the key
      * qits-deployments' {@code pd_resource} registry uses — and the generated files read it under
      * the same name, because a placeholder cannot be spelled with an environment name the template
      * does not know yet. A pair that drifted apart is an idp holding a secret that nothing on this
@@ -680,14 +680,14 @@ class SeedPhasesTest {
     void theEdgesSecretIsRecordedByApplicationAndReadByApplication() {
         Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "prod")),
                 new RunLog(temp.resolve("run.log")));
-        boot.state.serviceClientSecrets.put(PlatformModel.application("platform-edge"), "s3cr3t");
+        boot.state.serviceClientSecrets.put(PlatformModel.application("edge"), "s3cr3t");
 
         Map<String, String> tokens = new SeedPhases(boot).tokens();
 
-        assertThat(tokens).containsEntry("IDP_CLIENT_SECRET_PLATFORM_EDGE", "s3cr3t");
+        assertThat(tokens).containsEntry("IDP_CLIENT_SECRET_EDGE", "s3cr3t");
         // And the id beside it is the WIRE ALIAS, which the model already answers: there is no
         // second token for it, because a second spelling could not follow a plane change.
-        assertThat(tokens).containsEntry("ALIAS_PLATFORM_EDGE", "qits-platform-edge");
+        assertThat(tokens).containsEntry("ALIAS_EDGE", "prod-qits-edge");
         // The passkey binding travels in the same map. Locally the rp id is the PROJECT's door,
         // which parents the idp's own host either way the supportsEnvironments flag stands.
         assertThat(tokens).containsEntry("WEBAUTHN_RP_ID", "qits.localhost")
@@ -837,10 +837,10 @@ class SeedPhasesTest {
     void theSystemConsolesConfigJsonNamesTheRegistryAndTheMirror() {
         String json = SeedPhases.dockerConfigJson(
                 List.of("registry.prod.localhost:8080", "mirror.prod.localhost:8080"),
-                "qits-platform-system", "s3cr3t");
+                "qits-system", "s3cr3t");
 
         String auth = Base64.getEncoder().encodeToString(
-                "qits-platform-system:s3cr3t".getBytes(StandardCharsets.UTF_8));
+                "qits-system:s3cr3t".getBytes(StandardCharsets.UTF_8));
         assertThat(json).isEqualTo("{\"auths\":{"
                 + "\"registry.prod.localhost:8080\":{\"auth\":\"" + auth + "\"},"
                 + "\"mirror.prod.localhost:8080\":{\"auth\":\"" + auth + "\"}}}\n");
@@ -918,8 +918,8 @@ class SeedPhasesTest {
     /** Both names a stack service answers to, because both are addresses on the network. */
     @Test
     void theBareServiceNameCountsAsWell() {
-        assertThat(SeedPhases.alreadyServing("qits-platform-idp", "qits-pd-qits-platform-idp-",
-                List.of(), List.of("qits-platform-idp"))).contains("qits-platform-idp");
+        assertThat(SeedPhases.alreadyServing("qits-idp", "qits-pd-qits-idp-",
+                List.of(), List.of("qits-idp"))).contains("qits-idp");
     }
 
     /** Nothing of this application anywhere: the phase starts its own. */

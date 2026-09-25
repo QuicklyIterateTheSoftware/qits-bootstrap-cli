@@ -98,7 +98,7 @@ public class PipelinePhases {
     public Phase seedIdp() {
         return new Phase("seed-idp", "bring the idp up alone", ctx -> {
             boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
-            String alias = PlatformModel.wireAlias("platform-idp", boot.config.envName());
+            String alias = PlatformModel.wireAlias("idp", boot.config.envName());
             Path file = boot.state.wrapperDir.resolve("docker-stack.qits.idp.yml");
             Files.deleteIfExists(file);
             Files.writeString(file, ComposeTemplate.only(
@@ -128,7 +128,7 @@ public class PipelinePhases {
             // The same hand-off for the mirror, which seed-mirror started by hand before any stack
             // file existed. Its volume is the cache and survives the recreate; what it gains is the
             // observability address and the deployer's adoption at the next cutover.
-            String mirror = PlatformModel.wireAlias("platform-mirror", boot.config.envName());
+            String mirror = PlatformModel.wireAlias("mirror", boot.config.envName());
             if (boot.docker.allNames().contains(mirror)) {
                 ctx.log("  handing the seed mirror over to the stack, from the same volume");
                 boot.docker.removeContainer(mirror, ctx::log);
@@ -260,15 +260,15 @@ public class PipelinePhases {
             // planes carry the qualifier now, so a literal here would be a name that stops
             // answering the day the bare alias is withdrawn — and nothing would say so but a wait
             // that times out.
-            boot.awaitHealth(ctx, PlatformModel.dialAlias("platform-idp", env)
+            boot.awaitHealth(ctx, PlatformModel.wireAlias("idp", env)
                             + " (no host port, dialled on qits-net)",
                     () -> boot.http.get(boot.config.idpDialUrl() + "/q/health/ready", Map.of()));
             // /q is the edge's own prefix, the one thing it never proxies. An answer here is this
             // process, not something behind it. Its alias rather than the port it publishes: this
             // run is on qits-net, and the published port is for a person's browser.
-            boot.awaitHealth(ctx, PlatformModel.dialAlias("platform-edge", env)
+            boot.awaitHealth(ctx, PlatformModel.wireAlias("edge", env)
                             + " (the door, on qits-net)",
-                    () -> boot.http.get("http://" + PlatformModel.dialAlias("platform-edge", env)
+                    () -> boot.http.get("http://" + PlatformModel.wireAlias("edge", env)
                             + ":8080/q/health/ready", Map.of()));
             // THE BYTE PLANE'S THREE, each at its own alias. They are polled together because they
             // fail together in the same way — a store, a cache and a git host are three services
@@ -291,7 +291,7 @@ public class PipelinePhases {
             boot.awaitHealth(ctx, env + "-qits-projects (the alias table, on qits-net)",
                     () -> boot.projects.health(projectsToken));
             boot.awaitHealth(ctx, env + "-qits-ci (on qits-net)", boot.ci::health);
-            boot.awaitHealth(ctx, PlatformModel.dialAlias("deployments", env) + " (on qits-net)",
+            boot.awaitHealth(ctx, PlatformModel.wireAlias("deployments", env) + " (on qits-net)",
                     boot.pd::health);
             // THE BUS, and it is waited for here rather than trusted to arrive: every green build
             // of this run travels ci -> outbox -> this service -> the deployer's subscriber, and
@@ -300,7 +300,7 @@ public class PipelinePhases {
             //
             // No auth-plane probe below for it: it enforces no machine gate, so there is no tenant
             // to warm.
-            boot.awaitHealth(ctx, PlatformModel.dialAlias("events", env) + " (the bus, on qits-net)",
+            boot.awaitHealth(ctx, PlatformModel.wireAlias("events", env) + " (the bus, on qits-net)",
                     () -> boot.http.get(boot.config.eventsUrl() + "/q/health/ready", Map.of()));
             // THE CONTAINER ORCHESTRATOR, and it is waited for BEFORE the first pipeline of this
             // boot rather than trusted to arrive: qits-ci runs every step as a container it asks
@@ -342,7 +342,7 @@ public class PipelinePhases {
             // THE DOOR THIS RUN ACTUALLY USES, and that is why it is the probe: /events/
             // build-succeeded is gone from the deployer and answers 404, which reads as "not warm"
             // and would spin here for the phase's whole timeout.
-            boot.awaitHealth(ctx, PlatformModel.dialAlias("deployments", env)
+            boot.awaitHealth(ctx, PlatformModel.wireAlias("deployments", env)
                             + " auth plane (junk bearer -> 401)",
                     () -> warmWhenGuardRefused(boot.http.postJson(
                             boot.config.platformDeploymentsUrl() + "/api/events/software-released",
@@ -655,7 +655,7 @@ public class PipelinePhases {
                 + (mode == Acme.Mode.PRODUCTION ? "" : " --staging") + " \\");
         lines.add("               --domain=" + domain + " --email=" + email + " \\");
         lines.add("               --management-url=http://"
-                + PlatformModel.dialAlias("platform-edge", environment) + ":9000");
+                + PlatformModel.wireAlias("edge", environment) + ":9000");
         lines.add("           The management port is NOT published: it is unauthenticated and a "
                 + "swarm publish cannot");
         lines.add("           be loopback-only, so it is reachable on qits-net and nowhere else.");
@@ -1465,7 +1465,7 @@ public class PipelinePhases {
                     List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
                     "refs/tags/" + version);
 
-            if ("platform-edge".equals(name)) {
+            if ("edge".equals(name)) {
                 // Both edges need the same host ports. Release them only after the real edge's
                 // source is safely in githost, but before its service is created. The cutover is
                 // intentionally a short closed interval, never two authorities.
@@ -1683,22 +1683,15 @@ public class PipelinePhases {
     }
 
     /**
-     * "Is it live at this version?" has two answers, because the two planes are read in two places.
-     * An environment service has a deployment row under this tier. A platform service has one too
-     * since the plane was given a real environment — but its container is the stronger evidence and
-     * the cheaper one: the deployer names it qits-pd-&lt;app&gt;-&lt;id8&gt;, with the tier segment
-     * dropped rather than filled, and runs the image tagged with the version it deployed.
+     * "Is it live at this version?" has ONE answer now: the deployment row under this tier.
+     * <p>
+     * It had two while there were two planes. A platform service was read from its CONTAINER
+     * instead — the deployer named it qits-pd-&lt;app&gt;-&lt;id8&gt; with the tier segment dropped
+     * rather than filled, and that was the stronger evidence precisely because the row was keyed by
+     * an absent environment. There is no absent environment left, so every application has a row
+     * under a real tier and the container arm was reading the same fact the long way round.
      */
     private boolean alreadyLive(PhaseContext ctx, String name, String application, String version) {
-        if (PlatformModel.isPlatformService(name)) {
-            Optional<String> live = platformContainer(name, version);
-            if (live.isPresent()) {
-                ctx.log("  " + application + " already live at " + version
-                        + " (" + live.get() + ")");
-                return true;
-            }
-            return false;
-        }
         Optional<JsonNode> row = boot.pd.newestDeployment(boot.state.environmentId, application);
         if (row.isPresent() && "ACTIVE".equals(Json.text(row.get(), "status"))
                 && version.equals(Json.text(row.get(), "version"))) {
@@ -1861,16 +1854,12 @@ public class PipelinePhases {
      */
     private void awaitDeployment(PhaseContext ctx, String name, String application, String version,
             String runId, String runSha, String baselineRowId) {
-        boolean platformService = PlatformModel.isPlatformService(name);
         CiLogStream ciLog = new CiLogStream(boot.ci, ctx);
         DeployLogStream pdLog = new DeployLogStream(boot.docker, ctx, application,
                 PlatformModel.wireAlias("deployments", boot.config.envName()),
                 PlatformModel.pdNamePrefix("deployments", boot.config.envName()));
         long interval = boot.config.pollInterval().toMillis();
-        String target = platformService
-                ? "a container named " + PlatformModel.pdNamePrefix(name, boot.config.envName())
-                + "* running :" + version + " and serving"
-                : "a deployment row for " + application + " at " + version + " in "
+        String target = "a deployment row for " + application + " at " + version + " in "
                 + boot.config.platformDeploymentsUrl() + "/api/deployments";
         try {
             String outcome = Waiter.await(ctx, target, boot.config.deployTimeout(),
@@ -1879,15 +1868,7 @@ public class PipelinePhases {
                         // "what is it doing" is answered in the same breath as "is it done".
                         pdLog.follow();
                         String deploymentState = "no row yet";
-                        if (platformService) {
-                            Optional<String[]> container = platformContainerAt(name, version);
-                            if (container.isPresent() && serving(container.get()[1])) {
-                                return Waiter.Poll.done("ACTIVE " + container.get()[0], "live");
-                            }
-                            deploymentState = container
-                                    .map(found -> found[0] + " is " + found[1])
-                                    .orElse("no container at this version");
-                        } else {
+                        {
                             Optional<JsonNode> row = boot.pd.newestDeployment(
                                     boot.state.environmentId, application);
                             if (row.isPresent()) {
@@ -2697,22 +2678,22 @@ public class PipelinePhases {
                     + "and pulls that image.");
             report.add("           Pushing a branch deploys nothing, and environment/<name> is "
                     + "retired: there is no");
-            report.add("           deploy ref on this platform. The platform services ("
-                    + String.join(", ", PlatformModel.PLATFORM_SERVICES) + ")");
-            report.add("           take the same road into this same environment: one instance "
-                    + "each, bare aliases,");
-            report.add("           joined to every environment's networks.");
+            report.add("           deploy ref on this platform. Every application takes that "
+                    + "same road into the one");
+            report.add("           environment: there is no second kind of service and no "
+                    + "second plane to deploy onto.");
             report.add("swarm:     " + boot.state.swarm + ". qits-net is an attachable overlay: "
                     + "swarm services and");
             report.add("           plain containers share it and resolve each other by name.");
             report.add("topology:  qits-deployments owns the environments, the services,");
             report.add("           the links AND the deployments — one component, at "
                     + boot.config.platformDeploymentsUrl());
-            report.add("names:     an environment service answers to " + env
-                    + "-qits-<app>, a platform service to its bare");
-            report.add("           repository name. Deployed containers are qits-pd-" + env
-                    + "-qits-<app>-<id8>");
-            report.add("           and qits-pd-qits-<app>-<id8>.");
+            report.add("names:     every service answers to " + env
+                    + "-qits-<app>, and deployed containers are");
+            report.add("           qits-pd-" + env + "-qits-<app>-<id8>. One shape: the bare "
+                    + "qits-<app> a platform");
+            report.add("           service used to answer to is not a name on this platform "
+                    + "any more.");
             report.add("main:      finalized by the release AFTER its deployment lands — "
                     + "qits-projects merges the release");
             report.add("           tag back. A direct push needs -o qits.token="

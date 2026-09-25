@@ -925,8 +925,8 @@ public class SeedPhases {
         return new Phase("seed-mirror",
                 "have qits-platform-mirror serving before anything resolves through it", ctx -> {
             boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
-            String mirror = PlatformModel.wireAlias("platform-mirror", boot.config.envName());
-            String prefix = PlatformModel.pdNamePrefix("platform-mirror", boot.config.envName());
+            String mirror = PlatformModel.wireAlias("mirror", boot.config.envName());
+            String prefix = PlatformModel.pdNamePrefix("mirror", boot.config.envName());
             Optional<String> serving = alreadyServing(mirror, prefix,
                     boot.docker.runningNames(), boot.docker.serviceNames());
             if (serving.isPresent()) {
@@ -2492,7 +2492,7 @@ public class SeedPhases {
             // here. The registry is written beside it anyway: it costs one line and the day this
             // console pulls a qits/* image of its own is not the day to discover the file names
             // one host.
-            dockerConfig(ctx, "qits-platform-system-config", "platform-system",
+            dockerConfig(ctx, "qits-platform-system-config", "system",
                     boot.config.registryVhost(), boot.config.mirrorVhost());
             if (!sha256(properties).equals(before)) {
                 restartSeedDeployer(ctx);

@@ -31,7 +31,7 @@ class UnwrapPhasesTest {
     void theDataVolumesGo() {
         assertThat(UnwrapPhases.isData("qits-deployments-data")).isTrue();
         assertThat(UnwrapPhases.isData("qits-platform-artifacts-data")).isTrue();
-        assertThat(UnwrapPhases.isData("qits-platform-idp-data")).isTrue();
+        assertThat(UnwrapPhases.isData("qits-idp-data")).isTrue();
         // The new one, covered by the same pattern rather than by a line of its own.
         assertThat(UnwrapPhases.isData("qits-oci-postgresql-data")).isTrue();
         // The first-boot Maven repository: rebuilt by the next bootstrap.
@@ -215,7 +215,7 @@ class UnwrapPhasesTest {
             if (line.contains("service ls --format")) {
                 // The name sweep sees the label ones again, plus one no label caught.
                 return ScriptedRunner.ok("qits-pd-prod-qits-ci-a1b2c3d4", "qits_prod-qits-events",
-                        "qits_qits-platform-idp", "somebody-elses-service");
+                        "qits_qits-idp", "somebody-elses-service");
             }
             return ScriptedRunner.ok();
         });
@@ -225,7 +225,7 @@ class UnwrapPhasesTest {
         assertThat(runner.lines()).contains(
                 "docker service rm qits-pd-prod-qits-ci-a1b2c3d4",
                 "docker service rm qits_prod-qits-events",
-                "docker service rm qits_qits-platform-idp");
+                "docker service rm qits_qits-idp");
         // Found by two sweeps, removed once — and somebody else's service is not this platform's.
         assertThat(runner.lines().stream().filter(line -> line.startsWith("docker service rm")))
                 .hasSize(3);
@@ -246,7 +246,7 @@ class UnwrapPhasesTest {
     /** The three name shapes a machine can be carrying, and the stack's own prefix among them. */
     @Test
     void everyShapeThisPlatformNamesThingsWithIsSwept() {
-        assertThat(UnwrapPhases.isPlatformName("qits-pd-qits-platform-idp-f325ef80")).isTrue();
+        assertThat(UnwrapPhases.isPlatformName("qits-pd-qits-idp-f325ef80")).isTrue();
         assertThat(UnwrapPhases.isPlatformName("prod-qits-ci")).isTrue();
         assertThat(UnwrapPhases.isPlatformName("qits_prod-qits-events")).isTrue();
         assertThat(UnwrapPhases.isPlatformName("postgres")).isFalse();

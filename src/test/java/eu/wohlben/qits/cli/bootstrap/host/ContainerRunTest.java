@@ -162,7 +162,7 @@ class ContainerRunTest {
         // point under the primary's .git; a submodule with an embedded .git points beside it, and
         // the duplicates collapse.
         Path common = Path.of("/home/dev/primary/.git");
-        Path embedded = Path.of("/home/dev/primary/services/qits-platform-edge/.git");
+        Path embedded = Path.of("/home/dev/primary/services/qits-edge/.git");
         ContainerRun.Plan plan = new ContainerRun.Plan(IMAGE, WRAPPER, true,
                 List.of(common, common, embedded), WRAPPER,
                 WRAPPER.resolve(".qits-bootstrap-src"), WRAPPER.resolve("qits-bootstrap-cli.log"),

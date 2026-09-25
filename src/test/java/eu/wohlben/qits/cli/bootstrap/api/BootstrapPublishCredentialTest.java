@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class BootstrapPublishCredentialTest {
 
-    private static final String ISSUER = "http://qits-platform-idp:8080/idp";
+    private static final String ISSUER = "http://qits-idp:8080/idp";
     private static final String CLIENTS = ISSUER + "/api/clients";
 
     /**

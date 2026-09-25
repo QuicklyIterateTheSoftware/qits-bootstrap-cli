@@ -53,7 +53,7 @@ class BootstrapConfigTest {
         // reload live on it, both unauthenticated, and this run reaches them because it is on
         // qits-net. /q is the management root path and lets-encrypt is the extension's own segment.
         assertThat(config.edgeLetsEncryptUrl())
-                .isEqualTo("http://prod-qits-platform-edge:9000/q/lets-encrypt");
+                .isEqualTo("http://prod-qits-edge:9000/q/lets-encrypt");
         // No default, and unset is a supported platform: the edge stays on plain HTTP.
         assertThat(config.domain()).isEmpty();
         // Mandatory WITH a domain and refused without one, so there is nothing to default it to.
@@ -148,7 +148,7 @@ class BootstrapConfigTest {
                 .isEqualTo("http://preprod-qits-githost:8080/githost");
         // Scheme, host and port with NO path: this service answers under /mirror/q for health and
         // under the registries' own literals for content, so each caller appends what it wants.
-        assertThat(config.mirrorUrl()).isEqualTo("http://preprod-qits-platform-mirror:8080");
+        assertThat(config.mirrorUrl()).isEqualTo("http://preprod-qits-mirror:8080");
         // Seed services are reached at fixed aliases before deployment endpoints are projected.
         assertThat(config.ciUrl()).isEqualTo("http://preprod-qits-ci:8080/ci");
         // AND EVERY ADDRESS CARRIES THE TIER NOW, the platform plane's included. These four were
@@ -176,7 +176,7 @@ class BootstrapConfigTest {
         // string comparison nothing. Moving the issuer rejects every token in flight across the
         // estate at once, so it moves in a step of its own, after every consumer is discovering
         // from the qualified address.
-        assertThat(config.idpDialUrl()).isEqualTo("http://preprod-qits-platform-idp:8080/idp");
+        assertThat(config.idpDialUrl()).isEqualTo("http://preprod-qits-idp:8080/idp");
         assertThat(config.idpIssuer()).isEqualTo("http://qits-platform-idp:8080/idp");
     }
 

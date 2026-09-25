@@ -62,12 +62,12 @@ public final class BootstrapPlan {
             // The edge is in the first half because it needs nothing from the platform: it has no
             // client to place a bundle for and no qits dependency to resolve, so its image builds
             // from Maven Central alone and is the platform's direct ingress.
-            phases.add(seed.seedImage("platform-edge"));
+            phases.add(seed.seedImage("edge"));
             // THE BYTE PLANE'S THREE, together and here rather than after the publishes below: all
             // three are built out of qits-blobstore and qits-registries, which the maven-seed phase
             // put in the temporary registry before the first image was built. There is nothing they
             // could wait for — the real store does not exist until one of them is running.
-            phases.add(seed.seedImage("platform-mirror"));
+            phases.add(seed.seedImage("mirror"));
             phases.add(seed.seedImage("artifacts"));
             phases.add(seed.seedImage("githost"));
             // Beside artifacts because it needs nothing either: the image is upstream postgres,
@@ -135,7 +135,7 @@ public final class BootstrapPlan {
             phases.add(seed.angularPublish());
             phases.add(seed.seedImage("ci"));
             phases.add(seed.seedImage("deployments"));
-            phases.add(seed.seedImage("platform-idp"));
+            phases.add(seed.seedImage("idp"));
             // The orchestrator's own image, in the second half because its reactor resolves four
             // qits jars the publishes above put in the store. It has no client bundle to place: the
             // service serves machines and there is no SPA to stand in for.
