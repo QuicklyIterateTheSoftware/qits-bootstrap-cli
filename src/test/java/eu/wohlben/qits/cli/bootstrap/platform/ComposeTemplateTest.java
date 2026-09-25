@@ -1229,51 +1229,52 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>THE FLIP STILL STANDS ON THE BYTE PLANE, in both files, and it landed on 2026-08-14.</b>
-     * What changed is that the anonymous-read list is no longer EMPTY: it holds exactly one
-     * browser-facing label, {@code landing} — the tier's public front door, a marketing page with
-     * no machine surface, no authenticated data and no write path, which gated answered every
-     * anonymous browser with a 302 to the idp login. The exemption is per LABEL, GET/HEAD only, and
-     * the edge strips identity before forwarding, so it reaches that one app and nothing else.
+     * <b>THE LANDING PAGE STAYS BEHIND THE LOGIN WALL, by the owner's decision on ticket
+     * qits-374.</b> An earlier change carved out an anonymous-read exemption for it; that decision
+     * was reversed, so {@code QITS_EDGE_AUTH_ANONYMOUS_READ_APPS} is gone from both the seed stack
+     * and the deployer extras. No key means no list means every name this edge serves needs a
+     * bearer on every method, reads included — the byte plane stays closed exactly as before, and
+     * now so does the landing page.
      * <p>
-     * <b>This test is what stops a byte-plane name being smuggled onto that list.</b> registry and
-     * mirror stay gated on every method, so the value is asserted to be exactly {@code landing} in
-     * both files and to contain neither name — and the key is asserted to appear exactly ONCE in
-     * each, because a stray second copy anywhere reopens the door. Beside it stand the flip's other
-     * two values: the deployer told to authenticate its pulls, and ci told which registries a step
-     * must log in to. Half of it is a platform whose deployer cannot pull, or step containers
-     * authenticating against a door that never asks — so all three are asserted together.
+     * <b>This test is what stops either being reopened by an edit to the template.</b> It asserts
+     * the key is ABSENT from both files — not merely that its value is not {@code landing},
+     * {@code registry} or {@code mirror}, but that the key does not appear at all — asked of the
+     * KEY lines rather than of the file whole, so a comment mentioning the key does not trip it.
+     * Beside it stand the flip of 2026-08-14's other two values, kept exactly as they were: the
+     * deployer told to authenticate its pulls, and ci told which registries a step must log in to.
+     * Half of it is a platform whose deployer cannot pull, or step containers authenticating
+     * against a door that never asks — so all three are asserted together.
      */
     @Test
-    void theBytePlaneStaysClosedAndOnlyLandingIsAnonymous() {
+    void nothingIsAnonymousAndTheBytePlaneStaysClosed() {
         String compose = ComposeTemplate.compose(tokens());
         String extras = ComposeTemplate.extras(tokens());
         String vhosts = "registry.prod.localhost:8080,mirror.prod.localhost:8080";
         String key = "QITS_EDGE_AUTH_ANONYMOUS_READ_APPS";
 
-        // Exactly one declaration per file. Asked of the KEY lines rather than of the file whole,
-        // so the prose above a block is free to name the key while a second assignment is not.
+        // No declaration in either file. Asked of the KEY lines rather than of the file whole, so a
+        // comment mentioning the key is free to do so without tripping this assertion.
         List<String> composeLines = compose.lines()
                 .map(String::strip)
                 .filter(line -> line.startsWith(key + ":"))
                 .toList();
-        assertThat(composeLines).as("seed edge anonymous-read declarations").hasSize(1);
+        assertThat(composeLines).as("seed edge anonymous-read declarations").isEmpty();
         List<String> extrasLines = extrasKeys().stream()
                 .filter(line -> line.contains("env." + key + "="))
                 .toList();
-        assertThat(extrasLines).as("extras anonymous-read declarations").hasSize(1);
+        assertThat(extrasLines).as("extras anonymous-read declarations").isEmpty();
 
-        // The VALUE, parsed rather than matched: the seed file quotes it, the extras file does not,
-        // and what matters is the token, which is one label and not three.
-        String seedValue = composeLines.get(0)
-                .substring((key + ":").length()).strip().replace("\"", "");
-        String extrasValue = extrasLines.get(0)
-                .substring(extrasLines.get(0).indexOf("env." + key + "=") + ("env." + key + "=").length())
-                .strip();
-        assertThat(seedValue).isEqualTo("landing");
-        assertThat(extrasValue).isEqualTo("landing");
-        assertThat(seedValue).doesNotContain("registry").doesNotContain("mirror");
-        assertThat(extrasValue).doesNotContain("registry").doesNotContain("mirror");
+        // In particular, no KEY LINE — never a comment — names the key with any of the three labels
+        // the flip and the landing exemption ever touched. Asked of key lines only, the same
+        // discipline as above, so a comment explaining the absence cannot trip this assertion.
+        assertThat(compose.lines().map(String::strip)
+                .filter(line -> line.startsWith(key + ":")))
+                .noneMatch(line -> line.contains("landing") || line.contains("registry")
+                        || line.contains("mirror"));
+        assertThat(extras.lines().map(String::strip)
+                .filter(line -> line.contains("env." + key + "=")))
+                .noneMatch(line -> line.contains("landing") || line.contains("registry")
+                        || line.contains("mirror"));
 
         // The deployer authenticates its own pull AND serialises the credential into every service
         // spec it creates. Spelled in the seed too: that deployer pulls before it reads any extras.
