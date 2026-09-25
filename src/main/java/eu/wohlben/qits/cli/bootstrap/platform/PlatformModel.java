@@ -687,15 +687,15 @@ public final class PlatformModel {
             // platform-idp is qits-idp-platform-service. The deployer, the bus and the
             // configuration store say no plane at all on the application side and never will —
             // that is what PLATFORM_SERVICES is for.
-            Map.entry("platform-edge", "qits-edge-platform-service"),
-            Map.entry("platform-idp", "qits-idp-platform-service"),
-            Map.entry("platform-maintenance", "qits-maintenance-platform-service"),
-            Map.entry("platform-mirror", "qits-mirror-platform-service"),
-            Map.entry("platform-orchestrator", "qits-orchestrator-platform-service"),
-            Map.entry("platform-system", "qits-system-platform-service"),
-            Map.entry("configuration", "qits-configuration-platform-service"),
-            Map.entry("deployments", "qits-deployments-platform-service"),
-            Map.entry("events", "qits-events-platform-service"),
+            Map.entry("platform-edge", "qits-edge-service"),
+            Map.entry("platform-idp", "qits-idp-service"),
+            Map.entry("platform-maintenance", "qits-maintenance-service"),
+            Map.entry("platform-mirror", "qits-mirror-service"),
+            Map.entry("platform-orchestrator", "qits-orchestrator-service"),
+            Map.entry("platform-system", "qits-system-service"),
+            Map.entry("configuration", "qits-configuration-service"),
+            Map.entry("deployments", "qits-deployments-service"),
+            Map.entry("events", "qits-events-service"),
 
             // The frontends. Both old spellings collapse into one: a client's repository takes its
             // SERVICE's component and plane, whether the model spelled it spa-<x> or
@@ -710,14 +710,14 @@ public final class PlatformModel {
             Map.entry("spa-observability", "qits-observability-frontend"),
             Map.entry("spa-projects", "qits-projects-frontend"),
             Map.entry("spa-workspaces", "qits-workspaces-frontend"),
-            Map.entry("spa-configuration", "qits-configuration-platform-frontend"),
-            Map.entry("spa-deployments", "qits-deployments-platform-frontend"),
-            Map.entry("spa-events", "qits-events-platform-frontend"),
-            Map.entry("platform-spa-idp", "qits-idp-platform-frontend"),
-            Map.entry("platform-spa-maintenance", "qits-maintenance-platform-frontend"),
-            Map.entry("platform-spa-mirror", "qits-mirror-platform-frontend"),
-            Map.entry("platform-spa-orchestrator", "qits-orchestrator-platform-frontend"),
-            Map.entry("platform-spa-system", "qits-system-platform-frontend"));
+            Map.entry("spa-configuration", "qits-configuration-frontend"),
+            Map.entry("spa-deployments", "qits-deployments-frontend"),
+            Map.entry("spa-events", "qits-events-frontend"),
+            Map.entry("platform-spa-idp", "qits-idp-frontend"),
+            Map.entry("platform-spa-maintenance", "qits-maintenance-frontend"),
+            Map.entry("platform-spa-mirror", "qits-mirror-frontend"),
+            Map.entry("platform-spa-orchestrator", "qits-orchestrator-frontend"),
+            Map.entry("platform-spa-system", "qits-system-frontend"));
 
     /**
      * <b>The repository this name is hosted and checked out as</b> — the git-host repository, the

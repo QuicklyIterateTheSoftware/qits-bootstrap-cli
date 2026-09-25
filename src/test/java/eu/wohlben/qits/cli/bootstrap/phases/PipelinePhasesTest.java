@@ -1183,10 +1183,10 @@ class PipelinePhasesTest {
 
         String minted = boot.storageId("events");
 
-        assertThat(minted).matches("[0-9a-f-]{36}").isNotEqualTo("qits-events-platform-service");
+        assertThat(minted).matches("[0-9a-f-]{36}").isNotEqualTo("qits-events-service");
         assertThat(boot.storageId("events")).isEqualTo(minted);
         assertThat(boot.state.repositoryIds)
-                .containsEntry("qits-events-platform-service", minted);
+                .containsEntry("qits-events-service", minted);
         // And two repositories never share one, which a name-shaped id could not have got wrong.
         assertThat(boot.storageId("ci")).isNotEqualTo(minted);
     }

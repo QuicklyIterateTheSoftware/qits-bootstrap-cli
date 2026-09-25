@@ -19,15 +19,15 @@ class PlatformModelTest {
         // every line below moved with the phase-2 renames. A wrong path here used to fall back to
         // GitHub in silence; the sources phase fails on it now.
         assertThat(PlatformModel.repoPath("deployments"))
-                .isEqualTo("services/qits-deployments-platform-service");
+                .isEqualTo("services/qits-deployments-service");
         assertThat(PlatformModel.repoPath("artifacts"))
                 .isEqualTo("services/qits-artifacts-service");
         assertThat(PlatformModel.repoPath("platform-idp"))
-                .isEqualTo("services/qits-idp-platform-service");
+                .isEqualTo("services/qits-idp-service");
         assertThat(PlatformModel.repoPath("platform-edge"))
-                .isEqualTo("services/qits-edge-platform-service");
+                .isEqualTo("services/qits-edge-service");
         assertThat(PlatformModel.repoPath("spa-deployments"))
-                .isEqualTo("frontends/qits-deployments-platform-frontend");
+                .isEqualTo("frontends/qits-deployments-frontend");
         assertThat(PlatformModel.repoPath("spa-artifacts"))
                 .isEqualTo("frontends/qits-artifacts-frontend");
         // The byte plane's own, each in the directory its ROLE puts it in: one library and two
@@ -35,7 +35,7 @@ class PlatformModelTest {
         assertThat(PlatformModel.repoPath("registries"))
                 .isEqualTo("libs/qits-registries-javalib");
         assertThat(PlatformModel.repoPath("platform-mirror"))
-                .isEqualTo("services/qits-mirror-platform-service");
+                .isEqualTo("services/qits-mirror-service");
         assertThat(PlatformModel.repoPath("githost")).isEqualTo("services/qits-githost-service");
         assertThat(PlatformModel.repoPath("docs")).isEqualTo("services/qits-docs-service");
         // The container orchestrator: a service, so services/ and docker/Dockerfile, and its wire
@@ -53,7 +53,7 @@ class PlatformModelTest {
         assertThat(PlatformModel.repoPath("spa-githost"))
                 .isEqualTo("frontends/qits-githost-frontend");
         assertThat(PlatformModel.repoPath("platform-spa-mirror"))
-                .isEqualTo("frontends/qits-mirror-platform-frontend");
+                .isEqualTo("frontends/qits-mirror-frontend");
 
         assertThat(PlatformModel.repoPath("ci-daemon")).isEqualTo("daemons/qits-ci-daemon");
         // The two daemons that joined the replay set on 2026-08-10. The default arm would clone
@@ -123,17 +123,17 @@ class PlatformModelTest {
 
         // A PLATFORM service, where the plane changes sides: the repository carries it as a
         // modifier before the role, the application keeps the prefix it has always answered to.
-        assertThat(PlatformModel.repo("platform-idp")).isEqualTo("qits-idp-platform-service");
+        assertThat(PlatformModel.repo("platform-idp")).isEqualTo("qits-idp-service");
         assertThat(PlatformModel.application("platform-idp")).isEqualTo("qits-platform-idp");
         assertThat(PlatformModel.wireAlias("platform-idp", "dev")).isEqualTo("qits-platform-idp");
 
         // The deployer and the bus say no plane at all on the application side and never will —
         // PLATFORM_SERVICES is the authority, not the spelling — while their repositories do.
-        assertThat(PlatformModel.repo("events")).isEqualTo("qits-events-platform-service");
+        assertThat(PlatformModel.repo("events")).isEqualTo("qits-events-service");
         assertThat(PlatformModel.application("events")).isEqualTo("qits-events");
         assertThat(PlatformModel.wireAlias("events", "dev")).isEqualTo("qits-events");
         assertThat(PlatformModel.repo("deployments"))
-                .isEqualTo("qits-deployments-platform-service");
+                .isEqualTo("qits-deployments-service");
         assertThat(PlatformModel.application("deployments")).isEqualTo("qits-deployments");
         assertThat(PlatformModel.wireAlias("deployments", "dev")).isEqualTo("qits-deployments");
     }
@@ -228,32 +228,32 @@ class PlatformModelTest {
         expected.put("stt", "qits-stt-service");
         expected.put("workspaces", "qits-workspaces-service");
         // The platform tier's, plane as a modifier before the role.
-        expected.put("configuration", "qits-configuration-platform-service");
-        expected.put("deployments", "qits-deployments-platform-service");
-        expected.put("events", "qits-events-platform-service");
-        expected.put("platform-edge", "qits-edge-platform-service");
-        expected.put("platform-idp", "qits-idp-platform-service");
-        expected.put("platform-maintenance", "qits-maintenance-platform-service");
-        expected.put("platform-mirror", "qits-mirror-platform-service");
-        expected.put("platform-orchestrator", "qits-orchestrator-platform-service");
-        expected.put("platform-system", "qits-system-platform-service");
+        expected.put("configuration", "qits-configuration-service");
+        expected.put("deployments", "qits-deployments-service");
+        expected.put("events", "qits-events-service");
+        expected.put("platform-edge", "qits-edge-service");
+        expected.put("platform-idp", "qits-idp-service");
+        expected.put("platform-maintenance", "qits-maintenance-service");
+        expected.put("platform-mirror", "qits-mirror-service");
+        expected.put("platform-orchestrator", "qits-orchestrator-service");
+        expected.put("platform-system", "qits-system-service");
         // The frontends. Both model spellings collapse into one grammar: a client takes its
         // service's component and plane.
         expected.put("spa-artifacts", "qits-artifacts-frontend");
         expected.put("spa-ci", "qits-ci-frontend");
-        expected.put("spa-configuration", "qits-configuration-platform-frontend");
-        expected.put("spa-deployments", "qits-deployments-platform-frontend");
+        expected.put("spa-configuration", "qits-configuration-frontend");
+        expected.put("spa-deployments", "qits-deployments-frontend");
         expected.put("spa-docs", "qits-docs-frontend");
-        expected.put("spa-events", "qits-events-platform-frontend");
+        expected.put("spa-events", "qits-events-frontend");
         expected.put("spa-githost", "qits-githost-frontend");
         expected.put("spa-observability", "qits-observability-frontend");
         expected.put("spa-projects", "qits-projects-frontend");
         expected.put("spa-workspaces", "qits-workspaces-frontend");
-        expected.put("platform-spa-idp", "qits-idp-platform-frontend");
-        expected.put("platform-spa-maintenance", "qits-maintenance-platform-frontend");
-        expected.put("platform-spa-mirror", "qits-mirror-platform-frontend");
-        expected.put("platform-spa-orchestrator", "qits-orchestrator-platform-frontend");
-        expected.put("platform-spa-system", "qits-system-platform-frontend");
+        expected.put("platform-spa-idp", "qits-idp-frontend");
+        expected.put("platform-spa-maintenance", "qits-maintenance-frontend");
+        expected.put("platform-spa-mirror", "qits-mirror-frontend");
+        expected.put("platform-spa-orchestrator", "qits-orchestrator-frontend");
+        expected.put("platform-spa-system", "qits-system-frontend");
         // The libraries and the image builds, renamed on 2026-08-30.
         expected.put("eventstream", "qits-eventstream-javalib");
         expected.put("integrations-angular", "qits-integrations-angular-jslib");
@@ -417,7 +417,7 @@ class PlatformModelTest {
                 "components/qits-ui-components/qits-ui-components-jslib")).isEqualTo("LIBRARY");
         // The platform tier is a modifier before the role, so the suffix still decides.
         assertThat(PlatformModel.archetype("idp-platform-service",
-                "components/qits-idp/qits-idp-platform-service")).isEqualTo("SERVICE");
+                "components/qits-idp/qits-idp-service")).isEqualTo("SERVICE");
     }
 
     /**
@@ -802,7 +802,7 @@ class PlatformModelTest {
         // leaf carries the plane as a modifier now, while the directory is still the ROLE's —
         // services/, exactly as the deployer's and the bus's are.
         assertThat(PlatformModel.repoPath("configuration"))
-                .isEqualTo("services/qits-configuration-platform-service");
+                .isEqualTo("services/qits-configuration-service");
     }
 
     /**
@@ -846,9 +846,9 @@ class PlatformModelTest {
         // A service and its client, each in the directory its ROLE puts it in, and the Dockerfile
         // where every service keeps one.
         assertThat(PlatformModel.repoPath("platform-orchestrator"))
-                .isEqualTo("services/qits-orchestrator-platform-service");
+                .isEqualTo("services/qits-orchestrator-service");
         assertThat(PlatformModel.repoPath("platform-spa-orchestrator"))
-                .isEqualTo("frontends/qits-orchestrator-platform-frontend");
+                .isEqualTo("frontends/qits-orchestrator-frontend");
         assertThat(PlatformModel.dockerfilePath("platform-orchestrator"))
                 .isEqualTo("docker/Dockerfile");
         // Published whole: it has no module a consumer resolves.
@@ -908,9 +908,9 @@ class PlatformModelTest {
                 .isEqualTo("qits-pd-qits-platform-maintenance-");
         // A service and its client, each in the directory its ROLE puts it in.
         assertThat(PlatformModel.repoPath("platform-maintenance"))
-                .isEqualTo("services/qits-maintenance-platform-service");
+                .isEqualTo("services/qits-maintenance-service");
         assertThat(PlatformModel.repoPath("platform-spa-maintenance"))
-                .isEqualTo("frontends/qits-maintenance-platform-frontend");
+                .isEqualTo("frontends/qits-maintenance-frontend");
         assertThat(PlatformModel.archetype("platform-maintenance")).isEqualTo("SERVICE");
         assertThat(PlatformModel.archetype("platform-spa-maintenance")).isEqualTo("FRONTEND");
         assertThat(PlatformModel.dockerfilePath("platform-maintenance"))
@@ -972,9 +972,9 @@ class PlatformModelTest {
                 .isEqualTo("qits-pd-qits-platform-system-");
         // A service and its console, each in the directory its ROLE puts it in.
         assertThat(PlatformModel.repoPath("platform-system"))
-                .isEqualTo("services/qits-system-platform-service");
+                .isEqualTo("services/qits-system-service");
         assertThat(PlatformModel.repoPath("platform-spa-system"))
-                .isEqualTo("frontends/qits-system-platform-frontend");
+                .isEqualTo("frontends/qits-system-frontend");
         assertThat(PlatformModel.archetype("platform-system")).isEqualTo("SERVICE");
         assertThat(PlatformModel.archetype("platform-spa-system")).isEqualTo("FRONTEND");
         assertThat(PlatformModel.dockerfilePath("platform-system")).isEqualTo("docker/Dockerfile");
