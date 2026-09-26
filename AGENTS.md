@@ -418,6 +418,29 @@ forced. Add to that list rather than deviating quietly.
   and its rows land under one: its own first self-deploy finds nothing, reconciles instead, and
   rotates the database passwords this bootstrap issued, mid-boot. The line is a
   `${TIER_ENV_<APP>}` fragment that renders empty for the platform plane — never spelled by hand.
+- **`QITS_DOMAIN` IS STATED ONCE AND NEVER FANNED OUT — and it has TWO WRITERS.** The seed stack
+  states it to **every seed service** the bootstrap starts (all but the upstream postgres image,
+  which is no qits application); **qits-deployments** reads it into
+  `qits.deployments.platform-domain` and writes it into every container it deploys thereafter,
+  beside `QITS_ENVIRONMENT`. Both halves are needed because on the seed stack qits-deployments is
+  not the deployer, this program is — and the failure is silent, not loud: `qits.edge.domain`
+  defaults to `localhost`, so a seed edge told nothing reads every name one tier out. The deployer
+  is the only application whose EXTRAS name the variable, because nothing propagates to the
+  propagator. Every service derives its own browser names, origins, allow-lists, cookie domain and
+  passkey rp id from it. **Never add a
+  composed hostname to a generated file again**, whatever it is for. Eight keys used to be there —
+  the edge's `QITS_EDGE_SESSIONS_CANONICAL_ORIGIN` and `_BROWSER_HOSTS`, the idp's
+  `QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN`, `_BROWSER_HOSTS` and `_COOKIE_DOMAIN`, its
+  `QITS_IDP_WEBAUTHN_RP_ID` and `_ORIGINS`, and `QITS_EDGE_ACME_DOMAIN` — every one the same
+  stated domain read a different way, and each free to go stale alone. Two did: the edge's
+  return-host list and the idp's drifted apart and sign-in broke on the live platform. Like the
+  tier line it is a fragment (`${DEPLOYMENTS_DOMAIN}`, `${DEPLOYMENTS_DOMAIN_ARGS}` from
+  `DomainTokens`) and renders NOTHING where no domain is stated — the deployer withholds the
+  variable rather than writing an empty one, and a file that stated emptiness would disagree with
+  it. What still spells a browser name is the CLOSING REPORT — `publicOrigin`, `idpOrigin`,
+  `envAuthority`, `projectAuthority`, `webauthnRpId`, `browserSsoCookieDomain` on
+  `BootstrapConfig` — and that is the whole of what those accessors are for now. Telling a person
+  where to go is not configuring a service.
 - **A source this program cannot trust stops the boot.** It decides which sha the whole platform is
   built from, so a wrapper path that is not a checkout and a refresh that will not fast-forward are
   both failures, not log lines. What is ABSENT is a different question and has a different answer:

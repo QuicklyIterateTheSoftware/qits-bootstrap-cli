@@ -688,50 +688,46 @@ class SeedPhasesTest {
         // And the id beside it is the WIRE ALIAS, which the model already answers: there is no
         // second token for it, because a second spelling could not follow a plane change.
         assertThat(tokens).containsEntry("ALIAS_EDGE", "prod-qits-edge");
-        // The passkey binding travels in the same map. Locally the rp id is the PROJECT's door,
-        // which parents the idp's own host either way the supportsEnvironments flag stands.
-        assertThat(tokens).containsEntry("WEBAUTHN_RP_ID", "qits.localhost")
-                .containsEntry("WEBAUTHN_ORIGINS", "http://idp.prod.qits.localhost:8080");
-        // And the session travels with it: the door, the login host, the allow-list and the shared
-        // parent. The door and the login host are NOT the same name, and the local door is the
-        // BARE APEX — with ACME off the edge reads the stated domain out of it.
-        assertThat(tokens).containsEntry("PUBLIC_ORIGIN", "http://localhost:8080")
-                .containsEntry("IDP_ORIGIN", "http://idp.prod.qits.localhost:8080")
-                .containsEntry("BROWSER_HOSTS", "localhost:8080,qits.localhost:8080,"
-                        + "*.qits.localhost:8080,*.prod.qits.localhost:8080")
-                .containsEntry("SESSION_COOKIE_DOMAIN", "qits.localhost");
+        // AND NO BROWSER NAME TRAVELS WITH IT ANY MORE. Six tokens did — the door, the login host,
+        // the return-host allow-list, the cookie domain, the rp id and the ceremony's origins — and
+        // they were the fan-out itself: six readings of the ONE domain this run is told, rendered
+        // into two files where each could go stale on its own. Two did, and sign-in broke. The
+        // domain is rendered once, for qits-deployments, which propagates it as QITS_DOMAIN.
+        assertThat(tokens).doesNotContainKeys("WEBAUTHN_RP_ID", "WEBAUTHN_ORIGINS",
+                "PUBLIC_ORIGIN", "IDP_ORIGIN", "BROWSER_HOSTS", "SESSION_COOKIE_DOMAIN");
+        // A local platform has no domain, so the deployer's fragment is empty too.
+        assertThat(tokens).containsEntry("SEED_DOMAIN", "")
+                .containsEntry("DEPLOYMENTS_DOMAIN_ARGS", "");
     }
 
     /**
-     * <b>A domain platform's door is this platform's own PROJECT door, {@code qits.<domain>}</b>,
-     * and its login host is {@code idp.} of the environment's door inside that project. Names are
-     * read right to left now — {@code <app>[.<env>].<project>.<domain>} — and the project label is
-     * mandatory, so the bare apex composes no application name at all: pointed there, the edge
-     * answers an honest 404 instead of a front door.
+     * <b>A DOMAIN PLATFORM RENDERS ITS DOMAIN ONCE, AND AS THE BARE DOMAIN.</b> Every browser name
+     * this platform serves is derived from it — the door {@code qits.<domain>}, the login host
+     * {@code idp.<env>.qits.<domain>}, the return-host list, the cookie domain and the passkey rp
+     * id — and the derivation belongs to the service that serves the name, not to this run. So the
+     * one thing a token carries is the value the owner stated, for qits-deployments, which puts it
+     * in every container it deploys.
      * <p>
-     * <b>The rp id does NOT move with it.</b> A passkey is bound to the rp id and asserts on it and
-     * its children, so the bare apex covers {@code idp.<env>.qits.<domain>} exactly as it covered
-     * {@code idp.<domain>} — and changing it would invalidate every passkey this platform ever
-     * registered.
+     * <b>This is what the sign-in break bought.</b> The edge's allow-list and the idp's were
+     * composed separately here and drifted apart; nothing composed separately can drift when there
+     * is only one value.
      */
     @Test
-    void aDomainPlatformsDoorIsItsProjectDoorAndItsLoginHostIsInside() {
+    void aDomainPlatformStatesItsDomainOnceForTheDeployerToPropagate() {
         Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev",
                 "QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7")),
                 new RunLog(temp.resolve("run.log")));
 
         Map<String, String> tokens = new SeedPhases(boot).tokens();
 
-        assertThat(tokens).containsEntry("PUBLIC_ORIGIN", "https://qits.qits-dev.eu")
-                .containsEntry("IDP_ORIGIN", "https://idp.dev.qits.qits-dev.eu")
-                .containsEntry("WEBAUTHN_ORIGINS", "https://idp.dev.qits.qits-dev.eu")
-                // The rp id stays the apex: a credential asserts on it and every label under it.
-                .containsEntry("WEBAUTHN_RP_ID", "qits-dev.eu");
-        // BOTH DEPTHS OF THE PROJECT, because supportsEnvironments is live data this file is
-        // written long before: the applications sit under the environment's door today and under
-        // the project's the moment the flag flips. No entry of its own is needed for the idp host.
-        assertThat(tokens).containsEntry("BROWSER_HOSTS", "qits.qits-dev.eu,*.qits.qits-dev.eu,"
-                + "*.dev.qits.qits-dev.eu");
+        // The BARE domain, in both files. Not a door, not an origin, not an authority with a port:
+        // the derivations are the consuming services' and each needs the unqualified value.
+        assertThat(tokens.get("SEED_DOMAIN")).contains("QITS_DOMAIN: qits-dev.eu");
+        assertThat(tokens.get("DEPLOYMENTS_DOMAIN_ARGS")).contains(
+                "qits.deployments.extras.qits-deployments.env.QITS_DOMAIN=qits-dev.eu");
+        // And no composed spelling beside it, on a domain platform least of all.
+        assertThat(tokens).doesNotContainKeys("WEBAUTHN_RP_ID", "WEBAUTHN_ORIGINS",
+                "PUBLIC_ORIGIN", "IDP_ORIGIN", "BROWSER_HOSTS", "SESSION_COOKIE_DOMAIN");
     }
 
     @Test

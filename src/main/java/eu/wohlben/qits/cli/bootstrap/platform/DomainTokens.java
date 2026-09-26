@@ -70,15 +70,72 @@ public final class DomainTokens {
         values.put("LETSENCRYPT_VOLUME", domain.map(ignored -> letsEncryptVolume(secret)).orElse(""));
         values.put("EDGE_SEED_TLS_PORTS", domain.isPresent() ? EDGE_TLS_PORTS : "");
         values.put("EDGE_TLS",
-                domain.map(value -> edgeTls(value, mode, email, secret, additional)).orElse(""));
+                domain.map(value -> edgeTls(mode, email, secret, additional)).orElse(""));
         values.put("EDGE_TLS_NOTE", domain.isPresent() ? EDGE_TLS_NOTE : "");
         values.put("EDGE_TLS_ARGS", domain
-                .map(value -> edgeTlsArgs(value, mode, email, hetznerToken, additional))
+                .map(value -> edgeTlsArgs(mode, email, hetznerToken, additional))
                 .orElse(""));
+        values.put("SEED_DOMAIN", domain.map(DomainTokens::seedDomain).orElse(""));
+        values.put("DEPLOYMENTS_DOMAIN_ARGS",
+                domain.map(DomainTokens::deploymentsDomain).orElse(""));
         return values;
     }
 
     private static final String EDGE = "qits.deployments.extras.qits-edge.";
+
+    private static final String DEPLOYMENTS = "qits.deployments.extras.qits-deployments.";
+
+    /**
+     * <b>THE STATED DOMAIN, ON EVERY SEED SERVICE THE BOOTSTRAP STARTS ITSELF.</b>
+     * <p>
+     * <b>{@code QITS_DOMAIN} has TWO writers, and that is the same shape {@code QITS_ENVIRONMENT}
+     * has.</b> qits-deployments writes it into every container IT deploys — but the seed stack is
+     * the half where qits-deployments is not the deployer, this program is, so a seed container is
+     * told by whoever started it. Leaving the seed services out would be a deployed estate that
+     * knows its domain and a boot that does not: the seed edge is the provable break, because
+     * {@code qits.edge.domain} defaults to {@code localhost} and an edge that believes the domain
+     * is {@code localhost} reads every name it serves one tier out and orders a certificate for
+     * nothing.
+     * <p>
+     * <b>It is pasted on every seed service rather than on the two that read it today</b>, for the
+     * reason the deployer writes it for every service: a value each consumer DERIVES from is not a
+     * per-service setting, and a service that starts deriving tomorrow should need no edit here.
+     * The one seed container that does not get it is the upstream postgres image, which is not a
+     * qits application at all — the same reason it carries no observability url and no tier.
+     * <p>
+     * <b>Absent, never empty, where no domain is stated</b> — the deployer's own guard, one word
+     * further on. A consumer that finds nothing falls back to the default it ships; a consumer
+     * handed {@code QITS_DOMAIN=} has been told that the domain is the empty string and composes
+     * nonsense out of it.
+     */
+    private static String seedDomain(String domain) {
+        return "\n"
+            + "      # THE PLATFORM'S DOMAIN, STATED ONCE AND DERIVED FROM EVERYWHERE — origins,\n"
+            + "      # allow-lists, cookie parent, rp id, ACME domain, each worked out by the\n"
+            + "      # service itself. TWO WRITERS, like QITS_ENVIRONMENT: qits-deployments writes\n"
+            + "      # it into every container it deploys, and this file writes it for the seed\n"
+            + "      # services, which start before any deployer exists.\n"
+            + "      QITS_DOMAIN: " + domain;
+    }
+
+    /**
+     * The same fact on the deployer's EXTRAS, which is the one place it has to be restated.
+     * <p>
+     * qits-deployments reads it as {@code qits.deployments.platform-domain} and propagates it, so it
+     * is the one application whose own extras must carry it: nothing propagates to the propagator,
+     * and a self-update's successor is started from these lines alone. No other application's
+     * extras name it — being handed it by the deployer is the whole point.
+     */
+    private static String deploymentsDomain(String domain) {
+        return "\n"
+            + "# WHAT THE DEPLOYER PROPAGATES, and the one extras block that has to state it. This\n"
+            + "# service reads it as qits.deployments.platform-domain and writes QITS_DOMAIN into\n"
+            + "# every container it deploys, beside QITS_ENVIRONMENT — so every other application\n"
+            + "# is HANDED the domain and none of their blocks name it. Nothing propagates to the\n"
+            + "# propagator, and a self-update's successor is started from these lines alone, so\n"
+            + "# the deployer's own copy has to live here as well as on the seed stack.\n"
+            + DEPLOYMENTS + "env.QITS_DOMAIN=" + domain;
+    }
 
     private static String letsEncryptVolume(String secretName) {
         return "\n"
@@ -130,7 +187,7 @@ public final class DomainTokens {
                 : "\n" + prefix + "QITS_EDGE_ACME_ADDITIONAL_NAMES" + separator + names;
     }
 
-    private static String edgeTls(String domain, String mode, String email, String secretName,
+    private static String edgeTls(String mode, String email, String secretName,
             String additionalNames) {
         return "\n"
             + "      # WHERE THE CERTIFICATE IS READ FROM, and the whole of what wakes the image's\n"
@@ -147,7 +204,6 @@ public final class DomainTokens {
             + "      QUARKUS_TLS_RELOAD_PERIOD: 1m\n"
             + "      QITS_EDGE_ACME_ENABLED: \"true\"\n"
             + "      QITS_EDGE_ACME_MODE: " + mode + "\n"
-            + "      QITS_EDGE_ACME_DOMAIN: " + domain + "\n"
             + "      QITS_EDGE_ACME_EMAIL: " + email + "\n"
             + "      QITS_EDGE_ACME_HETZNER_TOKEN_FILE: /run/secrets/qits-dns-hetzner-token"
             + acmeAdditionalNames(additionalNames, "      ", ": ") + "\n"
@@ -185,7 +241,7 @@ public final class DomainTokens {
      * service — the deployer has no swarm-secret support, and the edge's own deployments.yml
      * declares none.
      */
-    private static String edgeTlsArgs(String domain, String mode, String email, String hetznerToken,
+    private static String edgeTlsArgs(String mode, String email, String hetznerToken,
             String additionalNames) {
         return "\n" + EDGE + "publishes[1]=443:8443"
                     + "\n" + EDGE + "mounts[0]=volume:qits-edge-letsencrypt:/work/.letsencrypt"
@@ -196,7 +252,6 @@ public final class DomainTokens {
                     + "\n" + EDGE + "env.QUARKUS_TLS_RELOAD_PERIOD=1m"
                     + "\n" + EDGE + "env.QITS_EDGE_ACME_ENABLED=true"
                     + "\n" + EDGE + "env.QITS_EDGE_ACME_MODE=" + mode
-                    + "\n" + EDGE + "env.QITS_EDGE_ACME_DOMAIN=" + domain
                     + "\n" + EDGE + "env.QITS_EDGE_ACME_EMAIL=" + email
                     + "\n" + EDGE + "env.QITS_EDGE_ACME_HETZNER_TOKEN=" + hetznerToken
                     + acmeAdditionalNames(additionalNames, EDGE + "env.", "=");

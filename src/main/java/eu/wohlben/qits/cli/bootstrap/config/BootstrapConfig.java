@@ -712,10 +712,12 @@ public interface BootstrapConfig {
      * otherwise this method loses that label and every browser name below follows it, which is why
      * there is one method rather than a spelling per key.
      * <p>
-     * <b>The allow-list does not wait for that.</b> {@link #browserSsoHosts()} names both shapes on
-     * purpose, so a flag that flips under a running platform opens no hole and closes no door; the
-     * values that must move with the flag are {@link #idpOrigin()} and {@link #webauthnOrigins()},
-     * which name ONE host each and cannot hold two.
+     * <b>No SERVICE is configured from this any more, and that is what makes a flip cheap.</b> The
+     * allow-list and the ceremony's origins used to be derived here and rendered into the idp's and
+     * the edge's configuration, so a flag that flipped under a running platform left two files
+     * naming a depth the edge had stopped serving. Each service derives its own names from
+     * {@code QITS_DOMAIN} now. What is left of this here is the CLOSING REPORT: {@link
+     * #idpOrigin()} is where a person logs in, and it is one host, so it still spells the label.
      * <p>
      * Nothing has to resolve the local form: every {@code *.localhost} name answers loopback in
      * Chromium and Firefox, and on the host through nss-myhostname or systemd-resolved — no
@@ -812,54 +814,20 @@ public interface BootstrapConfig {
         return DomainName.of(this).orElse(PlatformModel.PROJECT + ".localhost");
     }
 
-    /**
-     * The origins a ceremony is accepted from — {@link #idpOrigin} and nothing else. It is a LIST on
-     * the idp's side and one entry here, because the login page has one address; it moves with
-     * {@link #envAuthority()} for that reason.
+    /*
+     * TWO METHODS USED TO SIT HERE AND THEY WERE THE FAN-OUT ITSELF: webauthnOrigins(), the
+     * ceremony's accepted origins, and browserSsoHosts(), the return-host allow-list. Both were
+     * derived here and rendered into the idp's and the edge's configuration as spelled-out values,
+     * which is the one thing this platform no longer does with the domain: it is stated once,
+     * qits-deployments propagates it as QITS_DOMAIN, and each service works its own names out.
+     * The allow-list was the value that drifted — the edge's copy and the idp's stopped agreeing
+     * and a person could not sign in — so it is deleted rather than moved.
+     *
+     * The accessors around them survive because the CLOSING REPORT reads them: publicOrigin(),
+     * idpOrigin(), envAuthority(), projectAuthority() and webauthnRpId() are what a person is told
+     * at the end of a boot, and browserSsoCookieDomain() is named in the same report. Telling a
+     * person where to go is not configuring a service.
      */
-    default String webauthnOrigins() {
-        return idpOrigin();
-    }
-
-    /**
-     * The browser authorities a completed IdP ceremony may return to, in this platform's own
-     * project: its door, {@code *.} of that door, and {@code *.} of its environment's door.
-     * <p>
-     * <b>It is an ALLOW-LIST and not a parent-suffix check</b>, which is why it names shapes rather
-     * than describing one. The edge and the idp both read a {@code *.} entry as exactly ONE extra
-     * label on the same port, so {@code *.<env>.qits.<domain>} admits
-     * {@code ci.<env>.qits.<domain>} and nothing deeper. That single wildcard is what makes ONE
-     * session cover every service, since each application has a browser host of its own.
-     * <p>
-     * <b>The canonical origin's own authority leads the list, because the edge refuses to start
-     * without it there.</b> With a domain that is the project door {@link #projectAuthority()};
-     * locally it is the bare apex, for the reason {@link #publicOrigin()} gives, and the project
-     * door is then named beside it.
-     * <p>
-     * <b>BOTH depths of the project are listed, and that is deliberate.</b> Whether an application
-     * of {@code qits} is {@code <app>.qits.<domain>} or {@code <app>.<env>.qits.<domain>} is the
-     * project's live {@code supportsEnvironments} flag, which this file is written long before and
-     * which may flip under a running platform. An allow-list entry for a name the edge does not
-     * serve admits nobody — there is no router here to confuse — so naming both costs nothing and
-     * means a flip never strands a person mid-login on a host the idp will not return them to.
-     * The {@code *.qits.<domain>} entry also covers the environment door itself,
-     * {@code <env>.qits.<domain>}, which is one label under the project's.
-     * <p>
-     * <b>The idp host needs no entry of its own.</b> {@link #idpOrigin()} is {@code idp.} of
-     * {@link #envAuthority()}, which a listed wildcard already admits: one extra label, same port.
-     * <p>
-     * <b>What is NOT on the list any more is the apex and {@code *.<domain>}.</b> The top-level
-     * {@code <env>.<domain>} tier and the unqualified application tier are gone from the grammar,
-     * so neither shape is a name the edge serves — and another project's names are another
-     * project's to allow, which is what an allow-list is for.
-     */
-    default String browserSsoHosts() {
-        String project = projectAuthority();
-        String environment = envAuthority();
-        return DomainName.of(this)
-                .map(domain -> project + ",*." + project + ",*." + environment)
-                .orElse(domainAuthority() + "," + project + ",*." + project + ",*." + environment);
-    }
 
     /**
      * The parent a session cookie is shared with: the domain where there is one —

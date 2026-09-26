@@ -259,29 +259,13 @@ public final class ComposeTemplate {
                   # may differ: discovery is addressed, validation is compared, and only the second
                   # one reads this line.
                   QITS_IDP_ISSUER: ${IDP}
-                  # THE IDP'S OWN HOST, not the door: the login page is an application of the
-                  # `qits` project like every other, at idp.<env>.qits.<domain> — or
-                  # idp.<env>.qits.localhost:<port> locally. A door serves nothing but a redirect
-                  # off /.
-                  #
-                  # EVERY NAME IS READ RIGHT TO LEFT, <app>[.<env>].<project>.<domain>, each label
-                  # inside the one to its right, and the PROJECT LABEL IS MANDATORY. There is no
-                  # unqualified application tier and no top-level <env>.<domain> tier: the platform
-                  # is simply the project called `qits`. Whether the env label is there at all is
-                  # that project's supportsEnvironments flag — it stands today, so these names
-                  # carry it.
-                  #
-                  # The return-host list is the project's door, *. of it and *. of the
-                  # environment's door — one wildcard is exactly one extra label on the same port,
-                  # which is what carries one session across every <app> host, the idp's own
-                  # included. Both depths are listed because the flag is live data and this file is
-                  # written long before it is read: an allow-list entry for a name the edge does
-                  # not serve admits nobody. The cookie is scoped to the parent every shape shares
-                  # — the domain, or qits.localhost locally, since bare localhost is a public
-                  # suffix and a cookie scoped to it is dropped.
-                  QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN: ${IDP_ORIGIN}
-                  QITS_IDP_BROWSER_SSO_BROWSER_HOSTS: "${BROWSER_HOSTS}"
-                  QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN: "${SESSION_COOKIE_DOMAIN}"
+                  # NO BROWSER NAMES HERE ANY MORE. The canonical origin, the return-host
+                  # allow-list and the cookie domain were composed in this file and handed to the
+                  # idp spelled out — three values derived from the one stated domain, each able to
+                  # go stale on its own. They did: this file's list and the edge's drifted apart
+                  # and sign-in broke. The domain is stated ONCE now, as QITS_DOMAIN at the foot
+                  # of this block, and the idp derives its own names from it under the same
+                  # right-to-left grammar everything else reads.
                   # THE ONE CLIENT THIS FILE STILL NAMES, AND IT IS THE BOOTSTRAP'S OWN. The idp
                   # seeds it into idp_service_client the first time it comes up on an empty store,
                   # and from that credential this program creates every other client against the
@@ -300,19 +284,11 @@ public final class ComposeTemplate {
                   # line here could only restate them, and a restatement is what drifts.
                   QITS_IDP_SEED_CLIENT_ID: "${BOOTSTRAP_CLIENT_ID}"
                   QITS_IDP_SEED_CLIENT_SECRET: "${BOOTSTRAP_CLIENT_SECRET}"
-                  # THE PASSKEY BINDING. A credential is bound to the rp id and asserts on that
-                  # host AND its children: the rp id is the domain where there is one, and
-                  # qits.localhost — the PROJECT's door — locally. The project's door rather than
-                  # the environment's on purpose: it is a parent of every name either way the
-                  # supportsEnvironments flag stands, so a flip cannot invalidate a passkey. The
-                  # origins are what the browser's ceremony is checked against, and that is the
-                  # idp's own host, a child of the rp id. Every *.localhost name is a secure
-                  # context by itself, so a passkey works there with no certificate; a raw IP is
-                  # not one, and from it only the password fallback logs in. A passkey registered
-                  # under an older local rp id — bare localhost, or <env>.localhost — asserts on
-                  # neither door and has to be registered again.
-                  QITS_IDP_WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID}
-                  QITS_IDP_WEBAUTHN_ORIGINS: "${WEBAUTHN_ORIGINS}"
+                  # NOR THE PASSKEY BINDING. The rp id and the ceremony's origins are the stated
+                  # domain read two more ways, so they are derived from QITS_DOMAIN beside the
+                  # browser names above rather than composed here. The binding itself has not
+                  # moved — a credential asserts on the rp id AND its children — and the closing
+                  # report is still what tells a person which host theirs is bound to.
                   # WHERE TELEMETRY GOES, and it has to be spelled in every service below. The
                   # images ship the bare qits-observability, and that name died with the
                   # 2026-08-08 rename: observability is an environment service, so its alias
@@ -320,7 +296,7 @@ public final class ComposeTemplate {
                   # every trace and every log AND retries, so the whole platform goes dark while
                   # each container fills its own log with the attempts — which is how it was found
                   # on the first prod bootstrap.
-                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}
                 # No volume: /data held the H2 and nothing else, and the image has no mount point for it
                 # any more.
                 #
@@ -440,32 +416,13 @@ public final class ComposeTemplate {
                   # so the session gate needs no pair of its own any more. It introspects with Basic
                   # and asks for no token, so there is no oidc-client here either.
                   QITS_EDGE_SESSIONS_ENABLED: "true"
-                  # THE EDGE'S CANONICAL ORIGIN IS A DOOR, AND IT IS THE PLATFORM PROJECT'S:
-                  # https://qits.<domain>. It was the bare apex, and the apex is not a name any
-                  # more — every application address carries a project label, so a canonical origin
-                  # that carries none leaves the edge nothing to compose and the door answers an
-                  # honest 404 instead of a redirect. The edge reads THIS VALUE by the same
-                  # right-to-left grammar as a request's own Host, and a name that names no project
-                  # falls back to it, so naming the project's door is what puts a front door back
-                  # on the apex.
-                  #
-                  # IT IS ALSO WHERE THE STATED DOMAIN COMES FROM WHERE ACME IS OFF — the grammar
-                  # is positional and the domain cannot be derived (example.co.uk is two labels,
-                  # localhost is one), so the edge takes it from qits.edge.acme.domain and, failing
-                  # that, from this authority. That is why the LOCAL value is the bare
-                  # http://localhost:<port> and not qits.localhost: the latter would make
-                  # qits.localhost the domain and every name would be read one tier out. With a
-                  # domain the two sources are independent and this names the door.
-                  #
-                  # A person may return to an authority on the list below or to any ONE label under
-                  # it, on the same port. That wildcard is what carries a session onto every <app>
-                  # host of this project: a service host serves that service's SPA as well as its
-                  # wire routes. Both depths are listed — *.qits.<domain> and *.<env>.qits.<domain>
-                  # — because which one an application sits at is the project's live
-                  # supportsEnvironments flag, and an allow-list entry for a name the edge does not
-                  # serve admits nobody.
-                  QITS_EDGE_SESSIONS_CANONICAL_ORIGIN: ${PUBLIC_ORIGIN}
-                  QITS_EDGE_SESSIONS_BROWSER_HOSTS: "${BROWSER_HOSTS}"
+                  # AND NEITHER THE CANONICAL ORIGIN NOR THE RETURN-HOST LIST IS SPELLED HERE.
+                  # Both are the stated domain read through the same right-to-left grammar the
+                  # edge already applies to a request's own Host, so composing them in this file
+                  # was one fact written out twice — and the second copy drifted from the idp's
+                  # until a person could not sign in. The edge derives them from QITS_DOMAIN, at
+                  # the foot of this block. It must be there: qits.edge.domain defaults to
+                  # `localhost`, so a seed edge told nothing reads every name one tier out.
                   # THE IDP CLIENT THIS SERVICE HOLDS, AND IT IS A RESOURCE LIKE A DATABASE IS.
                   # The `idp-clients` phase creates it against the RUNNING idp — after `seed-idp`
                   # brought that service up alone — and records the secret in qits-deployments'
@@ -489,7 +446,7 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_platform_edge_eventstream
                   QITS_RESOURCE_EVENTSTREAM_PASSWORD: "${PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD}"
                   QITS_EVENTS_URL: http://${DIAL_EVENTS}:8080
-                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${EDGE_TLS}
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}${EDGE_TLS}
                 networks:
                   # THE THREE VHOSTS ARE ALIASES OF THIS SERVICE, and the long form is here for
                   # nothing else. Docker's embedded DNS answers only the names it holds and
@@ -696,7 +653,7 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_IDP_CLIENT_ID: ${ALIAS_DEPLOYMENTS}
                   QITS_RESOURCE_IDP_CLIENT_SECRET: "${IDP_CLIENT_SECRET_DEPLOYMENTS}"
                   QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP_DIAL}
-                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}
                 volumes:
                   # No data volume any more: the store is the postgres above, and /data held the H2 files
                   # and nothing else. The config volume stays — it is the extras a self-update's
@@ -766,7 +723,7 @@ public final class ComposeTemplate {
                   # block.
                   QITS_AUTH_MACHINE_REQUIRED: "${MACHINE_REQUIRED}"
                   QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP_DIAL}
-                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}
                 networks: [qits-net]
                 deploy:
                   replicas: 1
@@ -809,7 +766,7 @@ public final class ComposeTemplate {
                   # AND THE CACHED BYTES ARE IN THERE TOO. There is no blobs directory and no volume:
                   # what this service pulled from upstream is rows in the same database, so the
                   # container is stateless and a cold start is the ordinary one anyway.
-                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}
                 # Both names, for the reason spelled on qits-idp's block above.
                 ${SEED_NETWORKS_MIRROR}
                 deploy:
@@ -907,7 +864,7 @@ public final class ComposeTemplate {
                   # that silently disarmed the seatbelt would be the quiet failure. The service ships it
                   # FALSE, because it is the git host that serves its own redeploy.
                   QITS_REPOSITORIES_GIT_PROTECT_DEFAULT_BRANCH: "true"
-                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}
                 networks: [qits-net]
                 deploy:
                   replicas: 1
@@ -1021,7 +978,7 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_IDP_URL: ${IDP_DIAL}
                   QITS_RESOURCE_IDP_CLIENT_ID: ${ALIAS_PROJECTS}
                   QITS_RESOURCE_IDP_CLIENT_SECRET: "${IDP_CLIENT_SECRET_PROJECTS}"
-                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}
                 # THE SAME VOLUME THE DEPLOYED CONTAINER GETS, and it is the only seed service that
                 # mounts one it shares with its successor. /data is not a database — it is the git
                 # mirrors this service clones and the credential file beside them — so a cutover
@@ -1202,7 +1159,7 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_IDP_URL: ${IDP_DIAL}
                   QITS_RESOURCE_IDP_CLIENT_ID: ${ALIAS_CI}
                   QITS_RESOURCE_IDP_CLIENT_SECRET: "${IDP_CLIENT_SECRET_CI}"
-                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}
                 # NO VOLUMES AT ALL, and there is nothing left to add. ci's /data held the H2 files,
                 # and before that a bare git mirror per repository — it reads pipeline config off the
                 # git host's content routes now. The daemon socket was the last mount and it is gone
@@ -1288,7 +1245,7 @@ public final class ComposeTemplate {
                   # deployer's was: gaining a credential must not be a redeploy of the one service
                   # that starts every workload on this host.
                   DOCKER_CONFIG: /work/config
-                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}
                 volumes:
                   # THE SOCKET. Starting containers is what this service is, so the mount is not a
                   # deployment's convenience but the whole component — and it is the one this
@@ -1339,7 +1296,7 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_DB_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_events
                   QITS_RESOURCE_DB_USERNAME: qits_events
                   QITS_RESOURCE_DB_PASSWORD: "${PG_EVENTS_PASSWORD}"
-                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}
                 # No volume: the store is the postgres above, /data held the H2 and nothing else, and the
                 # image has no mount point left for it.
                 #
@@ -1501,12 +1458,11 @@ public final class ComposeTemplate {
             # USER SESSIONS ARE ENFORCED on every application vhost; IdP routes remain the
             # protocol-required anonymous carve-out.
             #
-            # THE CANONICAL ORIGIN IS THIS PLATFORM'S PROJECT DOOR, https://qits.<domain>, and the
-            # bare apex locally. The seed block says why at length: the apex carries no project
-            # label, so an edge pointed at it composes no application name and the door 404s; and
-            # with ACME off this same value is where the STATED DOMAIN comes from, which is why the
-            # local half must stay the apex. The return-host list carries the project's door and a
-            # wildcard at both depths — one extra label each, same port.
+            # THE CANONICAL ORIGIN AND THE RETURN-HOST LIST ARE NOT HERE. They are the stated
+            # domain read by the edge's own right-to-left grammar, so this file composing them was
+            # the one fact written out a second time — and the second copy drifted from the idp's
+            # until sign-in broke. QITS_DOMAIN is what the edge derives them from, and
+            # qits-deployments writes it into every container it starts.
             #
             # NO CREDENTIAL HERE, AND THAT IS THE RULE THIS WHOLE FILE NOW KEEPS: identity is
             # created against the running idp and INJECTED by the deployer, as
@@ -1524,8 +1480,6 @@ public final class ComposeTemplate {
             # client id that does not exist, and fail its sessions with a 401 that points at a file
             # instead of at the missing idp:client declaration.
             qits.deployments.extras.qits-edge.env.QITS_EDGE_SESSIONS_ENABLED=true
-            qits.deployments.extras.qits-edge.env.QITS_EDGE_SESSIONS_CANONICAL_ORIGIN=${PUBLIC_ORIGIN}
-            qits.deployments.extras.qits-edge.env.QITS_EDGE_SESSIONS_BROWSER_HOSTS=${BROWSER_HOSTS}
             qits.deployments.extras.qits-edge.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080${EDGE_TLS_ARGS}
             # THE HOSTED HALF OF THE BYTE PLANE, and a stateless deployment: metadata and blob bytes are
             # both rows in qits_artifacts, so there is no mount and no /data left to give it.
@@ -1927,7 +1881,7 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-deployments.groups[0]=${DOCKER_GID}
             qits.deployments.extras.qits-deployments.env.QITS_RESOURCE_DB_URL=jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_deployments
             qits.deployments.extras.qits-deployments.env.QITS_RESOURCE_DB_USERNAME=qits_deployments
-            qits.deployments.extras.qits-deployments.env.QITS_RESOURCE_DB_PASSWORD=${PG_DEPLOYMENTS_PASSWORD}${TIER_ENV_EXTRAS_DEPLOYMENTS}
+            qits.deployments.extras.qits-deployments.env.QITS_RESOURCE_DB_PASSWORD=${PG_DEPLOYMENTS_PASSWORD}${TIER_ENV_EXTRAS_DEPLOYMENTS}${DEPLOYMENTS_DOMAIN_ARGS}
             # WHERE IT READS A DEPLOYMENT SPEC, as env since the demotion. It was a plain property of
             # this file, which worked only because the successor mounted the same volume and Quarkus read
             # it at boot — and that is exactly what "the file is unread after the flip" cannot mean. A
@@ -1991,23 +1945,13 @@ public final class ComposeTemplate {
             # its own step once every consumer discovers from the qualified address. The seed stack's
             # block says the same thing at more length.
             qits.deployments.extras.qits-idp.env.QITS_IDP_ISSUER=${IDP}
-            # Browser SSO is configured in both halves, and the canonical origins DIFFER. The idp
-            # is served on a host of its own — idp.<env>.qits.<domain>, an application of the
-            # `qits` project like every other — so its canonical origin is that host; the edge's is
-            # the PROJECT'S DOOR, qits.<domain>, which is what lets it compose application names at
-            # all under the right-to-left grammar. The return-host list is the same on both sides,
-            # and names both depths of the project because supportsEnvironments is live data.
-            qits.deployments.extras.qits-idp.env.QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN=${IDP_ORIGIN}
-            qits.deployments.extras.qits-idp.env.QITS_IDP_BROWSER_SSO_BROWSER_HOSTS=${BROWSER_HOSTS}
-            qits.deployments.extras.qits-idp.env.QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN=${SESSION_COOKIE_DOMAIN}
-            # The passkey binding, as on the seed block: the rp id is a HOST a credential is bound
-            # to (and every label under it) — the domain, or the project's door qits.localhost
-            # locally — and the origins are what a ceremony is checked against, which is the idp's
-            # own host. A credential bound to the parent asserts on the child, so the login sitting
-            # one project label deeper changed no binding on a domain platform; the LOCAL rp id did
-            # move, because <env>.localhost parents nothing the platform serves now.
-            qits.deployments.extras.qits-idp.env.QITS_IDP_WEBAUTHN_RP_ID=${WEBAUTHN_RP_ID}
-            qits.deployments.extras.qits-idp.env.QITS_IDP_WEBAUTHN_ORIGINS=${WEBAUTHN_ORIGINS}
+            # BROWSER SSO AND THE PASSKEY BINDING ARE DERIVED, NOT SPELLED. The canonical origin,
+            # the return-host allow-list, the cookie domain, the rp id and the ceremony's origins
+            # are five readings of ONE stated domain, and composing all five here put five values
+            # in this file that could go stale independently of each other and of the edge's
+            # copies. Two of them did. The idp reads QITS_DOMAIN — which qits-deployments injects
+            # into every container — and works its own names out under the same right-to-left
+            # grammar the edge applies to a request's Host.
             qits.deployments.extras.qits-idp.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             qits.deployments.extras.qits-stt.mounts[0]=volume:qits-stt-data:/data
             qits.deployments.extras.qits-stt.env.QITS_SPEECH_HOME=/data/speech

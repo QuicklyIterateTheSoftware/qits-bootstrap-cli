@@ -452,29 +452,46 @@ that, each measured on this host rather than assumed:
   prints the one-liner that asks for one. **The platform's postgres publishes nothing either**: its one consumer was this
   CLI's cold-boot DDL, which dials the wire alias on 5432 like everything else. An operator with a
   `psql` goes in through `docker exec`. No publish binds loopback — neither mode has an ip field.
-- **User sessions use canonical SSO, and one session covers every service host.** Both generated
-  formats seed the edge's own IdP client (`<env>-qits-edge`) and enable the session gate. They
-  configure the idp's one WebAuthn/login origin — its OWN host, an application of this platform's
-  project like any other: `https://idp.<env>.qits.<domain>` in domain mode,
-  `http://idp.<env>.qits.localhost:<port>` locally, because a door serves no `/idp/...` path — plus
-  the return-host allow-list. **The edge's canonical origin is this platform's PROJECT DOOR**,
-  `https://qits.<domain>`: names are read right to left and every application address carries a
-  project label, so an edge pointed at the bare apex composes no application name and the front door
-  404s. The LOCAL half stays the bare apex on purpose — with ACME off, the edge takes the stated
-  domain from this value's authority, so `qits.localhost` there would make `qits.localhost` the
-  domain and read every name one tier out. The allow-list names the project door and a wildcard in
-  front of each door under it (`qits.<domain>,*.qits.<domain>,*.<env>.qits.<domain>`), exactly one
-  extra label on the same port. **BOTH depths are listed on purpose**: whether an application of
-  `qits` is `<app>.qits.<domain>` or `<app>.<env>.qits.<domain>` is that project's live
-  `supportsEnvironments` flag, and an allow-list is not a router — an entry for a name the edge does
-  not serve admits nobody, so covering both means a flip never strands a person mid-login.
-  **The WebAuthn relying party does not move with any of this**: it is the bare apex, a credential
-  asserts on the rp id and its children, and changing it would invalidate every passkey. The cookie
-  is scoped to the parent both sides share — the domain, or `qits.localhost` locally, because bare
-  `localhost` is a public suffix and a cookie scoped to it is dropped. The edge strips that named
-  cookie before proxying to a machine's own routes. The boot mints the one-time token the first
-  account registers with, and a passkey made on an older local platform — rp id `localhost` or
-  `<env>.localhost` — asserts on neither door and has to be registered again.
+- **THE DOMAIN IS STATED ONCE, AND NO SERVICE IS HANDED A COMPOSED HOSTNAME.** Both generated
+  formats seed the edge's own IdP client (`<env>-qits-edge`) and enable the session gate — and that
+  is all they say about browser names. What they render instead is the domain itself, as
+  `QITS_DOMAIN`, and **that variable has two writers, exactly as `QITS_ENVIRONMENT` does**: the
+  bootstrap states it to every seed service it starts, and **qits-deployments** — which reads it
+  into `qits.deployments.platform-domain` — writes it into every container it deploys thereafter.
+  The seed half is not optional: on the seed stack qits-deployments is not the deployer, this
+  program is, and `qits.edge.domain` defaults to `localhost`, so a seed edge told nothing does not
+  fail loudly — it believes the domain is `localhost`, reads every name one tier out and orders a
+  certificate for nothing. The deployer additionally carries it in its own extras, because nothing
+  propagates to the propagator. Every other application's extras name it nowhere: being handed it
+  is the point. The upstream postgres image is the one seed container left out, for the same reason
+  it gets no observability url and no tier — it is not a qits application. With no domain the
+  variable is not rendered at all — **absent, never empty**, which is the deployer's own guard: a
+  consumer that finds nothing falls back to the default it ships, while one handed `QITS_DOMAIN=`
+  has been told the domain is the empty string and composes nonsense from it.
+
+  **Seven keys were retired to get there, and they are worth naming** because the estate has
+  qits-configuration entries holding their last values: `QITS_EDGE_SESSIONS_CANONICAL_ORIGIN`,
+  `QITS_EDGE_SESSIONS_BROWSER_HOSTS`, `QITS_IDP_BROWSER_SSO_CANONICAL_ORIGIN`,
+  `QITS_IDP_BROWSER_SSO_BROWSER_HOSTS`, `QITS_IDP_BROWSER_SSO_COOKIE_DOMAIN`,
+  `QITS_IDP_WEBAUTHN_RP_ID`, `QITS_IDP_WEBAUTHN_ORIGINS` — plus `QITS_EDGE_ACME_DOMAIN` from the
+  TLS fragments. A stored entry is only read when something asks for it, so once no service asks
+  the residue is inert and needs no migration. Every one of them was the SAME stated domain read a
+  different way, and that is the whole argument: seven values that could go stale independently.
+  Two of them did — the edge's return-host list and the idp's drifted apart and sign-in broke on
+  the live platform when the `qits` project became env-less.
+
+  **The derivations themselves have not changed, only where they happen.** Names are read right to
+  left, `<app>[.<env>].<project>.<domain>`; the edge's door is this platform's project door
+  `https://qits.<domain>`; the login is the idp's own host `idp.<env>.qits.<domain>`; the allow-list
+  is the project door and a wildcard in front of each door under it, at both depths, because
+  `supportsEnvironments` is live data and an allow-list is not a router; the cookie is scoped to
+  the parent both sides share; and the WebAuthn relying party stays the bare domain, since a
+  credential asserts on the rp id and its children and moving it would invalidate every passkey.
+  Each service now works that out from `QITS_DOMAIN` for itself. The edge still strips the session
+  cookie before proxying to a machine's own routes, the boot still mints the one-time token the
+  first account registers with, and the closing report still tells a person where to log in and
+  which host their passkey is bound to — those report values are the only place this CLI still
+  spells a browser name, and telling a person is not configuring a service.
 - **A rerun deploys a SUBSET by leaving services out of the file**, because `docker stack deploy`
   takes no service list. Nothing is pruned — what the file omits is the deployer's — and a seed
   service whose application the deployer has taken over is removed outright: swarm restarts a task

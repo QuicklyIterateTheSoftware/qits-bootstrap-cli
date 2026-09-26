@@ -40,8 +40,7 @@ class DomainTokensTest {
         // The rest of the wiring is unchanged: without any of it a cutover takes 443 away.
         assertThat(extras).contains("publishes[1]=443:8443")
                 .contains("mounts[0]=volume:qits-edge-letsencrypt:/work/.letsencrypt")
-                .contains("env.QITS_EDGE_ACME_MODE=staging")
-                .contains("env.QITS_EDGE_ACME_DOMAIN=wohlben.dev");
+                .contains("env.QITS_EDGE_ACME_MODE=staging");
     }
 
     /** The seed edge keeps the swarm secret and the file form: it is a stack service, and can. */
@@ -92,21 +91,45 @@ class DomainTokensTest {
     }
 
     /**
-     * <b>THE DOMAIN IS STATED FOR THE ROUTING, not only for the order.</b> The edge reads every
-     * name it serves right to left against a domain it cannot derive — {@code example.co.uk} is
-     * two labels and {@code localhost} is one — and it takes that value from
-     * {@code qits.edge.acme.domain}. So the key has to be spelled wherever a domain is configured,
-     * including with issuance OFF: the certificate is then a placeholder, and the GRAMMAR still
-     * needs the domain. Without it the edge would fall back to the canonical origin's authority
-     * and read this platform's own names one tier out.
+     * <b>THE DOMAIN IS STATED FOR THE ROUTING AS WELL AS FOR THE ORDER — and it is stated ONCE.</b>
+     * The edge reads every name it serves right to left against a domain it cannot derive
+     * ({@code example.co.uk} is two labels and {@code localhost} is one), so it needs the value
+     * whether issuance is on or off. It used to be told twice: {@code QITS_EDGE_ACME_DOMAIN} here,
+     * and the same fact again inside the canonical origin and the return-host list. That is the
+     * fan-out this retires — the edge reads the one {@code QITS_DOMAIN} qits-deployments injects —
+     * so no TLS fragment spells a domain of its own any more, with issuance off or on.
      */
     @Test
     void theEdgeIsToldTheDomainItReadsNamesAgainstEvenWithIssuanceOff() {
         Map<String, String> off = DomainTokens.of(Optional.of("wohlben.dev"), "off",
                 "hostmaster@wohlben.dev", TOKEN, Optional.empty(), List.of());
 
-        assertThat(off.get("EDGE_TLS")).contains("QITS_EDGE_ACME_DOMAIN: wohlben.dev");
-        assertThat(off.get("EDGE_TLS_ARGS")).contains("env.QITS_EDGE_ACME_DOMAIN=wohlben.dev");
+        // STILL TOLD, AND TOLD WHATEVER ISSUANCE IS DOING — under the single name now. The ACME
+        // block spells no domain of its own, because a certificate's domain and a router's domain
+        // were always the same fact; the seed service carries QITS_DOMAIN instead, which the edge
+        // reads as qits.edge.domain and derives its ACME domain, its origin and its allow-list
+        // from. Without it that key falls back to `localhost` and the grammar reads a tier out.
+        assertThat(off.get("SEED_DOMAIN")).contains("QITS_DOMAIN: wohlben.dev");
+        assertThat(off.get("EDGE_TLS")).doesNotContain("QITS_EDGE_ACME_DOMAIN");
+        assertThat(off.get("EDGE_TLS_ARGS")).doesNotContain("QITS_EDGE_ACME_DOMAIN");
+        assertThat(tokens().get("EDGE_TLS")).doesNotContain("QITS_EDGE_ACME_DOMAIN");
+        assertThat(tokens().get("EDGE_TLS_ARGS")).doesNotContain("QITS_EDGE_ACME_DOMAIN");
+    }
+
+    /**
+     * <b>ONE VARIABLE, TWO WRITERS, and this file is the second one.</b> qits-deployments writes
+     * {@code QITS_DOMAIN} into every container it deploys — but the seed stack is the half where it
+     * is not the deployer, this program is, so the bootstrap states it to the services it starts
+     * itself. The deployer additionally needs it in its own EXTRAS, because nothing propagates to
+     * the propagator and a self-update's successor is started from those lines alone.
+     */
+    @Test
+    void theDomainIsWrittenForTheSeedServicesAndForTheDeployersOwnExtras() {
+        Map<String, String> tokens = tokens();
+
+        assertThat(tokens.get("SEED_DOMAIN")).contains("QITS_DOMAIN: wohlben.dev");
+        assertThat(tokens.get("DEPLOYMENTS_DOMAIN_ARGS")).contains(
+                "qits.deployments.extras.qits-deployments.env.QITS_DOMAIN=wohlben.dev");
     }
 
     /** A domainless platform spells none of it — the same answer it always gave. */
@@ -118,5 +141,11 @@ class DomainTokensTest {
         assertThat(none.get("EDGE_TLS_ARGS")).isEmpty();
         assertThat(none.get("EDGE_TLS")).isEmpty();
         assertThat(none.get("EDGE_TLS_NOTE")).isEmpty();
+        // The deployer's statement of the domain obeys the same rule, and it is the one that
+        // matters most: the deployer WITHHOLDS the variable where there is no domain rather than
+        // writing an empty one, so a generated file that stated emptiness would disagree with the
+        // very service it configures.
+        assertThat(none.get("SEED_DOMAIN")).isEmpty();
+        assertThat(none.get("DEPLOYMENTS_DOMAIN_ARGS")).isEmpty();
     }
 }

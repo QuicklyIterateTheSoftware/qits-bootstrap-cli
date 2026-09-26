@@ -231,7 +231,6 @@ class BootstrapConfigTest {
         // THE CEREMONY HAPPENS ON THE IDP'S OWN HOST, not on a door, which serves no /idp path.
         // It is a child of the rp id, so the binding holds.
         assertThat(plain.idpOrigin()).isEqualTo("http://idp.dev.qits.localhost:9090");
-        assertThat(plain.webauthnOrigins()).isEqualTo("http://idp.dev.qits.localhost:9090");
 
         // With a domain the door is TLS on THIS PLATFORM'S PROJECT DOOR. It was the apex, and the
         // apex is not a name any more: every application address carries a project label, so an
@@ -246,49 +245,29 @@ class BootstrapConfigTest {
         // was — and changing it would invalidate every passkey this platform ever registered.
         assertThat(hosted.webauthnRpId()).isEqualTo("qits-dev.eu");
         assertThat(hosted.idpOrigin()).isEqualTo("https://idp.dev.qits.qits-dev.eu");
-        assertThat(hosted.webauthnOrigins()).isEqualTo("https://idp.dev.qits.qits-dev.eu");
     }
 
     /**
-     * <b>One session covers every service, and the allow-list plus the cookie domain are what do
-     * it.</b> The wildcard entry is exactly one extra label on the same port, which the edge and the
-     * idp both read that way; the cookie is scoped to the parent both the door and the service hosts
-     * share.
+     * <b>The parent a session cookie is shared with, which is the one session value this program
+     * still answers.</b> The return-host allow-list used to be derived beside it and rendered into
+     * the idp's and the edge's configuration; the two copies drifted apart and sign-in broke, so
+     * the allow-list is the services' own business now, derived from the one {@code QITS_DOMAIN}
+     * the deployer propagates. What survives here is what the CLOSING REPORT says to a person.
      */
     @Test
-    void oneSessionReachesEveryServiceHostOfThePlatformProject() {
+    void theSessionCookiesParentIsTheProjectDoorUntilThereIsADomain() {
         BootstrapConfig plain = from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev"));
 
-        // The canonical origin's own authority leads the list, because the edge refuses to start
-        // without it there — locally that is the bare apex. Then the project's door and a wildcard
-        // in front of each door under it.
-        assertThat(plain.browserSsoHosts()).isEqualTo("localhost:9090,qits.localhost:9090,"
-                + "*.qits.localhost:9090,*.dev.qits.localhost:9090");
-        // A cookie domain is a host: no port, and no leading dot.
+        // A cookie domain is a host: no port, and no leading dot. Locally it is the PROJECT's
+        // door, because bare `localhost` is a public suffix and a cookie scoped to it is dropped.
         assertThat(plain.browserSsoCookieDomain()).isEqualTo("qits.localhost");
-        // The idp's host needs no entry of its own: the wildcard is one extra label, and that is
-        // exactly what idp. of the innermost door is.
-        assertThat(plain.browserSsoHosts().split(",")).contains("*." + plain.envAuthority());
 
         BootstrapConfig hosted = from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev",
                 "QITS_DOMAIN", "qits-dev.eu"));
 
-        // THREE SHAPES WITH A DOMAIN, and BOTH DEPTHS OF THE PROJECT are among them on purpose:
-        // whether an application of `qits` is <app>.qits.<domain> or <app>.<env>.qits.<domain> is
-        // that project's live supportsEnvironments flag, which this value is derived long before.
-        // An allow-list is not a router, so an entry for a name the edge does not serve admits
-        // nobody — and listing both means a flip never strands a person mid-login.
-        assertThat(hosted.browserSsoHosts()).isEqualTo(
-                "qits.qits-dev.eu,*.qits.qits-dev.eu,*.dev.qits.qits-dev.eu");
+        // With a domain it is the domain, which parents every project's names and not only this
+        // platform's.
         assertThat(hosted.browserSsoCookieDomain()).isEqualTo("qits-dev.eu");
-        // idp.dev.qits.qits-dev.eu is admitted by *.dev.qits.qits-dev.eu, so the login host is on
-        // the list already — one extra label under the innermost door.
-        assertThat(hosted.browserSsoHosts().split(",")).contains("*.dev.qits.qits-dev.eu");
-        // And the apex and *.<domain> are NOT on it: the top-level environment tier and the
-        // unqualified application tier are gone from the grammar, and another project's names are
-        // another project's to allow.
-        assertThat(hosted.browserSsoHosts().split(","))
-                .doesNotContain("qits-dev.eu").doesNotContain("*.qits-dev.eu");
     }
 
     @Test

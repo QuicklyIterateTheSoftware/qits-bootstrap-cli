@@ -3085,17 +3085,17 @@ public class SeedPhases {
                     boot.state.serviceClientSecrets
                             .getOrDefault(PlatformModel.application(app), ""));
         }
-        // THE PASSKEY BINDING, and it follows the address a browser arrives at rather than standing
-        // beside it: a credential registered under one rp id asserts under no other host.
-        values.put("WEBAUTHN_RP_ID", boot.config.webauthnRpId());
-        values.put("WEBAUTHN_ORIGINS", boot.config.webauthnOrigins());
-        // TWO ORIGINS, AND THEY ARE NOT THE SAME NAME. The door is the edge's canonical session
-        // origin and serves nothing but a redirect; the login page is on the idp's own host, which
-        // is what the idp itself has to call canonical.
-        values.put("PUBLIC_ORIGIN", boot.config.publicOrigin());
-        values.put("IDP_ORIGIN", boot.config.idpOrigin());
-        values.put("BROWSER_HOSTS", boot.config.browserSsoHosts());
-        values.put("SESSION_COOKIE_DOMAIN", boot.config.browserSsoCookieDomain());
+        // NO BROWSER NAME IS A TOKEN ANY MORE. The door, the login host, the return-host
+        // allow-list, the cookie domain, the rp id and the ceremony's origins were six tokens here
+        // and seven keys across the two generated files — six readings of the ONE domain this run
+        // is told, each free to go stale on its own. Two of them did, and sign-in broke on the live
+        // platform. The domain is stated once, rendered once (below, for qits-deployments alone),
+        // and every service derives its own names from the QITS_DOMAIN the deployer injects.
+        // The accessors on BootstrapConfig that survive — publicOrigin, idpOrigin, envAuthority,
+        // webauthnRpId, browserSsoCookieDomain — are the CLOSING REPORT's, which tells a person
+        // where to go and what their passkey is bound to. Telling a person is not configuring a
+        // service.
+        //
         // What QITS_DOMAIN adds, and nothing when there is none: every one of these is empty then,
         // so both files render exactly as a platform with no public names always rendered them.
         values.putAll(DomainTokens.of(DomainName.of(boot.config), Acme.mode(boot.config).word(),
