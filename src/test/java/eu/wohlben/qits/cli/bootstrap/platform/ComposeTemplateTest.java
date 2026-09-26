@@ -381,7 +381,7 @@ class ComposeTemplateTest {
         assertThat(compose).contains("QITS_EVENTS_URL: http://" + ENV + "-qits-events:8080");
         assertThat(extras)
                 .contains("env.QITS_EVENTS_URL=http://" + ENV + "-qits-events:8080")
-                .contains("http://" + ENV + "-qits-deployments:8080/platform-deployments/api")
+                .contains("http://" + ENV + "-qits-deployments:8080/deployments/api")
                 .contains("env.QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://" + ENV
                         + "-qits-configuration:8080")
                 .contains("env.QITS_PROJECTS_RELEASE_REQUESTS_MAINTENANCE_URL=http://" + ENV
@@ -665,7 +665,7 @@ class ComposeTemplateTest {
         // inbound audience, and its idp client id.
         assertThat(extras).contains("env.QITS_EVENTS_URL=http://prod-qits-events:8080")
                 .contains("qits-artifacts.env.QITS_ARTIFACTS_GC_PINS_CD_BASE_URL="
-                        + "http://prod-qits-deployments:8080/platform-deployments/api")
+                        + "http://prod-qits-deployments:8080/deployments/api")
                 .contains("qits-deployments.env.QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL="
                         + "http://prod-qits-configuration:8080");
         // And its idp client id is the same bare alias, on the seed stack where the credential is

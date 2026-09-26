@@ -126,7 +126,7 @@ row appear:
 
 ```sh
 curl -fsS -H 'X-Qits-User: qits-bootstrap' -H 'X-Qits-Roles: qits:admin' \
-  'http://dev-qits-deployments:8080/platform-deployments/api/deployments?environmentId=<id>'
+  'http://dev-qits-deployments:8080/deployments/api/deployments?environmentId=<id>'
 ```
 
 The row to see is `status: ACTIVE` with the `version` the request answered with. `IMAGE_MISSING`

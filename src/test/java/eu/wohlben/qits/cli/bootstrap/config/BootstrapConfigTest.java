@@ -162,7 +162,7 @@ class BootstrapConfigTest {
         // concatenation here could not follow PLATFORM_SERVICES when an application moved plane,
         // and it cannot follow this either. dialAlias is the one place the qualifier is decided.
         assertThat(config.platformDeploymentsUrl())
-                .isEqualTo("http://preprod-qits-deployments:8080/platform-deployments");
+                .isEqualTo("http://preprod-qits-deployments:8080/deployments");
         assertThat(config.eventsUrl()).isEqualTo("http://preprod-qits-events:8080/events");
         // The configuration store is the third, since 2026-09-07 — and it was the one whose
         // concatenation cost the most: this exact string is also handed to the deployer as
