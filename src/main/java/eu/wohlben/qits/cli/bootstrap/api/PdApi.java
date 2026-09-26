@@ -13,8 +13,11 @@ import java.util.Optional;
  * component now — the merge-back of qits-cd and qits-serviceregistry — so an environment write is
  * a row here rather than a proxied call to a second service.
  * <p>
- * Every route sits under {@code /platform-deployments/api}, which is what the edge projects
- * verbatim; the base this is built with carries the segment and nothing repeats it.
+ * Every route sits under {@code /deployments/api}, which is what the edge projects verbatim; the
+ * base this is built with carries the segment and nothing repeats it. It was
+ * {@code /platform-deployments/api} until the platform tier the word named was retired; the
+ * service still reroutes that spelling internally, with a WARN per hit, but the base below is the
+ * only place it would have to be said and there is no reason for it to say the old one.
  */
 public class PdApi {
 

@@ -549,9 +549,23 @@ public interface BootstrapConfig {
 
     /**
      * qits-deployments at its fixed seed alias, for the reason above.
-     * The route segment stayed {@code /platform-deployments} when the repository was renamed —
-     * it names the component, not the repository, and every route of the service (its API, its
-     * health, its client) hangs off it. Only the hostname moved.
+     * <p>
+     * <b>The route segment HAS moved now, and the old rule was right about why it had not.</b> It
+     * stayed {@code /platform-deployments} through the repository rename because a route names the
+     * component rather than the repository, and every route of the service — its API, its health,
+     * its client — hangs off this one base, so moving it to follow a rename alone would have bought
+     * nothing and cost a flag day. What changed is the component itself: the platform tier the word
+     * named is gone, so {@code platform} no longer distinguishes anything, and the segment is
+     * {@code /deployments}. qits-deployments does still answer the old spelling — but only as a
+     * temporary in-service reroute that rewrites the leading segment and logs one WARN naming the
+     * caller, so a stale spelling is an entry on an inventory to be cleared, not a supported
+     * address.
+     * <p>
+     * <b>This is the caller that could not afford to lean on that reroute.</b> A cold bootstrap is
+     * the only thing that dials the deployer before anything else on the estate exists to, and a
+     * wrong segment here never clears the deployer health wait: the reroute would have been the
+     * single thing between a stale spelling and a boot that hangs on its timeout, with no running
+     * platform anywhere to have caught it first. That is not a thing to leave load-bearing.
      * <p>
      * <b>The hostname is DERIVED, and that is what the 2026-08-17 plane move cost.</b> This method
      * spelled {@code <env>-qits-deployments} and therefore did not follow
@@ -561,7 +575,7 @@ public interface BootstrapConfig {
      */
     default String platformDeploymentsUrl() {
         return "http://" + PlatformModel.wireAlias("deployments", envName())
-                + ":8080/platform-deployments";
+                + ":8080/deployments";
     }
 
     /**

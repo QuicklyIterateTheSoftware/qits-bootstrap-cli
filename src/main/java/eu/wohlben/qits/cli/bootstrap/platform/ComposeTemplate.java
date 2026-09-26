@@ -576,14 +576,18 @@ public final class ComposeTemplate {
               # used to. In the seed because the '${ENV_NAME}' environment is created through it minutes
               # from now and because nothing else can start a container. No published host port of its own —
               # the edge's deployment route is the public door. Ready at
-              # /platform-deployments/q/health/ready.
+              # /deployments/q/health/ready.
               #
               # A PLATFORM service since 2026-08-17: ONE deployer for every tier, so its key is the bare
               # repository name and no tier qualifies it. It was one deployer per tier until then, and the
               # move is what lets an environment gate another environment — a hierarchy cannot live inside
-              # one tier's deployer. Its route segment is still /platform-deployments, which names the
-              # component; the repository rename to qits-platform-deployments comes after the local proof,
-              # so the alias here is deliberately still qits-deployments.
+              # one tier's deployer. Its route segment was /platform-deployments for as long as that plane
+              # existed, and the old rule for keeping it through the repository rename was right: a route
+              # names the component, not the repository. The component is what moved — the platform tier is
+              # retired, so the word distinguishes nothing — and the segment is /deployments now. The
+              # service reroutes the old spelling internally with a WARN per hit, which is an inventory of
+              # stale callers rather than a second address; for a cold boot that reroute would be the only
+              # thing between a wrong segment here and a health wait that never clears.
               ${ALIAS_DEPLOYMENTS}:
                 image: qits/deployments:latest
                 # THE DOCKER SOCKET'S GROUP, AS THE PRIMARY ONE — and that spelling is forced.
@@ -1561,13 +1565,17 @@ public final class ComposeTemplate {
             # hangs on its timeout instead.
             #
             # THE DEPLOYER PIN SOURCE IS ONE UNION FOR THE WHOLE PLATFORM since the deployer moved plane,
-            # and that is a decision rather than a leak: /platform-deployments/api/pins already answers
-            # the union of every environment's pins, and every tier's sweep now reads the same one. Its
-            # address is still SPELLED — the artifacts jar defaults to qits-platform-deployments, the
-            # repository's post-rename name, which nothing answers to until phase 3.
+            # and that is a decision rather than a leak: /deployments/api/pins already answers the union
+            # of every environment's pins, and every tier's sweep now reads the same one. The segment was
+            # /platform-deployments while that plane existed; the tier is retired, so the word
+            # distinguishes nothing and the route moved with it. The service reroutes the old spelling
+            # internally with a WARN per hit, so a stale caller works and is on an inventory — not a
+            # reason to keep writing it here. Its address is still SPELLED — the artifacts jar defaults to
+            # qits-platform-deployments, the repository's post-rename name, which nothing answers to until
+            # phase 3.
             qits.deployments.extras.qits-artifacts.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
             qits.deployments.extras.qits-artifacts.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
-            qits.deployments.extras.qits-artifacts.env.QITS_ARTIFACTS_GC_PINS_CD_BASE_URL=http://${DIAL_DEPLOYMENTS}:8080/platform-deployments/api
+            qits.deployments.extras.qits-artifacts.env.QITS_ARTIFACTS_GC_PINS_CD_BASE_URL=http://${DIAL_DEPLOYMENTS}:8080/deployments/api
             qits.deployments.extras.qits-artifacts.env.QITS_ARTIFACTS_GC_PINS_CI_BASE_URL=http://${ENV_NAME}-qits-ci:8080/ci/api
             qits.deployments.extras.qits-artifacts.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE CACHE HALF. One address to say and nothing else — no mount, because the cached bytes

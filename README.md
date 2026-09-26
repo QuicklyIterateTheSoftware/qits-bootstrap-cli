@@ -670,7 +670,7 @@ platform pass looks a repository up by while the seed catalogue answers ids and 
 name a ref that no longer exists). A value this run cannot fill is an absent key, never an empty
 string. It hands the deployer that release by hand when
 nothing ran (an earlier boot already published this version) or when a green run's announcement
-never produced a row after a minute. That hand-over is `POST /platform-deployments/api/events/
+never produced a row after a minute. That hand-over is `POST /deployments/api/events/
 software-released`; `/events/build-succeeded` is gone from the deployer and 404s.
 
 While a deploy phase waits it also talks: the CI run's own output is relayed under `ci|` (a poll of

@@ -70,7 +70,7 @@ forced. Add to that list rather than deviating quietly.
   lost.** A green release run announces one `SoftwareRelease` per published artifact, and the
   deployer is an application THIS BOOT redeploys — a subscriber mid-cutover catches up on its own
   sweep rather than at once — so a green run with no deployment row after a minute gets the release
-  handed over exactly once inside the wait, through `POST /platform-deployments/api/events/
+  handed over exactly once inside the wait, through `POST /deployments/api/events/
   software-released`. One more attempt, never a retry loop. `/events/build-succeeded` is gone from
   the deployer and 404s; nothing here may go looking for a sha-addressed intake again.
   **The PUSH half of that rule is retired, and its retirement is the byte-plane split's dividend.**
