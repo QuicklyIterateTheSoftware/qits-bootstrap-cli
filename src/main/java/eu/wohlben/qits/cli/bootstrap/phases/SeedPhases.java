@@ -1331,7 +1331,7 @@ public class SeedPhases {
     String npmrc(String token) {
         String registry = boot.config.artifactsUrl().replaceFirst("^https?://", "") + "/npm/npm/";
         return "cat > /root/.npmrc <<'NPMRC'\n"
-                + "registry=" + boot.config.mirrorUrl() + "/artifacts/npm/npmjs/\n"
+                + "registry=" + boot.config.mirrorUrl() + "/npm/npmjs/\n"
                 + "@qits:registry=" + boot.config.artifactsUrl() + "/npm/npm/\n"
                 + (token == null || token.isBlank() ? ""
                         : "//" + registry + ":_authToken=" + token + "\n")

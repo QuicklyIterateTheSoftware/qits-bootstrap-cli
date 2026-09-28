@@ -1111,7 +1111,7 @@ public final class ComposeTemplate {
                   # and NOT the registry name above — that one is resolved by the HOST's daemon, and a
                   # step container's own resolver knows no *.localhost name at all.
                   QITS_ARTIFACTS_NPM_HOSTED_URL: http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/
-                  QITS_ARTIFACTS_NPM_PROXY_URL: http://${DIAL_MIRROR}:8080/artifacts/npm/npmjs/
+                  QITS_ARTIFACTS_NPM_PROXY_URL: http://${DIAL_MIRROR}:8080/npm/npmjs/
                   QITS_ARTIFACTS_MAVEN_REGISTRY_URL: http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven
                   QITS_ARTIFACTS_DOCS_URL: http://${ENV_NAME}-qits-artifacts:8080/artifacts/docs/docs
                   # The websocket a step container's daemon dials BACK to this service. The image ships the
@@ -1676,7 +1676,7 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-ci.env.QITS_ARTIFACTS_REGISTRY_HOST=registry.${ENV_NAME}.localhost:${PORT}
             qits.deployments.extras.qits-ci.env.QITS_CI_DOCKER_AUTH_HOSTS=registry.${ENV_NAME}.localhost:${PORT},mirror.${ENV_NAME}.localhost:${PORT}
             qits.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_HOSTED_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/
-            qits.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_PROXY_URL=http://${DIAL_MIRROR}:8080/artifacts/npm/npmjs/
+            qits.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_PROXY_URL=http://${DIAL_MIRROR}:8080/npm/npmjs/
             qits.deployments.extras.qits-ci.env.QITS_ARTIFACTS_MAVEN_REGISTRY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven
             qits.deployments.extras.qits-ci.env.QITS_ARTIFACTS_DOCS_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/docs/docs
             # THE OVERRIDE, not the ordinary answer — see the seed block's QITS_CI_DAEMON_VERSION_OVERRIDE
@@ -2167,7 +2167,7 @@ public final class ComposeTemplate {
             # public registry, where the @qits scope does not exist.
             qits.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_MAVEN_REPOSITORY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven
             qits.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_NPM_REGISTRY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/
-            qits.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_NPM_PROXY_URL=http://${DIAL_MIRROR}:8080/artifacts/npm/npmjs/
+            qits.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_NPM_PROXY_URL=http://${DIAL_MIRROR}:8080/npm/npmjs/
             qits.deployments.extras.qits-workspaces.env.QITS_EVENTS_URL=http://${DIAL_EVENTS}:8080
             qits.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_GIT_HOST=${ENV_NAME}-qits-workspaces
             # NO RELEASE ENTRY BRANCH. QITS_WORKSPACES_RELEASE_ENTRY_BRANCH named the
@@ -2259,7 +2259,7 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-maintenance.env.QITS_MAINTENANCE_REGISTRIES_NPM_URL=http://${ALIAS_ARTIFACTS}:8080/artifacts/npm/npm
             qits.deployments.extras.qits-maintenance.env.QITS_MAINTENANCE_REGISTRIES_OCI_URL=http://${ALIAS_ARTIFACTS}:8080/v2
             qits.deployments.extras.qits-maintenance.env.QITS_MAINTENANCE_MIRROR_MAVEN_URL=http://${DIAL_MIRROR}:8080/artifacts/maven/central
-            qits.deployments.extras.qits-maintenance.env.QITS_MAINTENANCE_MIRROR_NPM_URL=http://${DIAL_MIRROR}:8080/artifacts/npm/npmjs
+            qits.deployments.extras.qits-maintenance.env.QITS_MAINTENANCE_MIRROR_NPM_URL=http://${DIAL_MIRROR}:8080/npm/npmjs
             qits.deployments.extras.qits-maintenance.env.QITS_MAINTENANCE_ENVIRONMENT=${ENV_NAME}
             qits.deployments.extras.qits-maintenance.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE BASE SYSTEM PANELS, AND THIS BLOCK IS THE THIRD GRANT OF THE HOST'S DOCKER SOCKET

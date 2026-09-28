@@ -972,7 +972,7 @@ class ComposeTemplateTest {
                             "QITS_ARTIFACTS_NPM_HOSTED_URL=http://prod-qits-artifacts:8080"
                                     + "/artifacts/npm/npm/")
                     .contains("QITS_ARTIFACTS_NPM_PROXY_URL=http://prod-qits-mirror:8080"
-                            + "/artifacts/npm/npmjs/")
+                            + "/npm/npmjs/")
                     .contains("QITS_ARTIFACTS_MAVEN_REGISTRY_URL=http://prod-qits-artifacts:8080"
                             + "/artifacts/maven/maven")
                     .contains("QITS_ARTIFACTS_DOCS_URL=http://prod-qits-artifacts:8080"
@@ -1010,11 +1010,11 @@ class ComposeTemplateTest {
                 .contains("env.QITS_WORKSPACE_NPM_REGISTRY_URL=http://prod-qits-artifacts:8080"
                         + "/artifacts/npm/npm/")
                 .contains("env.QITS_WORKSPACE_NPM_PROXY_URL=http://prod-qits-mirror:8080"
-                        + "/artifacts/npm/npmjs/");
+                        + "/npm/npmjs/");
         // Same addresses, stated once per consumer: if ci's move and a workspace's do not, this
         // fails rather than leaving one of them pointed at a registry that no longer serves.
         for (String suffix : new String[]{
-                "/artifacts/maven/maven", "/artifacts/npm/npm/", "/artifacts/npm/npmjs/"}) {
+                "/artifacts/maven/maven", "/artifacts/npm/npm/", "/npm/npmjs/"}) {
             assertThat(ci).contains(suffix);
             assertThat(workspaces).contains(suffix);
         }
