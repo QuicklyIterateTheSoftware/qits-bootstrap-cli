@@ -959,8 +959,9 @@ class ComposeTemplateTest {
     /**
      * <b>The two-endpoint topology, as every client sees it.</b> Hosted content is this tier's
      * qits-artifacts; third-party content is qits-mirror. The step containers are where it
-     * matters most, because ci ships all four roots defaulted to the one service that used to be
-     * both.
+     * matters most, because ci ships all three remaining roots defaulted to the one service that
+     * used to be both — the npmjs cache is a code default in the service now (qits-472) and this
+     * template no longer states it.
      */
     @Test
     void hostedContentIsTheStoreAndThirdPartyContentIsTheMirror() {
@@ -971,12 +972,11 @@ class ComposeTemplateTest {
             assertThat(block).contains(
                             "QITS_ARTIFACTS_NPM_HOSTED_URL=http://prod-qits-artifacts:8080"
                                     + "/artifacts/npm/npm/")
-                    .contains("QITS_ARTIFACTS_NPM_PROXY_URL=http://prod-qits-mirror:8080"
-                            + "/npm/npmjs/")
                     .contains("QITS_ARTIFACTS_MAVEN_REGISTRY_URL=http://prod-qits-artifacts:8080"
                             + "/artifacts/maven/maven")
                     .contains("QITS_ARTIFACTS_DOCS_URL=http://prod-qits-artifacts:8080"
-                            + "/artifacts/docs/docs");
+                            + "/artifacts/docs/docs")
+                    .doesNotContain("QITS_ARTIFACTS_NPM_PROXY_URL");
         }
         // The publish target is the HOSTED registry and never the mirror: a publish step pushes the
         // platform's own image, and the mirror takes no writes at all. It is dialled by the HOST's
@@ -989,15 +989,18 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>A workspace builds against the same two registries a CI step does.</b> The addresses are
-     * asserted against ci's own so the two cannot drift: a workspace that resolved a different
-     * npmjs cache, or a different maven store, would build something CI cannot reproduce — and the
-     * failure would not look like a configuration difference, it would look like a flaky test.
+     * <b>A workspace builds against the same hosted registries a CI step does.</b> The addresses
+     * are asserted against ci's own so the two cannot drift: a workspace that resolved a different
+     * maven store would build something CI cannot reproduce — and the failure would not look like
+     * a configuration difference, it would look like a flaky test.
      *
      * <p>They are wire aliases and never a {@code *.localhost} name: the consumer is a container on
      * qits-net, whose resolver knows no such name. That is the same rule ci's block follows, and
      * the reason the registry HOST (which the host daemon resolves) is absent here — a workspace
      * pushes no image.
+     *
+     * <p>The npmjs cache is NOT one of the compared addresses: both ci and qits-workspaces now get
+     * it as a code default (qits-472) and this template states it for neither.
      */
     @Test
     void aWorkspaceIsToldTheSameRegistriesCiUses() {
@@ -1008,13 +1011,12 @@ class ComposeTemplateTest {
                 .contains("env.QITS_WORKSPACE_MAVEN_REPOSITORY_URL=http://prod-qits-artifacts:8080"
                         + "/artifacts/maven/maven")
                 .contains("env.QITS_WORKSPACE_NPM_REGISTRY_URL=http://prod-qits-artifacts:8080"
-                        + "/artifacts/npm/npm/")
-                .contains("env.QITS_WORKSPACE_NPM_PROXY_URL=http://prod-qits-mirror:8080"
-                        + "/npm/npmjs/");
+                        + "/artifacts/npm/npm/");
+        assertThat(ci).doesNotContain("QITS_ARTIFACTS_NPM_PROXY_URL");
+        assertThat(workspaces).doesNotContain("QITS_WORKSPACE_NPM_PROXY_URL");
         // Same addresses, stated once per consumer: if ci's move and a workspace's do not, this
         // fails rather than leaving one of them pointed at a registry that no longer serves.
-        for (String suffix : new String[]{
-                "/artifacts/maven/maven", "/artifacts/npm/npm/", "/npm/npmjs/"}) {
+        for (String suffix : new String[]{"/artifacts/maven/maven", "/artifacts/npm/npm/"}) {
             assertThat(ci).contains(suffix);
             assertThat(workspaces).contains(suffix);
         }
