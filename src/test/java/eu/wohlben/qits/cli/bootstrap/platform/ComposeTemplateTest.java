@@ -71,6 +71,8 @@ class ComposeTemplateTest {
         values.put("PUSH_TOKEN", "local-dev");
         // A one-build host: the 16 GB VPS the formula exists for.
         values.put("CI_CONCURRENT_BUILDS", "1");
+        // The platform's own runner starts at the same number — see SeedPhases.tokens.
+        values.put("CI_LOCAL_SLOTS", "1");
         values.put("MACHINE_REQUIRED", "true");
         values.put("DOCKER_GID", "988");
         values.put("DAEMON_SHA", "abc123");
@@ -1967,25 +1969,67 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>THE HOST'S DOCKER SOCKET IS GRANTED TO THREE APPLICATIONS, and each grant is a block
+     * <b>THE HOST'S DOCKER SOCKET IS GRANTED TO FOUR APPLICATIONS, and each grant is a block
      * somebody wrote on purpose.</b> qits-containers starts every workload on the host,
-     * qits-deployments is a deployer, and qits-system owns the admin console's terminals.
-     * A fourth is a decision and not a mount: it needs the bind AND {@code groups[0]}, which is what
-     * makes the socket usable by a container running as uid 1001, plus a comment saying why the
-     * power belongs there rather than behind an endpoint on one of the three.
+     * qits-deployments is a deployer, qits-system owns the admin console's terminals, and
+     * qits-ci-runner (qits-502, epic qits-443) is what qits-ci's in-process executor held
+     * indirectly, through qits-containers, until the executor was retired: a step's container is
+     * now something the platform's own CI runner starts itself, the same way any other runner on
+     * the estate does. A fifth is a decision and not a mount: it needs the bind AND
+     * {@code groups[0]}, which is what makes the socket usable by a container running as uid 1001,
+     * plus a comment saying why the power belongs there rather than behind an endpoint on one of
+     * the four.
      * <p>
-     * This is the assertion the goldens cannot make. Each of the three blocks holds its own mount
+     * This is the assertion the goldens cannot make. Each of the four blocks holds its own mount
      * and its own group, and a golden proves each of them; only a question asked across every block
-     * at once can say that there are three of them.
+     * at once can say that there are four of them.
      */
     @Test
-    void theHostsSocketIsGrantedToExactlyThreeApplications() {
+    void theHostsSocketIsGrantedToExactlyFourApplications() {
+        // applicationsWith sorts, so this is alphabetical order, not the order the blocks appear in.
         assertThat(applicationsWith("/var/run/docker.sock")).containsExactly(
-                "qits-containers", "qits-deployments", "qits-system");
+                "qits-ci-runner", "qits-containers", "qits-deployments", "qits-system");
         // The group is the other half, and either one without the other is a container that cannot
-        // use what it was given — so the two lists are the same three names.
+        // use what it was given — so the two lists are the same four names.
         assertThat(applicationsWith(".groups[")).containsExactly(
-                "qits-containers", "qits-deployments", "qits-system");
+                "qits-ci-runner", "qits-containers", "qits-deployments", "qits-system");
+    }
+
+    /**
+     * <b>qits-ci-runner's own block</b>, holding what the golden file already proves whole plus the
+     * two things a golden of one rendering cannot: that a domain changes the URL and nothing else
+     * of it, and that with no domain the runner is handed no internal alias to fall back on.
+     */
+    @Test
+    void qitsCiRunnerHoldsTheSocketAndDialsThePublicEdgeAlone() {
+        String noDomain = extras("qits-ci-runner");
+        assertThat(noDomain)
+                .contains(".mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock")
+                .doesNotContain(".mounts[1]")
+                .contains(".groups[0]=988")
+                .contains(".env.QITS_CI_RUNNER_URL=")
+                .contains(".env.QITS_CI_RUNNER_STATE_DIR=/var/lib/qits-ci-runner")
+                .contains(".env.QITS_CI_RUNNER_SLOTS=1")
+                .contains(".env.QITS_CI_RUNNER_SELF_UPDATE=false")
+                .contains(".env.QITS_CI_RUNNER_ID=")
+                .contains(".env.QITS_CI_RUNNER_REGISTRATION_TOKEN=");
+        // No domain: the url key renders, but empty — never the internal wire alias. A runner off
+        // the platform's own swarm cannot resolve ${ALIAS_qits-ci} or ${DIAL_qits-ci} however they
+        // were spelled, so a fallback to one here would be a config line that looks configured and
+        // fails at the runner with a connect error instead of RunnerEnv's own clear refusal.
+        assertThat(noDomain.lines()).anyMatch(
+                line -> line.equals(EXTRAS + "qits-ci-runner.env.QITS_CI_RUNNER_URL="));
+        assertThat(noDomain).doesNotContain("qits-ci:8080").doesNotContain(ENV + "-qits-ci");
+
+        String withDomain = extras("qits-ci-runner", tokens(DOMAIN));
+        assertThat(withDomain)
+                .contains(".env.QITS_CI_RUNNER_URL=https://ci.qits." + DOMAIN)
+                .doesNotContain("qits-ci:8080")
+                .doesNotContain(ENV + "-qits-ci");
+        // Every OTHER line of the block is untouched by the domain — the invariant
+        // aDomainAddsItsFragmentsAndChangesNothingElse proves platform-wide; this is the same
+        // question asked of one block, in the shape a reader of this block would ask it.
+        assertThat(withDomain.replace("https://ci.qits." + DOMAIN, "")).isEqualTo(noDomain);
     }
 
     /**
@@ -2081,6 +2125,14 @@ class ComposeTemplateTest {
                 .map(line -> line.substring(EXTRAS.length()).split("\\.")[0])
                 .distinct()
                 .filter(application -> !application.equals("qits-oci-postgresql"))
+                // qits-ci-runner is the second exception, and it is the same shape as postgres':
+                // it is not a Quarkus application and ships no OTLP exporter to point anywhere with
+                // this key. Its telemetry address is QITS_CI_RUNNER_TELEMETRY_URL, and RunnerEnv
+                // derives that one ITSELF from QITS_CI_RUNNER_URL when unset — the "derive it
+                // yourself" rule this file applies to every browser name applies here too, and it
+                // is the one key of this runner's that actually can be derived rather than handed
+                // over as a literal.
+                .filter(application -> !application.equals("qits-ci-runner"))
                 .toList())
                 .isNotEmpty()
                 .allSatisfy(application -> assertThat(extras(application))

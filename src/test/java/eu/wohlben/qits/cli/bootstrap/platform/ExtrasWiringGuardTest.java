@@ -76,10 +76,20 @@ class ExtrasWiringGuardTest {
      * entry that is no longer earning its place — so the set cannot quietly stop meaning anything.
      * <b>An empty set is the epic's end-state proof</b>, and the day it empties this constant and
      * the exemption arm go with it.
+     * <p>
+     * <b>{@code qits-ci-runner} joined the set the day its block was first written (qits-502,
+     * epic qits-443), not the day the guard landed</b> — the one addition this set is allowed,
+     * because the migration this guard tracks has a destination every OTHER entry can reach and
+     * this one cannot: a {@code .config/qits/configuration.yml} ships with the Quarkus image that
+     * reads it, and the runner is not one — {@code eu.wohlben.qits.cirunner.RunnerEnv} parses raw
+     * environment strings with no config framework underneath it at all. Its non-indexed,
+     * non-secret keys (the url, the state dir, the slot count, the self-update flag, the id) stay
+     * exempt for as long as that is true.
      */
     private static final Set<String> NOT_YET_MIGRATED = Set.of(
             "qits-artifacts",
             "qits-ci",
+            "qits-ci-runner",
             "qits-configuration",
             "qits-containers",
             "qits-deployments",

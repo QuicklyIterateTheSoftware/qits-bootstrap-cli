@@ -3060,6 +3060,13 @@ public class SeedPhases {
         // and the extras carry the reason. Read here rather than remembered, so a machine that grew
         // memory gets the benefit on its next boot.
         values.put("CI_CONCURRENT_BUILDS", String.valueOf(boot.config.ciConcurrentBuildsEffective()));
+        // THE PLATFORM'S OWN CI RUNNER'S SLOT COUNT, and it starts at the same number as the
+        // in-process executor it replaces (qits-443) rather than a second knob: the host that used
+        // to run QITS_CI_CONCURRENT_BUILDS builds at once through qits-containers has exactly that
+        // much room for the runner's own containers. A future operator override
+        // (qits.deployments.extras.qits-ci-runner.env.QITS_CI_RUNNER_SLOTS) is a config write, not
+        // a rerun of this boot.
+        values.put("CI_LOCAL_SLOTS", String.valueOf(boot.config.ciConcurrentBuildsEffective()));
         values.put("MACHINE_REQUIRED", String.valueOf(boot.config.machineAuth()));
         values.put("DOCKER_GID", boot.state.dockerGid);
         values.put("DAEMON_SHA", boot.state.daemonSha == null ? "" : boot.state.daemonSha);

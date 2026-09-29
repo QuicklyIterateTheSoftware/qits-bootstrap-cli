@@ -431,7 +431,9 @@ that, each measured on this host rather than assumed:
   container orchestrator — take the socket's group as their PRIMARY group (`user: "1001:<gid>"`,
   1001 being the images' own user). Their deployed successors get `--group-add` from the extras,
   which is where supplementary groups still work. Two is the SEED's count, not the platform's:
-  qits-platform-system holds a socket too and has no seed block at all.
+  qits-platform-system and qits-ci-runner hold a socket too, and neither has a seed block at all —
+  qits-ci-runner is not even a seed CONCERN, since the in-process executor it replaces is still
+  what this cold start's own qits-ci runs steps through; see the fourth-holder paragraph below.
 - **No `container_name:`.** A stack ignores it and names the container
   `qits_<service>.<slot>.<taskid>`. What answers a wire alias is the SERVICE, which resolves under
   `qits_<alias>` and under the bare `<alias>` both — so every address in the file is unchanged, and
@@ -915,6 +917,23 @@ console that owns the PTYs has to hold the socket itself. Its idp client is a DO
 first — the glances image is pulled through the platform mirror, so its `config.json` is the one the
 bootstrap writes with two hosts rather than one. It calls no peer, holds no store, and is **not** a
 seed service.
+
+**qits-ci-runner is the FOURTH holder of the host's docker socket** — after qits-containers, the
+deployer and qits-platform-system — and epic qits-443's replacement for what qits-ci's in-process
+executor held indirectly, through qits-containers: a step used to be a container qits-ci asked
+qits-containers to start, and it is now a container this runner starts itself, the same way any
+other runner on the estate does. Its socket is its own extras block's grant
+(`ComposeTemplate.EXTRAS_REST`, qits-502), on the record beside the other three. Unlike every other
+holder it dials OUT rather than being dialled: it reaches qits-ci through the public edge, never an
+internal alias, because a runner's registration token is opaque and only the public edge
+introspects it — true of this runner exactly as it is of a person's own, even though this one
+happens to live on the platform's own host. **This bootstrap's own cold start does not bring it into
+service.** The extras block is written so a redeploy of qits-ci-runner is configured correctly
+whenever one happens, but nothing here creates the `localhost` runner row qits-ci needs to hand out
+an id and a registration token, and the in-process executor is still what this boot's own qits-ci
+runs every step through — a later task in the epic adds the phase that creates that row and retires
+the executor. Until then the block's `QITS_CI_RUNNER_ID` and `_REGISTRATION_TOKEN` keys render
+empty and an operator fills them by hand through qits-configuration once the row exists.
 
 A **platform** service is one instance for the whole platform, joined to every environment's
 networks, belonging to no tier — so it appears in no per-environment deployment listing, and the

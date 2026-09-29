@@ -2301,5 +2301,62 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-system.env.QITS_SYSTEM_GLANCES_IMAGE_REPO=mirror.${ENV_NAME}.localhost:${PORT}/hub/nicolargo/glances
             qits.deployments.extras.qits-system.env.QITS_SYSTEM_GLANCES_IMAGE_VERSION=4.5.6-full
             qits.deployments.extras.qits-system.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # THE FOURTH GRANT OF THE HOST'S DOCKER SOCKET — after qits-containers, qits-deployments
+            # and qits-system above. It is what qits-ci's IN-PROCESS EXECUTOR held, indirectly,
+            # through qits-containers, until the retirement epic (qits-443) took that executor out:
+            # a step used to be a container qits-ci asked qits-containers to start, and now it is a
+            # container THIS runner starts itself, the same way any other runner on the estate does.
+            # The socket is the runner's, not qits-ci's — qits-ci never touches the host directly —
+            # and it is root-equivalent control of THIS machine's daemon for exactly the reason
+            # qits-containers' grant is: something has to start a step's container, and a runner is
+            # what starts it now.
+            #
+            # NO SECOND MOUNT HERE FOR THE RUNNER'S OWN STATE — registration, its runner id, the
+            # boot sweep's bookkeeping. It still lands on a named volume rather than the container
+            # layer, so a redeploy is the same runner reconnecting rather than a new one
+            # registering, but the volume is declared where every other data volume of a repository
+            # this bootstrap did not write is: the runner's own
+            # {@code .config/qits/deployments.yml} (`volumes: private:state:/var/lib/qits-ci-runner`),
+            # which the deployer resolves and mounts itself. A second {@code mounts[]} entry at the
+            # same target here would be a second mount of one path, which docker refuses outright.
+            #
+            # QITS_CI_RUNNER_URL IS A PUBLIC EDGE ADDRESS, AND DELIBERATELY NOT THE INTERNAL ALIAS
+            # every other line in this file reaches for. A runner's registration token is the opaque
+            # `qits_tok_…` qits-ci mints and only the PUBLIC edge introspects — the internal alias
+            # answers no such door — so the runner has to dial out through the same edge a person's
+            # own runner would, even though this one happens to live on the platform's own host (see
+            # `ci-runners-go-through-the-edge`). It is composed with the one grammar
+            # RunnerAddresses.publicOrigin uses for every runner qits-ci tells this to
+            # (DomainTokens.ciRunnerPublicUrl explains why composing it here, once, does not reopen
+            # the browser-name question the rest of this file settled — it is a fragment like every
+            # other domain-derived value, empty with no domain and this with one).
+            #
+            # QITS_CI_RUNNER_SELF_UPDATE=false ON PURPOSE: this container is not the one that
+            # replaces itself. Every other runner rolls itself over on an Upgrade frame; this one is
+            # a deployed application like any other, so qits-deployments is what redeploys it on a
+            # release, and a runner also trying to self-update would be two actors racing to remove
+            # the same container.
+            #
+            # THE ID AND THE TOKEN ARE DELIBERATELY EMPTY HERE. Both are minted against the running
+            # idp and qits-ci once, by an operator, the moment the `localhost` runner row exists (a
+            # later task in this epic creates it) — never by this bootstrap, which runs before that
+            # row can exist and has no business minting a runner's own credential. An operator fills
+            # them through qits-configuration's PUT door, which is ConfigurationService.upsert
+            # (qits-configuration-service, ConfigurationService.java:487-508): every write it makes
+            # is class `plain`, unconditionally. A REBOOTSTRAP re-imports this whole block through
+            # ConfigurationService.importProperties (ConfigurationService.java:566-594), and that
+            # importer's per-line write (ConfigurationService.java:580-586) checks the row it would
+            # replace BEFORE comparing values: a `plain` row is counted `kept` and left untouched,
+            # full stop — so an operator's id and token survive every later rebootstrap, and only a
+            # row that is still `imported` (never set by hand) is what this empty value would go on
+            # blanking.
+            qits.deployments.extras.qits-ci-runner.mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock
+            qits.deployments.extras.qits-ci-runner.groups[0]=${DOCKER_GID}
+            qits.deployments.extras.qits-ci-runner.env.QITS_CI_RUNNER_URL=${CI_RUNNER_PUBLIC_URL}
+            qits.deployments.extras.qits-ci-runner.env.QITS_CI_RUNNER_STATE_DIR=/var/lib/qits-ci-runner
+            qits.deployments.extras.qits-ci-runner.env.QITS_CI_RUNNER_SLOTS=${CI_LOCAL_SLOTS}
+            qits.deployments.extras.qits-ci-runner.env.QITS_CI_RUNNER_SELF_UPDATE=false
+            qits.deployments.extras.qits-ci-runner.env.QITS_CI_RUNNER_ID=
+            qits.deployments.extras.qits-ci-runner.env.QITS_CI_RUNNER_REGISTRATION_TOKEN=
             """;
 }

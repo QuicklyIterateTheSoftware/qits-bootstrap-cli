@@ -78,6 +78,7 @@ public final class DomainTokens {
         values.put("SEED_DOMAIN", domain.map(DomainTokens::seedDomain).orElse(""));
         values.put("DEPLOYMENTS_DOMAIN_ARGS",
                 domain.map(DomainTokens::deploymentsDomain).orElse(""));
+        values.put("CI_RUNNER_PUBLIC_URL", domain.map(DomainTokens::ciRunnerPublicUrl).orElse(""));
         return values;
     }
 
@@ -135,6 +136,26 @@ public final class DomainTokens {
             + "# propagator, and a self-update's successor is started from these lines alone, so\n"
             + "# the deployer's own copy has to live here as well as on the seed stack.\n"
             + DEPLOYMENTS + "env.QITS_DOMAIN=" + domain;
+    }
+
+    /**
+     * <b>qits-ci-runner's own address, and the one fragment here that is not a fragment of a line —
+     * it is a WHOLE value, {@code env.QITS_CI_RUNNER_URL}'s.</b> Every other key in this class adds
+     * text to a line the template already has; this one is simpler because there is nothing to add
+     * to: the key and its comment are written once, beside {@code qits-ci-runner}'s block in
+     * {@code ComposeTemplate.EXTRAS_REST}, and a domain changes only what value that one line
+     * carries — empty with none, this with one.
+     * <p>
+     * <b>Composed rather than derived by the runner itself</b>, and that comment explains why:
+     * {@code eu.wohlben.qits.cirunner.RunnerEnv} is a plain binary with no notion of
+     * {@code QITS_DOMAIN} at all, so unlike every application this class used to compose a browser
+     * name for, there is no service on the other end to hand the domain to and let it work the name
+     * out. The grammar is qits-ci's own, {@code RunnerAddresses.publicOrigin}:
+     * {@code https://<host>.<project>.<domain>} with no environment label, because the platform
+     * project carries none.
+     */
+    private static String ciRunnerPublicUrl(String domain) {
+        return "https://ci.qits." + domain;
     }
 
     private static String letsEncryptVolume(String secretName) {
