@@ -933,25 +933,31 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>qits-ci's build concurrency is FILLED, in both files, and is never the literal 2.</b>
+     * <b>The host's build concurrency is FILLED and is never the literal 2 — on the seed qits-ci and
+     * on the runner that replaced the deployed qits-ci's executor.</b>
      * <p>
      * A step's {@code docker build} is served by the host daemon, so it runs outside the 4g step
      * cgroup; two concurrent GraalVM-native ones livelocked a 16 GB host on 2026-08-22. The number
-     * is {@link CiConcurrency}'s, and it has to reach the extras as well as the seed — the extras
-     * are what the deployed ci gets, and a literal there is what wrote an operator's hand-set 1
-     * back to 2 on the next re-bootstrap.
+     * is {@link CiConcurrency}'s. The deployed qits-ci executes nothing since qits-443, so its
+     * extras carry the number no more: it reaches qits-ci-runner as its slots instead, and a
+     * literal there would be what writes an operator's hand-set 1 back to 2 on the next
+     * re-bootstrap. The seed qits-ci still carries it — it executes the cold start's early runs
+     * itself.
      */
     @Test
-    void ciBuildConcurrencyComesFromTheHostAndReachesBothFiles() {
+    void ciBuildConcurrencyComesFromTheHostAndReachesTheSeedAndTheRunner() {
         Map<String, String> twoBuildHost = tokens();
         twoBuildHost.put("CI_CONCURRENT_BUILDS", "2");
+        twoBuildHost.put("CI_LOCAL_SLOTS", "2");
 
         assertThat(serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-ci"))
                 .contains("QITS_CI_CONCURRENT_BUILDS: \"1\"");
         assertThat(serviceBlock(ComposeTemplate.compose(twoBuildHost), ENV + "-qits-ci"))
                 .contains("QITS_CI_CONCURRENT_BUILDS: \"2\"");
-        assertThat(extras("qits-ci")).contains("env.QITS_CI_CONCURRENT_BUILDS=1");
-        assertThat(extras("qits-ci", twoBuildHost)).contains("env.QITS_CI_CONCURRENT_BUILDS=2");
+        assertThat(extras("qits-ci-runner")).contains("env.QITS_CI_RUNNER_SLOTS=1");
+        assertThat(extras("qits-ci-runner", twoBuildHost)).contains("env.QITS_CI_RUNNER_SLOTS=2");
+        // The deployed qits-ci runs nothing itself, so it is told no number of builds to run.
+        assertThat(extras("qits-ci")).doesNotContain("QITS_CI_CONCURRENT_BUILDS");
 
         // The step container's own limits are NOT sized by this and must not move with it.
         assertThat(extras("qits-ci")).contains("env.QITS_CI_MEMORY_LIMIT=4g")
@@ -1580,10 +1586,12 @@ class ComposeTemplateTest {
         String ci = serviceBlock(compose, ENV + "-qits-ci");
         String ciExtras = extras("qits-ci");
 
-        // The wire alias, in both files: the image ships the unqualified qits-containers:8080,
-        // which resolves to nothing on this network.
+        // The wire alias, on the seed: the image ships the unqualified qits-containers:8080, which
+        // resolves to nothing on this network, and the seed qits-ci still executes the cold start's
+        // early runs through the orchestrator. The deployed one asks it for nothing since qits-443
+        // — a runner starts its steps — so its extras name no orchestrator at all.
         assertThat(ci).contains("QITS_CONTAINERS_URL: http://prod-qits-containers:8080");
-        assertThat(ciExtras).contains("env.QITS_CONTAINERS_URL=http://prod-qits-containers:8080");
+        assertThat(ciExtras).doesNotContain("QITS_CONTAINERS_URL");
 
         // And the grant that is gone. Not "no mount" alone — the socket group is the other half,
         // and either one without the other is a container that cannot use what it was given.

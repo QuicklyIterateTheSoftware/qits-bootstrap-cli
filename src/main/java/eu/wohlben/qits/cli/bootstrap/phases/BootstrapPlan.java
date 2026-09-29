@@ -209,7 +209,25 @@ public final class BootstrapPlan {
         }
         phases.add(pipeline.environment());
         for (String deployable : PlatformModel.DEPLOYABLES) {
+            // THE PLATFORM HOST'S RUNNER, and the three phases around its deployment are one piece.
+            // From epic qits-443 on qits-ci has no executor of its own, so a run is executed by a
+            // connected runner or by nothing — this host's included. `runner-localhost` declares the
+            // row in qits-ci and writes its id and one-time registration token into
+            // qits-configuration BEFORE the deployment, because the deployment is configured from
+            // there; `runner-connected` waits AFTER it for qits-ci to say the runner is connected,
+            // which is the fact a run depends on. Why the three sit behind the edge is in
+            // PlatformModel.DEPLOYABLES. Without a domain the runner has no address to dial, so the
+            // declaration skips itself and there is nothing to deploy or wait for.
+            if (PipelinePhases.CI_RUNNER.equals(deployable)) {
+                phases.add(pipeline.localhostRunner());
+                if (domain.isEmpty()) {
+                    continue;
+                }
+            }
             phases.add(pipeline.deploy(deployable));
+            if (PipelinePhases.CI_RUNNER.equals(deployable)) {
+                phases.add(pipeline.localhostRunnerConnected());
+            }
             // THE TWO PHASES THAT MOVE DEPLOYMENT CONFIGURATION INTO THE PLATFORM, and they sit
             // here rather than at the end of the train because both directions of the order are
             // load-bearing. AFTER qits-configuration's own deployment: a deployer told to read a

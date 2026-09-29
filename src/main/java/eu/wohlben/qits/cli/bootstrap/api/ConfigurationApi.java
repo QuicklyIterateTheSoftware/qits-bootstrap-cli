@@ -66,4 +66,20 @@ public class ConfigurationApi {
         return http.postText(base + "/configuration/api/import?env=" + envName, properties,
                 ADMIN_HEADERS);
     }
+
+    /**
+     * <b>One entry, set in this boot's environment</b> — {@code PUT /configuration/api/applications/
+     * <application>/envs/<env>/entries/<key>} with {@code {"value": …}}. 201 the first time the key
+     * is seen in that env, 200 afterwards, and an identical value writes no revision.
+     * <p>
+     * <b>Unlike the import, what this writes is class {@code plain}</b>, and that is why a value the
+     * boot has to keep across reruns goes through here: a later import that meets a {@code plain}
+     * row leaves it alone rather than writing the rendered file's value back over it.
+     *
+     * @param key the extras grammar after the application segment, {@code env.QITS_…}
+     */
+    public Http.Response setEntry(String application, String key, String value) {
+        return http.putJson(base + "/configuration/api/applications/" + application + "/envs/"
+                + envName + "/entries/" + key, Json.object("value", value), ADMIN_HEADERS);
+    }
 }

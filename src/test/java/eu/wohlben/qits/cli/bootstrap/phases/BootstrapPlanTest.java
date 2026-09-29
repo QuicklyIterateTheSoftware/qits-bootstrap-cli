@@ -328,6 +328,36 @@ class BootstrapPlanTest {
         assertThat(ids).doesNotContain("dns-zone", "edge-acme");
     }
 
+    /**
+     * <b>THE PLATFORM HOST'S RUNNER: declared, deployed, connected — in that order, behind the edge
+     * and before the deployer's self-update.</b> The declaration writes the id and the registration
+     * token the deployment is configured from, so it has to come first; the runner dials qits-ci at
+     * the public edge, so none of it can come before {@code deploy-edge}; and it needs the deployed
+     * qits-ci and a flipped qits-configuration.
+     */
+    @Test
+    void theLocalhostRunnerIsDeclaredDeployedAndAwaitedBehindTheEdge() {
+        List<String> ids = ids(plan(Map.of("QITS_DOMAIN", "qits-dev.eu",
+                "QITS_PUBLIC_IP", "203.0.113.7")));
+
+        assertThat(ids).containsSubsequence("configuration-flip", "deploy-ci", "deploy-edge",
+                "runner-localhost", "deploy-ci-runner", "runner-connected", "deploy-deployments");
+        assertThat(ids.get(ids.indexOf("runner-localhost") + 1)).isEqualTo("deploy-ci-runner");
+        assertThat(ids.get(ids.indexOf("deploy-ci-runner") + 1)).isEqualTo("runner-connected");
+    }
+
+    /**
+     * Without a domain the runner's address is empty, so there is nothing to deploy or wait for —
+     * and the declaration stays in the plan only to say so when it skips.
+     */
+    @Test
+    void withNoDomainTheRunnerIsNeitherDeployedNorAwaited() {
+        List<String> ids = ids(plan(Map.of()));
+
+        assertThat(ids).contains("runner-localhost");
+        assertThat(ids).doesNotContain("deploy-ci-runner", "runner-connected");
+    }
+
     /** No domain is the default, and then neither phase exists — nothing to skip at runtime. */
     @Test
     void withNoDomainNeitherIsInThePlan() {

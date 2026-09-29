@@ -7,6 +7,7 @@ import eu.wohlben.qits.cli.bootstrap.config.TestConfig;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseSkipped;
+import eu.wohlben.qits.cli.bootstrap.engine.Waiter;
 import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
@@ -1556,5 +1557,223 @@ class PipelinePhasesTest {
     @Test
     void aCheckoutWithNoSlotFileDeclaresNothing(@org.junit.jupiter.api.io.TempDir Path src) {
         assertThat(PipelinePhases.declaresReleasePhase(src)).isFalse();
+    }
+
+    // --- the localhost runner ------------------------------------------------------------------------
+    //
+    // The phase's conversation with qits-ci and qits-configuration, driven through a fake of the one
+    // thing both clients share: the http. What is asserted is what went over the wire, because that
+    // is what a live boot would have done.
+
+    private static final String RUNNER_ID = "7c1d2f0e-5a8b-4c3d-9e1f-0a2b3c4d5e6f";
+
+    private static final String TOKEN = "qits_tok_abc123DEF456";
+
+    /** An install line shaped exactly as qits-ci's {@code RunnerInstallScript.line} renders it. */
+    private static String installLine(String token) {
+        return "curl -fsSL -H 'Authorization: Bearer " + token + "' https://ci.qits.example.org"
+                + "/ci/api/runners/install.sh | sudo env QITS_CI_RUNNER_URL='https://ci.qits.example.org'"
+                + " QITS_CI_RUNNER_ID='" + RUNNER_ID + "' QITS_CI_RUNNER_REGISTRATION_TOKEN='" + token
+                + "' QITS_CI_RUNNER_SLOTS='2' sh";
+    }
+
+    private static String runnerJson(boolean registered, boolean connected, String installScript) {
+        return "{\"id\":\"" + RUNNER_ID + "\",\"name\":\"localhost\",\"slots\":2,"
+                + "\"plane\":\"INTERNAL\",\"registered\":" + registered + ",\"connected\":"
+                + connected + (installScript == null ? ""
+                        : ",\"installScript\":" + eu.wohlben.qits.cli.bootstrap.api.Json.quote(
+                                installScript)) + "}";
+    }
+
+    private static String listing(String... runners) {
+        return "{\"runners\":[" + String.join(",", runners) + "]}";
+    }
+
+    /** Answers by method and url, and records every call it was asked. */
+    static final class FakeRunnerHttp extends Http {
+        final Map<String, Http.Response> answers = new java.util.HashMap<>();
+        final List<String> calls = new ArrayList<>();
+        final Map<String, String> bodies = new java.util.HashMap<>();
+        final Map<String, Map<String, String>> headers = new java.util.HashMap<>();
+
+        FakeRunnerHttp answer(String call, int status, String body) {
+            answers.put(call, new Http.Response(status, body));
+            return this;
+        }
+
+        private Http.Response answer(String call, String body, Map<String, String> sent) {
+            calls.add(call);
+            bodies.put(call, body);
+            headers.put(call, sent);
+            return answers.getOrDefault(call, new Http.Response(500, "unexpected " + call));
+        }
+
+        @Override
+        public Http.Response get(String url, Map<String, String> sent) {
+            return answer("GET " + url, null, sent);
+        }
+
+        @Override
+        public Http.Response postJson(String url, String json, Map<String, String> sent) {
+            return answer("POST " + url, json, sent);
+        }
+
+        @Override
+        public Http.Response putJson(String url, String json, Map<String, String> sent) {
+            return answer("PUT " + url, json, sent);
+        }
+    }
+
+    private static final String RUNNERS = "http://prod-qits-ci:8080/ci/api/runners";
+
+    private static final String ENTRIES = "http://prod-qits-configuration:8080/configuration/api/"
+            + "applications/qits-ci-runner/envs/prod/entries/";
+
+    private static PipelinePhases.LocalhostRunner declare(FakeRunnerHttp http,
+                                                          CiLogStreamTest.Recorder ctx) {
+        return PipelinePhases.declareLocalhostRunner(ctx,
+                new CiApi(http, "http://prod-qits-ci:8080/ci"),
+                new eu.wohlben.qits.cli.bootstrap.api.ConfigurationApi(http,
+                        "http://prod-qits-configuration:8080", "prod"),
+                "bootstrap-bearer", 2);
+    }
+
+    /**
+     * <b>A cold start: 201, and the token is read out of the install line.</b> qits-ci answers it
+     * nowhere else, so the line is the one place to take it from — and both values go into
+     * qits-configuration for qits-ci-runner, where the deployment that follows is configured from.
+     */
+    @Test
+    void aFreshRunnerIsDeclaredAndItsIdAndTokenGoToConfiguration() {
+        FakeRunnerHttp http = new FakeRunnerHttp()
+                .answer("POST " + RUNNERS, 201, runnerJson(false, false, installLine(TOKEN)))
+                .answer("PUT " + ENTRIES + "env.QITS_CI_RUNNER_ID", 201, "{}")
+                .answer("PUT " + ENTRIES + "env.QITS_CI_RUNNER_REGISTRATION_TOKEN", 201, "{}");
+        CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
+
+        PipelinePhases.LocalhostRunner runner = declare(http, ctx);
+
+        assertThat(runner).isEqualTo(new PipelinePhases.LocalhostRunner(RUNNER_ID, false));
+        assertThat(http.calls).containsExactly("POST " + RUNNERS,
+                "PUT " + ENTRIES + "env.QITS_CI_RUNNER_ID",
+                "PUT " + ENTRIES + "env.QITS_CI_RUNNER_REGISTRATION_TOKEN");
+        assertThat(http.bodies.get("POST " + RUNNERS))
+                .isEqualTo("{\"name\":\"localhost\",\"plane\":\"INTERNAL\",\"slots\":2}");
+        // The machine write presents this run's own token — qits:system, audience qits-platform.
+        assertThat(http.headers.get("POST " + RUNNERS))
+                .containsEntry("Authorization", "Bearer bootstrap-bearer");
+        assertThat(http.bodies.get("PUT " + ENTRIES + "env.QITS_CI_RUNNER_ID"))
+                .isEqualTo("{\"value\":\"" + RUNNER_ID + "\"}");
+        assertThat(http.bodies.get("PUT " + ENTRIES + "env.QITS_CI_RUNNER_REGISTRATION_TOKEN"))
+                .isEqualTo("{\"value\":\"" + TOKEN + "\"}");
+        // And the token itself is never said aloud.
+        assertThat(ctx.logs).noneMatch(line -> line.contains(TOKEN));
+    }
+
+    /**
+     * <b>A rerun against a runner that registered: 409, the id from the listing, and no token.</b>
+     * The runner lives on the client.json of its state volume, and qits-ci refuses a token for a
+     * registered runner anyway — so nothing is rotated and only the id is re-asserted.
+     */
+    @Test
+    void aRerunAgainstARegisteredRunnerMintsNoToken() {
+        FakeRunnerHttp http = new FakeRunnerHttp()
+                .answer("POST " + RUNNERS, 409, "{\"message\":\"A runner named localhost already exists\"}")
+                .answer("GET " + RUNNERS, 200, listing(runnerJson(true, true, null)))
+                .answer("PUT " + ENTRIES + "env.QITS_CI_RUNNER_ID", 200, "{}");
+        CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
+
+        PipelinePhases.LocalhostRunner runner = declare(http, ctx);
+
+        assertThat(runner).isEqualTo(new PipelinePhases.LocalhostRunner(RUNNER_ID, true));
+        assertThat(http.calls).containsExactly("POST " + RUNNERS, "GET " + RUNNERS,
+                "PUT " + ENTRIES + "env.QITS_CI_RUNNER_ID");
+    }
+
+    /**
+     * <b>A rerun against a runner that never registered: 409, then a rotation.</b> The first token's
+     * value was answered once, to whichever boot minted it, and is not readable again — so a fresh
+     * one is minted and written over it.
+     */
+    @Test
+    void aRerunAgainstAnUnregisteredRunnerRotatesItsToken() {
+        FakeRunnerHttp http = new FakeRunnerHttp()
+                .answer("POST " + RUNNERS, 409, "{}")
+                .answer("GET " + RUNNERS, 200, listing(
+                        "{\"id\":\"other\",\"name\":\"laptop\",\"registered\":true}",
+                        runnerJson(false, false, null)))
+                .answer("POST " + RUNNERS + "/" + RUNNER_ID + "/registration-token", 200,
+                        runnerJson(false, false, installLine("qits_tok_rotated789")))
+                .answer("PUT " + ENTRIES + "env.QITS_CI_RUNNER_ID", 200, "{}")
+                .answer("PUT " + ENTRIES + "env.QITS_CI_RUNNER_REGISTRATION_TOKEN", 200, "{}");
+        CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
+
+        PipelinePhases.LocalhostRunner runner = declare(http, ctx);
+
+        assertThat(runner).isEqualTo(new PipelinePhases.LocalhostRunner(RUNNER_ID, false));
+        assertThat(http.calls).containsExactly("POST " + RUNNERS, "GET " + RUNNERS,
+                "POST " + RUNNERS + "/" + RUNNER_ID + "/registration-token",
+                "PUT " + ENTRIES + "env.QITS_CI_RUNNER_ID",
+                "PUT " + ENTRIES + "env.QITS_CI_RUNNER_REGISTRATION_TOKEN");
+        assertThat(http.headers.get("POST " + RUNNERS + "/" + RUNNER_ID + "/registration-token"))
+                .containsEntry("Authorization", "Bearer bootstrap-bearer");
+        assertThat(http.bodies.get("PUT " + ENTRIES + "env.QITS_CI_RUNNER_REGISTRATION_TOKEN"))
+                .isEqualTo("{\"value\":\"qits_tok_rotated789\"}");
+    }
+
+    /**
+     * A write qits-configuration refuses STOPS the boot, and says so without the token: the
+     * deployment below would otherwise start a runner with nothing to register with.
+     */
+    @Test
+    void aRefusedConfigurationWriteStopsTheBootWithoutTheToken() {
+        FakeRunnerHttp http = new FakeRunnerHttp()
+                .answer("POST " + RUNNERS, 201, runnerJson(false, false, installLine(TOKEN)))
+                .answer("PUT " + ENTRIES + "env.QITS_CI_RUNNER_ID", 201, "{}")
+                .answer("PUT " + ENTRIES + "env.QITS_CI_RUNNER_REGISTRATION_TOKEN", 403,
+                        "refused " + TOKEN);
+
+        assertThatThrownBy(() -> declare(http, new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("env.QITS_CI_RUNNER_REGISTRATION_TOKEN")
+                .hasMessageNotContaining(TOKEN);
+    }
+
+    /** Any other refusal of the create is a stop too, in qits-ci's own words. */
+    @Test
+    void aRefusedCreateStopsTheBoot() {
+        FakeRunnerHttp http = new FakeRunnerHttp()
+                .answer("POST " + RUNNERS, 403, "this credential writes nothing here");
+
+        assertThatThrownBy(() -> declare(http, new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("403");
+    }
+
+    /** The wait ends on {@code connected: true} and on nothing weaker. */
+    @Test
+    void theConnectionWaitEndsOnConnectedAndOnlyThen() {
+        assertThat(PipelinePhases.runnerConnection(new Http.Response(200,
+                listing(runnerJson(true, true, null)))).value()).isEqualTo(RUNNER_ID);
+
+        Waiter.Poll<String> registered = PipelinePhases.runnerConnection(new Http.Response(200,
+                listing(runnerJson(true, false, null))));
+        assertThat(registered.value()).isNull();
+        assertThat(registered.observed()).isEqualTo("registered, not connected");
+
+        assertThat(PipelinePhases.runnerConnection(new Http.Response(200,
+                listing(runnerJson(false, false, null)))).observed()).isEqualTo("not registered yet");
+        assertThat(PipelinePhases.runnerConnection(new Http.Response(200, listing()))
+                .observed()).isEqualTo("qits-ci lists no runner localhost");
+        assertThat(PipelinePhases.runnerConnection(new Http.Response(503, "down")).value())
+                .isNull();
+    }
+
+    /** The install line carries the token in single quotes, and that is the whole parse. */
+    @Test
+    void theRegistrationTokenIsReadOutOfTheInstallLine() {
+        assertThat(CiApi.registrationToken(installLine(TOKEN))).contains(TOKEN);
+        assertThat(CiApi.registrationToken("curl … | sh")).isEmpty();
+        assertThat(CiApi.registrationToken(null)).isEmpty();
     }
 }

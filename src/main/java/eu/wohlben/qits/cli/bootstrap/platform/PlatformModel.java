@@ -183,12 +183,24 @@ public final class PlatformModel {
      * because its own cutover DROPS every open terminal: put earlier, the successor would take the
      * sessions of an operator watching the rest of the train go by. It stays above the edge and the
      * deployer for the reason everything does. Not in the seed either: nothing calls it.
+     * <p>
+     * <b>qits-ci-runner joined on 2026-09-29 (qits-507), and it is the one application AFTER the
+     * edge.</b> It is the platform host's own CI runner — since epic qits-443 qits-ci executes
+     * nothing itself, and a step on this host is a container this runner starts. Two facts pin it
+     * behind the edge. Its {@code QITS_CI_RUNNER_URL} is the PUBLIC edge address, because only the
+     * public edge turns a registration token into something qits-ci accepts, and until
+     * {@code deploy-edge} the public door is the bootstrap ingress, which routes no API at all. And
+     * its {@code health_cmd} is healthy only while it is connected, so a deployment before the edge
+     * would fail the deployer's health gate and be rolled back. It stays ABOVE qits-deployments for
+     * the reason everything does: that deployment is the self-update handoff. The
+     * {@code runner-localhost} phase before it and {@code runner-connected} after it are in
+     * {@code BootstrapPlan}.
      */
     public static final List<String> DEPLOYABLES = List.of(
             "observability", "idp", "configuration", "stt", "projects",
             "workspaces", "events", "mirror", "artifacts", "githost", "docs",
             "containers", "ci", "orchestrator", "maintenance", "system",
-            "edge", "deployments");
+            "edge", "ci-runner", "deployments");
 
     /**
      * <b>There is no platform plane, and this is where it used to be listed.</b>
@@ -413,7 +425,8 @@ public final class PlatformModel {
      */
     public static String repoPath(String name) {
         return switch (name) {
-            case "ci-daemon", "workspace-daemon", "projects-daemon" -> "daemons/" + repo(name);
+            case "ci-daemon", "ci-runner", "workspace-daemon", "projects-daemon" ->
+                    "daemons/" + repo(name);
             case "oci", "oci-postgresql", "oci-workspace", "oci-workspace-editor" ->
                     "images/" + repo(name);
             // Framework glue is shared code, so the integrations sit in libs/ like any other lib —
@@ -518,6 +531,15 @@ public final class PlatformModel {
         if (name.endsWith("-javalib") || name.endsWith("-jslib")) {
             return "LIBRARY";
         }
+        // The REPOSITORY's grammar next, for a model name that says nothing of its kind while its
+        // repository does: ci-runner is qits-ci-runner-daemon, a DAEMON deployed as an application.
+        String repository = repo(name);
+        if (!repository.equals(name) && !repository.equals("qits-" + name)) {
+            String kind = archetypeOfName(repository);
+            if (!"SERVICE".equals(kind)) {
+                return kind;
+            }
+        }
         if (LIBRARY_NAMES.contains(name)) {
             return "LIBRARY";
         }
@@ -620,6 +642,10 @@ public final class PlatformModel {
             // The environment tier's services.
             Map.entry("artifacts", "qits-artifacts-service"),
             Map.entry("ci", "qits-ci-service"),
+            // The platform host's runner: a daemon repository deployed as an application, so the
+            // model name is the APPLICATION's (qits-ci-runner, the name its deployments.yml pins)
+            // and the repository is the daemon's.
+            Map.entry("ci-runner", "qits-ci-runner-daemon"),
             Map.entry("containers", "qits-containers-service"),
             Map.entry("docs", "qits-docs-service"),
             Map.entry("githost", "qits-githost-service"),

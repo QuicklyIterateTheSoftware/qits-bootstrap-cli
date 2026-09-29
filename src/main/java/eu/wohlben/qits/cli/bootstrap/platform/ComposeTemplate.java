@@ -1055,6 +1055,15 @@ public final class ComposeTemplate {
                   # on a 16 GB host with no swap livelocked the machine on 2026-08-22 and it needed a
                   # hard reset — and a literal here is also what silently reverted the 1 an operator
                   # had set by hand. QITS_CI_CONCURRENT_BUILDS in the environment overrides it.
+                  #
+                  # ON THE SEED ONLY, and deliberately so. The deployed qits-ci's extras lost this
+                  # key and QITS_CONTAINERS_URL below with the in-process executor (qits-443), but
+                  # the SEED qits-ci is the one that executes every release replay and every train
+                  # build up to deploy-ci — and no runner exists this early in a cold start: the
+                  # localhost runner is a qits-deployments deployment, brought up by the train. So
+                  # the seed keeps the executor's two keys for as long as the seed image is a
+                  # qits-ci that has one. Against a qits-ci without it both are inert, and the seed
+                  # stage needs a runner of its own (see the README's phase table).
                   QITS_CI_CONCURRENT_BUILDS: "${CI_CONCURRENT_BUILDS}"
                   # NOT the bound on a build. It is the step CONTAINER's limit, and the docker build
                   # it starts is the host daemon's child — which is why the line above is sized by
@@ -1662,14 +1671,14 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_URL=http://githost.${ENV_NAME}.internal:8080
             qits.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_AUDIENCE=${ENV_NAME}-qits-githost
             qits.deployments.extras.qits-ci.env.QITS_CI_NETWORK=qits-net
-            # THE SAME COMPUTED NUMBER as the seed block's, and it has to be here too: this is what
-            # survives the seed container, and a re-bootstrap that wrote a literal back over an
-            # operator's hand-set value is exactly how a 16 GB host was livelocked on 2026-08-22.
-            # CiConcurrency holds the formula; QITS_CI_CONCURRENT_BUILDS overrides it.
-            qits.deployments.extras.qits-ci.env.QITS_CI_CONCURRENT_BUILDS=${CI_CONCURRENT_BUILDS}
+            # NO QITS_CI_CONCURRENT_BUILDS AND NO QITS_CONTAINERS_URL, and both absences are the
+            # retirement epic (qits-443). The deployed qits-ci has no in-process executor: it runs
+            # nothing itself and asks qits-containers for nothing, so it declares neither key and a
+            # line here would be a value nothing reads. The host's build capacity did not go away —
+            # it moved to qits-ci-runner below, as QITS_CI_RUNNER_SLOTS=${CI_LOCAL_SLOTS}, the same
+            # computed number (CiConcurrency) the executor used to be sized by.
             qits.deployments.extras.qits-ci.env.QITS_CI_MEMORY_LIMIT=4g
             qits.deployments.extras.qits-ci.env.QITS_CI_CPUS=4
-            qits.deployments.extras.qits-ci.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
             qits.deployments.extras.qits-ci.env.QITS_ARTIFACTS_REGISTRY_HOST=registry.${ENV_NAME}.localhost:${PORT}
             qits.deployments.extras.qits-ci.env.QITS_CI_DOCKER_AUTH_HOSTS=registry.${ENV_NAME}.localhost:${PORT},mirror.${ENV_NAME}.localhost:${PORT}
             qits.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_HOSTED_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/
@@ -2337,19 +2346,20 @@ public final class ComposeTemplate {
             # release, and a runner also trying to self-update would be two actors racing to remove
             # the same container.
             #
-            # THE ID AND THE TOKEN ARE DELIBERATELY EMPTY HERE. Both are minted against the running
-            # idp and qits-ci once, by an operator, the moment the `localhost` runner row exists (a
-            # later task in this epic creates it) — never by this bootstrap, which runs before that
-            # row can exist and has no business minting a runner's own credential. An operator fills
-            # them through qits-configuration's PUT door, which is ConfigurationService.upsert
-            # (qits-configuration-service, ConfigurationService.java:487-508): every write it makes
-            # is class `plain`, unconditionally. A REBOOTSTRAP re-imports this whole block through
-            # ConfigurationService.importProperties (ConfigurationService.java:566-594), and that
-            # importer's per-line write (ConfigurationService.java:580-586) checks the row it would
+            # THE ID AND THE TOKEN ARE DELIBERATELY EMPTY HERE, AND THIS FILE NEVER CARRIES THEM.
+            # Both come from qits-ci, not from this program: the `runner-localhost` phase declares
+            # the `localhost` runner there (POST /ci/api/runners) once qits-ci and
+            # qits-configuration are both deployed, and writes the runner's id and its registration
+            # token straight into qits-configuration through the PUT door
+            # (ConfigurationController.setIn -> ConfigurationService.upsert), which writes every row
+            # class `plain`. That is the one credential-shaped value allowed in qits-configuration
+            # for this application, and why it is allowed: a registration token is single-use and
+            # dead after the first registration — the runner then lives on the client.json on its
+            # state volume — so the row holds a spent token from the moment the runner has
+            # connected. A REBOOTSTRAP re-imports this whole block through
+            # ConfigurationService.importProperties, whose per-line write checks the row it would
             # replace BEFORE comparing values: a `plain` row is counted `kept` and left untouched,
-            # full stop — so an operator's id and token survive every later rebootstrap, and only a
-            # row that is still `imported` (never set by hand) is what this empty value would go on
-            # blanking.
+            # so these two empty lines never blank what the phase (or an operator) wrote.
             qits.deployments.extras.qits-ci-runner.mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock
             qits.deployments.extras.qits-ci-runner.groups[0]=${DOCKER_GID}
             qits.deployments.extras.qits-ci-runner.env.QITS_CI_RUNNER_URL=${CI_RUNNER_PUBLIC_URL}

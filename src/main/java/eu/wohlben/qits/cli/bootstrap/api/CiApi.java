@@ -7,6 +7,8 @@ import java.util.List;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** qits-ci: the manual event door the bring-up starts release builds with, and the run listings the
  * waits poll. */
@@ -88,6 +90,77 @@ public class CiApi {
         }
         Json.parse(answer.body()).path("runIds").forEach(id -> runs.add(id.asText()));
         return runs;
+    }
+
+    // --- the runners ------------------------------------------------------------------------------
+
+    /**
+     * <b>{@code POST /ci/api/runners}: declare a runner.</b> 201 answers the runner flat, plus
+     * {@code installScript} — the one line that carries its registration token, and the only place
+     * qits-ci ever writes that value. 409 is a name already taken.
+     * <p>
+     * <b>A machine write, with this run's own token</b>: the four lifecycle writes take
+     * {@code qits:system} beside {@code qits:admin} (qits-ci, qits-521), and a machine caller must
+     * present a token addressed to {@code qits-platform} — {@code MachineAuth.require}, the same
+     * audience every guarded service here validates. With the gate off there is no token, and the
+     * forwarded identity is the whole credential, as it is on the reads.
+     * <p>
+     * <b>Never {@link Http.Response#describe()} a successful answer</b>: its body carries the token.
+     */
+    public Http.Response createRunner(String name, String plane, int slots, String token) {
+        return http.postJson(base + "/api/runners",
+                Json.object("name", name, "plane", plane, "slots", Json.verbatim(String.valueOf(slots))),
+                writer(token));
+    }
+
+    /** {@code GET /ci/api/runners}: every runner, with whether it is registered and connected. */
+    public Http.Response runners() {
+        return http.get(base + "/api/runners", SYSTEM_HEADERS);
+    }
+
+    /**
+     * {@code POST /ci/api/runners/{id}/registration-token}: a fresh registration token for a runner
+     * that has not registered, in the same shape as the create's answer. A registered runner is
+     * 409 — it has spent its registration and needs no token.
+     */
+    public Http.Response rotateRegistrationToken(String runnerId, String token) {
+        return http.postJson(base + "/api/runners/" + runnerId + "/registration-token", "{}",
+                writer(token));
+    }
+
+    /** The one runner of this name in a {@link #runners()} answer, if it is there. */
+    public static Optional<JsonNode> runnerNamed(Http.Response listing, String name) {
+        if (!listing.ok()) {
+            return Optional.empty();
+        }
+        for (JsonNode runner : Json.parse(listing.body()).path("runners")) {
+            if (name.equals(Json.text(runner, "name"))) {
+                return Optional.of(runner);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * The install line's {@code QITS_CI_RUNNER_REGISTRATION_TOKEN='…'}. qits-ci answers the token
+     * nowhere else — not as a field of its own, not on any read — so the line is the value's one
+     * carrier, and {@code RunnerInstallScript.line} quotes it in single quotes because the token's
+     * shape ({@code RunnerInstallScript.TOKEN}) never contains one.
+     */
+    public static Optional<String> registrationToken(String installScript) {
+        if (installScript == null) {
+            return Optional.empty();
+        }
+        Matcher token = REGISTRATION_TOKEN.matcher(installScript);
+        return token.find() ? Optional.of(token.group(1)) : Optional.empty();
+    }
+
+    private static final Pattern REGISTRATION_TOKEN =
+            Pattern.compile("QITS_CI_RUNNER_REGISTRATION_TOKEN='([^']+)'");
+
+    /** A write's credential: the bearer when there is one, the forwarded identity otherwise. */
+    private static Map<String, String> writer(String token) {
+        return token == null || token.isBlank() ? SYSTEM_HEADERS : bearer(token);
     }
 
     private static Map<String, String> bearer(String token) {

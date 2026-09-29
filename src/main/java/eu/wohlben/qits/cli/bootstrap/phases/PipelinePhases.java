@@ -2,6 +2,7 @@ package eu.wohlben.qits.cli.bootstrap.phases;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import eu.wohlben.qits.cli.bootstrap.api.CiApi;
+import eu.wohlben.qits.cli.bootstrap.api.ConfigurationApi;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.Json;
 import eu.wohlben.qits.cli.bootstrap.config.Acme;
@@ -2294,6 +2295,191 @@ public class PipelinePhases {
     }
 
     // --- the public identity ------------------------------------------------------------------------
+
+    // --- the platform host's runner ---------------------------------------------------------------
+
+    /** The platform host's runner, as the model names it — application qits-ci-runner. */
+    public static final String CI_RUNNER = "ci-runner";
+
+    /**
+     * The runner row's name in qits-ci. qits-ci's own {@code CiRunners.LOCALHOST}: listed first,
+     * and refused a delete while it is the only runner there is.
+     */
+    static final String LOCALHOST_RUNNER = "localhost";
+
+    /**
+     * Where its steps reach the platform. INTERNAL, on qits-net: the step containers it starts run
+     * on the very host the platform's aliases resolve on, so the public names would be a detour
+     * through the edge for every clone and every publish.
+     */
+    static final String LOCALHOST_PLANE = "INTERNAL";
+
+    /** The two keys the deployer injects into qits-ci-runner, in the extras grammar. */
+    static final String RUNNER_ID_KEY = "env.QITS_CI_RUNNER_ID";
+
+    static final String RUNNER_TOKEN_KEY = "env.QITS_CI_RUNNER_REGISTRATION_TOKEN";
+
+    /**
+     * What {@link #declareLocalhostRunner} left behind: the row's id, and whether a registration
+     * token went into qits-configuration with it — none does for a runner that has registered.
+     */
+    record LocalhostRunner(String id, boolean registered) {
+    }
+
+    /**
+     * <b>THE LOCALHOST RUNNER, declared in qits-ci and handed its credential through
+     * qits-configuration — immediately before its own deployment.</b>
+     * <p>
+     * <b>Why the cold start does this at all.</b> Since epic qits-443 qits-ci has no executor of its
+     * own: a run is executed by a connected runner or by nothing. Every runner elsewhere is a
+     * container a person starts with the install line; this host's is a qits-deployments
+     * deployment ({@code qits-ci-runner}), and a deployment is configured from qits-configuration —
+     * so the id and the one-time registration token go there, under application
+     * {@code qits-ci-runner}, where the deployer injects them as {@code QITS_CI_RUNNER_ID} and
+     * {@code QITS_CI_RUNNER_REGISTRATION_TOKEN}. The extras file keeps both keys EMPTY and never
+     * carries either value; see the comment beside them in {@code ComposeTemplate}.
+     * <p>
+     * <b>Here, and not earlier, because everything it touches has to be the deployed one.</b> The
+     * create is a {@code qits:system} write only a qits-ci carrying qits-521 accepts; the write
+     * lands in a qits-configuration the deployer has been flipped to read; and the deployment it
+     * prepares cannot come up before {@code deploy-edge} (see {@link PlatformModel#DEPLOYABLES}).
+     * <p>
+     * <b>A rerun is a 409 on the name, and it is read rather than fought.</b> The row is taken by
+     * id from the listing. A runner that has REGISTERED needs no token — it lives on the
+     * {@code client.json} its state volume holds, and a registration token for it would be refused
+     * anyway — so only its id is re-asserted. One that has not gets a fresh token: the old one's
+     * value was answered once, to whichever boot minted it, and is not readable again.
+     * <p>
+     * <b>A bootstrap without a domain skips it</b>: the runner dials qits-ci at the public edge
+     * address ({@code QITS_CI_RUNNER_URL}), and with no domain that address is empty — a runner
+     * there would refuse to start and fail its own deployment. The plan leaves out the deployment
+     * and the connection wait too.
+     */
+    public Phase localhostRunner() {
+        return new Phase("runner-localhost", "declare the localhost runner in qits-ci and write its "
+                + "credential into qits-configuration", ctx -> {
+            if (DomainName.of(boot.config).isEmpty()) {
+                ctx.skip("no domain, so the runner has no public address to dial qits-ci at — "
+                        + "QITS_CI_RUNNER_URL is empty and qits-ci-runner is not deployed");
+            }
+            LocalhostRunner runner = declareLocalhostRunner(ctx, boot.ci, boot.configuration,
+                    boot.bootstrapToken(), boot.config.ciConcurrentBuildsEffective());
+            ctx.note(runner.registered() ? "localhost already registered" : "localhost declared");
+        });
+    }
+
+    /**
+     * The phase's whole conversation with qits-ci and qits-configuration, with both handed in so a
+     * test drives it through fakes. The registration token is never logged and never put in an
+     * exception: a refusal is described by its status alone.
+     */
+    static LocalhostRunner declareLocalhostRunner(PhaseContext ctx, CiApi ci,
+                                                  ConfigurationApi configuration, String token,
+                                                  int slots) {
+        Http.Response created = ci.createRunner(LOCALHOST_RUNNER, LOCALHOST_PLANE, slots, token);
+        String id;
+        String registrationToken = null;
+        boolean registered = false;
+        if (created.status() == 201) {
+            JsonNode runner = Json.parse(created.body());
+            id = Json.text(runner, "id");
+            registrationToken = installToken(runner, "the create");
+            ctx.log("  declared runner " + LOCALHOST_RUNNER + " (" + id + "): " + slots
+                    + " slots, " + LOCALHOST_PLANE + " plane");
+        } else if (created.status() == 409) {
+            JsonNode runner = CiApi.runnerNamed(ci.runners(), LOCALHOST_RUNNER)
+                    .orElseThrow(() -> new IllegalStateException("qits-ci answered 409 for runner "
+                            + LOCALHOST_RUNNER + " but does not list it"));
+            id = Json.text(runner, "id");
+            registered = runner.path("registered").asBoolean(false);
+            if (registered) {
+                ctx.log("  runner " + LOCALHOST_RUNNER + " (" + id + ") is already registered — "
+                        + "it lives on the client.json of its state volume, so no token is minted");
+            } else {
+                Http.Response rotated = ci.rotateRegistrationToken(id, token);
+                if (rotated.status() == 409) {
+                    // Registered between the listing and the rotation: the same answer as above.
+                    registered = true;
+                    ctx.log("  runner " + LOCALHOST_RUNNER + " (" + id + ") registered meanwhile — "
+                            + "no token is minted");
+                } else if (!rotated.ok()) {
+                    throw new IllegalStateException("rotating runner " + LOCALHOST_RUNNER
+                            + "'s registration token answered " + rotated.status());
+                } else {
+                    registrationToken = installToken(Json.parse(rotated.body()), "the rotation");
+                    ctx.log("  runner " + LOCALHOST_RUNNER + " (" + id + ") exists but never "
+                            + "registered — its registration token was rotated");
+                }
+            }
+        } else {
+            throw new IllegalStateException("declaring runner " + LOCALHOST_RUNNER + " answered "
+                    + created.describe());
+        }
+        if (id.isBlank()) {
+            throw new IllegalStateException("qits-ci named no id for runner " + LOCALHOST_RUNNER);
+        }
+        put(configuration, RUNNER_ID_KEY, id);
+        ctx.log("  qits-configuration: " + PlatformModel.application(CI_RUNNER) + " "
+                + RUNNER_ID_KEY + "=" + id);
+        if (registrationToken != null) {
+            put(configuration, RUNNER_TOKEN_KEY, registrationToken);
+            ctx.log("  qits-configuration: " + PlatformModel.application(CI_RUNNER) + " "
+                    + RUNNER_TOKEN_KEY + " written (single-use, spent at the first registration)");
+        }
+        return new LocalhostRunner(id, registered);
+    }
+
+    private static String installToken(JsonNode runner, String what) {
+        return CiApi.registrationToken(Json.text(runner, "installScript"))
+                .orElseThrow(() -> new IllegalStateException(what + " of runner " + LOCALHOST_RUNNER
+                        + " answered no registration token in its install line"));
+    }
+
+    private static void put(ConfigurationApi configuration, String key, String value) {
+        Http.Response answer = configuration.setEntry(PlatformModel.application(CI_RUNNER), key,
+                value);
+        if (!answer.ok()) {
+            // STOPS the boot: the deployment below would start a runner with nothing to register
+            // with, and its health gate would roll it back an hour of waiting later.
+            throw new IllegalStateException("writing " + key + " for "
+                    + PlatformModel.application(CI_RUNNER) + " into qits-configuration answered "
+                    + answer.status());
+        }
+    }
+
+    /**
+     * <b>The localhost runner, CONNECTED — the one fact that says this platform can execute a run
+     * again.</b> A green deployment is not that fact on its own terms: the deployer's gate is the
+     * runner's own heartbeat file, and qits-ci is the party a run depends on. So this asks qits-ci,
+     * with the patience every other health wait here has.
+     */
+    public Phase localhostRunnerConnected() {
+        return new Phase("runner-connected", "wait for the localhost runner to connect to qits-ci",
+                ctx -> {
+            String id = Waiter.await(ctx, "runner " + LOCALHOST_RUNNER + " connected to qits-ci",
+                    boot.config.healthTimeout(), Duration.ofSeconds(5),
+                    () -> runnerConnection(boot.ci.runners()));
+            ctx.log("  runner " + LOCALHOST_RUNNER + " (" + id + ") is connected");
+            ctx.note("connected");
+        });
+    }
+
+    /** One poll of the listing: done with the runner's id once it is connected. */
+    static Waiter.Poll<String> runnerConnection(Http.Response listing) {
+        if (!listing.ok()) {
+            return Waiter.Poll.pending("runners: " + listing.describe());
+        }
+        Optional<JsonNode> runner = CiApi.runnerNamed(listing, LOCALHOST_RUNNER);
+        if (runner.isEmpty()) {
+            return Waiter.Poll.pending("qits-ci lists no runner " + LOCALHOST_RUNNER);
+        }
+        if (runner.get().path("connected").asBoolean(false)) {
+            return Waiter.Poll.done(Json.text(runner.get(), "id"), "connected");
+        }
+        return Waiter.Poll.pending(runner.get().path("registered").asBoolean(false)
+                ? "registered, not connected"
+                : "not registered yet");
+    }
 
     /**
      * <b>THE PROJECT EVERY PLATFORM REPOSITORY BELONGS TO, before the first one is created.</b>

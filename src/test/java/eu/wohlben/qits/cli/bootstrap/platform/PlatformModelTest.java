@@ -262,6 +262,9 @@ class PlatformModelTest {
         expected.put("ci-daemon", "qits-ci-daemon");
         expected.put("projects-daemon", "qits-projects-daemon");
         expected.put("workspace-daemon", "qits-workspace-daemon");
+        // The platform host's runner: its model name is the APPLICATION's (qits-ci-runner), and
+        // its repository is a daemon's.
+        expected.put("ci-runner", "qits-ci-runner-daemon");
         // The agent harness, born on 2026-09-08 under a name outside the grammar. The wrapper
         // declares it so, and the boot follows the wrapper.
         expected.put("coding-agents", "qits-coding-agents");
@@ -287,6 +290,24 @@ class PlatformModelTest {
      * model's names, and it is the assertion a half-taught rename fails: a repository left at its
      * old spelling ends in none of these.
      */
+    /**
+     * <b>A model name that says nothing of its kind answers from its repository's grammar.</b>
+     * {@code ci-runner} is deployed as an application, but its repository is
+     * {@code qits-ci-runner-daemon}, and qits-projects already holds it as a DAEMON — the adoption
+     * would otherwise hand it the SERVICE default.
+     */
+    @Test
+    void theRunnerIsADaemonDeployedAsAnApplication() {
+        assertThat(PlatformModel.archetype("ci-runner",
+                "components/qits-ci/qits-ci-runner-daemon")).isEqualTo("DAEMON");
+        assertThat(PlatformModel.application("ci-runner")).isEqualTo("qits-ci-runner");
+        // And the model names that say nothing answer as they always did.
+        assertThat(PlatformModel.archetype("ci", "components/qits-ci/qits-ci-service"))
+                .isEqualTo("SERVICE");
+        assertThat(PlatformModel.archetype("eventstream",
+                "components/qits-eventstream/qits-eventstream-javalib")).isEqualTo("LIBRARY");
+    }
+
     @Test
     void noRepositoryIsLeftAtAStaleName() {
         assertThat(PlatformModel.platformRepos())
@@ -503,7 +524,7 @@ class PlatformModelTest {
                 "observability", "idp", "configuration", "stt", "projects",
                 "workspaces", "events", "mirror", "artifacts", "githost", "docs",
                 "containers", "ci", "orchestrator", "maintenance", "system",
-                "edge", "deployments");
+                "edge", "ci-runner", "deployments");
         // postgres is neither here nor a deployable: it is the seed database, a seed-only service
         // the train never deploys, so it left DEPLOYABLES for SEEDED_REPOS.
         assertThat(PlatformModel.DEPLOYABLES).doesNotContain("oci-postgresql");
@@ -1133,15 +1154,17 @@ class PlatformModelTest {
      * bootstrap since. A derivation asserted against itself would pass while the platform and the
      * template disagreed.
      * <p>
-     * Twenty-one entries: the environment, the eighteen deployables' browser labels, and the two
+     * Twenty-two entries: the environment, the nineteen deployables' browser labels, and the two
      * edge app labels no application name spells ({@code registry} is qits-artifacts,
      * {@code editor} is qits-workspaces). {@code idp} and {@code edge} are in it twice over — from
-     * {@link PlatformModel#DEPLOYABLES} and by name — and appear once.
+     * {@link PlatformModel#DEPLOYABLES} and by name — and appear once. {@code ci-runner} is the
+     * newest (qits-507): it publishes no page, but the rule is that a deployable reserves its label,
+     * and a project called after an application would be a name no person can tell apart from it.
      */
     @Test
     void theReservedSlugsAreTheEnvironmentAndEveryServiceLabel() {
         assertThat(PlatformModel.reservedSlugs("dev")).isEqualTo("dev,"
-                + "artifacts,ci,configuration,containers,deployments,docs,edge,editor,events,"
+                + "artifacts,ci,ci-runner,configuration,containers,deployments,docs,edge,editor,events,"
                 + "githost,idp,maintenance,mirror,observability,orchestrator,projects,registry,"
                 + "stt,system,workspaces");
     }
