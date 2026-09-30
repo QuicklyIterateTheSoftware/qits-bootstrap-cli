@@ -1517,8 +1517,9 @@ class PipelinePhasesTest {
 
     /**
      * <b>An archetype counts on its own, and erring toward yes is the decision.</b> The steps of
-     * this repository's phase two live in the wrapper's
-     * {@code .config/qits/release-archetypes/java-service.yml}, which one checkout cannot resolve —
+     * this repository's phase two live in qits-ci's
+     * {@code .config/qits/release-archetypes/java-service.yml} (shipped in qits-ci-service, or in a
+     * repository's own copy at that path), which one checkout cannot resolve —
      * so a declared archetype is read as a declared phase. A false positive costs five more calls
      * to a door that publishes nothing; a false negative costs the deploy.
      */

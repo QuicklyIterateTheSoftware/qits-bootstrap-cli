@@ -1600,15 +1600,16 @@ public class PipelinePhases {
      * <b>The question used to be "does the recipe select {@code SCMRelease}", and that grammar is
      * gone.</b> Every repository on the estate declares {@code .config/qits/release.yml} — SLOTS,
      * {@code release-request:} for phase one and {@code release:} for phase two, usually reached
-     * through an {@code archetype:} the wrapper holds the steps for — and the hand-written trigger
+     * through an {@code archetype:} qits-ci holds the steps for — and the hand-written trigger
      * pair that spelled {@code event: SCMRelease} survives nowhere. A file with no {@code event:}
      * key in it made this answer false forever, which is this guard dead with no symptom until the
      * race it exists for comes round again.
      * <p>
      * <b>A declared {@code archetype:} counts, and the asymmetry is deliberate.</b> A repository
      * may declare nothing but an archetype and its artifacts and still have a full publish phase,
-     * because the steps live in the wrapper's {@code .config/qits/release-archetypes/<name>.yml};
-     * this program reads one checkout and cannot resolve that, so it errs toward yes. The two costs
+     * because the steps live in qits-ci (shipped in qits-ci-service, or in a repository's own copy
+     * at that path, at some revision this one checkout may not hold); this program reads one
+     * checkout and still cannot resolve that, so it errs toward yes. The two costs
      * are not comparable: a false negative is the IMAGE_MISSING boot above, while a false positive
      * is at most five more announcements ten seconds apart against a repository that really has no
      * release phase — and each of those is one call to a door that publishes nothing.
