@@ -367,12 +367,15 @@ public final class ComposeTemplate {
                   # until that day, because every puller was a machine holding no credential. Each
                   # one holds its own now — the deployer and the orchestrator from the config.json
                   # files this bootstrap writes, a ci step from the credential ci commissions for
-                  # its run — so the door was closed by adding the two keys below, which are the
-                  # OTHER HALF of that change and stay exactly as they are:
+                  # its run — so the door was closed by adding the key below, the OTHER HALF of that
+                  # change, which stays exactly as it is:
                   #
                   #   QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH  unset (false)    ->  true
-                  #   QITS_CI_DOCKER_AUTH_HOSTS                unset            ->  the two
-                  #                                                                 registry names
+                  #
+                  # ci's own half of the flip, QITS_CI_DOCKER_AUTH_HOSTS, is gone with the internal
+                  # step-address plane (qits-515): a step logs in to the registries it needs from the
+                  # per-run credential ci commissions and the PUBLIC names ci composes from
+                  # QITS_DOMAIN, so there is no qits-net host list left to spell.
                   QITS_EDGE_APPS_REGISTRY_HOST_PATTERN: "{env}-qits-artifacts"
                   QITS_EDGE_APPS_MIRROR_HOST_PATTERN: "{env}-qits-mirror"
                   QITS_EDGE_APPS_GITHOST_HOST_PATTERN: "{env}-qits-githost"
@@ -1020,8 +1023,7 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_EVENTSTREAM_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_ci_eventstream
                   QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_ci_eventstream
                   QITS_RESOURCE_EVENTSTREAM_PASSWORD: "${PG_CI_EVENTSTREAM_PASSWORD}"
-                  # ci's own fetch of the pushed ref, and the same base as seen from inside a step
-                  # container — steps join qits-net, so both resolve the git host directly.
+                  # ci's own fetch of the pushed ref.
                   #
                   # THE GIT HOST'S ROOT, WITH NO PATH: ci appends the repository's own address
                   # itself — /git/<projectId>/<repoName> for a run that carries names, and the
@@ -1029,7 +1031,6 @@ public final class ComposeTemplate {
                   # /artifacts, because the routes lived inside the artifacts store; qits-githost
                   # serves /git at its own root and there is nothing in front of it.
                   QITS_CI_GIT_HOST_URL: http://${ENV_NAME}-qits-githost:8080
-                  QITS_CI_CONTAINER_GIT_URL: http://githost.${ENV_NAME}.internal:8080
                   QITS_CI_CONTAINER_GIT_AUDIENCE: ${ENV_NAME}-qits-githost
                   # THE SAME CATALOGUE THE DEPLOYED ci READS, on the seed too — since 2026-09-05.
                   # The seed used to withhold this key, on the argument that qits-projects was
@@ -1045,11 +1046,6 @@ public final class ComposeTemplate {
                   # 404 (2026-09-05 trial boot, deploy phases 60–62). The deployed ci never had that
                   # problem because its extras carry this key; the seed now says the same thing.
                   QITS_CI_PROJECTS_URL: http://${ENV_NAME}-qits-projects:8080
-                  # The network step containers join. Still qits-net: it is the deployer's legacy network,
-                  # the one every container on this host is on whatever plane it belongs to. It is
-                  # ci's choice and travels in the workload spec; the orchestrator puts the container
-                  # on it.
-                  QITS_CI_NETWORK: qits-net
                   # NOT the bound on a build. It is the step CONTAINER's limit; a `docker build` a
                   # step runs is served by the HOST daemon and is outside this cgroup entirely.
                   QITS_CI_MEMORY_LIMIT: 4g
@@ -1059,8 +1055,7 @@ public final class ComposeTemplate {
                   # QITS_CI_IN_PROCESS_EXECUTOR_ENABLED are gone with it, and this seed container
                   # never calls qits-containers. Every run of this boot is executed by the
                   # `localhost` runner the bootstrap starts as a plain container on qits-net
-                  # (qits-588) — the two keys at the end of this block are what that runner needs
-                  # of this service.
+                  # (qits-588), over the public edge — see the QITS_DOMAIN note below.
                   # NO QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL. ci's direct POST to the deployer was retired
                   # on 2026-08-10: a green build is announced on the BUS now, ci -> outbox ->
                   # ${ALIAS_EVENTS} -> the deployer's durable subscriber. qits-ci reads no such key
@@ -1072,17 +1067,6 @@ public final class ComposeTemplate {
                   # publish step pushes the platform's own image, and the mirror takes no writes at
                   # all.
                   QITS_ARTIFACTS_REGISTRY_HOST: registry.${ENV_NAME}.localhost:${PORT}
-                  # WHICH REGISTRIES A STEP MUST LOG IN TO — the third of the flip's values, and
-                  # the one that has to name BOTH stores. A step pushes to the hosted registry and
-                  # PULLS its base images from the mirror, and since 2026-08-14 neither answers a
-                  # read anonymously. ci writes the run's commissioned credential into the step's
-                  # docker config for every host on this list; a name missing from it is a pull
-                  # that dies on a 401 the step has no way to explain.
-                  #
-                  # THE PORT IS PART OF EACH NAME. A docker credential is keyed by host:port, so
-                  # the entries have to be spelled exactly as QITS_REGISTRY and the base-image
-                  # references are — the edge's port, which is the only one either name answers on.
-                  QITS_CI_DOCKER_AUTH_HOSTS: "registry.${ENV_NAME}.localhost:${PORT},mirror.${ENV_NAME}.localhost:${PORT}"
                   # NO QITS_CI_REGISTRY_AUTH_*, and its retirement is the commission API's dividend.
                   # A publish step still needs a credential — the edge answers a registry WRITE with
                   # a 401 Bearer challenge — but ci no longer holds a static one to lend out: it
@@ -1090,25 +1074,12 @@ public final class ComposeTemplate {
                   # id and secret, and decommissions it when the run ends. It borrowed the store's
                   # own client for half a day, which made one leaked step secret the identity that
                   # may write to every registry on the platform. Nothing goes here in its place.
-                  # THE THREE ROOTS EVERY STEP CONTAINER IS HANDED, and the byte-plane split is why they
-                  # are spelled here at all. ci ships them defaulted to qits-platform-artifacts:8080, one
-                  # service that answered for hosted packages and cached ones alike; there are two services
-                  # now, and this tier's qits-artifacts is the one that still needs stating — the npmjs
-                  # cache is a code default in the services that dial it, so it is not repeated here.
-                  #
-                  # They are dialled by the STEP CONTAINER ITSELF over qits-net, so these are wire aliases
-                  # and NOT the registry name above — that one is resolved by the HOST's daemon, and a
-                  # step container's own resolver knows no *.localhost name at all.
-                  QITS_ARTIFACTS_NPM_HOSTED_URL: http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/
+                  # qits-ci REACHES its own artifact store at this alias, on qits-net — HttpImagePins'
+                  # own use of the hosted Maven repository, not a step's. A step is told the PUBLIC
+                  # name of every store it needs, composed by qits-ci itself from QITS_DOMAIN; the
+                  # internal step-address plane that used to spell npm/docs/workspaces roots and a
+                  # step daemon callback here is retired (qits-515).
                   QITS_ARTIFACTS_MAVEN_REGISTRY_URL: http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven
-                  QITS_ARTIFACTS_DOCS_URL: http://${ENV_NAME}-qits-artifacts:8080/artifacts/docs/docs
-                  # The websocket a step container's daemon dials BACK to this service. The image ships the
-                  # unqualified ws://qits-ci:8080/ci/daemon, and nothing by that alias exists any more — a
-                  # blank here fails every step with "could not reach qits-ci", which is exactly how it was
-                  # found on the first prod bootstrap.
-                  QITS_CI_CONTAINER_DAEMON_URL: ws://${ENV_NAME}-qits-ci:8080/ci/daemon
-                  # Same class of self-name: the release train asks workspaces for version identity.
-                  QITS_CI_WORKSPACES_URL: http://${ENV_NAME}-qits-workspaces:8080
                   # The event bus. Its shipped `qits-events:8080` resolved to nothing while the bus
                   # was per-tier — measured: every outbox delivery of the seed ci dialled it, got
                   # ConnectException, and gave up after its five attempts. The bus is a platform
@@ -1127,9 +1098,6 @@ public final class ComposeTemplate {
                   # this entry is what hands the decision back to the pin. The retired name
                   # QITS_CI_DAEMON_VERSION is read by nobody; qits-ci WARNs at boot if it finds it set.
                   QITS_CI_DAEMON_VERSION_OVERRIDE: "${DAEMON_SHA}"
-                  # Where a step container wgets that binary. The shipped default still names the
-                  # retired qits-platform-artifacts alias; on qits-net the store is this tier's.
-                  QITS_CI_DAEMON_BINARY_URL_TEMPLATE: "http://${ENV_NAME}-qits-artifacts:8080/artifacts/daemons/qits-ci-daemon/{version}"
                   # Machine auth. Inbound: /ci/api/events/* demands a bearer addressed to this service whose
                   # project claim covers the event's repo. Outbound: every request that starts, reads
                   # or removes a step container carries one.
@@ -1150,13 +1118,17 @@ public final class ComposeTemplate {
                   # It carries no id, no secret and no address, which is why it is the ONE
                   # QUARKUS_OIDC_CLIENT_* spelling this file may hold.
                   QUARKUS_OIDC_CLIENT_CLIENT_ENABLED: "true"
-                  # WHAT AN INTERNAL RUNNER IS TOLD TO DIAL. The bootstrap's own runner is on
-                  # qits-net, and ci answers its registration with this base and the socket under
-                  # it. ci would derive it from QITS_ENVIRONMENT, which this block does not state —
-                  # so on any environment but `dev` the derivation names a host nothing answers to.
-                  # The deployed successor is handed QITS_ENVIRONMENT by the deployer and needs no
-                  # line.
-                  QITS_CI_RUNNER_INTERNAL_URL: http://${ENV_NAME}-qits-ci:8080
+                  # QITS_DOMAIN REACHES THIS BLOCK TOO, through the SEED_DOMAIN fragment appended
+                  # to the line below — every seed service gets it, not just this one
+                  # (DomainTokens.seedDomain).
+                  # IT IS NOT OPTIONAL FOR CI FROM qits-515 ON: the internal step-address plane
+                  # (the qits-net aliases a step and a runner used to be handed directly) is gone,
+                  # and every address a step or a runner is told now is the PUBLIC name qits-ci
+                  # composes from this variable — ci.qits.<domain>, registry.qits.<domain>, and the
+                  # rest (runnerhost/StepAddressPlane). A platform with no domain configured hands
+                  # out no such address: qits-ci launches no step (LAUNCH_FAILED
+                  # EDGE_PLANE_UNCONFIGURED on every run) and the runner register door answers 503.
+                  # That is the CI-runners campaign's stated end state, not a regression to chase.
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}
                 # NO VOLUMES AT ALL, and there is nothing left to add. ci's /data held the H2 files,
                 # and before that a bare git mirror per repository — it reads pipeline config off the
@@ -1439,8 +1411,10 @@ public final class ComposeTemplate {
             # edge serves needs a bearer on every method, reads included — the landing page stays
             # gated on purpose, per the owner's decision on ticket qits-374. Putting `registry` or
             # `mirror` on this list would undo the 2026-08-14 flip, whose other half stands beside it
-            # unchanged: QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH=true on the deployer and
-            # QITS_CI_DOCKER_AUTH_HOSTS naming both registry vhosts on ci. Do not add the key back.
+            # unchanged: QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH=true on the deployer. ci's own half
+            # of that flip, QITS_CI_DOCKER_AUTH_HOSTS, is gone with the internal step-address plane
+            # (qits-515) — a step logs in with its per-run commissioned credential now. Do not add
+            # either key back.
             qits.deployments.extras.qits-edge.env.QITS_EDGE_APPS_REGISTRY_HOST_PATTERN={env}-qits-artifacts
             qits.deployments.extras.qits-edge.env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN={env}-qits-mirror
             qits.deployments.extras.qits-edge.env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost
@@ -1592,11 +1566,12 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-githost.env.QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN}
             qits.deployments.extras.qits-githost.env.QITS_REPOSITORIES_GIT_PROTECT_DEFAULT_BRANCH=true
             qits.deployments.extras.qits-githost.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
-            # THE FOUR STEP-CONTAINER ROOTS, split across the two byte services exactly as the seed block
-            # above splits them: hosted npm, maven and docs at this tier's qits-artifacts, the npmjs cache
-            # at qits-mirror. ci's shipped defaults all name qits-platform-artifacts:8080, which
-            # resolves to nothing — and the failure is a step that cannot install a dependency, not a
-            # deployment that refuses to start.
+            # qits-ci REACHES ITS OWN hosted Maven repository at this tier's qits-artifacts, on
+            # qits-net (HttpImagePins). It is the one root left here: the internal step-address plane
+            # that used to spell npm/docs roots and a step daemon callback for THIS application's
+            # own extras is retired (qits-515) — a step and a runner are now told the PUBLIC name of
+            # every store, composed by qits-ci itself from QITS_DOMAIN. See the QITS_DOMAIN note
+            # below this block.
             #
             # NO QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL. ci's direct POST to the deployer was retired on
             # 2026-08-10 and the key it read is gone with it: a green build is announced on the bus,
@@ -1608,14 +1583,6 @@ public final class ComposeTemplate {
             # step, and gives it back when the run ends. The static pair this file carried for half a
             # day lent the store's own client to every step, which made one leaked step secret the
             # identity that may write to every registry on the platform.
-            #
-            # QITS_CI_DOCKER_AUTH_HOSTS IS THE FLIP'S THIRD VALUE, and it names BOTH stores: a step
-            # pushes to the hosted registry and PULLS its base images from the mirror, and since
-            # 2026-08-14 neither answers a read anonymously. ci writes the run's credential into the
-            # step's docker config for every host on this list, so a name left off it is a pull that
-            # dies on a 401 with nothing in the step to explain it. The port is part of each entry —
-            # a docker credential is keyed by host:port — and it is the edge's, the only port either
-            # name answers on.
             # NO AUDIENCE AND NO OIDC CLIENT IDENTITY OF ANY SPELLING. ci's identity is the
             # `idp:client` resource it declares: the deployer creates the client, keeps the secret in
             # its registry and injects QITS_RESOURCE_IDP_* into the successor, so this file stores
@@ -1664,30 +1631,32 @@ public final class ComposeTemplate {
             # change on both sides and is left until one is wanted for its own sake.
             qits.deployments.extras.qits-ci.env.QITS_CI_PROJECTS_URL=http://${ENV_NAME}-qits-projects:8080
             qits.deployments.extras.qits-ci.env.QITS_CI_GIT_HOST_URL=http://${ENV_NAME}-qits-githost:8080
-            qits.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_URL=http://githost.${ENV_NAME}.internal:8080
             qits.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_AUDIENCE=${ENV_NAME}-qits-githost
-            qits.deployments.extras.qits-ci.env.QITS_CI_NETWORK=qits-net
             qits.deployments.extras.qits-ci.env.QITS_CI_MEMORY_LIMIT=4g
             qits.deployments.extras.qits-ci.env.QITS_CI_CPUS=4
             qits.deployments.extras.qits-ci.env.QITS_ARTIFACTS_REGISTRY_HOST=registry.${ENV_NAME}.localhost:${PORT}
-            qits.deployments.extras.qits-ci.env.QITS_CI_DOCKER_AUTH_HOSTS=registry.${ENV_NAME}.localhost:${PORT},mirror.${ENV_NAME}.localhost:${PORT}
-            qits.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_HOSTED_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/
             qits.deployments.extras.qits-ci.env.QITS_ARTIFACTS_MAVEN_REGISTRY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven
-            qits.deployments.extras.qits-ci.env.QITS_ARTIFACTS_DOCS_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/docs/docs
             # THE OVERRIDE, not the ordinary answer — see the seed block's QITS_CI_DAEMON_VERSION_OVERRIDE
             # for why: a bootstrapped platform's daemon is a digest this bootstrap uploaded and named
             # nothing else, and clearing this entry once a released daemon's version is pinned by
             # qits-ci is what hands the decision back to that pin. QITS_CI_DAEMON_VERSION is retired
             # and read by nobody.
             qits.deployments.extras.qits-ci.env.QITS_CI_DAEMON_VERSION_OVERRIDE=${DAEMON_SHA}
-            qits.deployments.extras.qits-ci.env.QITS_CI_DAEMON_BINARY_URL_TEMPLATE=http://${ENV_NAME}-qits-artifacts:8080/artifacts/daemons/qits-ci-daemon/{version}
-            qits.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_DAEMON_URL=ws://${ENV_NAME}-qits-ci:8080/ci/daemon
-            qits.deployments.extras.qits-ci.env.QITS_CI_WORKSPACES_URL=http://${ENV_NAME}-qits-workspaces:8080
             qits.deployments.extras.qits-ci.env.QITS_EVENTS_URL=http://${DIAL_EVENTS}:8080
             qits.deployments.extras.qits-ci.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
             qits.deployments.extras.qits-ci.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
             qits.deployments.extras.qits-ci.env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=true
             qits.deployments.extras.qits-ci.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # QITS_DOMAIN NAMES NO LINE HERE, AND THAT IS THE POINT — it is the one variable this
+            # block must NOT state, because qits-deployments writes it into every container it
+            # deploys (DomainTokens.deploymentsDomain), this application's own successor included. A
+            # line here would shadow that injection with whatever this file was rendered with and
+            # never see a rotation. IT IS NOT OPTIONAL FOR CI FROM qits-515 ON, though: the internal
+            # step-address plane deleted above is gone, and every address a step or a runner is told
+            # now is the PUBLIC name qits-ci composes from QITS_DOMAIN. A platform with no domain
+            # configured hands out none of them — qits-ci launches no step (LAUNCH_FAILED
+            # EDGE_PLANE_UNCONFIGURED on every run) and the runner register door answers 503. That is
+            # the CI-runners campaign's stated end state, not a regression to chase.
             # THE CONTAINER ORCHESTRATOR, and the SOCKET IS THE LINE. Every successor of this
             # application has to be started with /var/run/docker.sock and the socket's group, because
             # starting containers is the whole component — a cutover that dropped either would deploy
@@ -1985,8 +1954,10 @@ public final class ComposeTemplate {
             # created from them never dials back and its boot clone fails. Both are spelled here, the
             # first with the environment's own prefix.
             #
-            # THE GIT ONE IS THE INTERNAL ALIAS, githost.<env>.internal, the same address qits-ci hands
-            # its step containers and qits-workspaces its workspace containers — not the git host's
+            # THE GIT ONE IS THE INTERNAL ALIAS, githost.<env>.internal, the same address
+            # qits-workspaces hands its workspace containers (qits-ci's step containers used to share
+            # it too, until the internal step-address plane was retired at qits-515 — a step is told
+            # the git host's PUBLIC name now, composed from QITS_DOMAIN) — not the git host's
             # service alias, which is what this line used to say. Every container image authenticates
             # git with the credential helper baked into it, and that helper answers a username and a
             # token, which git sends as Basic. Only the internal alias's oauth2 transport turns that

@@ -988,10 +988,10 @@ class ComposeTemplateTest {
 
     /**
      * <b>The two-endpoint topology, as every client sees it.</b> Hosted content is this tier's
-     * qits-artifacts; third-party content is qits-mirror. The step containers are where it
-     * matters most, because ci ships all three remaining roots defaulted to the one service that
-     * used to be both — the npmjs cache is a code default in the service now (qits-472) and this
-     * template no longer states it.
+     * qits-artifacts; third-party content is qits-mirror. ci itself still reaches the hosted Maven
+     * repository on qits-net (HttpImagePins) — every other root a step container used to be handed
+     * here (npm, docs, the npmjs cache) is retired with the internal step-address plane (qits-515):
+     * a step is told the PUBLIC name of each store now, composed from QITS_DOMAIN.
      */
     @Test
     void hostedContentIsTheStoreAndThirdPartyContentIsTheMirror() {
@@ -1000,12 +1000,10 @@ class ComposeTemplateTest {
 
         for (String block : new String[]{ci.replace(": ", "="), ciExtras}) {
             assertThat(block).contains(
-                            "QITS_ARTIFACTS_NPM_HOSTED_URL=http://prod-qits-artifacts:8080"
-                                    + "/artifacts/npm/npm/")
-                    .contains("QITS_ARTIFACTS_MAVEN_REGISTRY_URL=http://prod-qits-artifacts:8080"
-                            + "/artifacts/maven/maven")
-                    .contains("QITS_ARTIFACTS_DOCS_URL=http://prod-qits-artifacts:8080"
-                            + "/artifacts/docs/docs")
+                            "QITS_ARTIFACTS_MAVEN_REGISTRY_URL=http://prod-qits-artifacts:8080"
+                                    + "/artifacts/maven/maven")
+                    .doesNotContain("QITS_ARTIFACTS_NPM_HOSTED_URL")
+                    .doesNotContain("QITS_ARTIFACTS_DOCS_URL")
                     .doesNotContain("QITS_ARTIFACTS_NPM_PROXY_URL");
         }
         // The publish target is the HOSTED registry and never the mirror: a publish step pushes the
@@ -1019,8 +1017,8 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>A workspace builds against the same hosted registries a CI step does.</b> The addresses
-     * are asserted against ci's own so the two cannot drift: a workspace that resolved a different
+     * <b>A workspace builds against the same hosted Maven registry a CI step does.</b> The address
+     * is asserted against ci's own so the two cannot drift: a workspace that resolved a different
      * maven store would build something CI cannot reproduce — and the failure would not look like
      * a configuration difference, it would look like a flaky test.
      *
@@ -1029,8 +1027,9 @@ class ComposeTemplateTest {
      * the reason the registry HOST (which the host daemon resolves) is absent here — a workspace
      * pushes no image.
      *
-     * <p>The npmjs cache is NOT one of the compared addresses: both ci and qits-workspaces now get
-     * it as a code default (qits-472) and this template states it for neither.
+     * <p>The npm registry is NOT one of the compared addresses any more: ci no longer states one at
+     * all (qits-515 — a step container is told the PUBLIC npm name now, composed from
+     * QITS_DOMAIN), where a workspace still gets the qits-net one directly.
      */
     @Test
     void aWorkspaceIsToldTheSameRegistriesCiUses() {
@@ -1042,14 +1041,14 @@ class ComposeTemplateTest {
                         + "/artifacts/maven/maven")
                 .contains("env.QITS_WORKSPACE_NPM_REGISTRY_URL=http://prod-qits-artifacts:8080"
                         + "/artifacts/npm/npm/");
-        assertThat(ci).doesNotContain("QITS_ARTIFACTS_NPM_PROXY_URL");
+        assertThat(ci).doesNotContain("QITS_ARTIFACTS_NPM_PROXY_URL")
+                .doesNotContain("QITS_ARTIFACTS_NPM_HOSTED_URL");
         assertThat(workspaces).doesNotContain("QITS_WORKSPACE_NPM_PROXY_URL");
-        // Same addresses, stated once per consumer: if ci's move and a workspace's do not, this
-        // fails rather than leaving one of them pointed at a registry that no longer serves.
-        for (String suffix : new String[]{"/artifacts/maven/maven", "/artifacts/npm/npm/"}) {
-            assertThat(ci).contains(suffix);
-            assertThat(workspaces).contains(suffix);
-        }
+        // Same maven address, stated once per consumer: if ci's moves and a workspace's does not,
+        // this fails rather than leaving one of them pointed at a registry that no longer serves.
+        String mavenSuffix = "/artifacts/maven/maven";
+        assertThat(ci).contains(mavenSuffix);
+        assertThat(workspaces).contains(mavenSuffix);
     }
 
     /**
@@ -1278,16 +1277,15 @@ class ComposeTemplateTest {
      * the key is ABSENT from both files — not merely that its value is not {@code landing},
      * {@code registry} or {@code mirror}, but that the key does not appear at all — asked of the
      * KEY lines rather than of the file whole, so a comment mentioning the key does not trip it.
-     * Beside it stand the flip of 2026-08-14's other two values, kept exactly as they were: the
-     * deployer told to authenticate its pulls, and ci told which registries a step must log in to.
-     * Half of it is a platform whose deployer cannot pull, or step containers authenticating
-     * against a door that never asks — so all three are asserted together.
+     * Beside it stands the flip of 2026-08-14's other surviving value, kept exactly as it was: the
+     * deployer told to authenticate its pulls. ci's own half of that flip, the docker-auth-hosts
+     * list a step logged in with, is retired with the internal step-address plane (qits-515) — a
+     * step now logs in with its per-run commissioned credential instead.
      */
     @Test
     void nothingIsAnonymousAndTheBytePlaneStaysClosed() {
         String compose = ComposeTemplate.compose(tokens());
         String extras = ComposeTemplate.extras(tokens());
-        String vhosts = "registry.prod.localhost:8080,mirror.prod.localhost:8080";
         String key = "QITS_EDGE_AUTH_ANONYMOUS_READ_APPS";
 
         // No declaration in either file. Asked of the KEY lines rather than of the file whole, so a
@@ -1321,12 +1319,10 @@ class ComposeTemplateTest {
         assertThat(extras("qits-deployments"))
                 .contains("env.QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH=true");
 
-        // ci's half names BOTH stores: a step pushes to the hosted registry and pulls its base
-        // images from the mirror, and neither answers a read anonymously any more. The port is
-        // part of each entry — a docker credential is keyed by host:port.
-        assertThat(serviceBlock(compose, ENV + "-qits-ci"))
-                .contains("QITS_CI_DOCKER_AUTH_HOSTS: \"" + vhosts + "\"");
-        assertThat(extras("qits-ci")).contains("env.QITS_CI_DOCKER_AUTH_HOSTS=" + vhosts);
+        // ci names no docker-auth-hosts list any more, in either file: a step now logs in with the
+        // per-run credential ci commissions, against the public names ci composes from QITS_DOMAIN.
+        assertThat(serviceBlock(compose, ENV + "-qits-ci")).doesNotContain("QITS_CI_DOCKER_AUTH_HOSTS");
+        assertThat(extras("qits-ci")).doesNotContain("QITS_CI_DOCKER_AUTH_HOSTS");
 
         // The deployer's plain property is NOT how this is said: what starts a successor is the
         // application's extras, so the switch is an env key like every other value there.
@@ -1384,14 +1380,16 @@ class ComposeTemplateTest {
         String compose = ComposeTemplate.compose(tokens());
         String host = "http://prod-qits-githost:8080";
 
-        // ci itself uses the direct bearer route; its untrusted step containers use the edge.
+        // ci itself uses the direct bearer route; its untrusted step containers are told the git
+        // host's PUBLIC name instead, composed by ci from QITS_DOMAIN — the internal step-address
+        // plane's QITS_CI_CONTAINER_GIT_URL is retired (qits-515) and states nowhere in this file.
         assertThat(serviceBlock(compose, ENV + "-qits-ci"))
                 .contains("QITS_CI_GIT_HOST_URL: " + host)
-                .contains("QITS_CI_CONTAINER_GIT_URL: http://githost.prod.internal:8080")
-                .contains("QITS_CI_CONTAINER_GIT_AUDIENCE: prod-qits-githost");
+                .contains("QITS_CI_CONTAINER_GIT_AUDIENCE: prod-qits-githost")
+                .doesNotContain("QITS_CI_CONTAINER_GIT_URL");
         assertThat(extras("qits-ci")).contains("env.QITS_CI_GIT_HOST_URL=" + host)
-                .contains("env.QITS_CI_CONTAINER_GIT_URL=http://githost.prod.internal:8080")
-                .contains("env.QITS_CI_CONTAINER_GIT_AUDIENCE=prod-qits-githost");
+                .contains("env.QITS_CI_CONTAINER_GIT_AUDIENCE=prod-qits-githost")
+                .doesNotContain("QITS_CI_CONTAINER_GIT_URL");
         // The two services that push. Their key was renamed with the split — a deployment still
         // passing qits.artifacts.url configures nothing and silently takes the default.
         // The agent containers projects creates clone over the internal alias like ci's step
@@ -2044,43 +2042,44 @@ class ComposeTemplateTest {
 
     /**
      * <b>WHAT THE BOOTSTRAP'S OWN RUNNER NEEDS OF qits-ci, on the seed and on its successor.</b>
+     * The owner's ruling is that the bootstrap's `localhost` runner is an EDGE runner like any
+     * other — it is a machine on the far side of the public door, not a qits-net peer — so ci never
+     * hands it a qits-net base to dial. {@code QITS_CI_RUNNER_INTERNAL_URL} and the internal
+     * step-address plane it belonged to are retired (qits-515): neither file states it, on any
+     * environment, domain or no.
      * <ul>
      *   <li>The oidc client's switch, on BOTH: ci ships it off and nothing the deployer injects
      *       turns it on, so without the line ci commissions nothing — no runner, and no per-run
      *       credential either. It went out with the per-service oidc blocks on 2026-09-15.
-     *   <li>The internal base an INTERNAL runner is told to dial, on the SEED alone: ci derives it
-     *       from QITS_ENVIRONMENT, which the seed block does not state and the deployer always
-     *       injects.
      *   <li>The registry host, on both, in the spelling the HOST's daemon resolves: it is what ci
      *       composes a runner's self-update image from, and what this boot tags and pushes the
      *       runner image under.
      * </ul>
      */
     @Test
-    void ciCommissionsAndTellsAnInternalRunnerTheQitsNetAddresses() {
+    void ciCommissionsARunnerOverThePublicEdgeNotAQitsNetAddress() {
         String seed = serviceBlock(ComposeTemplate.compose(tokens()),
                 PlatformModel.wireAlias("ci", ENV));
         assertThat(seed).contains("QUARKUS_OIDC_CLIENT_CLIENT_ENABLED: \"true\"")
-                .contains("QITS_CI_RUNNER_INTERNAL_URL: http://prod-qits-ci:8080")
                 .contains("QITS_ARTIFACTS_REGISTRY_HOST: registry.prod.localhost:8080")
-                // What the token endpoint an INTERNAL runner is told is derived from.
+                .doesNotContain("QITS_CI_RUNNER_INTERNAL_URL")
+                // What the token endpoint a runner is told is derived from.
                 .contains("QITS_RESOURCE_IDP_URL: http://prod-qits-idp:8080/idp");
 
         String deployed = extras("qits-ci");
         assertThat(deployed).contains("env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=true")
                 .contains("env.QITS_ARTIFACTS_REGISTRY_HOST=registry.prod.localhost:8080")
-                // The deployer injects QITS_ENVIRONMENT and QITS_RESOURCE_IDP_URL, so neither the
-                // internal base nor the idp address is restated.
                 .doesNotContain("QITS_CI_RUNNER_INTERNAL_URL")
+                // The deployer injects QITS_RESOURCE_IDP_URL, so it is not restated here.
                 .doesNotContain("QITS_RESOURCE_IDP_");
 
-        // The environment is in every one of them, never a literal `dev`.
+        // The environment is not spelled into a runner address here either, on any tier.
         Map<String, String> staging = tokens();
         staging.putAll(PlatformModel.modelTokens("staging"));
         staging.put("ENV_NAME", "staging");
         assertThat(serviceBlock(ComposeTemplate.compose(staging),
                 PlatformModel.wireAlias("ci", "staging")))
-                .contains("QITS_CI_RUNNER_INTERNAL_URL: http://staging-qits-ci:8080")
+                .doesNotContain("QITS_CI_RUNNER_INTERNAL_URL")
                 .contains("QITS_ARTIFACTS_REGISTRY_HOST: registry.staging.localhost:8080");
     }
 
