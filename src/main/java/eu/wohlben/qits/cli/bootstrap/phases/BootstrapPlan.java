@@ -38,8 +38,9 @@ public final class BootstrapPlan {
         // just has no early killer — so nothing after it depends on it.
         phases.add(seed.hostOom());
         // The bootstrap edge is the first public component. It owns the normal public door while
-        // the seed is built, and it stays there across worker retries until platform-edge cuts it
-        // over near the end of this plan.
+        // the seed is built, and it stays there across worker retries until the edge's seed deploy
+        // retires it — the end of the local-build step. A rerun over a deployer-managed edge starts
+        // none at all.
         phases.add(seed.bootstrapIngressPrepare());
         phases.add(seed.bootstrapIngressStart());
         // Before the sources, because the sources are read out of it — and on a cold machine there

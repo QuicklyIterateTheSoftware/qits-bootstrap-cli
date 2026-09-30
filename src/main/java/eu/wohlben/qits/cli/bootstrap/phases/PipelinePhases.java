@@ -3247,11 +3247,11 @@ public class PipelinePhases {
      * <p>
      * <b>Then it lifts the quarantine, and that is this program's to do.</b> A runner that has just
      * registered is quarantined awaiting its first health check, which is a pseudo-build of
-     * qits-ci's own repository at {@code main} — a repository whose main this boot does not push
-     * until {@code deploy-ci}, near the end of the train. The check cannot be queued, qits-ci swallows that,
-     * and its sweep asks again in an hour. So the bootstrap greenlights the runner it started,
-     * through the operator's own door, and the first release replay is the proof the check would
-     * have been. A runner that is in service already is not greenlit again: its failure streak is
+     * qits-ci's own repository at {@code main}. That main is on the git host by now —
+     * {@code seed-deploy-ci} pushed it — but the check is still a build, and one qits-ci's sweep may
+     * not get to for an hour when it cannot be queued at once. So the bootstrap greenlights the
+     * runner it started, through the operator's own door, and the first release replay is the
+     * proof the check would have been. A runner that is in service already is not greenlit again: its failure streak is
      * qits-ci's to keep.
      * <p>
      * <b>Skipped whenever {@code runner-localhost} stood aside</b> — there is no runner of ours to
