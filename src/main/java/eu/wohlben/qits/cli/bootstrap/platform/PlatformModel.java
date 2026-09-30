@@ -191,6 +191,27 @@ public final class PlatformModel {
             "edge", "deployments");
 
     /**
+     * <b>The seed images the deployer puts live BEFORE the first build</b> — at their real release
+     * tag, through its manual door, so the platform runs as it does in steady state before this
+     * host's runner is started and before the first release replay is asked for.
+     * <p>
+     * It is {@link #CORE} in {@link #DEPLOYABLES} order, less two. qits-oci-postgresql is never
+     * deployed at all (see {@link #DEPLOYABLES}). qits-deployments stays where it is, LAST of the
+     * train: its own deployment is the self-update handoff, and it has to come after the
+     * configuration flip, which needs qits-configuration — an application no seed image is built
+     * for. The edge is last of these for the train's own reason: its cutover takes the bootstrap
+     * ingress's door away, so everything that still needs that door is done by then.
+     * <p>
+     * Each of them is deployed a SECOND time in the train, from the image its release run builds:
+     * a seed image is a placeholder in places (its SPA above all), and the train is where the real
+     * one replaces it.
+     */
+    public static final List<String> SEED_DEPLOYED = DEPLOYABLES.stream()
+            .filter(CORE::contains)
+            .filter(name -> !"deployments".equals(name))
+            .toList();
+
+    /**
      * <b>There is no platform plane, and this is where it used to be listed.</b>
      *
      * <p>A service was once one of two kinds. An ENVIRONMENT service got a copy per tier and

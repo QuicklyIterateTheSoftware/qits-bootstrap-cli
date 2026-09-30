@@ -1313,4 +1313,50 @@ class SeedPhasesTest {
         assertThat(script.indexOf("openssl req")).isLessThan(script.indexOf("chown -R"));
         assertThat(script).contains("subjectAltName=DNS:wohlben.dev,DNS:*.wohlben.dev");
     }
+
+    // --- the bootstrap ingress, on a rerun ------------------------------------------------------
+
+    /**
+     * The deployer's edge is a service under the bare alias (the swarm driver's shape) or a
+     * {@code qits-pd-} container (the docker driver's). The seed stack's own edge,
+     * {@code qits_<alias>}, is not the deployer's: that is the cold boot's, and the ingress stands
+     * beside it for the whole local-build step.
+     */
+    @Test
+    void onlyADeployerManagedEdgeCountsAsLive() {
+        assertThat(SeedPhases.deployerManagedEdge(List.of(), List.of("prod-qits-edge"), "prod"))
+                .isTrue();
+        assertThat(SeedPhases.deployerManagedEdge(List.of("qits-pd-prod-qits-edge-1a2b3c4d"),
+                List.of(), "prod")).isTrue();
+        assertThat(SeedPhases.deployerManagedEdge(List.of("qits_prod-qits-edge.1.xyz"),
+                List.of("qits_prod-qits-edge"), "prod")).isFalse();
+        // Another application's deployment is not the edge's.
+        assertThat(SeedPhases.deployerManagedEdge(List.of(), List.of("prod-qits-ci"), "prod"))
+                .isFalse();
+    }
+
+    /**
+     * <b>A RERUN OVER A DEPLOYED EDGE STARTS NO INGRESS</b>: neither phase does anything but look,
+     * because a second door would bind 80/443 against the platform's own. The edge's seed deploy is
+     * in the middle of the boot now, so this is the common rerun.
+     */
+    @Test
+    void aRerunOverADeployedEdgeStartsNoBootstrapIngress() throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command ->
+                String.join(" ", command).startsWith("docker service ls")
+                        ? ScriptedRunner.ok("prod-qits-edge", "qits_prod-qits-githost")
+                        : ScriptedRunner.ok());
+        Boot boot = new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log")), runner);
+        SeedPhases seed = new SeedPhases(boot);
+
+        for (var phase : List.of(seed.bootstrapIngressPrepare(), seed.bootstrapIngressStart())) {
+            assertThatThrownBy(() -> phase.action().run(new CiLogStreamTest.Recorder()))
+                    .as(phase.id())
+                    .isInstanceOf(PhaseSkipped.class)
+                    .hasMessageContaining("prod-qits-edge is live");
+        }
+        assertThat(runner.lines()).allMatch(line -> line.startsWith("docker ps --format")
+                || line.startsWith("docker service ls"));
+        assertThat(boot.state.bootstrapIngressEnvFile).isNull();
+    }
 }

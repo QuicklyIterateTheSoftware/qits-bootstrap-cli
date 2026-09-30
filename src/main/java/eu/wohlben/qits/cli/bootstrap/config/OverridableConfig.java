@@ -203,6 +203,11 @@ public class OverridableConfig implements BootstrapConfig {
     }
 
     @Override
+    public Duration edgeReadyTimeout() {
+        return base.edgeReadyTimeout();
+    }
+
+    @Override
     public Duration pollInterval() {
         return base.pollInterval();
     }

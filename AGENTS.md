@@ -66,13 +66,16 @@ forced. Add to that list rather than deviating quietly.
   --timestamps` because what it wants is the deployer's own account of one application — a log line,
   not an event — while the docker socket is always there. Same courtesy rule: a read that fails
   relays nothing and fails nothing.
-- **An announcement the platform makes once, this program re-makes once — where one can still be
-  lost.** A green release run announces one `SoftwareRelease` per published artifact, and the
-  deployer is an application THIS BOOT redeploys — a subscriber mid-cutover catches up on its own
-  sweep rather than at once — so a green run with no deployment row after a minute gets the release
-  handed over exactly once inside the wait, through `POST /deployments/api/events/
-  software-released`. One more attempt, never a retry loop. `/events/build-succeeded` is gone from
-  the deployer and 404s; nothing here may go looking for a sha-addressed intake again.
+- **A green run with no deployment row is WAITED OUT, never handed over — with one exception that
+  is not impatience.** A green release run announces one `SoftwareRelease` per published artifact
+  and the deployer's subscriber is durable, so a frame offered mid-cutover is owed and its own sweep
+  catches up. The EXCEPTION is a version running as a SEED image (see the four-steps bullet below):
+  the deployer already holds the seed deploy's request for it, so the run's `SoftwareRelease` is not
+  newer and deploys nothing, and the deploy phase hands the same version to `POST
+  /deployments/api/events/software-released` once, the moment the run is green. Never before the run
+  is green, never twice, never for an application not recorded as seed-deployed.
+  `/events/build-succeeded` is gone from the deployer and 404s; nothing here may go looking for a
+  sha-addressed intake again.
   **The PUSH half of that rule is retired, and its retirement is the byte-plane split's dividend.**
   qits-githost writes `SCMPublishCommit` to the eventstream outbox inside the push's own
   transaction and qits-ci consumes it durably, so a ci that was down, restarting or mid-cutover
@@ -187,6 +190,33 @@ forced. Add to that list rather than deviating quietly.
   cutover removed its container, while a SERVICE's task is restarted within seconds. So a rerun
   leaves a deployer-managed application out of the FILE (a stack deploy takes no service list) and
   removes any seed service of it outright.
+- **A cold boot is FOUR STEPS, in the owner's order, and `BootstrapPlan` is built around them.**
+  (1) Build locally everything the platform needs, with the temporary bootstrap ingress serving the
+  seed Maven repository, git and the progress page the whole time. (2) Bring the platform up as it
+  runs in steady state: `seed-images-publish` puts each `PlatformModel.SEED_DEPLOYED` application's
+  seed build in the store as `qits/<application>:<real release tag>`, and `seed-deploy-*` hands the
+  deployer that version at its manual door — the edge last, whose phase retires the ingress. (3)
+  `edge-ready`, then this host's runner. (4) Only then the first build: the release replays, then
+  the train, in which the seed-deployed applications are deployed AGAIN from their release run's
+  image. Three things hold it together and none may be quietly undone. **The version is the real
+  tag**, never a stand-in: the deployer reads `deployments.yml` and `configuration.yml` at it, and a
+  missing tag deploys the defaults. **`SEED_DEPLOYED_<APP>` in `.qits-bootstrap.env` is written
+  BEFORE the door is posted** and emptied only when the release image's row is ACTIVE; it is the
+  only thing that tells the train a healthy ACTIVE row at the right version is a placeholder. **The
+  deployer is not seed-deployed**: its self-update stays last of the train, after the flip.
+  Before the first seed deploy come `qits-project`, `git-repos` and `environment` — the spec is read
+  name-addressed, and the manual door deploys nothing without a platform environment.
+- **The door the runner dials is proved before it dials it, and a domain boot needs a real
+  certificate.** `edge-ready` polls `https://{ci,idp,registry}.qits.<domain>` — qits-ci's own
+  `RunnerAddresses` names — until each answers over a certificate the JVM trusts, bounded by
+  `QITS_EDGE_READY_TIMEOUT`; without a domain it asks the edge, at its alias, for the registry name
+  the host's docker pulls by (`Http.getAs`, because `java.net.http` will not send a `Host`).
+  `QITS_ACME_MODE` staging or off with a domain can never pass, so `BootstrapCommand` refuses it
+  before anything runs (`Acme.edgeRunnerRefusal`).
+- **A rerun over a deployer-managed edge starts no bootstrap ingress.** Both ingress phases skip
+  when the edge is a service under its bare alias or a `qits-pd-` container — `seedPlan`'s own test
+  — because a second door would bind 80/443 against the platform's. With the edge deployed in the
+  middle of the boot, that is the common rerun.
 - **Deployment configuration is platform state, and the ORDER that moves it there can lose a boot
   in both directions.** qits-configuration holds each application's extras, and the deployer treats
   it as AUTHORITATIVE the moment it is given `QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL`: a read it
@@ -257,7 +287,7 @@ forced. Add to that list rather than deviating quietly.
   boot in that phase; no phase may decide it for itself. The lifecycle PUT is the only thing this
   run ever addresses by id, and every PUSH is name-addressed — which is what puts `projectId` and
   `repoName` on each push's event. Two things hold the shape together and each is a boot that fails
-  if it moves: everything after `deploy-githost` MUST be name-addressed, because that deployment
+  if it moves: everything after `seed-deploy-githost` MUST be name-addressed, because that deployment
   closes the storage scheme behind it; and the guard is therefore spelled in the deployment EXTRAS
   and never on the seed stack — seeding qits-projects did not change that and could not, because
   the credential the PUTs present is the BOOTSTRAP's and the guard demands one other client's
@@ -350,9 +380,14 @@ forced. Add to that list rather than deviating quietly.
   glances image is the mirror's).
 - **This host's CI runner holds the socket as a CONTAINER, and never as a deployment.** qits-ci
   executes nothing itself, so `runner-localhost` starts the normal `qits/qits-ci-runner` image with
-  a plain `docker run` on `qits-net` — the install line's container contract, INTERNAL plane — and
-  the runner rolls itself over from then on. Do not give it an extras block, a `DEPLOYABLES` entry
-  or a stack service: a deployer replacing the container would race the runner's own rollover.
+  a plain `docker run` — the install line's container contract — and the runner rolls itself over
+  from then on. It stays as the platform's default runner; nothing decommissions it. **The plane is
+  qits-ci's to choose, and the phase names none**: EDGE whenever qits-ci knows the domain (the
+  install line's container exactly, no network, plus a builder state volume of its own), INTERNAL
+  without one (`--network qits-net` and the alias-spelled registry lists — `INTERNAL_PLANE`, which
+  goes with qits-444). `QITS_CI_RUNNER_URL` is what the create's install line names. Do not give it
+  an extras block, a `DEPLOYABLES` entry or a stack service: a deployer replacing the container
+  would race the runner's own rollover.
   **Whose runner it is decides whether anything is started**: the phase acts only when qits-ci lists
   no runner, or its `localhost` row carries the `CI_RUNNER_ID` this installation recorded in
   `.qits-bootstrap.env` (plus the crash window: a lone `localhost` that never registered and was

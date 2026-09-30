@@ -270,6 +270,14 @@ public interface BootstrapConfig {
     @WithDefault("3600")
     Duration releaseTimeout();
 
+    /**
+     * How long the {@code edge-ready} gate waits for the platform's own edge to serve the names this
+     * host's runner dials — with a domain, over a TRUSTED certificate, which the edge orders itself
+     * and which Let's Encrypt usually issues within minutes of the records resolving.
+     */
+    @WithDefault("1800")
+    Duration edgeReadyTimeout();
+
     /** How long to wait for a seed service to report ready. */
     @WithDefault("120")
     Duration healthTimeout();

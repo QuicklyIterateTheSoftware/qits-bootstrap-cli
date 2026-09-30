@@ -95,17 +95,20 @@ class BootstrapPlanTest {
             List<String> ids = ids(plan(env));
 
             assertThat(ids).containsSubsequence("seed-stack", "seed-health", "register-token",
-                    "images-publish", "daemon-publish", "publish-credential-release",
-                    "qits-project");
-            assertThat(ids.get(ids.indexOf("images-publish") + 1)).isEqualTo("daemon-publish");
+                    "images-publish", "seed-images-publish", "daemon-publish",
+                    "publish-credential-release", "qits-project");
+            assertThat(ids.subList(ids.indexOf("images-publish"),
+                    ids.indexOf("images-publish") + 3)).containsExactly(
+                    "images-publish", "seed-images-publish", "daemon-publish");
         }
     }
 
     /**
      * <b>THE RUNNER IS STARTED AND CONNECTED BEFORE THE FIRST RUN IS ASKED FOR — in both arms.</b>
      * qits-ci executes nothing itself, so a release replay with no runner queues until its wait
-     * gives up. After the image push, because the runner is started from one of those images; and
-     * it is a container, never a deployment, so nothing in the plan deploys one.
+     * gives up. After the seed deploys, because the runner registers with the qits-ci the platform
+     * runs in steady state; and it is a container, never a deployment, so nothing in the plan
+     * deploys one — or takes it down again: it stays as the platform's default runner.
      */
     @Test
     void theRunnerIsStartedAndConnectedBeforeTheFirstRun() {
@@ -115,13 +118,62 @@ class BootstrapPlanTest {
             List<String> ids = ids(plan(env));
 
             assertThat(ids).containsSubsequence("seed-health", "images-publish",
-                    "publish-credential-release", "runner-localhost", "runner-connected",
-                    "qits-project", "git-repos", "release-train-push");
+                    "publish-credential-release", "qits-project", "git-repos",
+                    "seed-deploy-edge", "edge-ready", "runner-localhost", "runner-connected",
+                    "release-train-push");
+            // The platform's own edge is proved to serve what the runner dials, right before it
+            // dials it.
             int runner = ids.indexOf("runner-localhost");
-            assertThat(ids.subList(runner - 1, runner + 3)).containsExactly(
-                    "publish-credential-release", "runner-localhost", "runner-connected",
-                    "qits-project");
+            assertThat(ids.subList(runner - 2, runner + 3)).containsExactly(
+                    "seed-deploy-edge", "edge-ready", "runner-localhost", "runner-connected",
+                    "release-train-push");
             assertThat(ids).doesNotContain("deploy-ci-runner");
+            assertThat(ids).noneMatch(id -> id.contains("decommission"));
+        }
+    }
+
+    /**
+     * <b>THE OWNER'S FOUR STEPS, in both arms.</b> Everything the platform needs is built locally
+     * first; then the platform comes up as it runs in steady state — the seed images put live by
+     * the deployer at their release tag, the edge last of them, which retires the bootstrap
+     * ingress; then this host's runner; and only then the first build, the release replays and
+     * the train.
+     * <ul>
+     *   <li>The project, the repositories and the platform environment are all before the first
+     *       seed deploy: the spec is read name-addressed at the tag, and the manual door deploys
+     *       nothing without a designated environment.
+     *   <li>The seed images are in the store before the publishing credential goes back — and so
+     *       before the first deploy that pulls one.
+     *   <li>The deployer is not seed-deployed: its self-update stays last of the train.
+     * </ul>
+     */
+    @Test
+    void theSeedImagesAreDeployedAfterTheRepositoriesAndBeforeTheRunnerAndTheFirstBuild() {
+        for (Map<String, String> env : List.of(Map.<String, String>of(),
+                Map.of("QITS_SKIP_BUILD", "1"))) {
+            List<String> ids = ids(plan(env));
+
+            List<String> seedDeploys = ids.stream().filter(id -> id.startsWith("seed-deploy-"))
+                    .toList();
+            assertThat(seedDeploys).containsExactly("seed-deploy-idp", "seed-deploy-projects",
+                    "seed-deploy-events", "seed-deploy-mirror", "seed-deploy-artifacts",
+                    "seed-deploy-githost", "seed-deploy-containers", "seed-deploy-ci",
+                    "seed-deploy-edge");
+            // Contiguous: nothing builds, publishes or pushes in the middle of step two.
+            int first = ids.indexOf("seed-deploy-idp");
+            assertThat(ids.subList(first, first + seedDeploys.size())).isEqualTo(seedDeploys);
+            assertThat(ids).containsSubsequence("seed-images-publish",
+                    "publish-credential-release", "qits-project", "git-repos", "environment",
+                    "seed-deploy-idp");
+            assertThat(ids.get(first - 1)).isEqualTo("environment");
+            assertThat(ids).containsSubsequence("seed-deploy-edge", "edge-ready", "runner-localhost",
+                    "runner-connected", "release-train-push", "preseed",
+                    "release-spa-ui-components", "deploy-observability", "deploy-idp",
+                    "deploy-edge", "deploy-deployments", "summary");
+            assertThat(ids).doesNotContain("seed-deploy-deployments",
+                    "seed-deploy-oci-postgresql");
+            // The environment is reconciled once, before the first deployment of either kind.
+            assertThat(ids.stream().filter("environment"::equals)).hasSize(1);
         }
     }
 
@@ -319,13 +371,13 @@ class BootstrapPlanTest {
     }
 
     @Test
-    void theReleasesTheWrapperBuildsInstallAreReplayedBeforeAnythingIsDeployed() {
+    void theReleasesTheWrapperBuildsInstallAreReplayedBeforeTheTrainDeploysAnything() {
         List<String> ids = ids(plan(Map.of()));
 
         assertThat(ids).containsSubsequence("preseed",
                 "release-spa-ui-components",
                 "release-integrations-angular", "release-integrations-quarkus",
-                "release-eventstream", "environment", "deploy-observability");
+                "release-eventstream", "deploy-observability");
     }
 
     /**
@@ -347,8 +399,7 @@ class BootstrapPlanTest {
                 "release-oci-workspace-editor");
         // Still before the deployables: qits-workspaces and qits-projects pin these images, and a
         // pin with nothing behind it fails at the first workspace launch rather than at deploy.
-        assertThat(ids).containsSubsequence("release-projects-daemon", "environment",
-                "deploy-workspaces");
+        assertThat(ids).containsSubsequence("release-projects-daemon", "deploy-workspaces");
     }
 
     /**

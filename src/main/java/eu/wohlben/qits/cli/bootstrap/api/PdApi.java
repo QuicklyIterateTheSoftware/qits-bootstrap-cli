@@ -108,6 +108,30 @@ public class PdApi {
         return http.patchJson(base + "/api/environments/" + id, json, bearer(token));
     }
 
+    /**
+     * <b>{@code POST /deployments/api/events/software-released}: the manual door.</b> One released
+     * version of one application, entered exactly as the deployer's bus subscriber enters a
+     * {@code SoftwareRelease} — except that this door is not collapsed to the newest version, so
+     * naming a version that already has a request is a second deployment of it rather than
+     * nothing. That is what makes it the door for putting a SEED image live under its release tag,
+     * and again for replacing it with the release run's own image of the same version.
+     * <p>
+     * {@code projectId} and {@code repoName} are the repository's public address: with both, the
+     * deployer reads the spec name-addressed at the tag. {@code qits:system} and a machine token —
+     * the bootstrap's own client holds that role. 202 whether or not anything deploys.
+     */
+    public Http.Response softwareReleased(String repoId, String projectId, String repoName,
+                                          String application, String version, String token) {
+        List<String> fields = new ArrayList<>(List.of("repoId", repoId));
+        if (projectId != null && !projectId.isBlank()) {
+            fields.addAll(List.of("projectId", projectId));
+        }
+        fields.addAll(List.of("repoName", repoName, "application", application,
+                "version", version));
+        return http.postJson(base + "/api/events/software-released",
+                Json.object(fields.toArray(new String[0])), bearer(token));
+    }
+
     /** The newest deployment row of an application in an environment. */
     public Optional<JsonNode> newestDeployment(String environmentId, String applicationName) {
         Http.Response response = http.get(base + "/api/deployments?environmentId=" + environmentId,

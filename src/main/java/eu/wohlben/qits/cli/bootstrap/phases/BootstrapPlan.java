@@ -38,8 +38,9 @@ public final class BootstrapPlan {
         // just has no early killer — so nothing after it depends on it.
         phases.add(seed.hostOom());
         // The bootstrap edge is the first public component. It owns the normal public door while
-        // the seed is built, and it stays there across worker retries until platform-edge cuts it
-        // over near the end of this plan.
+        // the seed is built, and it stays there across worker retries until the edge's seed deploy
+        // retires it — the end of the local-build step. A rerun over a deployer-managed edge starts
+        // none at all.
         phases.add(seed.bootstrapIngressPrepare());
         phases.add(seed.bootstrapIngressStart());
         // Before the sources, because the sources are read out of it — and on a cold machine there
@@ -209,39 +210,66 @@ public final class BootstrapPlan {
         // inside the publish half of the boot: it presents the publishing credential, which
         // publish-credential-release hands back two phases down.
         phases.add(pipeline.imagesPublish());
+        // THE SEED IMAGES, AT THEIR REAL RELEASE TAG, and for the same reason the two images above
+        // go into the store: the deployer pulls what the store answers for and nothing the host
+        // merely holds. These are what the seed deploys below put live.
+        phases.add(pipeline.seedImagesPublish());
         phases.add(pipeline.daemonPublish());
         // IMMEDIATELY AFTER THE LAST PUBLISH. The bootstrap is the one exception to "only CI may
         // publish", and the exception is bounded by handing the credential back here rather than
         // by anything the idp enforces. Everything below is a push, a deployment or a read.
         phases.add(pipeline.publishCredentialRelease());
-        // THE RUNNER, AND IT HAS TO BE CONNECTED BEFORE THE FIRST RUN IS ASKED FOR. qits-ci executes
-        // nothing itself (qits-506), so every release replay below is this runner's or nobody's —
-        // a replay with no runner is a run that queues until its wait gives up, an hour later and
-        // once per publisher. Two phases because they fail differently: the first starts a
-        // container, the second waits for qits-ci to say it is connected and lifts the quarantine
-        // a freshly registered runner starts in. After the image push, because the runner is
-        // started from one of those images and its steps are pinned against the rest; and in both
-        // arms, because a warm rerun finds the container stopped as often as it finds it running.
-        // A platform whose runners are somebody else's is passed by — see
-        // PipelinePhases.runnerDecision.
-        phases.add(pipeline.localhostRunner());
-        phases.add(pipeline.localhostRunnerConnected());
         // THE PROJECT EVERY REPOSITORY BELONGS TO, and it comes before the first bare rather than
         // after the sixth deployment. qits-projects is a seed service now, so the one thing that
         // has to happen before this run creates anything is that the `qits` project exists to
         // register it under: a storage id is a UUID, and a UUID resolves to nothing until the
         // pairing is a row in the alias table.
+        //
+        // And both before the FIRST DEPLOYMENT, which is a few phases down now: the deployer reads
+        // a release's spec name-addressed at its tag, and the edge needs the `qits` project to
+        // project <app>.qits.<domain> at all.
         phases.add(pipeline.qitsProject());
         phases.add(pipeline.gitRepositories());
-        // Every deployable's gitlinks must be advertised before CI clones it. In particular,
-        // qits-ci points at qits-spa-ci; pushing that SPA after the deployment train makes the
-        // githost correctly refuse CI's request for an unadvertised object.
+        // Before the first deployment too: without a designated platform environment the manual
+        // door answers 202 and deploys nothing.
+        phases.add(pipeline.environment());
+        // STEP TWO OF FOUR: THE PLATFORM, UP AS IT RUNS IN STEADY STATE, BEFORE ANYTHING IS BUILT.
+        // Step one is everything above — the local builds, with the bootstrap ingress serving the
+        // temporary registry, git and the progress page. Here the deployer puts each seed image
+        // live at its real release tag through its manual door, and the edge's deployment, last,
+        // retires the ingress. The deployer itself is not among them: its self-update stays last
+        // of the train, after the configuration flip.
+        for (String name : PlatformModel.SEED_DEPLOYED) {
+            phases.add(pipeline.seedDeploy(name));
+        }
+        // THE DOOR THE RUNNER DIALS, proved before it dials: with a domain the runner reaches
+        // qits-ci, the idp and the registry through the platform's own edge over a certificate it
+        // has to trust, and without one the host's docker pulls through that edge.
+        phases.add(pipeline.edgeReady());
+        // STEP THREE: THE RUNNER, AND IT HAS TO BE CONNECTED BEFORE THE FIRST RUN IS ASKED FOR.
+        // qits-ci executes nothing itself (qits-506), so every release replay below is this
+        // runner's or nobody's — a replay with no runner is a run that queues until its wait gives
+        // up, an hour later and once per publisher. Two phases because they fail differently: the
+        // first starts a container, the second waits for qits-ci to say it is connected and lifts
+        // the quarantine a freshly registered runner starts in. After the seed deploys, because
+        // the runner registers with the qits-ci the platform runs in steady state — and it stays as
+        // the platform's default runner: nothing below decommissions it. In both arms, because a
+        // warm rerun finds the container stopped as often as it finds it running. A platform whose
+        // runners are somebody else's is passed by — see PipelinePhases.runnerDecision.
+        phases.add(pipeline.localhostRunner());
+        phases.add(pipeline.localhostRunnerConnected());
+        // STEP FOUR: THE FIRST BUILD. Every deployable's gitlinks must be advertised before CI
+        // clones it. In particular, qits-ci points at qits-spa-ci; pushing that SPA after the
+        // deployment train makes the githost correctly refuse CI's request for an unadvertised
+        // object.
         phases.add(pipeline.releaseTrainPush());
         phases.add(pipeline.releaseTrainPreseed());
         for (String publisher : PlatformModel.RELEASE_PUBLISHERS) {
             phases.add(pipeline.releaseReplay(publisher));
         }
-        phases.add(pipeline.environment());
+        // THE TRAIN, and for the nine seed-deployed applications it is a REdeployment: their
+        // release run replaces the seed image under the same tag, and the deploy phase hands the
+        // version over again once that run is green — see PipelinePhases.deploy.
         for (String deployable : PlatformModel.DEPLOYABLES) {
             phases.add(pipeline.deploy(deployable));
             // THE TWO PHASES THAT MOVE DEPLOYMENT CONFIGURATION INTO THE PLATFORM, and they sit

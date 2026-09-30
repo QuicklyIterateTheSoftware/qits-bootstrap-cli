@@ -739,27 +739,136 @@ public class PipelinePhases {
                             + "in the registry nor on this host — rerun without QITS_SKIP_BUILD");
                 }
             }
-            BootstrapPublishCredential.Pair pair = boot.publishPair(ctx);
-            // createTempDirectory is 0700: the file it holds is a credential.
-            Path config = Files.createTempDirectory("qits-docker-push-");
-            try {
-                if (pair != null) {
-                    Files.writeString(config.resolve("config.json"), SeedPhases.dockerConfigJson(
-                                    List.of(registryHost), pair.clientId(), pair.secret()),
-                            StandardCharsets.UTF_8);
-                }
-                for (StoreImage image : missing) {
-                    ctx.status("pushing " + image.reference(registryHost));
-                    Boot.must(boot.docker.run(pushCommand(config, image.reference(registryHost),
-                                    pair), ctx::log),
-                            "the push of " + image.reference(registryHost) + " failed");
-                }
-            } finally {
-                Files.deleteIfExists(config.resolve("config.json"));
-                Files.deleteIfExists(config);
-            }
+            push(ctx, registryHost, missing.stream().map(image -> image.reference(registryHost))
+                    .toList());
             ctx.note(missing.size() + " pushed");
         });
+    }
+
+    /**
+     * Each reference pushed by the host's daemon with the publishing credential, in a
+     * {@code config.json} of a 0700 directory this call makes and removes — see
+     * {@link #imagesPublish}, whose rules both pushing phases keep.
+     */
+    private void push(PhaseContext ctx, String registryHost, List<String> references)
+            throws IOException {
+        BootstrapPublishCredential.Pair pair = boot.publishPair(ctx);
+        // createTempDirectory is 0700: the file it holds is a credential.
+        Path config = Files.createTempDirectory("qits-docker-push-");
+        try {
+            if (pair != null) {
+                Files.writeString(config.resolve("config.json"), SeedPhases.dockerConfigJson(
+                                List.of(registryHost), pair.clientId(), pair.secret()),
+                        StandardCharsets.UTF_8);
+            }
+            for (String reference : references) {
+                ctx.status("pushing " + reference);
+                Boot.must(boot.docker.run(pushCommand(config, reference, pair), ctx::log),
+                        "the push of " + reference + " failed");
+            }
+        } finally {
+            Files.deleteIfExists(config.resolve("config.json"));
+            Files.deleteIfExists(config);
+        }
+    }
+
+    /**
+     * The seed image of one application as the deployer pulls it: {@code qits/<application>} at
+     * the release tag — qits-deployments' {@code ImageRefs} convention, which a release run meets
+     * by publishing exactly that, and which this phase meets by tagging the seed build so.
+     */
+    static StoreImage seedStoreImage(String name, String version) {
+        return new StoreImage("qits/" + PlatformModel.application(name), version);
+    }
+
+    /**
+     * <b>THE SEED IMAGES, INTO THE STORE AT THEIR REAL RELEASE TAG — so the deployer can put them
+     * live before the first build.</b>
+     * <p>
+     * A deployment is {@code <registry>/qits/<application>:<version>} and nothing else: the
+     * deployer derives the reference from the version it is handed, reads the spec at that tag, and
+     * pulls. The {@code seed-deploy-*} phases hand it each {@link PlatformModel#SEED_DEPLOYED}
+     * application at its newest release, so that image has to be in the store under that tag —
+     * and on a cold platform the only build of it there is, is the seed's
+     * {@code qits/<name>:latest}, built from the tree the {@code sources} phase stood at that same
+     * tag.
+     * <p>
+     * <b>THE VERSION IS THE REAL ONE, never a stand-in.</b> The deployer reads
+     * {@code deployments.yml} and {@code configuration.yml} at {@code refs/tags/<version>}, and a
+     * tag that is not there deploys the defaults: no resources, no host labels.
+     * <p>
+     * <b>The seed content under a released tag is temporary, and the train is what replaces
+     * it.</b> The release run of each of these repositories publishes {@code qits/<app>:<version>}
+     * again from the same tag — OCI tags are mutable — and the deploy phase then puts that image
+     * live. See {@link #deploy}.
+     * <p>
+     * <b>What the store already holds is left alone</b>, as {@link #imagesPublish} leaves it: that
+     * is every rerun and every live platform, where the tag holds what a release run published,
+     * and writing a seed build over it would be writing a placeholder over a release.
+     * <p>
+     * Inside the publish half of the boot, BEFORE {@code daemon-publish}: it presents the
+     * publishing credential, which is handed back straight after the last publish.
+     */
+    public Phase seedImagesPublish() {
+        return new Phase("seed-images-publish",
+                "push the seed images into the registry at their release tag", ctx -> {
+            String registryHost = boot.config.registryVhost();
+            Map<String, StoreImage> missing = new LinkedHashMap<>();
+            int held = 0;
+            for (String name : PlatformModel.SEED_DEPLOYED) {
+                String version = PlatformModel.newestRelease(
+                        boot.git.tagsNewestFirst(boot.state.repoDir(name), "main"));
+                if (version.isBlank()) {
+                    // The seed deploy says so and passes it by: there is no version to deploy.
+                    ctx.log("  " + PlatformModel.repo(name) + " has no release tag reachable from "
+                            + "main — nothing to push");
+                    continue;
+                }
+                StoreImage image = seedStoreImage(name, version);
+                // 404 AND NOTHING ELSE is "not there". Every other answer is a store that did not
+                // say, and pushing on it would be pushing a seed build over whatever a release run
+                // put under that tag — a placeholder written over a live platform's release.
+                Http.Response answer = boot.artifacts.image(image.repository(), image.tag());
+                if (!answer.ok() && answer.status() != 404) {
+                    throw new IllegalStateException("the registry did not say whether it holds "
+                            + image.repository() + ":" + image.tag() + " — " + answer.describe()
+                            + ". Nothing is pushed over a tag the store may hold; rerun");
+                }
+                boolean inStore = answer.ok();
+                ctx.log("  " + image.repository() + ":" + image.tag() + " — "
+                        + (inStore ? "held" : "to push from qits/" + name + ":latest"));
+                if (inStore) {
+                    held++;
+                } else {
+                    missing.put(name, image);
+                }
+            }
+            if (missing.isEmpty()) {
+                ctx.skip("the registry holds all " + held + " seed-deployed images");
+            }
+            for (String name : missing.keySet()) {
+                if (!boot.docker.imageExists(seedImageTag(name))) {
+                    throw new IllegalStateException(missing.get(name).reference(registryHost)
+                            + " is not in the registry and " + seedImageTag(name) + " is not on "
+                            + "this host — rerun without QITS_SKIP_BUILD");
+                }
+            }
+            List<String> references = new ArrayList<>();
+            for (Map.Entry<String, StoreImage> entry : missing.entrySet()) {
+                String reference = entry.getValue().reference(registryHost);
+                Boot.must(boot.docker.exec(ctx::log, "tag", seedImageTag(entry.getKey()),
+                        reference), "tagging " + seedImageTag(entry.getKey()) + " as " + reference
+                        + " failed");
+                references.add(reference);
+            }
+            push(ctx, registryHost, references);
+            ctx.note(references.size() + " pushed, " + held + " held");
+        });
+    }
+
+    /** The seed build of one application, as {@code SeedPhases.seedImage} tags it. */
+    static String seedImageTag(String name) {
+        return "qits/" + name + ":latest";
     }
 
     /**
@@ -1478,6 +1587,74 @@ public class PipelinePhases {
     // --- push, build, deploy — one application at a time -------------------------------------------
 
     /**
+     * <b>STEP TWO: A SEED IMAGE PUT LIVE BY THE DEPLOYER, before this host's runner exists and
+     * before the first build.</b>
+     * <p>
+     * The cold boot goes in four steps, and this phase is the second: build locally everything the
+     * platform needs; bring the platform up as it runs in steady state; start the runner; and only
+     * then build. So each {@link PlatformModel#SEED_DEPLOYED} application is handed to
+     * qits-deployments here exactly as it will be for the rest of its life — a released VERSION,
+     * whose image the deployer pulls as {@code qits/<application>:<version>} and whose spec it reads
+     * at that tag. The image under that tag is the seed build ({@code seed-images-publish} put it
+     * there); the version is the real one.
+     * <p>
+     * <b>Through the manual door, because there is no build to announce it.</b>
+     * {@code POST /deployments/api/events/software-released} is the deployer's own door for a
+     * release nobody was listening for, and it takes the same {@code (application, version)} its
+     * bus subscriber does. It is also not collapsed to the newest version, which is what lets the
+     * train hand the SAME version over again once the release run has replaced the image — see
+     * {@link #deploy}.
+     * <p>
+     * <b>RECORDED BEFORE IT IS HANDED OVER</b>, in {@code .qits-bootstrap.env}: once the deployer
+     * holds a request for this version, the release run's own {@code SoftwareRelease} of it is not
+     * newer and deploys nothing, so the train has to know to hand it over again — on this run, or
+     * on a rerun after this process died in between. An application that was already live at this
+     * version before this phase looked is not recorded: it is running a release, not a seed.
+     * <p>
+     * <b>The edge's phase retires the bootstrap ingress</b> ({@link #restoreRelease}), and that is
+     * the owner's order: the ingress serves the temporary registry, git and the progress page for
+     * the whole local-build step, and the platform's own edge takes the door here — before the
+     * runner is started and before the first build.
+     */
+    public Phase seedDeploy(String name) {
+        String repo = PlatformModel.repo(name);
+        String application = PlatformModel.application(name);
+        return new Phase("seed-deploy-" + name, repo + ": deploy the seed image at its release tag",
+                ctx -> {
+            Path src = boot.state.repoDir(name);
+            // Before anything is handed over, for the reason deploy() gives.
+            String baselineRowId = boot.pd.newestDeployment(boot.state.environmentId, application)
+                    .map(r -> Json.text(r, "id")).orElse(null);
+            String version = restoreRelease(ctx, name);
+            if (version.isBlank()) {
+                return;
+            }
+            BootstrapState recorded = new BootstrapState(
+                    boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME));
+            recorded.read();
+            if (alreadyLive(ctx, name, application, version)) {
+                ctx.note("already live at " + version
+                        + (recorded.seedDeployed(application).map(version::equals).orElse(false)
+                                ? ", from its seed image" : ""));
+                return;
+            }
+            recorded.putSeedDeployed(application, version);
+            recorded.write();
+            ctx.status("handing " + application + " " + version + " to the deployer");
+            Http.Response answer = boot.pd.softwareReleased(boot.storageId(name),
+                    boot.state.projectId, repo, application, version, boot.bootstrapToken());
+            if (!answer.ok()) {
+                throw new IllegalStateException("the deployer refused " + application + " "
+                        + version + " at its manual door: " + answer.describe());
+            }
+            ctx.log("  " + application + " " + version + " handed to the deployer — the seed "
+                    + "image, until the train replaces it with its release run's");
+            awaitDeployment(ctx, name, application, version, null,
+                    boot.git.commitOf(src, "main"), baselineRowId, false);
+        });
+    }
+
+    /**
      * Sequential on purpose: each release build is a cold native build on the host daemon, and a
      * workstation rarely wants eight at once.
      * <p>
@@ -1535,57 +1712,29 @@ public class PipelinePhases {
             // never by the name the deployer keys its own rows by.
             String storageId = boot.storageId(name);
 
-            ctx.status("pushing " + repo + " to main (quietly)");
-            // THE BRANCH, NOT HEAD. A restoring boot leaves the checkout detached at the release
-            // tag, so HEAD:refs/heads/main would push the RELEASE onto main — a rewind of the trunk
-            // on the git host, refused as a non-fast-forward and wrong even where it was accepted.
-            // The trunk is the local main branch and goes up as itself.
-            boot.push(ctx, repo + " to main", src, boot.gitUrl(name),
-                    List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
-                    "main:refs/heads/main");
-
-            // WHICH VERSION DEPLOYS, read after main is up so the commit it names is already in the
-            // store. A fact about the checkout, which an earlier phase of this same run refreshed.
-            //
-            // THE NEWEST RELEASE, NOT THE NEAREST TAG, and the two are different questions: a
-            // release cut on an older commit and tagged later is nearer in history while being
-            // older. It is asked exactly as the `sources` phase asks it — one function,
-            // PlatformModel.newestRelease over the version-sorted merged tags — because that phase
-            // stood this checkout at a tag and built the seed image from it. A deployment of
-            // another version is a successor whose Flyway lineage its own seed has already run
-            // past.
-            String version = PlatformModel.newestRelease(boot.git.tagsNewestFirst(src, "main"));
+            String version = restoreRelease(ctx, name);
             if (version.isBlank()) {
-                // Not a failed boot: the applications behind this one still deserve their turn, and
-                // this is a fact about the repository rather than a contradiction in the platform.
-                ctx.warn(repo + " has no release tag reachable from main, so there is no version to"
-                        + " deploy — a deployment is qits/" + application + ":<version> and nobody"
-                        + " has minted one. Cut a release through qits-projects and rerun");
-                ctx.note("no release to deploy");
                 return;
             }
-            ctx.log("  " + repo + " restores " + version);
             // MAIN'S HEAD, because that is where an event-triggered run is cloned and recorded —
             // the tag checkout is the release recipe's own business, invisible to the run row. Read
             // as the BRANCH, never as HEAD: this checkout stands at the release tag.
             String mainSha = boot.git.commitOf(src, "main");
 
-            // ONE TAG, THE NEWEST, and that is a trade: pushing every tag would restore the whole
-            // release history in one go, at one bus event and one full candidate sweep per tag
-            // across every repository qits-ci knows. The older tags restore nothing this boot needs.
-            ctx.status("pushing " + repo + " " + version);
-            boot.push(ctx, repo + " " + version, src, boot.gitUrl(name),
-                    List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
-                    "refs/tags/" + version);
-
-            if ("edge".equals(name)) {
-                // Both edges need the same host ports. Release them only after the real edge's
-                // source is safely in githost, but before its service is created. The cutover is
-                // intentionally a short closed interval, never two authorities.
-                boot.ingress.stop(ctx::log);
-            }
-
-            if (alreadyLive(ctx, name, application, version)) {
+            // A SEED IMAGE UNDER THIS VERSION IS NOT THIS VERSION, and "already live" must not be
+            // asked of it: the row is ACTIVE at the right version and its container is healthy, so
+            // the answer would be yes and the placeholder would stay for good. The record is what
+            // tells the two apart — see seedDeploy.
+            BootstrapState recorded = new BootstrapState(
+                    boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME));
+            recorded.read();
+            Optional<String> seedVersion = recorded.seedDeployed(application);
+            boolean seeded = redeploysAfterGreen(seedVersion, version);
+            if (seeded) {
+                ctx.log("  " + application + " runs its SEED image at " + version + " — the release "
+                        + "run replaces it, and the version is handed to the deployer again once "
+                        + "that run is green");
+            } else if (alreadyLive(ctx, name, application, version)) {
                 ctx.note("already live at " + version);
                 return;
             }
@@ -1616,8 +1765,90 @@ public class PipelinePhases {
             } else {
                 runId = runs.getFirst();
             }
-            awaitDeployment(ctx, name, application, version, runId, mainSha, baselineRowId);
+            boolean landed = awaitDeployment(ctx, name, application, version, runId, mainSha,
+                    baselineRowId, seeded);
+            if (landed && seedVersion.isPresent()) {
+                // The release run's image is what runs now — of this version, or of a newer one
+                // than the seed's — so there is nothing left for a rerun to hand over again.
+                recorded.putSeedDeployed(application, "");
+                recorded.write();
+            }
         });
+    }
+
+    /**
+     * <b>Does this deployment hand its version to the deployer AGAIN once the release run is
+     * green?</b> Only when that same version is running as a seed image — see {@link #seedDeploy}.
+     * The deployer then holds a request for it already, so the run's own SoftwareRelease is not
+     * newer and deploys nothing; the manual door is not collapsed that way, and two announcements
+     * of one version are two deployments.
+     * <p>
+     * A seed deployed at an OLDER version is not this case: the newer release is newer, and the
+     * bus deploys it like any other.
+     */
+    static boolean redeploysAfterGreen(Optional<String> seedVersion, String version) {
+        return seedVersion.map(version::equals).orElse(false);
+    }
+
+    /**
+     * <b>The two SCM facts a release is made of, on the git host: main, then the newest release
+     * tag — both quietly.</b> Answers that version, or blank when the repository has none, which
+     * has been WARNED here and leaves the caller nothing to deploy.
+     * <p>
+     * Both deploying phases start this way — the seed deploy of step two and the train's — and
+     * both for the same reasons, which are the comments below. The EDGE's phases also retire the
+     * bootstrap ingress here, after its source is safely up and before its service is created:
+     * the two edges want the same host ports, and the cutover is a short closed interval, never
+     * two authorities. Whichever of the two phases gets there first does it; the other finds
+     * nothing to stop.
+     */
+    private String restoreRelease(PhaseContext ctx, String name) throws Exception {
+        String repo = PlatformModel.repo(name);
+        String application = PlatformModel.application(name);
+        Path src = boot.state.repoDir(name);
+        ctx.status("pushing " + repo + " to main (quietly)");
+        // THE BRANCH, NOT HEAD. A restoring boot leaves the checkout detached at the release
+        // tag, so HEAD:refs/heads/main would push the RELEASE onto main — a rewind of the trunk
+        // on the git host, refused as a non-fast-forward and wrong even where it was accepted.
+        // The trunk is the local main branch and goes up as itself.
+        boot.push(ctx, repo + " to main", src, boot.gitUrl(name),
+                List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
+                "main:refs/heads/main");
+
+        // WHICH VERSION DEPLOYS, read after main is up so the commit it names is already in the
+        // store. A fact about the checkout, which an earlier phase of this same run refreshed.
+        //
+        // THE NEWEST RELEASE, NOT THE NEAREST TAG, and the two are different questions: a
+        // release cut on an older commit and tagged later is nearer in history while being
+        // older. It is asked exactly as the `sources` phase asks it — one function,
+        // PlatformModel.newestRelease over the version-sorted merged tags — because that phase
+        // stood this checkout at a tag and built the seed image from it. A deployment of
+        // another version is a successor whose Flyway lineage its own seed has already run
+        // past.
+        String version = PlatformModel.newestRelease(boot.git.tagsNewestFirst(src, "main"));
+        if (version.isBlank()) {
+            // Not a failed boot: the applications behind this one still deserve their turn, and
+            // this is a fact about the repository rather than a contradiction in the platform.
+            ctx.warn(repo + " has no release tag reachable from main, so there is no version to"
+                    + " deploy — a deployment is qits/" + application + ":<version> and nobody"
+                    + " has minted one. Cut a release through qits-projects and rerun");
+            ctx.note("no release to deploy");
+            return "";
+        }
+        ctx.log("  " + repo + " restores " + version);
+
+        // ONE TAG, THE NEWEST, and that is a trade: pushing every tag would restore the whole
+        // release history in one go, at one bus event and one full candidate sweep per tag
+        // across every repository qits-ci knows. The older tags restore nothing this boot needs.
+        ctx.status("pushing " + repo + " " + version);
+        boot.push(ctx, repo + " " + version, src, boot.gitUrl(name),
+                List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
+                "refs/tags/" + version);
+
+        if ("edge".equals(name)) {
+            boot.ingress.stop(ctx::log);
+        }
+        return version;
     }
 
     /**
@@ -1965,9 +2196,15 @@ public class PipelinePhases {
      * <p>
      * {@code runSha} is main's head, and it is only for the operator's line: an event-triggered run
      * is cloned and recorded there while the release recipe checks the tag out itself.
+     * <p>
+     * {@code handOverAfterGreen} is the one case where this wait says something to the deployer:
+     * see {@link #redeploysAfterGreen}.
+     *
+     * @return whether the deployment landed ACTIVE; every other ending has been warned here
      */
-    private void awaitDeployment(PhaseContext ctx, String name, String application, String version,
-            String runId, String runSha, String baselineRowId) {
+    boolean awaitDeployment(PhaseContext ctx, String name, String application, String version,
+            String runId, String runSha, String baselineRowId, boolean handOverAfterGreen) {
+        boolean[] handedOver = {false};
         CiLogStream ciLog = new CiLogStream(boot.ci, ctx);
         DeployLogStream pdLog = new DeployLogStream(boot.docker, ctx, application,
                 PlatformModel.wireAlias("deployments", boot.config.envName()),
@@ -2029,24 +2266,46 @@ public class PipelinePhases {
                         // here after a minute was impatience, and it was the only caller of an
                         // intake that could file a deployment the bus had not announced. What
                         // catches up is the consumer's own sweep.
-                        return Waiter.Poll.pending("release build "
-                                + (runId == null ? "not this phase's"
-                                        : runStatus.isBlank() ? "starting" : runStatus)
-                                + (runSha.isBlank() ? "" : " at " + SeedPhases.shortSha(runSha))
-                                + ", deployment " + deploymentState);
+                        //
+                        // <b>With ONE exception, and it is not impatience: a version that runs as
+                        // a seed image.</b> The deployer already holds a request for it — the seed
+                        // deploy's — so the run's SoftwareRelease is not newer and no sweep will
+                        // ever deploy it. The run has just published the real image under the same
+                        // tag, and the manual door is the only way to put it live: once, the moment
+                        // the run is green, and never before it.
+                        if (handOverAfterGreen && !handedOver[0] && "SUCCESS".equals(runStatus)) {
+                            handedOver[0] = true;
+                            Http.Response answer = boot.pd.softwareReleased(boot.storageId(name),
+                                    boot.state.projectId, PlatformModel.repo(name), application,
+                                    version, boot.bootstrapToken());
+                            if (!answer.ok()) {
+                                return Waiter.Poll.done("REDEPLOY REFUSED: the deployer's manual "
+                                        + "door answered " + answer.describe(), "refused");
+                            }
+                            ctx.log("  release run green — " + application + " " + version
+                                    + " handed to the deployer again, so its release image "
+                                    + "replaces the seed's");
+                        }
+                        return Waiter.Poll.pending((runId == null ? ""
+                                : "release build " + (runStatus.isBlank() ? "starting" : runStatus)
+                                        + (runSha.isBlank() ? ""
+                                                : " at " + SeedPhases.shortSha(runSha)) + ", ")
+                                + "deployment " + deploymentState);
                     });
             if (outcome.startsWith("ACTIVE")) {
                 ctx.log("  " + application + " " + outcome);
                 ctx.note(outcome);
-            } else {
-                ctx.warn(application + " " + outcome);
+                return true;
             }
+            ctx.warn(application + " " + outcome);
+            return false;
         } catch (TimeoutException e) {
             // The script's posture: a deployment that never lands is a warning on an otherwise
             // finished boot, not a reason to abandon the applications behind it.
             ctx.warn(application + ": no terminal deployment after "
                     + boot.config.deployTimeout().toSeconds() + "s (the release build may still be "
                     + "running — watch docker ps and docker logs qits-ci)");
+            return false;
         } catch (Exception e) {
             throw new IllegalStateException("waiting for " + application + " failed: " + e, e);
         }
@@ -2407,6 +2666,102 @@ public class PipelinePhases {
         return Set.copyOf(current.stream().map(String::trim).toList()).containsAll(env);
     }
 
+    // --- the platform's own door, before the runner dials it -------------------------------------
+
+    /** One thing the edge has to answer before the runner is started: what, and how to ask. */
+    record EdgeProbe(String what, java.util.function.Supplier<Http.Response> ask) {
+    }
+
+    /**
+     * <b>What the runner is about to dial, asked of the platform's own edge.</b>
+     * <p>
+     * <b>With a domain</b>, the three public names qits-ci tells an EDGE runner — its own
+     * {@code RunnerAddresses}: {@code https://<host>.qits.<domain>}, the platform project's
+     * applications, with no environment label. Each at the path the runner or its docker uses: the
+     * install script's door, the token endpoint, the registry's {@code /v2/}. Over HTTPS with the
+     * JVM's own trust store, so an answer at all is a certificate a machine trusts; a placeholder or
+     * a staging certificate is a failed handshake, which is no answer.
+     * <p>
+     * <b>Without one</b>, the registry's name as this host's docker spells it, asked of the edge at
+     * its own alias — the name a step image is pinned under and pulled by, routed by the edge that
+     * has just replaced the seed one.
+     */
+    List<EdgeProbe> edgeProbes() {
+        Optional<String> domain = DomainName.of(boot.config);
+        if (domain.isPresent()) {
+            List<EdgeProbe> probes = new ArrayList<>();
+            for (String[] entry : List.of(new String[] {"ci", "/ci/api/runners/install.sh"},
+                    new String[] {"idp", "/idp/token"}, new String[] {"registry", "/v2/"})) {
+                String url = "https://" + entry[0] + "." + PlatformModel.PROJECT + "."
+                        + domain.get() + entry[1];
+                probes.add(new EdgeProbe(url, () -> boot.http.get(url, Map.of())));
+            }
+            return probes;
+        }
+        String url = "http://" + PlatformModel.wireAlias("edge", boot.config.envName()) + ":8080/v2/";
+        String host = boot.config.registryVhost();
+        return List.of(new EdgeProbe(host + "/v2/ through " + url,
+                () -> boot.http.getAs(url, host)));
+    }
+
+    /**
+     * Did the edge ROUTE this? Any answer of the service's own is: a 401 from a guarded door is the
+     * door. No answer is not (with a domain that includes a certificate nobody trusts), a 5xx is a
+     * service not up or an edge still projecting, and a 404 is a name the edge does not route yet.
+     */
+    static boolean edgeServes(Http.Response answer) {
+        return answer.reached() && answer.status() < 500 && answer.status() != 404;
+    }
+
+    /**
+     * <b>THE PLATFORM'S OWN EDGE SERVES WHAT THE RUNNER IS ABOUT TO DIAL — before the runner is
+     * started.</b>
+     * <p>
+     * The edge was deployed a phase ago and the bootstrap ingress retired with it, so this is the
+     * first moment the platform's door is the only door. With a domain, the runner is an EDGE runner
+     * and reaches qits-ci, the idp and the registry through it and nothing else; a certificate it
+     * does not trust is a runner that never connects, and waiting that out in
+     * {@code runner-connected} would say "not connected" about a TLS problem. So this waits,
+     * bounded ({@code QITS_EDGE_READY_TIMEOUT}), for the edge's own ACME order to have landed — it
+     * has been running since the seed edge came up, so the wait is usually already over — and names
+     * each host's last answer while it does.
+     * <p>
+     * <b>A domain with ACME off or on staging is refused</b>, here and before the boot started
+     * ({@link Acme#edgeRunnerRefusal}): neither can ever pass.
+     */
+    public Phase edgeReady() {
+        return new Phase("edge-ready", "wait for the platform's edge to serve what the runner dials",
+                ctx -> {
+            String refusal = Acme.edgeRunnerRefusal(DomainName.of(boot.config).isPresent(),
+                    Acme.mode(boot.config));
+            if (refusal != null) {
+                throw new IllegalStateException(refusal);
+            }
+            List<EdgeProbe> probes = edgeProbes();
+            probes.forEach(probe -> ctx.log("  " + probe.what()));
+            try {
+                Waiter.await(ctx, "the platform's edge", boot.config.edgeReadyTimeout(),
+                        boot.config.pollInterval(), () -> {
+                            List<String> waiting = new ArrayList<>();
+                            for (EdgeProbe probe : probes) {
+                                Http.Response answer = probe.ask().get();
+                                if (!edgeServes(answer)) {
+                                    waiting.add(probe.what() + ": " + answer.describe());
+                                }
+                            }
+                            return waiting.isEmpty() ? Waiter.Poll.done("served", "served")
+                                    : Waiter.Poll.pending(String.join("; ", waiting));
+                        });
+            } catch (TimeoutException gaveUp) {
+                throw new IllegalStateException(gaveUp.getMessage() + (DomainName.of(boot.config)
+                        .isPresent() ? "\nA failed handshake is a certificate this host does not "
+                        + "trust yet: the edge orders it over DNS-01, so the records have to "
+                        + "resolve — rerun once they do." : ""));
+            }
+            ctx.note(probes.size() == 1 ? "the registry is routed" : probes.size() + " names served");
+        });
+    }
+
     // --- the platform host's runner ---------------------------------------------------------------
 
     /**
@@ -2416,12 +2771,18 @@ public class PipelinePhases {
     static final String LOCALHOST_RUNNER = "localhost";
 
     /**
-     * Where the runner and its steps reach the platform. INTERNAL, on qits-net: it is a container
-     * on the very host the platform's aliases resolve on, so the public names would be a detour
-     * through the edge for every clone and every publish — and on a cold boot the public door is
-     * still the bootstrap ingress, which routes no API at all.
+     * <b>The plane is qits-ci's to choose, and this program names none.</b> A runner declared with
+     * no plane is EDGE whenever qits-ci knows the platform's public domain and INTERNAL where it
+     * knows none ({@code CiRunnerController.defaultPlane}), and the owner's ruling is that this
+     * host's runner is EDGE whenever qits-ci will give one: a runner goes through the public edge
+     * like every other, and the {@code edge-ready} gate has just proved that edge serves it.
+     * <p>
+     * <b>INTERNAL is the no-domain answer, and it is the one branch that still puts the runner on
+     * qits-net</b> — the qits-net aliases are the only addresses there are then, and the runner's
+     * builder is told how to reach the registry and the mirror by them. qits-444 deletes that plane
+     * in qits-ci; everything this constant guards goes with it.
      */
-    static final String LOCALHOST_PLANE = "INTERNAL";
+    static final String INTERNAL_PLANE = "INTERNAL";
 
     /** The runner's own label. Never {@code qits.ci.runner}, which its boot sweep removes. */
     static final String RUNNER_PROCESS_LABEL = "qits.ci.runner.process";
@@ -2539,9 +2900,21 @@ public class PipelinePhases {
         return "qits-ci-runner-state-" + id8(runnerId);
     }
 
-    /** Where the runner dials qits-ci: the service's own alias, never the edge. */
-    static String runnerUrl(String envName) {
-        return "http://" + PlatformModel.wireAlias("ci", envName) + ":8080";
+    /**
+     * <b>Where the runner dials qits-ci, when qits-ci has not just said so.</b> The install line a
+     * create or a rotation answers names it ({@code QITS_CI_RUNNER_URL}) and is always preferred;
+     * a registered runner restarted on its volume gets no line, so the address is composed the way
+     * qits-ci composes it for the row's plane — {@code RunnerAddresses.ciBase}: the public
+     * {@code https://ci.qits.<domain>} on EDGE, the service's own alias on INTERNAL.
+     */
+    static String runnerUrl(String plane, Optional<String> domain, String envName) {
+        if (INTERNAL_PLANE.equals(plane)) {
+            return "http://" + PlatformModel.wireAlias("ci", envName) + ":8080";
+        }
+        return "https://ci." + PlatformModel.PROJECT + "." + domain.orElseThrow(() ->
+                new IllegalStateException("qits-ci's runner " + LOCALHOST_RUNNER + " is on the "
+                        + plane + " plane and this boot names no domain to reach it by — rerun "
+                        + "with the QITS_DOMAIN qits-ci was deployed with"));
     }
 
     /**
@@ -2583,12 +2956,21 @@ public class PipelinePhases {
     }
 
     /**
-     * <b>THE CONTAINER CONTRACT — the install line's, plus the network.</b> docker's restart policy
-     * is the supervisor; the socket is how the runner starts its steps and, when told to update,
-     * its own successor; the volume holds its client; the two labels are what a rollover finds its
-     * predecessor by. {@code --network qits-net} is the one thing the install line does not say,
-     * and it survives a self-update: the successor is started on the network its predecessor is on.
-     * <p>
+     * <b>THE CONTAINER CONTRACT — the install line's.</b> docker's restart policy is the
+     * supervisor; the socket is how the runner starts its steps and, when told to update, its own
+     * successor; the volume holds its client; the two labels are what a rollover finds its
+     * predecessor by. That is {@code runner-install.sh}'s {@code docker run}, element for element,
+     * with the address and the plane qits-ci answered:
+     * <ul>
+     *   <li><b>EDGE</b> adds exactly one thing the install line cannot pass,
+     *       {@code QITS_CI_RUNNER_BUILDKIT_STATE_VOLUME}: the runner's buildkitd defaults to
+     *       {@code qits-buildkitd-state}, which this host's {@code qits-buildkitd} already holds.
+     *       No network — docker's default bridge, as the install line starts it — and no registry
+     *       lists: qits-ci hands an EDGE runner its registry mirrors on every Ack, all public names.
+     *   <li><b>INTERNAL</b> adds {@code --network qits-net}, which survives a self-update (the
+     *       successor is started on the network its predecessor is on), and the builder's two
+     *       registry lists spelled with this platform's aliases. See {@link #INTERNAL_PLANE}.
+     * </ul>
      * <b>The registration token is an environment NAME on this line and a value only in the
      * process's own environment</b> — {@code -e NAME} hands docker the value from there, so it is
      * in no argv, no log and no {@code docker inspect} of a command line. It is masked as well.
@@ -2596,29 +2978,39 @@ public class PipelinePhases {
      * {@code client.json} of its state volume.
      *
      * @param token the registration token, or null for a runner that needs none
+     * @param plane the row's plane, as qits-ci answered it
+     * @param url   where the runner dials qits-ci — see {@link #runnerUrl}
      */
-    Cmd runnerRunCommand(String runnerId, String version, String image, int slots, String token) {
+    Cmd runnerRunCommand(String runnerId, String version, String image, int slots, String token,
+                         String plane, String url) {
         String env = boot.config.envName();
+        boolean internal = INTERNAL_PLANE.equals(plane);
         List<String> command = new ArrayList<>(List.of(
                 "docker", "run", "-d",
                 "--name", runnerContainerName(runnerId, version),
-                "--restart", "unless-stopped",
-                "--network", Boot.NETWORK,
+                "--restart", "unless-stopped"));
+        if (internal) {
+            command.addAll(List.of("--network", Boot.NETWORK));
+        }
+        command.addAll(List.of(
                 "--label", RUNNER_PROCESS_LABEL + "=" + runnerId,
                 "--label", RUNNER_VERSION_LABEL + "=" + version,
                 "-v", "/var/run/docker.sock:/var/run/docker.sock",
                 "-v", runnerStateVolume(runnerId) + ":" + RUNNER_STATE_DIR,
-                "-e", "QITS_CI_RUNNER_URL=" + runnerUrl(env),
+                "-e", "QITS_CI_RUNNER_URL=" + url,
                 "-e", "QITS_CI_RUNNER_ID=" + runnerId,
                 "-e", "QITS_CI_RUNNER_SLOTS=" + slots));
         if (token != null) {
             command.add("-e");
             command.add(RUNNER_TOKEN_ENV);
         }
+        if (internal) {
+            command.addAll(List.of(
+                    "-e", "QITS_CI_RUNNER_BUILDKIT_HTTP_REGISTRIES=" + runnerHttpRegistries(env),
+                    "-e", "QITS_CI_RUNNER_BUILDKIT_REGISTRY_MIRRORS="
+                            + runnerRegistryMirrors(boot.config)));
+        }
         command.addAll(List.of(
-                "-e", "QITS_CI_RUNNER_BUILDKIT_HTTP_REGISTRIES=" + runnerHttpRegistries(env),
-                "-e", "QITS_CI_RUNNER_BUILDKIT_REGISTRY_MIRRORS="
-                        + runnerRegistryMirrors(boot.config),
                 "-e", "QITS_CI_RUNNER_BUILDKIT_STATE_VOLUME=" + RUNNER_BUILDKIT_STATE_VOLUME,
                 image));
         Cmd run = Cmd.of(command);
@@ -2629,22 +3021,26 @@ public class PipelinePhases {
     }
 
     /**
-     * <b>THIS HOST'S CI RUNNER, started as a plain container on qits-net — before the first run
-     * this boot asks for.</b>
+     * <b>THIS HOST'S CI RUNNER, started as a plain container — after the platform is up and
+     * before the first run this boot asks for.</b>
      * <p>
      * <b>Why a cold start does this at all.</b> qits-ci has no executor of its own (qits-506): a
      * run is a connected runner's or nobody's. Every runner elsewhere is a container a person
-     * starts with the install line; a platform that is being made has no person and no public
-     * door yet, so this program is the one that starts the first — the normal runner image, with
-     * the install line's own container contract, registering itself at qits-ci's own alias with a
-     * registration token like any other.
+     * starts with the install line; on a platform that is being made there is no person, so this
+     * program starts the first — the normal runner image, with the install line's own container
+     * contract, registering at the address qits-ci's own answer names with a registration token
+     * like any other. It stays as the platform's default runner: nothing here or after it takes it
+     * down again.
+     * <p>
+     * <b>On the plane qits-ci chooses</b> — see {@link #INTERNAL_PLANE}: EDGE with a domain, through
+     * the edge the gate before this phase proved; INTERNAL, on qits-net, without one.
      * <p>
      * <b>Not a deployment, and never one.</b> The runner rolls ITSELF over when qits-ci tells it a
      * newer version, by starting a successor container and leaving; a deployer replacing the same
      * container would be two actors racing to remove it. So it is in no stack file, no extras
-     * block and no {@code DEPLOYABLES} entry, and the seed's cutovers pass it by: the row and its
-     * client are rows of qits-ci's database, which the deployed successor reads at the same alias,
-     * and the runner simply redials.
+     * block and no {@code DEPLOYABLES} entry, and the train's cutovers pass it by: the row and its
+     * client are rows of qits-ci's database, which every successor of qits-ci reads, and the runner
+     * simply redials.
      * <p>
      * <b>{@link #runnerDecision} is asked first, and a listing that is not ours ends the phase
      * there.</b> Everything below runs only for a runner this installation declared.
@@ -2666,7 +3062,7 @@ public class PipelinePhases {
      */
     public Phase localhostRunner() {
         return new Phase("runner-localhost",
-                "start this host's CI runner as a container on " + Boot.NETWORK, ctx -> {
+                "start this host's CI runner as a container", ctx -> {
             boot.state.ciRunnerId = null;
             boot.state.ciRunnerContainer = null;
             BootstrapState recorded = new BootstrapState(
@@ -2704,11 +3100,13 @@ public class PipelinePhases {
             int slots = boot.config.ciConcurrentBuildsEffective();
 
             String id;
+            String plane;
             String token = null;
+            String url = null;
             boolean registered = false;
             if (decision.claim() == RunnerClaim.DECLARE) {
-                Http.Response created = boot.ci.createRunner(LOCALHOST_RUNNER, LOCALHOST_PLANE,
-                        slots, boot.bootstrapToken());
+                Http.Response created = boot.ci.createRunner(LOCALHOST_RUNNER, slots,
+                        boot.bootstrapToken());
                 if (created.status() != 201) {
                     // Only a refusal is described: a 2xx body carries the token.
                     throw new IllegalStateException("declaring runner " + LOCALHOST_RUNNER
@@ -2721,11 +3119,14 @@ public class PipelinePhases {
                 // this row is ours, whatever happens to this process.
                 record(recorded, id);
                 token = installToken(runner, "the create");
+                url = CiApi.runnerUrl(Json.text(runner, "installScript")).orElse(null);
+                plane = Json.text(runner, "plane");
                 ctx.log("  declared runner " + LOCALHOST_RUNNER + " (" + id + "): " + slots
-                        + " slots, " + LOCALHOST_PLANE + " plane — recorded in "
+                        + " slots, " + plane + " plane, qits-ci's choice — recorded in "
                         + recorded.file());
             } else {
                 id = requireId(Json.text(decision.row(), "id"));
+                plane = Json.text(decision.row(), "plane");
                 registered = decision.row().path("registered").asBoolean(false);
                 if (!recorded.ciRunnerId().map(id::equals).orElse(false)) {
                     record(recorded, id);
@@ -2769,7 +3170,9 @@ public class PipelinePhases {
                         throw new IllegalStateException("a fresh registration token for runner "
                                 + LOCALHOST_RUNNER + " answered " + rotated.describe());
                     } else {
-                        token = installToken(Json.parse(rotated.body()), "the rotation");
+                        JsonNode answer = Json.parse(rotated.body());
+                        token = installToken(answer, "the rotation");
+                        url = CiApi.runnerUrl(Json.text(answer, "installScript")).orElse(null);
                         ctx.log("  runner " + LOCALHOST_RUNNER + " (" + id + ") never "
                                 + "registered — a fresh registration token was minted");
                     }
@@ -2798,8 +3201,12 @@ public class PipelinePhases {
                             "clearing the runner's stale client failed");
                 }
                 container = runnerContainerName(id, version);
-                Boot.must(boot.docker.run(runnerRunCommand(id, version, image, slots, token),
-                        ctx::log), "the runner container did not start");
+                if (url == null) {
+                    url = runnerUrl(plane, DomainName.of(boot.config), boot.config.envName());
+                }
+                ctx.log("  " + container + ": " + plane + " plane, dialling " + url);
+                Boot.must(boot.docker.run(runnerRunCommand(id, version, image, slots, token,
+                        plane, url), ctx::log), "the runner container did not start");
             }
             boot.state.ciRunnerId = id;
             boot.state.ciRunnerContainer = container;
@@ -2840,11 +3247,11 @@ public class PipelinePhases {
      * <p>
      * <b>Then it lifts the quarantine, and that is this program's to do.</b> A runner that has just
      * registered is quarantined awaiting its first health check, which is a pseudo-build of
-     * qits-ci's own repository at {@code main} — a repository whose main this boot does not push
-     * until {@code deploy-ci}, near the end of the train. The check cannot be queued, qits-ci swallows that,
-     * and its sweep asks again in an hour. So the bootstrap greenlights the runner it started,
-     * through the operator's own door, and the first release replay is the proof the check would
-     * have been. A runner that is in service already is not greenlit again: its failure streak is
+     * qits-ci's own repository at {@code main}. That main is on the git host by now —
+     * {@code seed-deploy-ci} pushed it — but the check is still a build, and one qits-ci's sweep may
+     * not get to for an hour when it cannot be queued at once. So the bootstrap greenlights the
+     * runner it started, through the operator's own door, and the first release replay is the
+     * proof the check would have been. A runner that is in service already is not greenlit again: its failure streak is
      * qits-ci's to keep.
      * <p>
      * <b>Skipped whenever {@code runner-localhost} stood aside</b> — there is no runner of ours to
