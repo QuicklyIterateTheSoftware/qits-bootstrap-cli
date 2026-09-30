@@ -432,8 +432,9 @@ that, each measured on this host rather than assumed:
   1001 being the images' own user). Their deployed successors get `--group-add` from the extras,
   which is where supplementary groups still work. Two is the SEED's count, not the platform's:
   qits-platform-system and qits-ci-runner hold a socket too, and neither has a seed block at all —
-  qits-ci-runner is not even a seed CONCERN, since the in-process executor it replaces is still
-  what this cold start's own qits-ci runs steps through; see the fourth-holder paragraph below.
+  qits-ci-runner is not even a seed CONCERN, since this cold start's own qits-ci runs steps through
+  its in-process executor, turned back on for exactly this platform; see the fourth-holder
+  paragraph below.
 - **No `container_name:`.** A stack ignores it and names the container
   `qits_<service>.<slot>.<taskid>`. What answers a wire alias is the SERVICE, which resolves under
   `qits_<alias>` and under the bare `<alias>` both — so every address in the file is unchanged, and
@@ -928,12 +929,20 @@ holder it dials OUT rather than being dialled: it reaches qits-ci through the pu
 internal alias, because a runner's registration token is opaque and only the public edge
 introspects it — true of this runner exactly as it is of a person's own, even though this one
 happens to live on the platform's own host. **This bootstrap's own cold start does not bring it into
-service.** The extras block is written so a redeploy of qits-ci-runner is configured correctly
-whenever one happens, but nothing here creates the `localhost` runner row qits-ci needs to hand out
-an id and a registration token, and the in-process executor is still what this boot's own qits-ci
-runs every step through — a later task in the epic adds the phase that creates that row and retires
-the executor. Until then the block's `QITS_CI_RUNNER_ID` and `_REGISTRATION_TOKEN` keys render
-empty and an operator fills them by hand through qits-configuration once the row exists.
+service.** The live estate runs every CI step on an external runner now — qits-ci ships with its
+in-process executor OFF (`QITS_CI_IN_PROCESS_EXECUTOR_ENABLED=false`) — but a freshly bootstrapped
+platform has no runner at all, so both the seed qits-ci and the pipeline-deployed one would have
+nothing to execute the bootstrap's own release replays, or any later run, without one. Until a
+follow-up gives this platform a same-node runner of its own, `ComposeTemplate` turns the in-process
+executor back ON for the platform it creates — `QITS_CI_IN_PROCESS_EXECUTOR_ENABLED=true` beside
+`QITS_CI_CONCURRENT_BUILDS` on both the seed block and qits-ci's extras — and every step this boot
+runs, and every step after it until that follow-up lands, goes through it. The qits-ci-runner extras
+block is prepared ahead of that follow-up rather than by it: it is written so a redeploy of
+qits-ci-runner is configured correctly whenever one happens, but nothing here creates the
+`localhost` runner row qits-ci needs to hand out an id and a registration token. Until that row
+exists the block's `QITS_CI_RUNNER_ID` and `_REGISTRATION_TOKEN` keys render empty and an operator
+fills them by hand through qits-configuration; a later task in the epic adds the phase that creates
+the row, hands qits-ci a runner of its own and turns the in-process executor back off.
 
 A **platform** service is one instance for the whole platform, joined to every environment's
 networks, belonging to no tier — so it appears in no per-environment deployment listing, and the

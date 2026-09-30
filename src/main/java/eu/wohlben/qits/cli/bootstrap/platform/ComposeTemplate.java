@@ -1056,6 +1056,11 @@ public final class ComposeTemplate {
                   # hard reset — and a literal here is also what silently reverted the 1 an operator
                   # had set by hand. QITS_CI_CONCURRENT_BUILDS in the environment overrides it.
                   QITS_CI_CONCURRENT_BUILDS: "${CI_CONCURRENT_BUILDS}"
+                  # qits-ci ships this OFF because the live estate's executor is an external runner
+                  # (epic qits-443). A platform this bootstrap creates has no runner yet, so its
+                  # executor is the in-process one, sized by QITS_CI_CONCURRENT_BUILDS above, until
+                  # the bootstrap provisions a same-node runner (follow-up).
+                  QITS_CI_IN_PROCESS_EXECUTOR_ENABLED: "true"
                   # NOT the bound on a build. It is the step CONTAINER's limit, and the docker build
                   # it starts is the host daemon's child — which is why the line above is sized by
                   # the host instead.
@@ -1667,6 +1672,11 @@ public final class ComposeTemplate {
             # operator's hand-set value is exactly how a 16 GB host was livelocked on 2026-08-22.
             # CiConcurrency holds the formula; QITS_CI_CONCURRENT_BUILDS overrides it.
             qits.deployments.extras.qits-ci.env.QITS_CI_CONCURRENT_BUILDS=${CI_CONCURRENT_BUILDS}
+            # qits-ci ships this OFF because the live estate's executor is an external runner
+            # (epic qits-443). A platform this bootstrap creates has no runner yet, so its
+            # executor is the in-process one, sized by QITS_CI_CONCURRENT_BUILDS above, until the
+            # bootstrap provisions a same-node runner (follow-up).
+            qits.deployments.extras.qits-ci.env.QITS_CI_IN_PROCESS_EXECUTOR_ENABLED=true
             qits.deployments.extras.qits-ci.env.QITS_CI_MEMORY_LIMIT=4g
             qits.deployments.extras.qits-ci.env.QITS_CI_CPUS=4
             qits.deployments.extras.qits-ci.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
