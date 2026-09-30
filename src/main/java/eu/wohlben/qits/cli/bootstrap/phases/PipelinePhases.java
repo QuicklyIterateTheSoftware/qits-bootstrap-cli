@@ -1587,6 +1587,74 @@ public class PipelinePhases {
     // --- push, build, deploy — one application at a time -------------------------------------------
 
     /**
+     * <b>STEP TWO: A SEED IMAGE PUT LIVE BY THE DEPLOYER, before this host's runner exists and
+     * before the first build.</b>
+     * <p>
+     * The cold boot goes in four steps, and this phase is the second: build locally everything the
+     * platform needs; bring the platform up as it runs in steady state; start the runner; and only
+     * then build. So each {@link PlatformModel#SEED_DEPLOYED} application is handed to
+     * qits-deployments here exactly as it will be for the rest of its life — a released VERSION,
+     * whose image the deployer pulls as {@code qits/<application>:<version>} and whose spec it reads
+     * at that tag. The image under that tag is the seed build ({@code seed-images-publish} put it
+     * there); the version is the real one.
+     * <p>
+     * <b>Through the manual door, because there is no build to announce it.</b>
+     * {@code POST /deployments/api/events/software-released} is the deployer's own door for a
+     * release nobody was listening for, and it takes the same {@code (application, version)} its
+     * bus subscriber does. It is also not collapsed to the newest version, which is what lets the
+     * train hand the SAME version over again once the release run has replaced the image — see
+     * {@link #deploy}.
+     * <p>
+     * <b>RECORDED BEFORE IT IS HANDED OVER</b>, in {@code .qits-bootstrap.env}: once the deployer
+     * holds a request for this version, the release run's own {@code SoftwareRelease} of it is not
+     * newer and deploys nothing, so the train has to know to hand it over again — on this run, or
+     * on a rerun after this process died in between. An application that was already live at this
+     * version before this phase looked is not recorded: it is running a release, not a seed.
+     * <p>
+     * <b>The edge's phase retires the bootstrap ingress</b> ({@link #restoreRelease}), and that is
+     * the owner's order: the ingress serves the temporary registry, git and the progress page for
+     * the whole local-build step, and the platform's own edge takes the door here — before the
+     * runner is started and before the first build.
+     */
+    public Phase seedDeploy(String name) {
+        String repo = PlatformModel.repo(name);
+        String application = PlatformModel.application(name);
+        return new Phase("seed-deploy-" + name, repo + ": deploy the seed image at its release tag",
+                ctx -> {
+            Path src = boot.state.repoDir(name);
+            // Before anything is handed over, for the reason deploy() gives.
+            String baselineRowId = boot.pd.newestDeployment(boot.state.environmentId, application)
+                    .map(r -> Json.text(r, "id")).orElse(null);
+            String version = restoreRelease(ctx, name);
+            if (version.isBlank()) {
+                return;
+            }
+            BootstrapState recorded = new BootstrapState(
+                    boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME));
+            recorded.read();
+            if (alreadyLive(ctx, name, application, version)) {
+                ctx.note("already live at " + version
+                        + (recorded.seedDeployed(application).map(version::equals).orElse(false)
+                                ? ", from its seed image" : ""));
+                return;
+            }
+            recorded.putSeedDeployed(application, version);
+            recorded.write();
+            ctx.status("handing " + application + " " + version + " to the deployer");
+            Http.Response answer = boot.pd.softwareReleased(boot.storageId(name),
+                    boot.state.projectId, repo, application, version, boot.bootstrapToken());
+            if (!answer.ok()) {
+                throw new IllegalStateException("the deployer refused " + application + " "
+                        + version + " at its manual door: " + answer.describe());
+            }
+            ctx.log("  " + application + " " + version + " handed to the deployer — the seed "
+                    + "image, until the train replaces it with its release run's");
+            awaitDeployment(ctx, name, application, version, null,
+                    boot.git.commitOf(src, "main"), baselineRowId);
+        });
+    }
+
+    /**
      * Sequential on purpose: each release build is a cold native build on the host daemon, and a
      * workstation rarely wants eight at once.
      * <p>
@@ -1644,55 +1712,14 @@ public class PipelinePhases {
             // never by the name the deployer keys its own rows by.
             String storageId = boot.storageId(name);
 
-            ctx.status("pushing " + repo + " to main (quietly)");
-            // THE BRANCH, NOT HEAD. A restoring boot leaves the checkout detached at the release
-            // tag, so HEAD:refs/heads/main would push the RELEASE onto main — a rewind of the trunk
-            // on the git host, refused as a non-fast-forward and wrong even where it was accepted.
-            // The trunk is the local main branch and goes up as itself.
-            boot.push(ctx, repo + " to main", src, boot.gitUrl(name),
-                    List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
-                    "main:refs/heads/main");
-
-            // WHICH VERSION DEPLOYS, read after main is up so the commit it names is already in the
-            // store. A fact about the checkout, which an earlier phase of this same run refreshed.
-            //
-            // THE NEWEST RELEASE, NOT THE NEAREST TAG, and the two are different questions: a
-            // release cut on an older commit and tagged later is nearer in history while being
-            // older. It is asked exactly as the `sources` phase asks it — one function,
-            // PlatformModel.newestRelease over the version-sorted merged tags — because that phase
-            // stood this checkout at a tag and built the seed image from it. A deployment of
-            // another version is a successor whose Flyway lineage its own seed has already run
-            // past.
-            String version = PlatformModel.newestRelease(boot.git.tagsNewestFirst(src, "main"));
+            String version = restoreRelease(ctx, name);
             if (version.isBlank()) {
-                // Not a failed boot: the applications behind this one still deserve their turn, and
-                // this is a fact about the repository rather than a contradiction in the platform.
-                ctx.warn(repo + " has no release tag reachable from main, so there is no version to"
-                        + " deploy — a deployment is qits/" + application + ":<version> and nobody"
-                        + " has minted one. Cut a release through qits-projects and rerun");
-                ctx.note("no release to deploy");
                 return;
             }
-            ctx.log("  " + repo + " restores " + version);
             // MAIN'S HEAD, because that is where an event-triggered run is cloned and recorded —
             // the tag checkout is the release recipe's own business, invisible to the run row. Read
             // as the BRANCH, never as HEAD: this checkout stands at the release tag.
             String mainSha = boot.git.commitOf(src, "main");
-
-            // ONE TAG, THE NEWEST, and that is a trade: pushing every tag would restore the whole
-            // release history in one go, at one bus event and one full candidate sweep per tag
-            // across every repository qits-ci knows. The older tags restore nothing this boot needs.
-            ctx.status("pushing " + repo + " " + version);
-            boot.push(ctx, repo + " " + version, src, boot.gitUrl(name),
-                    List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
-                    "refs/tags/" + version);
-
-            if ("edge".equals(name)) {
-                // Both edges need the same host ports. Release them only after the real edge's
-                // source is safely in githost, but before its service is created. The cutover is
-                // intentionally a short closed interval, never two authorities.
-                boot.ingress.stop(ctx::log);
-            }
 
             if (alreadyLive(ctx, name, application, version)) {
                 ctx.note("already live at " + version);
@@ -1727,6 +1754,67 @@ public class PipelinePhases {
             }
             awaitDeployment(ctx, name, application, version, runId, mainSha, baselineRowId);
         });
+    }
+
+    /**
+     * <b>The two SCM facts a release is made of, on the git host: main, then the newest release
+     * tag — both quietly.</b> Answers that version, or blank when the repository has none, which
+     * has been WARNED here and leaves the caller nothing to deploy.
+     * <p>
+     * Both deploying phases start this way — the seed deploy of step two and the train's — and
+     * both for the same reasons, which are the comments below. The EDGE's phases also retire the
+     * bootstrap ingress here, after its source is safely up and before its service is created:
+     * the two edges want the same host ports, and the cutover is a short closed interval, never
+     * two authorities. Whichever of the two phases gets there first does it; the other finds
+     * nothing to stop.
+     */
+    private String restoreRelease(PhaseContext ctx, String name) throws Exception {
+        String repo = PlatformModel.repo(name);
+        String application = PlatformModel.application(name);
+        Path src = boot.state.repoDir(name);
+        ctx.status("pushing " + repo + " to main (quietly)");
+        // THE BRANCH, NOT HEAD. A restoring boot leaves the checkout detached at the release
+        // tag, so HEAD:refs/heads/main would push the RELEASE onto main — a rewind of the trunk
+        // on the git host, refused as a non-fast-forward and wrong even where it was accepted.
+        // The trunk is the local main branch and goes up as itself.
+        boot.push(ctx, repo + " to main", src, boot.gitUrl(name),
+                List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
+                "main:refs/heads/main");
+
+        // WHICH VERSION DEPLOYS, read after main is up so the commit it names is already in the
+        // store. A fact about the checkout, which an earlier phase of this same run refreshed.
+        //
+        // THE NEWEST RELEASE, NOT THE NEAREST TAG, and the two are different questions: a
+        // release cut on an older commit and tagged later is nearer in history while being
+        // older. It is asked exactly as the `sources` phase asks it — one function,
+        // PlatformModel.newestRelease over the version-sorted merged tags — because that phase
+        // stood this checkout at a tag and built the seed image from it. A deployment of
+        // another version is a successor whose Flyway lineage its own seed has already run
+        // past.
+        String version = PlatformModel.newestRelease(boot.git.tagsNewestFirst(src, "main"));
+        if (version.isBlank()) {
+            // Not a failed boot: the applications behind this one still deserve their turn, and
+            // this is a fact about the repository rather than a contradiction in the platform.
+            ctx.warn(repo + " has no release tag reachable from main, so there is no version to"
+                    + " deploy — a deployment is qits/" + application + ":<version> and nobody"
+                    + " has minted one. Cut a release through qits-projects and rerun");
+            ctx.note("no release to deploy");
+            return "";
+        }
+        ctx.log("  " + repo + " restores " + version);
+
+        // ONE TAG, THE NEWEST, and that is a trade: pushing every tag would restore the whole
+        // release history in one go, at one bus event and one full candidate sweep per tag
+        // across every repository qits-ci knows. The older tags restore nothing this boot needs.
+        ctx.status("pushing " + repo + " " + version);
+        boot.push(ctx, repo + " " + version, src, boot.gitUrl(name),
+                List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
+                "refs/tags/" + version);
+
+        if ("edge".equals(name)) {
+            boot.ingress.stop(ctx::log);
+        }
+        return version;
     }
 
     /**
@@ -2138,11 +2226,11 @@ public class PipelinePhases {
                         // here after a minute was impatience, and it was the only caller of an
                         // intake that could file a deployment the bus had not announced. What
                         // catches up is the consumer's own sweep.
-                        return Waiter.Poll.pending("release build "
-                                + (runId == null ? "not this phase's"
-                                        : runStatus.isBlank() ? "starting" : runStatus)
-                                + (runSha.isBlank() ? "" : " at " + SeedPhases.shortSha(runSha))
-                                + ", deployment " + deploymentState);
+                        return Waiter.Poll.pending((runId == null ? ""
+                                : "release build " + (runStatus.isBlank() ? "starting" : runStatus)
+                                        + (runSha.isBlank() ? ""
+                                                : " at " + SeedPhases.shortSha(runSha)) + ", ")
+                                + "deployment " + deploymentState);
                     });
             if (outcome.startsWith("ACTIVE")) {
                 ctx.log("  " + application + " " + outcome);

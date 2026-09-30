@@ -1834,6 +1834,185 @@ class PipelinePhasesTest {
         assertThat(runner.lines()).noneMatch(line -> line.contains(" push "));
     }
 
+    // --- step two: the seed images, put live by the deployer ------------------------------------
+    //
+    // Driven like the runner phases below: git and docker over a scripted runner, the deployer and
+    // the idp over a canned http. The deployment listing is a supplier, so a test can have it
+    // change the moment the door is posted — which is what the deployer does.
+
+    private static final String DEPLOYMENTS =
+            "GET http://prod-qits-deployments:8080/deployments/api/deployments?environmentId=env-1";
+
+    private static final String DOOR =
+            "POST http://prod-qits-deployments:8080/deployments/api/events/software-released";
+
+    private static final String MAIN_SHA = "5ee5ee5ee5ee5ee5ee5ee5ee5ee5ee5ee5ee5ee5";
+
+    private static final String CI_STORAGE_ID = "8b1f0f0e-9a0c-4c3a-9a5b-000000000001";
+
+    /** One deployment row, as the deployer's listing answers it. */
+    private static String deploymentRow(String id, String application, String version,
+                                        String status, String container) {
+        return "{\"id\":\"" + id + "\",\"applicationName\":\"" + application + "\",\"version\":\""
+                + version + "\",\"status\":\"" + status + "\",\"containerName\":\"" + container
+                + "\",\"detail\":\"\"}";
+    }
+
+    private static Http.Response deployments(String... rows) {
+        return new Http.Response(200, "{\"deployments\":[" + String.join(",", rows) + "]}");
+    }
+
+    /**
+     * git answers every checkout with {@link #RELEASE} and {@link #MAIN_SHA}, a push is accepted,
+     * and {@code docker ps} lists the given containers as {@code name|status}.
+     */
+    private static ScriptedRunner deployDocker(List<String> containers) {
+        return new ScriptedRunner(command -> {
+            String line = String.join(" ", command);
+            if (line.startsWith("git -C") && line.contains(" tag --list")) {
+                return ScriptedRunner.ok(RELEASE);
+            }
+            if (line.startsWith("git -C") && line.contains(" rev-list")) {
+                return ScriptedRunner.ok(MAIN_SHA);
+            }
+            if (line.startsWith("docker ps --format")) {
+                return ScriptedRunner.ok(containers.toArray(new String[0]));
+            }
+            return ScriptedRunner.ok();
+        });
+    }
+
+    /** A boot past git-repos and environment, with a bootstrap client and a fast poll. */
+    private Boot deployBoot(ScriptedRunner runner, CannedHttp http, Map<String, String> env)
+            throws Exception {
+        Map<String, String> config = new java.util.HashMap<>(env);
+        config.putIfAbsent("QITS_POLL_INTERVAL", "PT0.001S");
+        config.putIfAbsent("QITS_DEPLOY_TIMEOUT", "PT0.3S");
+        http.answer("FORM http://prod-qits-idp:8080/idp/token", 200,
+                "{\"access_token\":\"bootstrap-bearer\",\"expires_in\":3600}");
+        Boot boot = runnerBoot(runner, http, config);
+        boot.state.bootstrapClientId = "prod-qits-bootstrap";
+        boot.state.bootstrapSecret = "boot";
+        boot.state.environmentId = "env-1";
+        boot.state.projectId = "p-qits";
+        boot.state.repositoriesRegistered = true;
+        boot.state.repositoryIds.put("qits-ci-service", CI_STORAGE_ID);
+        return boot;
+    }
+
+    private String recordedState() throws Exception {
+        Path file = temp.resolve(".qits-bootstrap.env");
+        return Files.exists(file) ? Files.readString(file) : "";
+    }
+
+    /**
+     * <b>A COLD PLATFORM: the seed image goes live through the manual door, at its real
+     * version.</b> Main and the tag are pushed quietly first — the deployer reads the spec at that
+     * tag, name-addressed — and the application is RECORDED as seed-deployed before the door is
+     * posted, because from that moment its release run's own SoftwareRelease deploys nothing.
+     */
+    @Test
+    void aColdPlatformGetsTheSeedImageDeployedAtItsReleaseTagThroughTheManualDoor()
+            throws Exception {
+        ScriptedRunner runner = deployDocker(List.of());
+        List<String> recordedAtTheDoor = new ArrayList<>();
+        boolean[] posted = {false};
+        CannedHttp http = new CannedHttp();
+        http.answer(DEPLOYMENTS, () -> posted[0]
+                ? deployments(deploymentRow("d-1", "qits-ci", RELEASE, "ACTIVE", "prod-qits-ci.1"))
+                : deployments());
+        http.answer(DOOR, () -> {
+            posted[0] = true;
+            try {
+                recordedAtTheDoor.add(recordedState());
+            } catch (Exception e) {
+                recordedAtTheDoor.add("unreadable: " + e);
+            }
+            return new Http.Response(202, "");
+        });
+        Boot boot = deployBoot(runner, http, Map.of());
+        CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
+
+        new PipelinePhases(boot).seedDeploy("ci").action().run(ctx);
+
+        assertThat(runner.lines()).anyMatch(line -> line.contains(" push -o qits.no-ci")
+                && line.endsWith("main:refs/heads/main"));
+        assertThat(runner.lines()).anyMatch(line -> line.contains(" push -o qits.no-ci")
+                && line.endsWith("refs/tags/" + RELEASE));
+        assertThat(http.calls.stream().filter(DOOR::equals)).hasSize(1);
+        assertThat(http.bodies.get(DOOR)).isEqualTo("{\"repoId\":\"" + CI_STORAGE_ID
+                + "\",\"projectId\":\"p-qits\",\"repoName\":\"qits-ci-service\","
+                + "\"application\":\"qits-ci\",\"version\":\"" + RELEASE + "\"}");
+        // qits:system: the bootstrap's own client, on the platform audience.
+        assertThat(http.headers.get(DOOR)).containsEntry("Authorization", "Bearer bootstrap-bearer");
+        assertThat(recordedAtTheDoor).singleElement().asString()
+                .contains("SEED_DEPLOYED_QITS_CI=" + RELEASE);
+        assertThat(ctx.logs).noneMatch(line -> line.startsWith("!! "));
+        // Nothing is built: step two asks qits-ci for nothing at all.
+        assertThat(http.calls).noneMatch(call -> call.contains("-qits-ci:"));
+    }
+
+    /**
+     * An application already live at this version was not put there by a seed deploy — it runs a
+     * release. Nothing is handed over, and nothing is recorded: the train must not redeploy it.
+     */
+    @Test
+    void anApplicationAlreadyLiveAtItsReleaseIsNeitherDeployedNorRecorded() throws Exception {
+        ScriptedRunner runner = deployDocker(List.of("prod-qits-ci.1.abc|Up 3 hours (healthy)"));
+        CannedHttp http = new CannedHttp().answer(DEPLOYMENTS, 200, deployments(
+                deploymentRow("d-0", "qits-ci", RELEASE, "ACTIVE", "prod-qits-ci.1.abc")).body());
+        Boot boot = deployBoot(runner, http, Map.of());
+
+        new PipelinePhases(boot).seedDeploy("ci").action().run(new CiLogStreamTest.Recorder());
+
+        assertThat(http.calls).doesNotContain(DOOR);
+        assertThat(recordedState()).doesNotContain("SEED_DEPLOYED_");
+    }
+
+    /** A door that refuses stops the boot: nothing after step two can run on half a platform. */
+    @Test
+    void aDoorThatRefusesStopsTheBoot() throws Exception {
+        CannedHttp http = new CannedHttp().answer(DEPLOYMENTS, 200, deployments().body())
+                .answer(DOOR, 403, "qits:system required");
+        Boot boot = deployBoot(deployDocker(List.of()), http, Map.of());
+
+        assertThatThrownBy(() -> new PipelinePhases(boot).seedDeploy("ci").action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("qits-ci " + RELEASE)
+                .hasMessageContaining("403");
+    }
+
+    /**
+     * <b>The edge's seed deploy retires the bootstrap ingress</b> — after its source is on the git
+     * host and before its service is created, as the train's own edge deploy always did.
+     */
+    @Test
+    void theEdgesSeedDeployRetiresTheBootstrapIngress() throws Exception {
+        ScriptedRunner base = deployDocker(List.of());
+        ScriptedRunner runner = new ScriptedRunner(command ->
+                String.join(" ", command).startsWith("docker ps -a --format")
+                        ? ScriptedRunner.ok("qits-bootstrap-edge")
+                        : base.run(Cmd.of(command), null));
+        boolean[] posted = {false};
+        CannedHttp http = new CannedHttp();
+        http.answer(DEPLOYMENTS, () -> posted[0] ? deployments(deploymentRow("d-1",
+                "qits-edge", RELEASE, "ACTIVE", "prod-qits-edge.1")) : deployments());
+        http.answer(DOOR, () -> {
+            posted[0] = true;
+            return new Http.Response(202, "");
+        });
+        Boot boot = deployBoot(runner, http, Map.of());
+
+        new PipelinePhases(boot).seedDeploy("edge").action().run(new CiLogStreamTest.Recorder());
+
+        assertThat(runner.lines()).containsSubsequence(
+                runner.lines().stream().filter(line -> line.endsWith("refs/tags/" + RELEASE))
+                        .findFirst().orElseThrow(),
+                "docker rm -f qits-bootstrap-edge");
+        assertThat(http.calls).contains(DOOR);
+    }
+
     // --- this host's runner -----------------------------------------------------------------------
     //
     // The two phases, driven through the two things they talk to: qits-ci over a canned http and

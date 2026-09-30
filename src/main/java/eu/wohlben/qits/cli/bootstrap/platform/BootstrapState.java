@@ -120,6 +120,29 @@ public class BootstrapState {
      * It also survives a resumed run for the same reason the client secrets do: this file is the
      * one thing a boot carries across its own restarts.
      */
+    /**
+     * <b>Which applications run a SEED image under a released tag</b>, one line per application
+     * with the version it was deployed at: {@code SEED_DEPLOYED_QITS_CI=2026.930.120000}.
+     * <p>
+     * Written by a {@code seed-deploy-*} phase BEFORE it hands the deployer the release, and
+     * emptied by the train's deploy phase once the release run's own image of that version is
+     * live. It has to outlive the process, because the fact it records outlives it: once the
+     * deployer holds a request for that version, a SoftwareRelease of the same version is not newer
+     * and deploys nothing — so the train has to know to hand the version over again, on this run
+     * or on a rerun of it.
+     */
+    public static final String SEED_DEPLOYED_PREFIX = "SEED_DEPLOYED_";
+
+    /** The version this application's seed image was deployed at, while it still runs it. */
+    public Optional<String> seedDeployed(String application) {
+        return value(SEED_DEPLOYED_PREFIX + PlatformModel.clientKey(application));
+    }
+
+    /** Records a seed deployment, or with an empty version, that it has been replaced. */
+    public void putSeedDeployed(String application, String version) {
+        put(SEED_DEPLOYED_PREFIX + PlatformModel.clientKey(application), version);
+    }
+
     public static final String REPO_ID_PREFIX = "REPO_ID_";
 
     /** What an earlier run seeded this repository under, if it recorded one. */
