@@ -2704,10 +2704,39 @@ public class SeedPhases {
         });
     }
 
+    /**
+     * <b>Is the platform's own edge already the deployer's?</b> The same question {@code seed-stack}
+     * asks of every seed service — see {@code PipelinePhases.seedPlan}: a service under the bare
+     * wire alias, or a {@code qits-pd-} container — asked of the edge alone.
+     */
+    static boolean deployerManagedEdge(List<String> running, List<String> services, String env) {
+        return PipelinePhases.seedPlan(running, services, env).managed()
+                .contains(PlatformModel.wireAlias("edge", env));
+    }
+
+    /**
+     * <b>A RERUN OVER A DEPLOYED EDGE STARTS NO BOOTSTRAP INGRESS — neither its capability nor its
+     * container.</b> The ingress exists for the local-build step of a cold boot, and the edge's seed
+     * deploy retires it; on a rerun past that point the deployer's edge holds the public door, and a
+     * second one would bind 80/443 against it. The edge's seed deploy has moved to the middle of
+     * the boot, so a rerun that finds it live is the common rerun, not the rare one.
+     */
+    private void standAsideForADeployedEdge(PhaseContext ctx) {
+        if (!boot.config.bootstrapIngress()) {
+            return;
+        }
+        String env = boot.config.envName();
+        if (deployerManagedEdge(boot.docker.runningNames(), boot.docker.serviceNames(), env)) {
+            ctx.skip("the deployer's " + PlatformModel.wireAlias("edge", env) + " is live and "
+                    + "holds the public door — no bootstrap ingress beside it");
+        }
+    }
+
     /** Generate one run's two ingress capabilities before compose needs githost's fingerprint. */
     public Phase bootstrapIngressPrepare() {
         return new Phase("bootstrap-ingress-prepare", "prepare the bootstrap-only ingress capability",
                 ctx -> {
+                    standAsideForADeployedEdge(ctx);
                     boot.ingress.prepare(ctx::log);
                     if (!boot.config.bootstrapIngress()) {
                         ctx.skip("QITS_BOOTSTRAP_INGRESS=0");
@@ -2718,6 +2747,7 @@ public class SeedPhases {
     /** Starts before the seed stack and never waits for or routes through the normal edge. */
     public Phase bootstrapIngressStart() {
         return new Phase("bootstrap-ingress", "start the temporary bootstrap ingress", ctx -> {
+            standAsideForADeployedEdge(ctx);
             boot.ingress.start(ctx::log);
             if (!boot.config.bootstrapIngress()) {
                 ctx.skip("QITS_BOOTSTRAP_INGRESS=0");
