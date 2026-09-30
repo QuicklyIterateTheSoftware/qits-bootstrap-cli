@@ -2013,6 +2013,98 @@ class PipelinePhasesTest {
         assertThat(http.calls).contains(DOOR);
     }
 
+    // --- step four: the train replaces a seed image -----------------------------------------------
+
+    private static final String TRIGGER = "POST http://prod-qits-ci:8080/ci/api/events/trigger";
+
+    private static final String RUN = "GET http://prod-qits-ci:8080/ci/api/runs/r-1";
+
+    /**
+     * The train's deploy of qits-ci over a platform whose seed image of it is ACTIVE at the release
+     * — with a healthy container, so "already live" would say yes. The run goes green on its
+     * second read; the listing gains a row once the door is posted.
+     */
+    private CannedHttp trainOverSeed(int[] doors) {
+        CannedHttp http = new CannedHttp();
+        String seedRow = deploymentRow("d-seed", "qits-ci", RELEASE, "ACTIVE", "prod-qits-ci.1.abc");
+        http.answer(DEPLOYMENTS, () -> doors[0] > 0
+                ? deployments(deploymentRow("d-release", "qits-ci", RELEASE, "ACTIVE",
+                        "prod-qits-ci.1.def"), seedRow)
+                : deployments(seedRow));
+        http.answer(TRIGGER, 200, "{\"runIds\":[\"r-1\"]}");
+        int[] reads = {0};
+        http.answer(RUN, () -> new Http.Response(200,
+                "{\"id\":\"r-1\",\"status\":\"" + (++reads[0] > 2 ? "SUCCESS" : "RUNNING")
+                        + "\",\"steps\":[]}"));
+        http.answer(DOOR, () -> {
+            doors[0]++;
+            return new Http.Response(202, "");
+        });
+        return http;
+    }
+
+    /**
+     * <b>A SEED-DEPLOYED APPLICATION IS DEPLOYED AGAIN FROM ITS RELEASE RUN'S IMAGE.</b> The
+     * release is announced as for any deployable, and once — only once — the run is green, the
+     * same version goes to the deployer's manual door: its SoftwareRelease is not newer than the
+     * seed deploy's request, so nothing else would put the real image live. "Already live" is not
+     * asked, because a seed image under the version answers yes. The record goes once the new row
+     * is ACTIVE.
+     */
+    @Test
+    void aSeedDeployedApplicationIsHandedOverAgainOnceItsReleaseRunIsGreen() throws Exception {
+        Files.writeString(temp.resolve(".qits-bootstrap.env"),
+                "SEED_DEPLOYED_QITS_CI=" + RELEASE + "\n", StandardCharsets.UTF_8);
+        int[] doors = {0};
+        CannedHttp http = trainOverSeed(doors);
+        Boot boot = deployBoot(deployDocker(List.of("prod-qits-ci.1.abc|Up 3 hours (healthy)")),
+                http, Map.of("QITS_DEPLOY_TIMEOUT", "PT5S"));
+        CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
+
+        new PipelinePhases(boot).deploy("ci").action().run(ctx);
+
+        assertThat(http.calls).contains(TRIGGER);
+        assertThat(doors[0]).isEqualTo(1);
+        // Not before the run is green: the door comes after the reads that answered SUCCESS.
+        int door = http.calls.indexOf(DOOR);
+        assertThat(http.calls.subList(0, door).stream().filter(RUN::equals).count())
+                .isGreaterThanOrEqualTo(3);
+        assertThat(http.bodies.get(DOOR)).contains("\"application\":\"qits-ci\"",
+                "\"version\":\"" + RELEASE + "\"");
+        assertThat(ctx.logs).noneMatch(line -> line.startsWith("!! "));
+        assertThat(recordedState()).doesNotContain("SEED_DEPLOYED_QITS_CI=" + RELEASE);
+    }
+
+    /**
+     * <b>Every other deployment keeps the rule: a green run with no row is WAITED OUT, never handed
+     * over.</b> An application not recorded as seed-deployed is not given to the manual door,
+     * however long its row takes.
+     */
+    @Test
+    void anApplicationThatIsNotSeedDeployedIsNeverHandedOver() throws Exception {
+        int[] doors = {0};
+        CannedHttp http = trainOverSeed(doors);
+        // The same listing, but no container behind the ACTIVE row: not live, so it is built.
+        Boot boot = deployBoot(deployDocker(List.of()), http, Map.of());
+        CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
+
+        new PipelinePhases(boot).deploy("ci").action().run(ctx);
+
+        assertThat(http.calls).contains(TRIGGER).doesNotContain(DOOR);
+        assertThat(ctx.logs).anyMatch(line -> line.startsWith("!! qits-ci: no terminal deployment"));
+    }
+
+    /** A seed recorded at an OLDER version is not this case: the newer release deploys itself. */
+    @Test
+    void onlyASeedOfTheSameVersionIsHandedOverAgain() {
+        assertThat(PipelinePhases.redeploysAfterGreen(java.util.Optional.of(RELEASE), RELEASE))
+                .isTrue();
+        assertThat(PipelinePhases.redeploysAfterGreen(java.util.Optional.of("2026.901.10000"),
+                RELEASE)).isFalse();
+        assertThat(PipelinePhases.redeploysAfterGreen(java.util.Optional.empty(), RELEASE))
+                .isFalse();
+    }
+
     // --- this host's runner -----------------------------------------------------------------------
     //
     // The two phases, driven through the two things they talk to: qits-ci over a canned http and

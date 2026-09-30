@@ -1650,7 +1650,7 @@ public class PipelinePhases {
             ctx.log("  " + application + " " + version + " handed to the deployer — the seed "
                     + "image, until the train replaces it with its release run's");
             awaitDeployment(ctx, name, application, version, null,
-                    boot.git.commitOf(src, "main"), baselineRowId);
+                    boot.git.commitOf(src, "main"), baselineRowId, false);
         });
     }
 
@@ -1721,7 +1721,20 @@ public class PipelinePhases {
             // as the BRANCH, never as HEAD: this checkout stands at the release tag.
             String mainSha = boot.git.commitOf(src, "main");
 
-            if (alreadyLive(ctx, name, application, version)) {
+            // A SEED IMAGE UNDER THIS VERSION IS NOT THIS VERSION, and "already live" must not be
+            // asked of it: the row is ACTIVE at the right version and its container is healthy, so
+            // the answer would be yes and the placeholder would stay for good. The record is what
+            // tells the two apart — see seedDeploy.
+            BootstrapState recorded = new BootstrapState(
+                    boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME));
+            recorded.read();
+            Optional<String> seedVersion = recorded.seedDeployed(application);
+            boolean seeded = redeploysAfterGreen(seedVersion, version);
+            if (seeded) {
+                ctx.log("  " + application + " runs its SEED image at " + version + " — the release "
+                        + "run replaces it, and the version is handed to the deployer again once "
+                        + "that run is green");
+            } else if (alreadyLive(ctx, name, application, version)) {
                 ctx.note("already live at " + version);
                 return;
             }
@@ -1752,8 +1765,29 @@ public class PipelinePhases {
             } else {
                 runId = runs.getFirst();
             }
-            awaitDeployment(ctx, name, application, version, runId, mainSha, baselineRowId);
+            boolean landed = awaitDeployment(ctx, name, application, version, runId, mainSha,
+                    baselineRowId, seeded);
+            if (landed && seedVersion.isPresent()) {
+                // The release run's image is what runs now — of this version, or of a newer one
+                // than the seed's — so there is nothing left for a rerun to hand over again.
+                recorded.putSeedDeployed(application, "");
+                recorded.write();
+            }
         });
+    }
+
+    /**
+     * <b>Does this deployment hand its version to the deployer AGAIN once the release run is
+     * green?</b> Only when that same version is running as a seed image — see {@link #seedDeploy}.
+     * The deployer then holds a request for it already, so the run's own SoftwareRelease is not
+     * newer and deploys nothing; the manual door is not collapsed that way, and two announcements
+     * of one version are two deployments.
+     * <p>
+     * A seed deployed at an OLDER version is not this case: the newer release is newer, and the
+     * bus deploys it like any other.
+     */
+    static boolean redeploysAfterGreen(Optional<String> seedVersion, String version) {
+        return seedVersion.map(version::equals).orElse(false);
     }
 
     /**
@@ -2162,9 +2196,15 @@ public class PipelinePhases {
      * <p>
      * {@code runSha} is main's head, and it is only for the operator's line: an event-triggered run
      * is cloned and recorded there while the release recipe checks the tag out itself.
+     * <p>
+     * {@code handOverAfterGreen} is the one case where this wait says something to the deployer:
+     * see {@link #redeploysAfterGreen}.
+     *
+     * @return whether the deployment landed ACTIVE; every other ending has been warned here
      */
-    private void awaitDeployment(PhaseContext ctx, String name, String application, String version,
-            String runId, String runSha, String baselineRowId) {
+    boolean awaitDeployment(PhaseContext ctx, String name, String application, String version,
+            String runId, String runSha, String baselineRowId, boolean handOverAfterGreen) {
+        boolean[] handedOver = {false};
         CiLogStream ciLog = new CiLogStream(boot.ci, ctx);
         DeployLogStream pdLog = new DeployLogStream(boot.docker, ctx, application,
                 PlatformModel.wireAlias("deployments", boot.config.envName()),
@@ -2226,6 +2266,26 @@ public class PipelinePhases {
                         // here after a minute was impatience, and it was the only caller of an
                         // intake that could file a deployment the bus had not announced. What
                         // catches up is the consumer's own sweep.
+                        //
+                        // <b>With ONE exception, and it is not impatience: a version that runs as
+                        // a seed image.</b> The deployer already holds a request for it — the seed
+                        // deploy's — so the run's SoftwareRelease is not newer and no sweep will
+                        // ever deploy it. The run has just published the real image under the same
+                        // tag, and the manual door is the only way to put it live: once, the moment
+                        // the run is green, and never before it.
+                        if (handOverAfterGreen && !handedOver[0] && "SUCCESS".equals(runStatus)) {
+                            handedOver[0] = true;
+                            Http.Response answer = boot.pd.softwareReleased(boot.storageId(name),
+                                    boot.state.projectId, PlatformModel.repo(name), application,
+                                    version, boot.bootstrapToken());
+                            if (!answer.ok()) {
+                                return Waiter.Poll.done("REDEPLOY REFUSED: the deployer's manual "
+                                        + "door answered " + answer.describe(), "refused");
+                            }
+                            ctx.log("  release run green — " + application + " " + version
+                                    + " handed to the deployer again, so its release image "
+                                    + "replaces the seed's");
+                        }
                         return Waiter.Poll.pending((runId == null ? ""
                                 : "release build " + (runStatus.isBlank() ? "starting" : runStatus)
                                         + (runSha.isBlank() ? ""
@@ -2235,15 +2295,17 @@ public class PipelinePhases {
             if (outcome.startsWith("ACTIVE")) {
                 ctx.log("  " + application + " " + outcome);
                 ctx.note(outcome);
-            } else {
-                ctx.warn(application + " " + outcome);
+                return true;
             }
+            ctx.warn(application + " " + outcome);
+            return false;
         } catch (TimeoutException e) {
             // The script's posture: a deployment that never lands is a warning on an otherwise
             // finished boot, not a reason to abandon the applications behind it.
             ctx.warn(application + ": no terminal deployment after "
                     + boot.config.deployTimeout().toSeconds() + "s (the release build may still be "
                     + "running — watch docker ps and docker logs qits-ci)");
+            return false;
         } catch (Exception e) {
             throw new IllegalStateException("waiting for " + application + " failed: " + e, e);
         }
