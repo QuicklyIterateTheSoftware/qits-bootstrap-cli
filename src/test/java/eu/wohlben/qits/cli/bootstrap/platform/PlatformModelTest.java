@@ -547,6 +547,20 @@ class PlatformModelTest {
         assertThat(PlatformModel.DEPLOYABLES).doesNotContain("oci-postgresql");
     }
 
+    /**
+     * <b>The seed images the deployer puts live before the first build</b>, in the train's order:
+     * every seed service it deploys at all, less the deployer itself, whose self-update stays last
+     * of the train and after the configuration flip. The edge is last, because its cutover takes
+     * the bootstrap ingress's door away.
+     */
+    @Test
+    void theSeedDeployedAreTheCoreLessTheDeployerInTrainOrder() {
+        assertThat(PlatformModel.SEED_DEPLOYED).containsExactly(
+                "idp", "projects", "events", "mirror", "artifacts", "githost", "containers", "ci",
+                "edge");
+        assertThat(PlatformModel.SEED_DEPLOYED).doesNotContain("deployments", "oci-postgresql");
+    }
+
     @Test
     void theRetiredDeployersAreGone() {
         assertThat(PlatformModel.platformRepos()).doesNotContain("cd", "serviceregistry");

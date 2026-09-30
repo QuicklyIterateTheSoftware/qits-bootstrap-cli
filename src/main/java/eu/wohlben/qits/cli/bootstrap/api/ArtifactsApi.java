@@ -100,8 +100,16 @@ public class ArtifactsApi {
      * are behind the machine gate too.
      */
     public boolean imagePublished(String repository, String tag) {
+        return image(repository, tag).ok();
+    }
+
+    /**
+     * The same question with the whole answer kept, for a caller to whom "not answering" and "not
+     * there" are different: a push decided on a 503 is a push over whatever the store does hold.
+     */
+    public Http.Response image(String repository, String tag) {
         return http.get(manifestUrl(registryBase(), repository, tag),
-                readHeaders("Accept", MANIFEST_TYPES)).ok();
+                readHeaders("Accept", MANIFEST_TYPES));
     }
 
     /**

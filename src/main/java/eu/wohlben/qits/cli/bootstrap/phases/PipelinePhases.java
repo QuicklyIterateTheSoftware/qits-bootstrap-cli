@@ -739,27 +739,136 @@ public class PipelinePhases {
                             + "in the registry nor on this host — rerun without QITS_SKIP_BUILD");
                 }
             }
-            BootstrapPublishCredential.Pair pair = boot.publishPair(ctx);
-            // createTempDirectory is 0700: the file it holds is a credential.
-            Path config = Files.createTempDirectory("qits-docker-push-");
-            try {
-                if (pair != null) {
-                    Files.writeString(config.resolve("config.json"), SeedPhases.dockerConfigJson(
-                                    List.of(registryHost), pair.clientId(), pair.secret()),
-                            StandardCharsets.UTF_8);
-                }
-                for (StoreImage image : missing) {
-                    ctx.status("pushing " + image.reference(registryHost));
-                    Boot.must(boot.docker.run(pushCommand(config, image.reference(registryHost),
-                                    pair), ctx::log),
-                            "the push of " + image.reference(registryHost) + " failed");
-                }
-            } finally {
-                Files.deleteIfExists(config.resolve("config.json"));
-                Files.deleteIfExists(config);
-            }
+            push(ctx, registryHost, missing.stream().map(image -> image.reference(registryHost))
+                    .toList());
             ctx.note(missing.size() + " pushed");
         });
+    }
+
+    /**
+     * Each reference pushed by the host's daemon with the publishing credential, in a
+     * {@code config.json} of a 0700 directory this call makes and removes — see
+     * {@link #imagesPublish}, whose rules both pushing phases keep.
+     */
+    private void push(PhaseContext ctx, String registryHost, List<String> references)
+            throws IOException {
+        BootstrapPublishCredential.Pair pair = boot.publishPair(ctx);
+        // createTempDirectory is 0700: the file it holds is a credential.
+        Path config = Files.createTempDirectory("qits-docker-push-");
+        try {
+            if (pair != null) {
+                Files.writeString(config.resolve("config.json"), SeedPhases.dockerConfigJson(
+                                List.of(registryHost), pair.clientId(), pair.secret()),
+                        StandardCharsets.UTF_8);
+            }
+            for (String reference : references) {
+                ctx.status("pushing " + reference);
+                Boot.must(boot.docker.run(pushCommand(config, reference, pair), ctx::log),
+                        "the push of " + reference + " failed");
+            }
+        } finally {
+            Files.deleteIfExists(config.resolve("config.json"));
+            Files.deleteIfExists(config);
+        }
+    }
+
+    /**
+     * The seed image of one application as the deployer pulls it: {@code qits/<application>} at
+     * the release tag — qits-deployments' {@code ImageRefs} convention, which a release run meets
+     * by publishing exactly that, and which this phase meets by tagging the seed build so.
+     */
+    static StoreImage seedStoreImage(String name, String version) {
+        return new StoreImage("qits/" + PlatformModel.application(name), version);
+    }
+
+    /**
+     * <b>THE SEED IMAGES, INTO THE STORE AT THEIR REAL RELEASE TAG — so the deployer can put them
+     * live before the first build.</b>
+     * <p>
+     * A deployment is {@code <registry>/qits/<application>:<version>} and nothing else: the
+     * deployer derives the reference from the version it is handed, reads the spec at that tag, and
+     * pulls. The {@code seed-deploy-*} phases hand it each {@link PlatformModel#SEED_DEPLOYED}
+     * application at its newest release, so that image has to be in the store under that tag —
+     * and on a cold platform the only build of it there is, is the seed's
+     * {@code qits/<name>:latest}, built from the tree the {@code sources} phase stood at that same
+     * tag.
+     * <p>
+     * <b>THE VERSION IS THE REAL ONE, never a stand-in.</b> The deployer reads
+     * {@code deployments.yml} and {@code configuration.yml} at {@code refs/tags/<version>}, and a
+     * tag that is not there deploys the defaults: no resources, no host labels.
+     * <p>
+     * <b>The seed content under a released tag is temporary, and the train is what replaces
+     * it.</b> The release run of each of these repositories publishes {@code qits/<app>:<version>}
+     * again from the same tag — OCI tags are mutable — and the deploy phase then puts that image
+     * live. See {@link #deploy}.
+     * <p>
+     * <b>What the store already holds is left alone</b>, as {@link #imagesPublish} leaves it: that
+     * is every rerun and every live platform, where the tag holds what a release run published,
+     * and writing a seed build over it would be writing a placeholder over a release.
+     * <p>
+     * Inside the publish half of the boot, BEFORE {@code daemon-publish}: it presents the
+     * publishing credential, which is handed back straight after the last publish.
+     */
+    public Phase seedImagesPublish() {
+        return new Phase("seed-images-publish",
+                "push the seed images into the registry at their release tag", ctx -> {
+            String registryHost = boot.config.registryVhost();
+            Map<String, StoreImage> missing = new LinkedHashMap<>();
+            int held = 0;
+            for (String name : PlatformModel.SEED_DEPLOYED) {
+                String version = PlatformModel.newestRelease(
+                        boot.git.tagsNewestFirst(boot.state.repoDir(name), "main"));
+                if (version.isBlank()) {
+                    // The seed deploy says so and passes it by: there is no version to deploy.
+                    ctx.log("  " + PlatformModel.repo(name) + " has no release tag reachable from "
+                            + "main — nothing to push");
+                    continue;
+                }
+                StoreImage image = seedStoreImage(name, version);
+                // 404 AND NOTHING ELSE is "not there". Every other answer is a store that did not
+                // say, and pushing on it would be pushing a seed build over whatever a release run
+                // put under that tag — a placeholder written over a live platform's release.
+                Http.Response answer = boot.artifacts.image(image.repository(), image.tag());
+                if (!answer.ok() && answer.status() != 404) {
+                    throw new IllegalStateException("the registry did not say whether it holds "
+                            + image.repository() + ":" + image.tag() + " — " + answer.describe()
+                            + ". Nothing is pushed over a tag the store may hold; rerun");
+                }
+                boolean inStore = answer.ok();
+                ctx.log("  " + image.repository() + ":" + image.tag() + " — "
+                        + (inStore ? "held" : "to push from qits/" + name + ":latest"));
+                if (inStore) {
+                    held++;
+                } else {
+                    missing.put(name, image);
+                }
+            }
+            if (missing.isEmpty()) {
+                ctx.skip("the registry holds all " + held + " seed-deployed images");
+            }
+            for (String name : missing.keySet()) {
+                if (!boot.docker.imageExists(seedImageTag(name))) {
+                    throw new IllegalStateException(missing.get(name).reference(registryHost)
+                            + " is not in the registry and " + seedImageTag(name) + " is not on "
+                            + "this host — rerun without QITS_SKIP_BUILD");
+                }
+            }
+            List<String> references = new ArrayList<>();
+            for (Map.Entry<String, StoreImage> entry : missing.entrySet()) {
+                String reference = entry.getValue().reference(registryHost);
+                Boot.must(boot.docker.exec(ctx::log, "tag", seedImageTag(entry.getKey()),
+                        reference), "tagging " + seedImageTag(entry.getKey()) + " as " + reference
+                        + " failed");
+                references.add(reference);
+            }
+            push(ctx, registryHost, references);
+            ctx.note(references.size() + " pushed, " + held + " held");
+        });
+    }
+
+    /** The seed build of one application, as {@code SeedPhases.seedImage} tags it. */
+    static String seedImageTag(String name) {
+        return "qits/" + name + ":latest";
     }
 
     /**

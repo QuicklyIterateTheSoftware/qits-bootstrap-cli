@@ -209,6 +209,10 @@ public final class BootstrapPlan {
         // inside the publish half of the boot: it presents the publishing credential, which
         // publish-credential-release hands back two phases down.
         phases.add(pipeline.imagesPublish());
+        // THE SEED IMAGES, AT THEIR REAL RELEASE TAG, and for the same reason the two images above
+        // go into the store: the deployer pulls what the store answers for and nothing the host
+        // merely holds. These are what the seed deploys below put live.
+        phases.add(pipeline.seedImagesPublish());
         phases.add(pipeline.daemonPublish());
         // IMMEDIATELY AFTER THE LAST PUBLISH. The bootstrap is the one exception to "only CI may
         // publish", and the exception is bounded by handing the credential back here rather than

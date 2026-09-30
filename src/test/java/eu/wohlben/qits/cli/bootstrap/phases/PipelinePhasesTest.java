@@ -1708,6 +1708,132 @@ class PipelinePhasesTest {
         assertThat(runner.argv).noneMatch(command -> command.contains("push"));
     }
 
+    // --- the seed images, at their release tag ---------------------------------------------------
+
+    private static final String RELEASE = "2026.930.120000";
+
+    /** git answers every seed-deployed checkout with one release tag, docker answers everything. */
+    private static ScriptedRunner seedImagesDocker(boolean localImages) {
+        return new ScriptedRunner(command -> {
+            String line = String.join(" ", command);
+            if (line.startsWith("git -C") && line.contains(" tag --list")) {
+                return ScriptedRunner.ok(RELEASE, "not-a-release");
+            }
+            if (line.startsWith("docker image inspect")) {
+                return localImages ? ScriptedRunner.ok("sha256:abc")
+                        : ScriptedRunner.failed("No such image");
+            }
+            return ScriptedRunner.ok();
+        });
+    }
+
+    /** A store that answers 404 for every seed-deployed image except the listed applications. */
+    private static CannedHttp seedStore(Map<String, Integer> answers) {
+        CannedHttp http = new CannedHttp();
+        for (String name : eu.wohlben.qits.cli.bootstrap.platform.PlatformModel.SEED_DEPLOYED) {
+            String application = eu.wohlben.qits.cli.bootstrap.platform.PlatformModel
+                    .application(name);
+            http.answer(MANIFESTS + "qits/" + application + "/manifests/" + RELEASE,
+                    answers.getOrDefault(name, 404), "");
+        }
+        return http;
+    }
+
+    /**
+     * <b>A cold store: every seed-deployed application's seed build goes in under the name the
+     * deployer pulls</b> — {@code qits/<application>:<release>}, tagged from
+     * {@code qits/<name>:latest} and pushed with the publishing credential. The version is the
+     * checkout's newest RELEASE tag, never a stand-in: the deployer reads the spec at that tag.
+     */
+    @Test
+    void aColdStoreIsPushedEverySeedDeployedImageAtItsReleaseTag() throws Exception {
+        ScriptedRunner runner = seedImagesDocker(true);
+        Boot boot = runnerBoot(runner, seedStore(Map.of()), Map.of("QITS_MACHINE_AUTH", "0"));
+
+        new PipelinePhases(boot).seedImagesPublish().action().run(new CiLogStreamTest.Recorder());
+
+        assertThat(runner.lines()).contains(
+                "docker tag qits/idp:latest registry.prod.localhost:8080/qits/qits-idp:" + RELEASE,
+                "docker tag qits/edge:latest registry.prod.localhost:8080/qits/qits-edge:"
+                        + RELEASE);
+        assertThat(runner.argv.stream().filter(command -> command.contains("push"))
+                .map(List::getLast)).containsExactly(
+                "registry.prod.localhost:8080/qits/qits-idp:" + RELEASE,
+                "registry.prod.localhost:8080/qits/qits-projects:" + RELEASE,
+                "registry.prod.localhost:8080/qits/qits-events:" + RELEASE,
+                "registry.prod.localhost:8080/qits/qits-mirror:" + RELEASE,
+                "registry.prod.localhost:8080/qits/qits-artifacts:" + RELEASE,
+                "registry.prod.localhost:8080/qits/qits-githost:" + RELEASE,
+                "registry.prod.localhost:8080/qits/qits-containers:" + RELEASE,
+                "registry.prod.localhost:8080/qits/qits-ci:" + RELEASE,
+                "registry.prod.localhost:8080/qits/qits-edge:" + RELEASE);
+        // The deployer's own image is not among them: its deployment stays last of the train.
+        assertThat(runner.lines()).noneMatch(line -> line.contains("qits-deployments:"));
+    }
+
+    /**
+     * <b>What the store holds is never written over</b> — on a live platform that tag holds what
+     * a release run published, and a seed build over it would be a placeholder over a release.
+     */
+    @Test
+    void aSeedImageTheStoreHoldsIsLeftAlone() throws Exception {
+        ScriptedRunner runner = seedImagesDocker(true);
+        Map<String, Integer> held = new java.util.HashMap<>();
+        eu.wohlben.qits.cli.bootstrap.platform.PlatformModel.SEED_DEPLOYED.stream()
+                .filter(name -> !name.equals("ci")).forEach(name -> held.put(name, 200));
+        Boot boot = runnerBoot(runner, seedStore(held), Map.of("QITS_MACHINE_AUTH", "0"));
+
+        new PipelinePhases(boot).seedImagesPublish().action().run(new CiLogStreamTest.Recorder());
+
+        assertThat(runner.argv.stream().filter(command -> command.contains("push"))
+                .map(List::getLast))
+                .containsExactly("registry.prod.localhost:8080/qits/qits-ci:" + RELEASE);
+
+        ScriptedRunner again = seedImagesDocker(true);
+        eu.wohlben.qits.cli.bootstrap.platform.PlatformModel.SEED_DEPLOYED
+                .forEach(name -> held.put(name, 200));
+        Boot rerun = runnerBoot(again, seedStore(held), Map.of("QITS_MACHINE_AUTH", "0"));
+        assertThatThrownBy(() -> new PipelinePhases(rerun).seedImagesPublish().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(PhaseSkipped.class)
+                .hasMessageContaining("the registry holds all 9 seed-deployed images");
+        assertThat(again.lines()).noneMatch(line -> line.startsWith("docker tag")
+                || line.contains(" push "));
+    }
+
+    /**
+     * <b>A store that does not SAY is not a store that lacks the image.</b> Only a 404 is "not
+     * there"; anything else stops the phase before one push, because the tag may hold a release.
+     */
+    @Test
+    void aStoreThatDoesNotAnswerIsPushedNothing() throws Exception {
+        ScriptedRunner runner = seedImagesDocker(true);
+        Boot boot = runnerBoot(runner, seedStore(Map.of("projects", 503)),
+                Map.of("QITS_MACHINE_AUTH", "0"));
+
+        assertThatThrownBy(() -> new PipelinePhases(boot).seedImagesPublish().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("qits/qits-projects:" + RELEASE)
+                .hasMessageContaining("503");
+        assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker tag")
+                || line.contains(" push "));
+    }
+
+    /** A seed build that is on neither side stops the boot and names the flag that hid it. */
+    @Test
+    void aSeedImageThatIsNeitherStoredNorBuiltStopsTheBoot() throws Exception {
+        ScriptedRunner runner = seedImagesDocker(false);
+        Boot boot = runnerBoot(runner, seedStore(Map.of()), Map.of("QITS_MACHINE_AUTH", "0"));
+
+        assertThatThrownBy(() -> new PipelinePhases(boot).seedImagesPublish().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("qits/idp:latest")
+                .hasMessageContaining("rerun without QITS_SKIP_BUILD");
+        assertThat(runner.lines()).noneMatch(line -> line.contains(" push "));
+    }
+
     // --- this host's runner -----------------------------------------------------------------------
     //
     // The two phases, driven through the two things they talk to: qits-ci over a canned http and

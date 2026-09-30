@@ -95,9 +95,11 @@ class BootstrapPlanTest {
             List<String> ids = ids(plan(env));
 
             assertThat(ids).containsSubsequence("seed-stack", "seed-health", "register-token",
-                    "images-publish", "daemon-publish", "publish-credential-release",
-                    "qits-project");
-            assertThat(ids.get(ids.indexOf("images-publish") + 1)).isEqualTo("daemon-publish");
+                    "images-publish", "seed-images-publish", "daemon-publish",
+                    "publish-credential-release", "qits-project");
+            assertThat(ids.subList(ids.indexOf("images-publish"),
+                    ids.indexOf("images-publish") + 3)).containsExactly(
+                    "images-publish", "seed-images-publish", "daemon-publish");
         }
     }
 
