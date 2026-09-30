@@ -94,6 +94,19 @@ public class BootstrapState {
     public static final String REGISTER_TOKEN_KEY = "IDP_REGISTER_TOKEN";
 
     /**
+     * <b>The id of the CI runner THIS installation declared for its own host.</b> It is what makes
+     * a {@code localhost} row in qits-ci ours: the bootstrap starts, restarts or re-registers only
+     * the runner whose id it wrote here, so a platform whose runner somebody else declared — an
+     * operator's, another host's — is never given a second one by a rerun. Written the moment
+     * qits-ci answers the create, before the container exists.
+     */
+    public static final String CI_RUNNER_ID_KEY = "CI_RUNNER_ID";
+
+    public Optional<String> ciRunnerId() {
+        return value(CI_RUNNER_ID_KEY);
+    }
+
+    /**
      * <b>Which storage id the git host keys each platform repository by</b>, one line per
      * repository: {@code REPO_ID_QITS_CI=8b1f0f0e-9a0c-4c3a-9a5b-000000000001}.
      * <p>

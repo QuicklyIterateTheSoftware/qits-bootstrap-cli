@@ -92,6 +92,95 @@ class CiApiTest {
         assertThat(ci.greenReleaseRunAt("repo-1", "abc123")).isFalse();
     }
 
+    // --- the runners ------------------------------------------------------------------------------
+
+    /** Records one write and answers it, so what a runner call puts on the wire is provable. */
+    static class RecordingHttp extends Http {
+        String url;
+        String body;
+        Map<String, String> headers;
+
+        @Override
+        public Response postJson(String url, String json, Map<String, String> headers) {
+            this.url = url;
+            this.body = json;
+            this.headers = headers;
+            return new Response(200, "{}");
+        }
+    }
+
+    /**
+     * The create names the runner, its plane and its slots — a number, not a string — and is a
+     * machine write: this run's bearer when there is one, the forwarded identity when the gate is
+     * off and there is none.
+     */
+    @Test
+    void aRunnerIsDeclaredWithItsPlaneAndSlotsAsAMachineWrite() {
+        RecordingHttp http = new RecordingHttp();
+        CiApi ci = new CiApi(http, "http://ci/ci");
+
+        ci.createRunner("localhost", "INTERNAL", 2, "bootstrap-bearer");
+
+        assertThat(http.url).isEqualTo("http://ci/ci/api/runners");
+        assertThat(http.body).isEqualTo("{\"name\":\"localhost\",\"plane\":\"INTERNAL\",\"slots\":2}");
+        assertThat(http.headers).containsExactly(Map.entry("Authorization", "Bearer bootstrap-bearer"));
+
+        ci.createRunner("localhost", "INTERNAL", 2, null);
+        assertThat(http.headers).containsEntry("X-Qits-Roles", "qits:admin")
+                .doesNotContainKey("Authorization");
+    }
+
+    /** A rotation is the same machine write, at the runner's own door. */
+    @Test
+    void aRegistrationTokenIsRotatedAtTheRunnersOwnDoor() {
+        RecordingHttp http = new RecordingHttp();
+
+        new CiApi(http, "http://ci/ci").rotateRegistrationToken("r-1", "bootstrap-bearer");
+
+        assertThat(http.url).isEqualTo("http://ci/ci/api/runners/r-1/registration-token");
+        assertThat(http.headers).containsEntry("Authorization", "Bearer bootstrap-bearer");
+    }
+
+    /**
+     * <b>The greenlight is {@code qits:admin} alone, so it never carries a bearer.</b> The
+     * bootstrap's machine token holds {@code qits:system}, which that door refuses; the forwarded
+     * identity on the qits-net hop is what opens it.
+     */
+    @Test
+    void theGreenlightGoesAsTheForwardedAdminIdentity() {
+        RecordingHttp http = new RecordingHttp();
+
+        new CiApi(http, "http://ci/ci").greenlight("r-1");
+
+        assertThat(http.url).isEqualTo("http://ci/ci/api/runners/r-1/greenlight");
+        assertThat(http.headers).containsEntry("X-Qits-User", "qits-bootstrap")
+                .containsEntry("X-Qits-Roles", "qits:admin")
+                .doesNotContainKey("Authorization");
+    }
+
+    /** The install line carries the token in single quotes, and that is the whole parse. */
+    @Test
+    void theRegistrationTokenIsReadOutOfTheInstallLine() {
+        assertThat(CiApi.registrationToken("curl -fsSL … | sudo env QITS_CI_RUNNER_ID='r-1' "
+                + "QITS_CI_RUNNER_REGISTRATION_TOKEN='qits_tok_abc-123_DEF' "
+                + "QITS_CI_RUNNER_SLOTS='2' sh")).contains("qits_tok_abc-123_DEF");
+        assertThat(CiApi.registrationToken("curl … | sh")).isEmpty();
+        assertThat(CiApi.registrationToken(null)).isEmpty();
+    }
+
+    /** A listing that did not answer names no runner — which a caller must not read as "none". */
+    @Test
+    void theRunnersOfAListingAreItsRowsAndARefusalHasNone() {
+        Http.Response listing = new Http.Response(200, "{\"runners\":["
+                + "{\"id\":\"a\",\"name\":\"qits-ci\"},{\"id\":\"b\",\"name\":\"localhost\"}]}");
+
+        assertThat(CiApi.runnersIn(listing)).hasSize(2);
+        assertThat(CiApi.runnerNamed(listing, "localhost").orElseThrow().path("id").asText())
+                .isEqualTo("b");
+        assertThat(CiApi.runnerNamed(listing, "laptop")).isEmpty();
+        assertThat(CiApi.runnersIn(new Http.Response(503, "down"))).isEmpty();
+    }
+
     /** Answers the run listing with a canned body and remembers what was asked for. */
     static class CannedRuns extends Http {
         private final Response answer;

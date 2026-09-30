@@ -159,6 +159,14 @@ public class RunState {
     public String bootstrapIngressRefPattern;
     public long bootstrapIngressExpiresAt;
     /** The closing report, printed after the display is handed back. */
+    /**
+     * The platform host's own CI runner, when the {@code runner-localhost} phase started or found
+     * one that is this installation's — and null when it stood aside, which is what tells
+     * {@code runner-connected} there is nothing of ours to wait for.
+     */
+    public String ciRunnerId;
+    /** That runner's container, for the log a failed wait quotes. */
+    public String ciRunnerContainer;
     public final List<String> summary = new ArrayList<>();
 
     public Path repoDir(String name) {

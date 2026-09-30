@@ -214,6 +214,18 @@ public final class BootstrapPlan {
         // publish", and the exception is bounded by handing the credential back here rather than
         // by anything the idp enforces. Everything below is a push, a deployment or a read.
         phases.add(pipeline.publishCredentialRelease());
+        // THE RUNNER, AND IT HAS TO BE CONNECTED BEFORE THE FIRST RUN IS ASKED FOR. qits-ci executes
+        // nothing itself (qits-506), so every release replay below is this runner's or nobody's —
+        // a replay with no runner is a run that queues until its wait gives up, an hour later and
+        // once per publisher. Two phases because they fail differently: the first starts a
+        // container, the second waits for qits-ci to say it is connected and lifts the quarantine
+        // a freshly registered runner starts in. After the image push, because the runner is
+        // started from one of those images and its steps are pinned against the rest; and in both
+        // arms, because a warm rerun finds the container stopped as often as it finds it running.
+        // A platform whose runners are somebody else's is passed by — see
+        // PipelinePhases.runnerDecision.
+        phases.add(pipeline.localhostRunner());
+        phases.add(pipeline.localhostRunnerConnected());
         // THE PROJECT EVERY REPOSITORY BELONGS TO, and it comes before the first bare rather than
         // after the sixth deployment. qits-projects is a seed service now, so the one thing that
         // has to happen before this run creates anything is that the `qits` project exists to

@@ -101,6 +101,30 @@ class BootstrapPlanTest {
         }
     }
 
+    /**
+     * <b>THE RUNNER IS STARTED AND CONNECTED BEFORE THE FIRST RUN IS ASKED FOR — in both arms.</b>
+     * qits-ci executes nothing itself, so a release replay with no runner queues until its wait
+     * gives up. After the image push, because the runner is started from one of those images; and
+     * it is a container, never a deployment, so nothing in the plan deploys one.
+     */
+    @Test
+    void theRunnerIsStartedAndConnectedBeforeTheFirstRun() {
+        for (Map<String, String> env : List.of(Map.<String, String>of(),
+                Map.of("QITS_SKIP_BUILD", "1"),
+                Map.of("QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7"))) {
+            List<String> ids = ids(plan(env));
+
+            assertThat(ids).containsSubsequence("seed-health", "images-publish",
+                    "publish-credential-release", "runner-localhost", "runner-connected",
+                    "qits-project", "git-repos", "release-train-push");
+            int runner = ids.indexOf("runner-localhost");
+            assertThat(ids.subList(runner - 1, runner + 3)).containsExactly(
+                    "publish-credential-release", "runner-localhost", "runner-connected",
+                    "qits-project");
+            assertThat(ids).doesNotContain("deploy-ci-runner");
+        }
+    }
+
     @Test
     void theSeedOrderIsTheOneTheDependenciesForce() {
         List<String> ids = ids(plan(Map.of()));

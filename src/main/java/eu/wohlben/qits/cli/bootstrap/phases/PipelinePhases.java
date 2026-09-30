@@ -6,6 +6,7 @@ import eu.wohlben.qits.cli.bootstrap.api.CiApi;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.Json;
 import eu.wohlben.qits.cli.bootstrap.config.Acme;
+import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
 import eu.wohlben.qits.cli.bootstrap.config.DomainName;
 import eu.wohlben.qits.cli.bootstrap.config.ExtraSans;
 import eu.wohlben.qits.cli.bootstrap.config.PublicIp;
@@ -16,6 +17,7 @@ import eu.wohlben.qits.cli.bootstrap.platform.BootstrapState;
 import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
+import eu.wohlben.qits.cli.bootstrap.platform.SeedDockerfile;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 
@@ -2403,6 +2405,533 @@ public class PipelinePhases {
                         service))
                 .mask(secret), null).captured();
         return Set.copyOf(current.stream().map(String::trim).toList()).containsAll(env);
+    }
+
+    // --- the platform host's runner ---------------------------------------------------------------
+
+    /**
+     * The runner row's name in qits-ci. qits-ci's own {@code CiRunners.LOCALHOST}: listed first,
+     * and refused a delete while it is the only runner there is.
+     */
+    static final String LOCALHOST_RUNNER = "localhost";
+
+    /**
+     * Where the runner and its steps reach the platform. INTERNAL, on qits-net: it is a container
+     * on the very host the platform's aliases resolve on, so the public names would be a detour
+     * through the edge for every clone and every publish — and on a cold boot the public door is
+     * still the bootstrap ingress, which routes no API at all.
+     */
+    static final String LOCALHOST_PLANE = "INTERNAL";
+
+    /** The runner's own label. Never {@code qits.ci.runner}, which its boot sweep removes. */
+    static final String RUNNER_PROCESS_LABEL = "qits.ci.runner.process";
+
+    static final String RUNNER_VERSION_LABEL = "qits.ci.runner.version";
+
+    /** Where the runner keeps its client, and where the install line mounts its state volume. */
+    static final String RUNNER_STATE_DIR = "/var/lib/qits-ci-runner";
+
+    /** The one value of the container that is a secret, handed over by NAME. */
+    static final String RUNNER_TOKEN_ENV = "QITS_CI_RUNNER_REGISTRATION_TOKEN";
+
+    /**
+     * <b>The runner's builder keeps its content store in a volume of its own.</b> The runner's
+     * buildkitd defaults to {@code qits-buildkitd-state}, which is the volume the platform's
+     * {@code qits-buildkitd} — this boot's builder, then qits-containers' — already holds.
+     * buildkitd locks its root, so two daemons on one volume is one daemon that never starts.
+     */
+    static final String RUNNER_BUILDKIT_STATE_VOLUME = "qits-ci-runner-buildkitd-state";
+
+    /** What the guard decided about the runners qits-ci lists. */
+    enum RunnerClaim {
+        /** qits-ci lists no runner at all: this installation declares its own. */
+        DECLARE,
+        /** The {@code localhost} row is this installation's. */
+        OURS,
+        /** Anything else. Nothing is started. */
+        NOT_OURS
+    }
+
+    /**
+     * The decision, the row it is about, and the sentence a skip is made of.
+     *
+     * @param row    the {@code localhost} row when it is ours, null otherwise
+     * @param reason why nothing is started, when nothing is
+     */
+    record RunnerDecision(RunnerClaim claim, JsonNode row, String reason) {
+    }
+
+    /**
+     * <b>WHOSE RUNNERS ARE THESE? — the one question that decides whether this program starts a
+     * container that holds the host's docker socket.</b>
+     * <p>
+     * A bootstrap is rerun over live platforms, and a live platform's runners are somebody's: an
+     * operator declared them, they sit on other machines, and a second {@code localhost} started
+     * beside them would take work nobody sized this host for. So this acts in two cases and no
+     * others:
+     * <ul>
+     *   <li><b>qits-ci lists no runner.</b> That is a cold platform, and a platform with no runner
+     *       executes nothing — so the boot declares its own.
+     *   <li><b>The {@code localhost} row carries the id THIS installation recorded</b>
+     *       ({@code CI_RUNNER_ID} in {@code .qits-bootstrap.env}). It is the runner an earlier run
+     *       of this program declared here, and a rerun keeps it running.
+     * </ul>
+     * <b>One more row is read as ours: a {@code localhost} that is the ONLY runner, has never
+     * registered and has never been seen.</b> That is the crash window — a boot that died between
+     * qits-ci answering the create and the id reaching the state file. Nothing runs as that row and
+     * nothing ever has, so adopting it takes nobody's runner; refusing it would leave a cold
+     * platform with a name it can neither use nor re-declare.
+     * <p>
+     * Everything else stands aside: another runner beside an unrecorded {@code localhost}, a
+     * {@code localhost} with a different id, a listing with runners and no {@code localhost} at
+     * all. The live estate is the last one — an external runner and no recorded id.
+     */
+    static RunnerDecision runnerDecision(List<JsonNode> runners, Optional<String> recordedId) {
+        if (runners.isEmpty()) {
+            return new RunnerDecision(RunnerClaim.DECLARE, null, null);
+        }
+        JsonNode localhost = null;
+        for (JsonNode runner : runners) {
+            if (LOCALHOST_RUNNER.equals(Json.text(runner, "name"))) {
+                localhost = runner;
+            }
+        }
+        String recorded = recordedId.map(id -> "recorded " + id)
+                .orElse("recorded no runner of its own");
+        if (localhost == null) {
+            return new RunnerDecision(RunnerClaim.NOT_OURS, null, "qits-ci lists "
+                    + runners.size() + (runners.size() == 1 ? " runner" : " runners")
+                    + " and no " + LOCALHOST_RUNNER + ", and this installation " + recorded
+                    + " — they are somebody's, so no runner is started beside them");
+        }
+        String id = Json.text(localhost, "id");
+        if (recordedId.isPresent() && recordedId.get().equals(id)) {
+            return new RunnerDecision(RunnerClaim.OURS, localhost, null);
+        }
+        if (runners.size() == 1 && neverUsed(localhost)) {
+            return new RunnerDecision(RunnerClaim.OURS, localhost, null);
+        }
+        return new RunnerDecision(RunnerClaim.NOT_OURS, null, "qits-ci's runner "
+                + LOCALHOST_RUNNER + " is " + id + " and this installation " + recorded
+                + " — it is somebody else's, so it is neither started nor re-registered here");
+    }
+
+    /** A row nothing has ever run as: not registered, not connected, never seen. */
+    private static boolean neverUsed(JsonNode runner) {
+        JsonNode lastSeen = runner.get("lastSeenAt");
+        return !runner.path("registered").asBoolean(false)
+                && !runner.path("connected").asBoolean(false)
+                && (lastSeen == null || lastSeen.isNull());
+    }
+
+    /** The first eight characters of a runner id, as the install line cuts them. */
+    static String id8(String runnerId) {
+        return runnerId.substring(0, Math.min(8, runnerId.length()));
+    }
+
+    /** The container's name: the install line's, so a rollover's successor is named alike. */
+    static String runnerContainerName(String runnerId, String version) {
+        return "qits-ci-runner-" + id8(runnerId) + "-" + version;
+    }
+
+    /** The volume the runner's client lives on. It outlives every container of the runner. */
+    static String runnerStateVolume(String runnerId) {
+        return "qits-ci-runner-state-" + id8(runnerId);
+    }
+
+    /** Where the runner dials qits-ci: the service's own alias, never the edge. */
+    static String runnerUrl(String envName) {
+        return "http://" + PlatformModel.wireAlias("ci", envName) + ":8080";
+    }
+
+    /**
+     * The registries the runner's builder speaks plain HTTP to — qits-containers'
+     * {@code qits.containers.buildkit.http-registries}, entry for entry, with this platform's
+     * aliases.
+     */
+    static String runnerHttpRegistries(String envName) {
+        return PlatformModel.wireAlias("artifacts", envName) + ":8080,"
+                + PlatformModel.wireAlias("mirror", envName) + ":8080";
+    }
+
+    /**
+     * <b>What the runner's builder rewrites a registry name to</b> — qits-containers'
+     * {@code qits.containers.buildkit.registry-mirrors}, entry for entry, with this platform's
+     * aliases. A committed {@code FROM} names the machine spelling of the mirror, a publish step
+     * pushes to the registry vhost, and the upstreams are read through the mirror's caches; a
+     * builder on qits-net resolves none of the first two and must not dial the third direct.
+     * <p>
+     * The two vhosts are spelled twice where they differ: as this environment names them, which is
+     * what qits-ci hands a step as its registry, and as {@code dev} names them, which is what
+     * every committed Dockerfile on the estate says whatever the environment is called.
+     */
+    static String runnerRegistryMirrors(BootstrapConfig config) {
+        String artifacts = PlatformModel.wireAlias("artifacts", config.envName()) + ":8080";
+        String mirror = PlatformModel.wireAlias("mirror", config.envName()) + ":8080";
+        Map<String, String> mirrors = new LinkedHashMap<>();
+        mirrors.put(config.registryVhost(), artifacts);
+        mirrors.put(config.mirrorVhost(), mirror);
+        mirrors.put("registry.dev.localhost:8080", artifacts);
+        mirrors.put(SeedDockerfile.MIRROR_HOST, mirror);
+        mirrors.put("localhost:" + config.registryPort(), artifacts);
+        mirrors.put("localhost:" + config.mirrorPort(), mirror);
+        mirrors.put("quay.io", mirror + "/quay");
+        mirrors.put("registry.access.redhat.com", mirror + "/redhat");
+        mirrors.put("docker.io", mirror + "/hub");
+        return mirrors.entrySet().stream().map(entry -> entry.getKey() + "=" + entry.getValue())
+                .collect(Collectors.joining(","));
+    }
+
+    /**
+     * <b>THE CONTAINER CONTRACT — the install line's, plus the network.</b> docker's restart policy
+     * is the supervisor; the socket is how the runner starts its steps and, when told to update,
+     * its own successor; the volume holds its client; the two labels are what a rollover finds its
+     * predecessor by. {@code --network qits-net} is the one thing the install line does not say,
+     * and it survives a self-update: the successor is started on the network its predecessor is on.
+     * <p>
+     * <b>The registration token is an environment NAME on this line and a value only in the
+     * process's own environment</b> — {@code -e NAME} hands docker the value from there, so it is
+     * in no argv, no log and no {@code docker inspect} of a command line. It is masked as well.
+     * A runner that has already registered is started without the name at all: it lives on the
+     * {@code client.json} of its state volume.
+     *
+     * @param token the registration token, or null for a runner that needs none
+     */
+    Cmd runnerRunCommand(String runnerId, String version, String image, int slots, String token) {
+        String env = boot.config.envName();
+        List<String> command = new ArrayList<>(List.of(
+                "docker", "run", "-d",
+                "--name", runnerContainerName(runnerId, version),
+                "--restart", "unless-stopped",
+                "--network", Boot.NETWORK,
+                "--label", RUNNER_PROCESS_LABEL + "=" + runnerId,
+                "--label", RUNNER_VERSION_LABEL + "=" + version,
+                "-v", "/var/run/docker.sock:/var/run/docker.sock",
+                "-v", runnerStateVolume(runnerId) + ":" + RUNNER_STATE_DIR,
+                "-e", "QITS_CI_RUNNER_URL=" + runnerUrl(env),
+                "-e", "QITS_CI_RUNNER_ID=" + runnerId,
+                "-e", "QITS_CI_RUNNER_SLOTS=" + slots));
+        if (token != null) {
+            command.add("-e");
+            command.add(RUNNER_TOKEN_ENV);
+        }
+        command.addAll(List.of(
+                "-e", "QITS_CI_RUNNER_BUILDKIT_HTTP_REGISTRIES=" + runnerHttpRegistries(env),
+                "-e", "QITS_CI_RUNNER_BUILDKIT_REGISTRY_MIRRORS="
+                        + runnerRegistryMirrors(boot.config),
+                "-e", "QITS_CI_RUNNER_BUILDKIT_STATE_VOLUME=" + RUNNER_BUILDKIT_STATE_VOLUME,
+                image));
+        Cmd run = Cmd.of(command);
+        if (token != null) {
+            run.env(RUNNER_TOKEN_ENV, token).mask(token);
+        }
+        return run;
+    }
+
+    /**
+     * <b>THIS HOST'S CI RUNNER, started as a plain container on qits-net — before the first run
+     * this boot asks for.</b>
+     * <p>
+     * <b>Why a cold start does this at all.</b> qits-ci has no executor of its own (qits-506): a
+     * run is a connected runner's or nobody's. Every runner elsewhere is a container a person
+     * starts with the install line; a platform that is being made has no person and no public
+     * door yet, so this program is the one that starts the first — the normal runner image, with
+     * the install line's own container contract, registering itself at qits-ci's own alias with a
+     * registration token like any other.
+     * <p>
+     * <b>Not a deployment, and never one.</b> The runner rolls ITSELF over when qits-ci tells it a
+     * newer version, by starting a successor container and leaving; a deployer replacing the same
+     * container would be two actors racing to remove it. So it is in no stack file, no extras
+     * block and no {@code DEPLOYABLES} entry, and the seed's cutovers pass it by: the row and its
+     * client are rows of qits-ci's database, which the deployed successor reads at the same alias,
+     * and the runner simply redials.
+     * <p>
+     * <b>{@link #runnerDecision} is asked first, and a listing that is not ours ends the phase
+     * there.</b> Everything below runs only for a runner this installation declared.
+     * <p>
+     * <b>Rerun-safe, and each arm is a state a real boot can be resumed in:</b>
+     * <ul>
+     *   <li>A container labelled with the runner's id exists — this run's, or a successor the
+     *       runner started itself: it is started if it is stopped and otherwise left alone.
+     *   <li>No container, and the row never registered: a fresh token (the first one's value was
+     *       answered once, to whichever run asked), the volume's stale client removed, and the
+     *       container started with it.
+     *   <li>No container, and the row registered: started WITHOUT a token, on the client its state
+     *       volume still holds. A registered row with no volume is a runner whose credential is
+     *       gone for good, which no rerun can mend; it stops the boot and names the row.
+     * </ul>
+     * <b>The machine gate has to be on.</b> The runner's socket reads its subject off a validated
+     * bearer and nothing else, so with {@code QITS_MACHINE_AUTH=0} a runner registers and can
+     * never connect — better said here than found in a wait that times out.
+     */
+    public Phase localhostRunner() {
+        return new Phase("runner-localhost",
+                "start this host's CI runner as a container on " + Boot.NETWORK, ctx -> {
+            boot.state.ciRunnerId = null;
+            boot.state.ciRunnerContainer = null;
+            BootstrapState recorded = new BootstrapState(
+                    boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME));
+            recorded.read();
+            Http.Response listing = boot.ci.runners();
+            if (!listing.ok()) {
+                // Not knowing whose runners there are is not a reason to start one.
+                throw new IllegalStateException("qits-ci did not list its runners: "
+                        + listing.describe() + " — no runner is started without knowing whose "
+                        + "are already there");
+            }
+            RunnerDecision decision = runnerDecision(CiApi.runnersIn(listing),
+                    recorded.ciRunnerId());
+            if (decision.claim() == RunnerClaim.NOT_OURS) {
+                ctx.skip(decision.reason());
+            }
+            if (!boot.config.machineAuth()) {
+                throw new IllegalStateException("QITS_MACHINE_AUTH=0: a runner connects with a "
+                        + "bearer qits-ci validates, and with the machine gate off it validates "
+                        + "none — the runner would register and never connect. Rerun with the "
+                        + "gate on");
+            }
+            String version = SeedPhases.runnerVersion(boot);
+            String image = SeedPhases.runnerRegistryImage(boot, version);
+            if (!boot.docker.imageExists(image)) {
+                if (!boot.docker.imageExists(SeedPhases.runnerImage(version))) {
+                    throw new IllegalStateException(SeedPhases.runnerImage(version) + " is not "
+                            + "on this host, and only a build makes it — rerun without "
+                            + "QITS_SKIP_BUILD");
+                }
+                Boot.must(boot.docker.exec(ctx::log, "tag", SeedPhases.runnerImage(version),
+                        image), "tagging the runner image under the registry host failed");
+            }
+            int slots = boot.config.ciConcurrentBuildsEffective();
+
+            String id;
+            String token = null;
+            boolean registered = false;
+            if (decision.claim() == RunnerClaim.DECLARE) {
+                Http.Response created = boot.ci.createRunner(LOCALHOST_RUNNER, LOCALHOST_PLANE,
+                        slots, boot.bootstrapToken());
+                if (created.status() != 201) {
+                    // Only a refusal is described: a 2xx body carries the token.
+                    throw new IllegalStateException("declaring runner " + LOCALHOST_RUNNER
+                            + " answered " + (created.ok() ? String.valueOf(created.status())
+                            : created.describe()));
+                }
+                JsonNode runner = Json.parse(created.body());
+                id = requireId(Json.text(runner, "id"));
+                // RECORDED BEFORE ANYTHING ELSE IS DONE WITH IT: from here on a rerun has to know
+                // this row is ours, whatever happens to this process.
+                record(recorded, id);
+                token = installToken(runner, "the create");
+                ctx.log("  declared runner " + LOCALHOST_RUNNER + " (" + id + "): " + slots
+                        + " slots, " + LOCALHOST_PLANE + " plane — recorded in "
+                        + recorded.file());
+            } else {
+                id = requireId(Json.text(decision.row(), "id"));
+                registered = decision.row().path("registered").asBoolean(false);
+                if (!recorded.ciRunnerId().map(id::equals).orElse(false)) {
+                    record(recorded, id);
+                    ctx.log("  runner " + LOCALHOST_RUNNER + " (" + id + ") is the only runner, "
+                            + "never registered and never seen — an earlier run declared it and "
+                            + "did not get to record it. Recorded now in " + recorded.file());
+                } else {
+                    ctx.log("  runner " + LOCALHOST_RUNNER + " (" + id + ") is this "
+                            + "installation's" + (registered ? ", and registered" : ""));
+                }
+            }
+
+            ProcessResult found = boot.docker.run(Cmd.of(List.of("docker", "ps", "-a",
+                    "--filter", "label=" + RUNNER_PROCESS_LABEL + "=" + id,
+                    "--format", "{{.Names}} {{.State}}")), null);
+            Boot.must(found, "listing the runner's containers failed");
+            List<String> containers = found.captured().stream().map(String::strip)
+                    .filter(line -> !line.isBlank()).toList();
+            String container;
+            if (!containers.isEmpty()) {
+                // The newest is first. One that runs is the runner; otherwise the newest is
+                // what a reboot or a stop left behind.
+                String running = containers.stream()
+                        .filter(line -> line.endsWith(" running") || line.endsWith(" restarting"))
+                        .findFirst().orElse(null);
+                container = name(running != null ? running : containers.getFirst());
+                if (running != null) {
+                    ctx.log("  " + container + " is already up");
+                } else {
+                    Boot.must(boot.docker.exec(ctx::log, "start", container),
+                            "starting " + container + " failed");
+                }
+            } else {
+                if (!registered && token == null) {
+                    Http.Response rotated = boot.ci.rotateRegistrationToken(id,
+                            boot.bootstrapToken());
+                    if (rotated.status() == 409) {
+                        // Registered between the listing and the rotation: the arm below.
+                        registered = true;
+                    } else if (!rotated.ok()) {
+                        throw new IllegalStateException("a fresh registration token for runner "
+                                + LOCALHOST_RUNNER + " answered " + rotated.describe());
+                    } else {
+                        token = installToken(Json.parse(rotated.body()), "the rotation");
+                        ctx.log("  runner " + LOCALHOST_RUNNER + " (" + id + ") never "
+                                + "registered — a fresh registration token was minted");
+                    }
+                }
+                String volume = runnerStateVolume(id);
+                if (registered) {
+                    token = null;
+                    if (!boot.docker.run(Cmd.of("docker", "volume", "inspect", volume),
+                            null).ok()) {
+                        throw new IllegalStateException("runner " + LOCALHOST_RUNNER + " (" + id
+                                + ") is registered, and neither a container nor the volume "
+                                + volume + " that held its client is on this host. Its "
+                                + "credential is gone and a registered runner is given no new "
+                                + "token — delete the row in qits-ci (DELETE /ci/api/runners/"
+                                + id + ", or the CI's runners page) and rerun");
+                    }
+                    ctx.log("  no container, and the runner is registered — starting it on the "
+                            + "client " + volume + " holds");
+                } else {
+                    // The volume is KEPT — it is the runner's state — but its client goes: the
+                    // runner registers with the token on this line, which is a new one.
+                    Boot.must(boot.docker.run(Cmd.of(List.of("docker", "run", "--rm",
+                                    "--entrypoint", "rm",
+                                    "-v", volume + ":" + RUNNER_STATE_DIR, image,
+                                    "-f", RUNNER_STATE_DIR + "/client.json")), ctx::log),
+                            "clearing the runner's stale client failed");
+                }
+                container = runnerContainerName(id, version);
+                Boot.must(boot.docker.run(runnerRunCommand(id, version, image, slots, token),
+                        ctx::log), "the runner container did not start");
+            }
+            boot.state.ciRunnerId = id;
+            boot.state.ciRunnerContainer = container;
+            ctx.note(container);
+        });
+    }
+
+    private static String requireId(String id) {
+        if (id.isBlank()) {
+            throw new IllegalStateException("qits-ci named no id for runner " + LOCALHOST_RUNNER);
+        }
+        return id;
+    }
+
+    private static void record(BootstrapState state, String id) throws IOException {
+        state.put(BootstrapState.CI_RUNNER_ID_KEY, id);
+        state.write();
+    }
+
+    /** {@code <name> <state>} as {@code docker ps} printed it: the name. */
+    private static String name(String line) {
+        int space = line.indexOf(' ');
+        return space < 0 ? line : line.substring(0, space);
+    }
+
+    /** The token out of an answer's install line — never logged, never put in an exception. */
+    private static String installToken(JsonNode runner, String what) {
+        return CiApi.registrationToken(Json.text(runner, "installScript"))
+                .orElseThrow(() -> new IllegalStateException(what + " of runner "
+                        + LOCALHOST_RUNNER + " answered no registration token in its install "
+                        + "line"));
+    }
+
+    /**
+     * <b>The runner, CONNECTED and IN SERVICE — the one fact that says this platform can execute a
+     * run.</b> A container that started is not that fact: qits-ci is the party a run depends on, so
+     * this asks qits-ci, with the patience every other health wait here has.
+     * <p>
+     * <b>Then it lifts the quarantine, and that is this program's to do.</b> A runner that has just
+     * registered is quarantined awaiting its first health check, which is a pseudo-build of
+     * qits-ci's own repository at {@code main} — a repository this boot has not created yet and
+     * will not push for another forty phases. The check cannot be queued, qits-ci swallows that,
+     * and its sweep asks again in an hour. So the bootstrap greenlights the runner it started,
+     * through the operator's own door, and the first release replay is the proof the check would
+     * have been. A runner that is in service already is not greenlit again: its failure streak is
+     * qits-ci's to keep.
+     * <p>
+     * <b>Skipped whenever {@code runner-localhost} stood aside</b> — there is no runner of ours to
+     * wait for, and waiting for somebody else's would be an hour spent on a platform that did not
+     * ask.
+     */
+    public Phase localhostRunnerConnected() {
+        return new Phase("runner-connected",
+                "wait for this host's CI runner to connect, and put it in service", ctx -> {
+            String id = boot.state.ciRunnerId;
+            if (id == null) {
+                ctx.skip("runner-localhost started no runner, so there is none of this "
+                        + "installation's to wait for");
+            }
+            JsonNode runner;
+            try {
+                runner = Waiter.await(ctx, "runner " + LOCALHOST_RUNNER + " connected to qits-ci",
+                        boot.config.healthTimeout(), Duration.ofSeconds(5),
+                        () -> runnerConnection(boot.ci.runners(), id));
+            } catch (TimeoutException gaveUp) {
+                throw new IllegalStateException(gaveUp.getMessage() + "\n" + runnerEvidence(id));
+            }
+            ctx.log("  runner " + LOCALHOST_RUNNER + " (" + id + ") is connected");
+            if (!runner.path("quarantined").asBoolean(false)) {
+                ctx.note("connected, in service");
+                return;
+            }
+            ctx.log("  quarantined: " + Json.text(runner, "quarantineReason")
+                    + " — greenlighting it");
+            Http.Response lifted = boot.ci.greenlight(id);
+            if (!lifted.ok()) {
+                throw new IllegalStateException("greenlighting runner " + LOCALHOST_RUNNER
+                        + " answered " + lifted.describe() + "\n" + runnerEvidence(id));
+            }
+            JsonNode after = CiApi.runnerNamed(boot.ci.runners(), LOCALHOST_RUNNER).orElse(null);
+            if (after == null || !after.has("quarantined")
+                    || after.path("quarantined").asBoolean(true)) {
+                throw new IllegalStateException("runner " + LOCALHOST_RUNNER + " is still "
+                        + "quarantined after the greenlight\n" + runnerEvidence(id));
+            }
+            ctx.note("connected, greenlit");
+        });
+    }
+
+    /**
+     * One poll of the listing: done with the runner's row once OUR runner is connected. A
+     * {@code localhost} of another id is not what is being waited for, and says so.
+     */
+    static Waiter.Poll<JsonNode> runnerConnection(Http.Response listing, String id) {
+        if (!listing.ok()) {
+            return Waiter.Poll.pending("runners: " + listing.describe());
+        }
+        Optional<JsonNode> runner = CiApi.runnerNamed(listing, LOCALHOST_RUNNER);
+        if (runner.isEmpty()) {
+            return Waiter.Poll.pending("qits-ci lists no runner " + LOCALHOST_RUNNER);
+        }
+        if (!id.equals(Json.text(runner.get(), "id"))) {
+            return Waiter.Poll.pending("qits-ci's " + LOCALHOST_RUNNER + " is "
+                    + Json.text(runner.get(), "id") + ", not " + id);
+        }
+        if (runner.get().path("connected").asBoolean(false)) {
+            return Waiter.Poll.done(runner.get(), "connected");
+        }
+        return Waiter.Poll.pending(runner.get().path("registered").asBoolean(false)
+                ? "registered, not connected"
+                : "not registered yet");
+    }
+
+    /**
+     * What a failed wait is told with: the row's own quarantine reason and the container's last
+     * words. Both are reads that may not answer, and neither may turn one failure into two.
+     */
+    private String runnerEvidence(String id) {
+        StringBuilder evidence = new StringBuilder();
+        CiApi.runnerNamed(boot.ci.runners(), LOCALHOST_RUNNER).ifPresent(row -> {
+            String reason = Json.text(row, "quarantineReason");
+            evidence.append("qits-ci: registered=").append(row.path("registered").asBoolean(false))
+                    .append(", connected=").append(row.path("connected").asBoolean(false))
+                    .append(reason.isBlank() ? "" : ", quarantined: " + reason).append('\n');
+        });
+        String container = boot.state.ciRunnerContainer;
+        if (container != null) {
+            ProcessResult logs = boot.docker.exec(null, "logs", "--tail", "20", container);
+            evidence.append("docker logs --tail 20 ").append(container).append(":\n")
+                    .append(logs.tailText(20));
+        }
+        return evidence.toString();
     }
 
     // --- the public identity ------------------------------------------------------------------------
