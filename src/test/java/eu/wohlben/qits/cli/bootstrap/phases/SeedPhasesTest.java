@@ -513,7 +513,8 @@ class SeedPhasesTest {
 
     /** A boot whose sources directory is this test's, holding a ci checkout that pins both jars. */
     private Boot protocolBoot(ScriptedRunner runner, CannedHttp http) throws IOException {
-        Boot boot = new Boot(TestConfig.from(Map.of("QITS_MACHINE_AUTH", "0")),
+        Boot boot = new Boot(TestConfig.from(Map.of("QITS_MACHINE_AUTH", "0",
+                "QITS_SRC", temp.resolve("src").toString())),
                 new RunLog(temp.resolve("run.log")), runner, http);
         boot.state.srcDir = temp.resolve("src");
         boot.state.wrapperDir = temp;
@@ -594,6 +595,157 @@ class SeedPhasesTest {
         assertThat(runner.lines()).anyMatch(line -> line.startsWith("docker cp ")
                 && line.endsWith("cid-1:/src@2026.930.132340"));
         assertThat(runner.lines()).contains("docker start -a cid-1");
+    }
+
+    // --- the runner image -------------------------------------------------------------------------
+
+    /** The runner's Dockerfile, cut to its shape: a global ARG, the compile stage, the image stage. */
+    private static final String RUNNER_DOCKERFILE = """
+            # HOW THE RUNNER IS BUILT
+            ARG BUILDER_IMAGE=qits/graalvmce-musl-builder:jdk-25
+
+            FROM ${BUILDER_IMAGE} AS build
+            USER root
+            WORKDIR /qits-build
+            COPY . .
+            RUN ./mvnw -B -ntp -pl ci-runner -am package -Dnative -DskipTests
+
+            FROM scratch AS binary
+            COPY --from=build /qits-build/ci-runner/target/qits-ci-runner /qits-ci-runner
+
+            # The image: the binary and a docker CLI on a small alpine base.
+            FROM docker:29.8.1-cli AS image
+            COPY --from=build /qits-build/ci-runner/target/qits-ci-runner /usr/local/bin/qits-ci-runner
+            RUN mkdir -p /var/lib/qits-ci-runner && chmod 700 /var/lib/qits-ci-runner
+            ENTRYPOINT ["/usr/local/bin/qits-ci-runner"]
+            CMD []
+            """;
+
+    /**
+     * <b>The image stage alone, fed the binary this boot built.</b> The compile happens in a
+     * container on the shared cache, so the only line of the stage that changes is the copy out of
+     * the {@code build} stage — the base image, the state directory and the entrypoint are the
+     * repository's and arrive untouched.
+     */
+    @Test
+    void theRunnerImageIsTheDockerfilesLastStageWithTheBinaryCopiedFromTheContext() {
+        String stage = SeedPhases.runnerImageStage(RUNNER_DOCKERFILE, "qits-ci-runner");
+
+        assertThat(stage.lines().toList()).containsExactly(
+                "ARG BUILDER_IMAGE=qits/graalvmce-musl-builder:jdk-25",
+                "FROM docker:29.8.1-cli AS image",
+                "COPY qits-ci-runner /usr/local/bin/qits-ci-runner",
+                "RUN mkdir -p /var/lib/qits-ci-runner && chmod 700 /var/lib/qits-ci-runner",
+                "ENTRYPOINT [\"/usr/local/bin/qits-ci-runner\"]",
+                "CMD []");
+        // No stage of it compiles anything: the other two are gone whole.
+        assertThat(stage).doesNotContain("--from=build").doesNotContain("mvnw");
+    }
+
+    /** A base image named through the mirror is read from its upstream, like every seed image's. */
+    @Test
+    void theRunnerImagesBaseLosesTheMirrorPrefixLikeEverySeedImage() {
+        String stage = SeedPhases.runnerImageStage(RUNNER_DOCKERFILE.replace(
+                "FROM docker:29.8.1-cli", "FROM mirror.dev.localhost:8080/hub/library/docker:29.8.1-cli"),
+                "qits-ci-runner");
+
+        assertThat(stage).contains("FROM docker.io/library/docker:29.8.1-cli AS image");
+    }
+
+    /** A Dockerfile that lost the stage, or the copy, stops the boot rather than being guessed at. */
+    @Test
+    void aRunnerDockerfileThisBootCannotReadStopsIt() {
+        assertThatThrownBy(() -> SeedPhases.runnerImageStage(
+                "FROM alpine AS build\nRUN true\n", "qits-ci-runner"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("AS image");
+        assertThatThrownBy(() -> SeedPhases.runnerImageStage(
+                "FROM alpine AS image\nRUN true\n", "qits-ci-runner"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("copies nothing from its build stage");
+    }
+
+    private static void runRunnerImage(Boot boot, PhaseContext ctx) throws Exception {
+        new SeedPhases(boot).runnerImage().action().run(ctx);
+    }
+
+    /**
+     * <b>The whole build, command for command.</b> The tag qits-ci pins goes into the ci-daemon's
+     * builder container, the binary comes out into a directory under the sources directory —
+     * because the image build mounts it, and the HOST's daemon resolves that mount — and the image
+     * is tagged under the bare name and under the registry host.
+     */
+    @Test
+    void theRunnerIsCompiledFromThePinnedTagAndTaggedUnderTheRegistryHost() throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command -> {
+            String line = String.join(" ", command);
+            if (line.startsWith("docker image inspect")) {
+                return ScriptedRunner.failed("Error: No such image");
+            }
+            if (line.contains(" show 2026.930.132340:docker/Dockerfile")) {
+                return ScriptedRunner.ok(RUNNER_DOCKERFILE.split("\n"));
+            }
+            return line.startsWith("docker create") ? ScriptedRunner.ok("cid-7")
+                    : ScriptedRunner.ok();
+        });
+        Boot boot = protocolBoot(runner, new CannedHttp());
+
+        runRunnerImage(boot, new CiLogStreamTest.Recorder());
+
+        List<String> create = runner.argv.stream()
+                .filter(command -> command.size() > 1 && command.get(1).equals("create"))
+                .findFirst().orElseThrow();
+        assertThat(create).containsSubsequence("--entrypoint", "bash")
+                .containsSubsequence("--memory", "6g")
+                .containsSubsequence("-v", "qits-maven-cache:/cache",
+                        "qits/graalvmce-musl-builder:jdk-25", "-c");
+        assertThat(create.getLast()).isEqualTo("rm -rf /cache/repository/eu/wohlben/qits\n"
+                + "cd /qits-build && ./mvnw -B -ntp -pl ci-runner -am package -Dnative "
+                + "-DskipTests -Dquarkus.native.container-build=false"
+                + " -Dmaven.repo.local=/cache/repository");
+        Path context = temp.resolve("src/.exports/qits-ci-runner-image");
+        assertThat(runner.lines()).containsSubsequence(
+                "docker start -a cid-7",
+                "docker cp cid-7:/qits-build/ci-runner/target/qits-ci-runner "
+                        + context.resolve("qits-ci-runner"),
+                "docker rm -f cid-7",
+                "docker tag qits/qits-ci-runner:2026.930.132340 "
+                        + "registry.prod.localhost:8080/qits/qits-ci-runner:2026.930.132340");
+        // The tag's tree is what was compiled, never the checkout.
+        assertThat(runner.lines()).anyMatch(line -> line.startsWith("docker cp ")
+                && line.endsWith("cid-7:/qits-build")
+                && line.contains("qits-ci-runner-daemon@2026.930.132340"));
+        // And the image build's context is that one directory, under the sources directory.
+        assertThat(runner.lines()).anyMatch(line -> line.contains("-v " + context + ":/ctx:ro")
+                && line.contains("name=qits/qits-ci-runner:2026.930.132340"));
+        assertThat(context).doesNotExist();
+    }
+
+    /** An image this host already holds is tagged and left alone: a version names one commit. */
+    @Test
+    void aRunnerImageThisHostHoldsIsNotBuiltAgain() throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok("sha256:abc"));
+        Boot boot = protocolBoot(runner, new CannedHttp());
+
+        assertThatThrownBy(() -> runRunnerImage(boot, new CiLogStreamTest.Recorder()))
+                .isInstanceOf(PhaseSkipped.class)
+                .hasMessageContaining("qits/qits-ci-runner:2026.930.132340 is already on this host");
+        assertThat(runner.lines()).contains("docker tag qits/qits-ci-runner:2026.930.132340 "
+                + "registry.prod.localhost:8080/qits/qits-ci-runner:2026.930.132340");
+        assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker create"));
+    }
+
+    /** A pinned tag the clone lacks stops the boot before anything is compiled. */
+    @Test
+    void aRunnerTagMissingFromTheCheckoutStopsTheBoot() throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.failed("no"));
+        Boot boot = protocolBoot(runner, new CannedHttp());
+
+        assertThatThrownBy(() -> runRunnerImage(boot, new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("pins the runner at 2026.930.132340")
+                .hasMessageContaining("no such tag");
+        assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker create"));
     }
 
     // --- what a publish presents at the store ----------------------------------------------------

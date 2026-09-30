@@ -164,6 +164,11 @@ public final class BootstrapPlan {
             // tarballs out of the store and a cold platform's store has neither.
             phases.add(seed.toolchainSeed());
             phases.add(seed.ciDaemon());
+            // STRAIGHT AFTER IT, because it is built on the toolchain image that phase just made.
+            // The runner is what executes every run of this boot from the first release replay
+            // on, so its image has to exist before the seed stack is up — and only a build arm
+            // can make it: a warm rerun starts the runner from the image the last one left.
+            phases.add(seed.runnerImage());
         }
 
         // seed-postgres is inside BOTH arms above rather than here, and the byte-plane split is why:

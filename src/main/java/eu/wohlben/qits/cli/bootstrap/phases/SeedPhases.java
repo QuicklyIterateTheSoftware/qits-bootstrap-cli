@@ -1791,6 +1791,186 @@ public class SeedPhases {
         });
     }
 
+    // --- the runner image -------------------------------------------------------------------------
+
+    /** The runner's image repository, as its own release publishes it. */
+    static final String RUNNER_IMAGE = "qits/qits-ci-runner";
+
+    /** The property in qits-ci's root pom that says which runner qits-ci expects. */
+    static final String RUNNER_PIN_PROPERTY = "qits.ci-runner-protocol.version";
+
+    /**
+     * <b>WHICH RUNNER THIS BOOT BUILDS AND STARTS: the one qits-ci pins.</b> qits-ci takes its
+     * runner version from the protocol jar it compiles against and tells every connected runner of
+     * another version to update to it — so a runner built at any other version would be told to
+     * pull an image no registry of a cold platform holds, and would drain forever. Read from the ci
+     * checkout on every ask, so the build arm and a warm rerun cannot disagree.
+     */
+    static String runnerVersion(Boot boot) throws IOException {
+        return protocolPin(Files.readString(
+                boot.state.repoDir("ci").resolve(PinnedVersions.ROOT_POM), StandardCharsets.UTF_8),
+                RUNNER_PIN_PROPERTY);
+    }
+
+    /** The image as the host daemon holds it after the build: {@code qits/qits-ci-runner:<pin>}. */
+    static String runnerImage(String version) {
+        return RUNNER_IMAGE + ":" + version;
+    }
+
+    /**
+     * The same image under the registry host — the spelling it is pushed under and the one a later
+     * self-update pulls, so the runner this boot starts is already named the way its successor
+     * will be.
+     */
+    static String runnerRegistryImage(Boot boot, String version) {
+        return boot.config.registryVhost() + "/" + runnerImage(version);
+    }
+
+    /**
+     * <b>The {@code image} stage of the runner's Dockerfile, fed a binary that is already built.</b>
+     * <p>
+     * The repository's Dockerfile compiles and packages in one file: a {@code build} stage on the
+     * musl toolchain and an {@code image} stage that copies the binary out of it. This boot does
+     * the compile the way it does the ci-daemon's — in a container, on the shared maven cache — so
+     * what it needs of the Dockerfile is the last stage alone, with its one
+     * {@code COPY --from=build} turned into a copy from the build context. Everything else in that
+     * stage is the repository's and stays the repository's: the base image, the state directory,
+     * the entrypoint.
+     * <p>
+     * The {@code ARG}s above the first {@code FROM} ride along, because a {@code FROM} may name
+     * one. A Dockerfile with no such stage, or whose stage copies nothing from {@code build},
+     * stops the boot: guessing at a changed file would start a container with no runner in it.
+     *
+     * @param binary the binary's file name in the build context
+     */
+    static String runnerImageStage(String dockerfile, String binary) {
+        List<String> lines = dockerfile.lines().toList();
+        StringBuilder stage = new StringBuilder();
+        int from = -1;
+        boolean beforeFirstFrom = true;
+        for (int i = 0; i < lines.size(); i++) {
+            String line = lines.get(i).strip();
+            if (line.regionMatches(true, 0, "FROM ", 0, 5)) {
+                beforeFirstFrom = false;
+                if (line.matches("(?i)FROM\\s+.*\\s+AS\\s+image")) {
+                    from = i;
+                }
+            } else if (beforeFirstFrom && line.regionMatches(true, 0, "ARG ", 0, 4)) {
+                stage.append(line).append('\n');
+            }
+        }
+        if (from < 0) {
+            throw new IllegalStateException("the runner's docker/Dockerfile has no `FROM … AS "
+                    + "image` stage — this boot packages the runner from that stage and cannot "
+                    + "guess at another");
+        }
+        boolean copied = false;
+        for (String line : lines.subList(from, lines.size())) {
+            java.util.regex.Matcher copy = java.util.regex.Pattern.compile(
+                    "^\\s*COPY\\s+--from=build\\s+\\S+\\s+(\\S+)\\s*$").matcher(line);
+            if (copy.matches()) {
+                stage.append("COPY ").append(binary).append(' ').append(copy.group(1)).append('\n');
+                copied = true;
+            } else {
+                stage.append(line).append('\n');
+            }
+        }
+        if (!copied) {
+            throw new IllegalStateException("the image stage of the runner's docker/Dockerfile "
+                    + "copies nothing from its build stage — there is no line to hand the binary "
+                    + "this boot built to");
+        }
+        return SeedDockerfile.rewrite(stage.toString());
+    }
+
+    /** The runner's native compile, in the builder container — the ci-daemon's line, one module on. */
+    static String runnerBuildScript() {
+        return MAVEN_PURGE_QITS
+                + "cd /qits-build && ./mvnw -B -ntp -pl ci-runner -am package -Dnative "
+                + "-DskipTests -Dquarkus.native.container-build=false" + MAVEN_REPO_LOCAL;
+    }
+
+    /**
+     * <b>{@code qits/qits-ci-runner:<pin>}, built from the release tag qits-ci pins.</b>
+     * <p>
+     * Since qits-506 qits-ci executes nothing itself: a run is a connected runner's or nobody's. A
+     * cold platform has no registry to pull the runner from and no CI to build it with, so this
+     * program builds the first one the way it builds the first ci-daemon — and for the same
+     * reason, straight after it, on the musl builder image that phase just made. The two
+     * repositories' builder Dockerfiles are byte copies of each other, so one toolchain image
+     * serves both.
+     * <p>
+     * <b>From the TAG, and the tag is qits-ci's pin</b> — see {@link #runnerVersion}. The checkout
+     * stands on main and is not what is built.
+     * <p>
+     * <b>Tagged twice</b>, like the step images: under the bare name the build loads it as, and
+     * under the registry host, which is how the {@code images-publish} phase pushes it and how the
+     * runner container is started.
+     * <p>
+     * <b>An image this daemon already holds is not built again</b>: the tag carries the version,
+     * and a version names one commit. That is every rerun, and it is what makes this phase cost a
+     * native build once per pin rather than once per boot.
+     */
+    public Phase runnerImage() {
+        return new Phase("runner-image", "build the qits-ci-runner image qits-ci pins", ctx -> {
+            String version = runnerVersion(boot);
+            String image = runnerImage(version);
+            String registryImage = runnerRegistryImage(boot, version);
+            if (boot.docker.imageExists(image)) {
+                Boot.must(boot.docker.exec(ctx::log, "tag", image, registryImage),
+                        "tagging " + image + " under the registry host failed");
+                ctx.skip(image + " is already on this host");
+            }
+            Path repo = boot.state.repoDir("ci-runner");
+            String dockerfile = boot.git.fileAt(repo, version, PlatformModel.dockerfilePath(
+                    "ci-runner"));
+            if (dockerfile == null) {
+                throw new IllegalStateException("qits-ci pins the runner at " + version + " and "
+                        + "the " + PlatformModel.repo("ci-runner") + " checkout has no such tag, "
+                        + "so there is nothing to build " + image + " from. Fetch the tags of "
+                        + repo + " (git fetch --tags) and rerun");
+            }
+            String stage = runnerImageStage(dockerfile, "qits-ci-runner");
+
+            boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
+            // The ci-daemon's container, line for line: the builder image entrypoints to
+            // native-image itself, and the build is on no network of ours, so it reads Maven
+            // Central direct and the shared cache is what keeps that to once.
+            String cid = create(ctx, List.of(
+                    "docker", "create", "--user", "root", "--entrypoint", "bash",
+                    "--memory", "6g", "--cpu-quota", "400000", "--cpuset-cpus", "0-3",
+                    "-v", MAVEN_CACHE_MOUNT, "qits/graalvmce-musl-builder:jdk-25",
+                    "-c", runnerBuildScript()));
+            // The build directory sits under the sources directory because the image build below
+            // mounts it as its context, and that mount is resolved by the HOST's daemon.
+            Path context = boot.state.srcDir.resolve(".exports").resolve("qits-ci-runner-image");
+            try {
+                copyTag(ctx, "ci-runner", version, cid, "/qits-build");
+                ctx.status("cold musl native build of the ci-runner");
+                ProcessResult run = boot.docker.exec(Docker.BUILD_TIMEOUT, ctx::log, "start", "-a",
+                        cid);
+                if (!run.ok()) {
+                    throw new IllegalStateException("ci-runner build failed\n" + run.tailText(20));
+                }
+                Files.createDirectories(context);
+                Boot.must(boot.docker.exec(Duration.ofMinutes(30), ctx::log, "cp",
+                                cid + ":/qits-build/ci-runner/target/qits-ci-runner",
+                                context.resolve("qits-ci-runner").toString()),
+                        "copying the runner binary out failed");
+                ctx.status("packaging " + image);
+                Boot.must(boot.docker.buildFromStdin(image, stage, context, List.of(), ctx::log),
+                        "build of " + image + " failed");
+            } finally {
+                boot.docker.removeContainer(cid, null);
+                Files.deleteIfExists(context.resolve("qits-ci-runner"));
+                Files.deleteIfExists(context);
+            }
+            Boot.must(boot.docker.exec(ctx::log, "tag", image, registryImage),
+                    "tagging " + image + " under the registry host failed");
+            ctx.note(version);
+        });
+    }
+
     // --- postgres ---------------------------------------------------------------------------------
 
     /**

@@ -286,7 +286,8 @@ public final class PlatformModel {
      * the platform release it afterwards.
      */
     public static final List<String> SEEDED_REPOS = List.of(
-            "oci", "oci-postgresql", "ci-daemon", "ci-runner", "eventstream", "registries", "spa-ui-components",
+            "oci", "oci-postgresql", "ci-daemon", "ci-runner", "eventstream", "registries",
+            "spa-ui-components",
             "userflows", "coding-agents", "spa-docs", "spa-deployments",
             "integrations-angular", "integrations-quarkus", "spa-projects",
             "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events",

@@ -69,6 +69,20 @@ class BootstrapPlanTest {
                 "publish-qits-ci-daemon-protocol", "publish-qits-ci-runner-protocol");
     }
 
+    /**
+     * The runner image is built straight after the ci-daemon — it is compiled on the toolchain
+     * image that phase makes — and before the seed stack, so it exists by the time it is started.
+     */
+    @Test
+    void theRunnerImageIsBuiltOnTheDaemonsToolchainBeforeTheStack() {
+        List<String> ids = ids(plan(Map.of()));
+
+        assertThat(ids.get(ids.indexOf("ci-daemon") + 1)).isEqualTo("runner-image");
+        assertThat(ids).containsSubsequence("seed-toolchain", "ci-daemon", "runner-image",
+                "seed-stack");
+        assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1")))).doesNotContain("runner-image");
+    }
+
     @Test
     void theSeedOrderIsTheOneTheDependenciesForce() {
         List<String> ids = ids(plan(Map.of()));
