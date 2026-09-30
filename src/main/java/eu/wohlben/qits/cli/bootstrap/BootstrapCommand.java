@@ -94,12 +94,14 @@ public class BootstrapCommand implements Callable<Integer> {
     String platformEnv;
 
     /**
-     * The domain this platform serves. Unset — the default — is a platform with no public names:
-     * the edge stays on plain HTTP. Its dns records are held outside this platform.
+     * The domain this platform serves, and REQUIRED: every service is addressed by a subdomain of
+     * it, and CI reaches the platform only through those public names. Its dns records are held
+     * outside this platform.
      */
     @CommandLine.Option(names = "--domain", paramLabel = "<domain>",
-            description = "The domain to serve: the name the edge's certificate is issued for. Its "
-                    + "dns records are yours to hold. Unset = no public names (QITS_DOMAIN).")
+            description = "The domain to serve: the name every service is addressed under and the "
+                    + "edge's certificate is issued for. Required. Its dns records are yours to "
+                    + "hold (QITS_DOMAIN).")
     String domain;
 
     /**
@@ -160,16 +162,21 @@ public class BootstrapCommand implements Callable<Integer> {
         // name that resolves to nothing, and it is far cheaper to say so here than four hours in.
         // The message is the whole output — no stack trace, since there is no bug here to report.
         try {
-            DomainName.of(effective);
+            // A boot without a domain can never pass: the platform is addressed by subdomain and
+            // CI reaches it only through its public names. Said first, so a missing domain is not
+            // reported as a public address given without one.
+            String missing = DomainName.missingRefusal(DomainName.of(effective).isPresent());
+            if (missing != null) {
+                throw new IllegalArgumentException(missing);
+            }
             PublicIp.of(effective);
             Acme.mode(effective);
             // The extra SANs leave the machine the same way, inside the same order — and one bad
             // name fails the WHOLE order, taking the names that would have worked with it.
             ExtraSans.of(effective, DomainName.of(effective));
-            // And a domain boot's certificate has to be one this host's runner can trust — which
-            // the boot only finds out at the edge-ready gate, after the whole local build.
-            String refusal = Acme.edgeRunnerRefusal(DomainName.of(effective).isPresent(),
-                    Acme.mode(effective));
+            // And the certificate has to be one this host's runner can trust — which the boot
+            // only finds out at the edge-ready gate, after the whole local build.
+            String refusal = Acme.edgeRunnerRefusal(Acme.mode(effective));
             if (refusal != null) {
                 throw new IllegalArgumentException(refusal);
             }

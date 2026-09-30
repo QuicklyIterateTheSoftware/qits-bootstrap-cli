@@ -1,11 +1,6 @@
 package eu.wohlben.qits.cli.bootstrap.api;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.InetSocketAddress;
-import java.net.Socket;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -160,55 +155,6 @@ public class Http {
             return send(request);
         } catch (IOException e) {
             return new Response(0, e.toString());
-        }
-    }
-
-    /**
-     * <b>A GET that names the host it is FOR, sent to the address it is AT</b> — which is how a
-     * name-routed door is asked about one of its names from a network that does not resolve them.
-     * {@code java.net.http} will not set {@code Host} (a restricted header), so this is one plain
-     * HTTP/1.1 exchange over a socket: the request line, that {@code Host}, {@code Connection:
-     * close}. The status line is the whole answer; the body is not read.
-     * <p>
-     * {@code http://} only. A status of 0 is no answer, with what went wrong as the body, exactly
-     * as {@link #get} reports one.
-     */
-    public Response getAs(String url, String host) {
-        URI uri = URI.create(url);
-        if (!"http".equals(uri.getScheme())) {
-            return new Response(0, "getAs speaks plain http, not " + uri.getScheme());
-        }
-        String path = uri.getRawPath() == null || uri.getRawPath().isEmpty() ? "/" : uri.getRawPath();
-        if (uri.getRawQuery() != null) {
-            path += "?" + uri.getRawQuery();
-        }
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(uri.getHost(),
-                    uri.getPort() < 0 ? 80 : uri.getPort()), 10_000);
-            socket.setSoTimeout((int) timeout.toMillis());
-            OutputStream out = socket.getOutputStream();
-            out.write(("GET " + path + " HTTP/1.1\r\nHost: " + host
-                    + "\r\nConnection: close\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
-            out.flush();
-            String line = new BufferedReader(new InputStreamReader(socket.getInputStream(),
-                    StandardCharsets.ISO_8859_1)).readLine();
-            int status = statusOf(line);
-            return status > 0 ? new Response(status, "") : new Response(0, "no status line: " + line);
-        } catch (IOException e) {
-            return new Response(0, e.toString());
-        }
-    }
-
-    /** The code in an HTTP/1.x status line, or 0 when the line is not one. */
-    static int statusOf(String line) {
-        if (line == null || !line.startsWith("HTTP/1.")) {
-            return 0;
-        }
-        String[] parts = line.split(" ", 3);
-        try {
-            return parts.length >= 2 ? Integer.parseInt(parts[1]) : 0;
-        } catch (NumberFormatException notACode) {
-            return 0;
         }
     }
 

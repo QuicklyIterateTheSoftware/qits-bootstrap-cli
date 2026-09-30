@@ -81,32 +81,26 @@ public final class Acme {
     }
 
     /**
-     * The account's contact address: what was configured, or {@code hostmaster@<domain>}.
+     * <b>A bootstrap needs a certificate a machine trusts, and says so before it starts.</b>
      * <p>
-     * The derivation is not a guess — {@code hostmaster} is the convention for the role that
-     * answers for a domain, so a platform that has a domain has a contact by construction and
-     * nobody has to fill a second knob in to get a certificate.
-     */
-    /**
-     * <b>A domain boot needs a certificate a machine trusts, and says so before it starts.</b>
-     * <p>
-     * With a domain, this host's runner is an EDGE runner: it dials {@code https://ci.qits.<domain>},
-     * mints at {@code https://idp.qits.<domain>} and pulls from {@code registry.qits.<domain>}, and
-     * every step it starts does the same — through the platform's own edge, which the boot waits
-     * for before the runner is started ({@code edge-ready}). The runner has no insecure mode and
-     * neither has docker for a TLS registry, so the certificate there has to be one they trust: a
-     * STAGING certificate is issued from an untrusted root and OFF keeps the self-signed
-     * placeholder. Either would pass the whole local build and then wait out the gate, hours in —
-     * so the refusal is up front.
+     * This host's runner is an EDGE runner — there is no other plane: it dials
+     * {@code https://ci.qits.<domain>}, mints at {@code https://idp.qits.<domain>} and pulls from
+     * {@code registry.qits.<domain>}, and every step it starts does the same — through the
+     * platform's own edge, which the boot waits for before the runner is started
+     * ({@code edge-ready}). The runner has no insecure mode and neither has docker for a TLS
+     * registry, so the certificate there has to be one they trust: a STAGING certificate is issued
+     * from an untrusted root and OFF keeps the self-signed placeholder. Either would pass the whole
+     * local build and then wait out the gate, hours in — so the refusal is up front. A missing
+     * domain is refused before this is asked ({@link DomainName#missingRefusal}).
      *
      * @return the refusal, or null when there is nothing to refuse
      */
-    public static String edgeRunnerRefusal(boolean domain, Mode mode) {
-        if (!domain || mode == Mode.PRODUCTION) {
+    public static String edgeRunnerRefusal(Mode mode) {
+        if (mode == Mode.PRODUCTION) {
             return null;
         }
-        return "QITS_ACME_MODE (--acme-mode) is '" + mode.word() + "', and a bootstrap with a "
-                + "domain needs 'production'. This host's CI runner and every step it starts reach "
+        return "QITS_ACME_MODE (--acme-mode) is '" + mode.word() + "', and a bootstrap needs "
+                + "'production'. This host's CI runner and every step it starts reach "
                 + "the platform through its public names — https://ci.qits.<domain>, "
                 + "idp.qits.<domain>, registry.qits.<domain> — and neither the runner nor docker "
                 + "accepts a certificate from " + (mode == Mode.OFF
@@ -116,6 +110,13 @@ public final class Acme {
                 + "this host.";
     }
 
+    /**
+     * The account's contact address: what was configured, or {@code hostmaster@<domain>}.
+     * <p>
+     * The derivation is not a guess — {@code hostmaster} is the convention for the role that
+     * answers for a domain, so a platform that has a domain has a contact by construction and
+     * nobody has to fill a second knob in to get a certificate.
+     */
     public static String email(BootstrapConfig config, String domain) {
         return config.acmeEmail().map(String::strip).filter(value -> !value.isEmpty())
                 .orElse("hostmaster@" + domain);

@@ -57,4 +57,16 @@ class DomainNameTest {
         assertThatThrownBy(() -> DomainName.of(config(tooLong)))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+
+    /**
+     * <b>A boot without a domain is refused up front</b>: the platform is addressed by subdomain
+     * and CI reaches it only through its public names, so the boot could never pass.
+     */
+    @Test
+    void aBootWithoutADomainIsRefusedNamingTheKnobAndWhy() {
+        assertThat(DomainName.missingRefusal(true)).isNull();
+        assertThat(DomainName.missingRefusal(false))
+                .contains("QITS_DOMAIN", "--domain", "subdomain", "https://ci.qits.<domain>",
+                        "could never pass");
+    }
 }

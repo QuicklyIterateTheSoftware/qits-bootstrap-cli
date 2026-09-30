@@ -17,7 +17,6 @@ import eu.wohlben.qits.cli.bootstrap.platform.BootstrapState;
 import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
-import eu.wohlben.qits.cli.bootstrap.platform.SeedDockerfile;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 
@@ -2675,33 +2674,22 @@ public class PipelinePhases {
     /**
      * <b>What the runner is about to dial, asked of the platform's own edge.</b>
      * <p>
-     * <b>With a domain</b>, the three public names qits-ci tells an EDGE runner — its own
-     * {@code RunnerAddresses}: {@code https://<host>.qits.<domain>}, the platform project's
-     * applications, with no environment label. Each at the path the runner or its docker uses: the
-     * install script's door, the token endpoint, the registry's {@code /v2/}. Over HTTPS with the
-     * JVM's own trust store, so an answer at all is a certificate a machine trusts; a placeholder or
-     * a staging certificate is a failed handshake, which is no answer.
-     * <p>
-     * <b>Without one</b>, the registry's name as this host's docker spells it, asked of the edge at
-     * its own alias — the name a step image is pinned under and pulled by, routed by the edge that
-     * has just replaced the seed one.
+     * The three public names qits-ci tells a runner — its own {@code RunnerAddresses}:
+     * {@code https://<host>.qits.<domain>}, the platform project's applications, with no
+     * environment label. Each at the path the runner or its docker uses: the install script's door,
+     * the token endpoint, the registry's {@code /v2/}. Over HTTPS with the JVM's own trust store, so
+     * an answer at all is a certificate a machine trusts; a placeholder or a staging certificate is
+     * a failed handshake, which is no answer.
      */
-    List<EdgeProbe> edgeProbes() {
-        Optional<String> domain = DomainName.of(boot.config);
-        if (domain.isPresent()) {
-            List<EdgeProbe> probes = new ArrayList<>();
-            for (String[] entry : List.of(new String[] {"ci", "/ci/api/runners/install.sh"},
-                    new String[] {"idp", "/idp/token"}, new String[] {"registry", "/v2/"})) {
-                String url = "https://" + entry[0] + "." + PlatformModel.PROJECT + "."
-                        + domain.get() + entry[1];
-                probes.add(new EdgeProbe(url, () -> boot.http.get(url, Map.of())));
-            }
-            return probes;
+    List<EdgeProbe> edgeProbes(String domain) {
+        List<EdgeProbe> probes = new ArrayList<>();
+        for (String[] entry : List.of(new String[] {"ci", "/ci/api/runners/install.sh"},
+                new String[] {"idp", "/idp/token"}, new String[] {"registry", "/v2/"})) {
+            String url = "https://" + entry[0] + "." + PlatformModel.PROJECT + "." + domain
+                    + entry[1];
+            probes.add(new EdgeProbe(url, () -> boot.http.get(url, Map.of())));
         }
-        String url = "http://" + PlatformModel.wireAlias("edge", boot.config.envName()) + ":8080/v2/";
-        String host = boot.config.registryVhost();
-        return List.of(new EdgeProbe(host + "/v2/ through " + url,
-                () -> boot.http.getAs(url, host)));
+        return probes;
     }
 
     /**
@@ -2718,26 +2706,27 @@ public class PipelinePhases {
      * started.</b>
      * <p>
      * The edge was deployed a phase ago and the bootstrap ingress retired with it, so this is the
-     * first moment the platform's door is the only door. With a domain, the runner is an EDGE runner
-     * and reaches qits-ci, the idp and the registry through it and nothing else; a certificate it
+     * first moment the platform's door is the only door. The runner reaches qits-ci, the idp and the
+     * registry through it and nothing else; a certificate it
      * does not trust is a runner that never connects, and waiting that out in
      * {@code runner-connected} would say "not connected" about a TLS problem. So this waits,
      * bounded ({@code QITS_EDGE_READY_TIMEOUT}), for the edge's own ACME order to have landed — it
      * has been running since the seed edge came up, so the wait is usually already over — and names
      * each host's last answer while it does.
      * <p>
-     * <b>A domain with ACME off or on staging is refused</b>, here and before the boot started
-     * ({@link Acme#edgeRunnerRefusal}): neither can ever pass.
+     * <b>No domain, or ACME off or on staging, is refused</b>, here and before the boot started
+     * ({@link DomainName#missingRefusal}, {@link Acme#edgeRunnerRefusal}): none can ever pass.
      */
     public Phase edgeReady() {
         return new Phase("edge-ready", "wait for the platform's edge to serve what the runner dials",
                 ctx -> {
-            String refusal = Acme.edgeRunnerRefusal(DomainName.of(boot.config).isPresent(),
-                    Acme.mode(boot.config));
+            Optional<String> domain = DomainName.of(boot.config);
+            String refusal = domain.isEmpty() ? DomainName.missingRefusal(false)
+                    : Acme.edgeRunnerRefusal(Acme.mode(boot.config));
             if (refusal != null) {
                 throw new IllegalStateException(refusal);
             }
-            List<EdgeProbe> probes = edgeProbes();
+            List<EdgeProbe> probes = edgeProbes(domain.get());
             probes.forEach(probe -> ctx.log("  " + probe.what()));
             try {
                 Waiter.await(ctx, "the platform's edge", boot.config.edgeReadyTimeout(),
@@ -2753,12 +2742,11 @@ public class PipelinePhases {
                                     : Waiter.Poll.pending(String.join("; ", waiting));
                         });
             } catch (TimeoutException gaveUp) {
-                throw new IllegalStateException(gaveUp.getMessage() + (DomainName.of(boot.config)
-                        .isPresent() ? "\nA failed handshake is a certificate this host does not "
-                        + "trust yet: the edge orders it over DNS-01, so the records have to "
-                        + "resolve — rerun once they do." : ""));
+                throw new IllegalStateException(gaveUp.getMessage() + "\nA failed handshake is a "
+                        + "certificate this host does not trust yet: the edge orders it over "
+                        + "DNS-01, so the records have to resolve — rerun once they do.");
             }
-            ctx.note(probes.size() == 1 ? "the registry is routed" : probes.size() + " names served");
+            ctx.note(probes.size() + " names served");
         });
     }
 
@@ -2769,20 +2757,6 @@ public class PipelinePhases {
      * and refused a delete while it is the only runner there is.
      */
     static final String LOCALHOST_RUNNER = "localhost";
-
-    /**
-     * <b>The plane is qits-ci's to choose, and this program names none.</b> A runner declared with
-     * no plane is EDGE whenever qits-ci knows the platform's public domain and INTERNAL where it
-     * knows none ({@code CiRunnerController.defaultPlane}), and the owner's ruling is that this
-     * host's runner is EDGE whenever qits-ci will give one: a runner goes through the public edge
-     * like every other, and the {@code edge-ready} gate has just proved that edge serves it.
-     * <p>
-     * <b>INTERNAL is the no-domain answer, and it is the one branch that still puts the runner on
-     * qits-net</b> — the qits-net aliases are the only addresses there are then, and the runner's
-     * builder is told how to reach the registry and the mirror by them. qits-444 deletes that plane
-     * in qits-ci; everything this constant guards goes with it.
-     */
-    static final String INTERNAL_PLANE = "INTERNAL";
 
     /** The runner's own label. Never {@code qits.ci.runner}, which its boot sweep removes. */
     static final String RUNNER_PROCESS_LABEL = "qits.ci.runner.process";
@@ -2904,55 +2878,13 @@ public class PipelinePhases {
      * <b>Where the runner dials qits-ci, when qits-ci has not just said so.</b> The install line a
      * create or a rotation answers names it ({@code QITS_CI_RUNNER_URL}) and is always preferred;
      * a registered runner restarted on its volume gets no line, so the address is composed the way
-     * qits-ci composes it for the row's plane — {@code RunnerAddresses.ciBase}: the public
-     * {@code https://ci.qits.<domain>} on EDGE, the service's own alias on INTERNAL.
+     * qits-ci composes it — {@code RunnerAddresses.ciBase}: the public
+     * {@code https://ci.qits.<domain>}. It is the only address a runner has: every runner goes
+     * through the public edge.
      */
-    static String runnerUrl(String plane, Optional<String> domain, String envName) {
-        if (INTERNAL_PLANE.equals(plane)) {
-            return "http://" + PlatformModel.wireAlias("ci", envName) + ":8080";
-        }
+    static String runnerUrl(Optional<String> domain) {
         return "https://ci." + PlatformModel.PROJECT + "." + domain.orElseThrow(() ->
-                new IllegalStateException("qits-ci's runner " + LOCALHOST_RUNNER + " is on the "
-                        + plane + " plane and this boot names no domain to reach it by — rerun "
-                        + "with the QITS_DOMAIN qits-ci was deployed with"));
-    }
-
-    /**
-     * The registries the runner's builder speaks plain HTTP to — qits-containers'
-     * {@code qits.containers.buildkit.http-registries}, entry for entry, with this platform's
-     * aliases.
-     */
-    static String runnerHttpRegistries(String envName) {
-        return PlatformModel.wireAlias("artifacts", envName) + ":8080,"
-                + PlatformModel.wireAlias("mirror", envName) + ":8080";
-    }
-
-    /**
-     * <b>What the runner's builder rewrites a registry name to</b> — qits-containers'
-     * {@code qits.containers.buildkit.registry-mirrors}, entry for entry, with this platform's
-     * aliases. A committed {@code FROM} names the machine spelling of the mirror, a publish step
-     * pushes to the registry vhost, and the upstreams are read through the mirror's caches; a
-     * builder on qits-net resolves none of the first two and must not dial the third direct.
-     * <p>
-     * The two vhosts are spelled twice where they differ: as this environment names them, which is
-     * what qits-ci hands a step as its registry, and as {@code dev} names them, which is what
-     * every committed Dockerfile on the estate says whatever the environment is called.
-     */
-    static String runnerRegistryMirrors(BootstrapConfig config) {
-        String artifacts = PlatformModel.wireAlias("artifacts", config.envName()) + ":8080";
-        String mirror = PlatformModel.wireAlias("mirror", config.envName()) + ":8080";
-        Map<String, String> mirrors = new LinkedHashMap<>();
-        mirrors.put(config.registryVhost(), artifacts);
-        mirrors.put(config.mirrorVhost(), mirror);
-        mirrors.put("registry.dev.localhost:8080", artifacts);
-        mirrors.put(SeedDockerfile.MIRROR_HOST, mirror);
-        mirrors.put("localhost:" + config.registryPort(), artifacts);
-        mirrors.put("localhost:" + config.mirrorPort(), mirror);
-        mirrors.put("quay.io", mirror + "/quay");
-        mirrors.put("registry.access.redhat.com", mirror + "/redhat");
-        mirrors.put("docker.io", mirror + "/hub");
-        return mirrors.entrySet().stream().map(entry -> entry.getKey() + "=" + entry.getValue())
-                .collect(Collectors.joining(","));
+                new IllegalStateException(DomainName.missingRefusal(false)));
     }
 
     /**
@@ -2960,17 +2892,12 @@ public class PipelinePhases {
      * supervisor; the socket is how the runner starts its steps and, when told to update, its own
      * successor; the volume holds its client; the two labels are what a rollover finds its
      * predecessor by. That is {@code runner-install.sh}'s {@code docker run}, element for element,
-     * with the address and the plane qits-ci answered:
-     * <ul>
-     *   <li><b>EDGE</b> adds exactly one thing the install line cannot pass,
-     *       {@code QITS_CI_RUNNER_BUILDKIT_STATE_VOLUME}: the runner's buildkitd defaults to
-     *       {@code qits-buildkitd-state}, which this host's {@code qits-buildkitd} already holds.
-     *       No network — docker's default bridge, as the install line starts it — and no registry
-     *       lists: qits-ci hands an EDGE runner its registry mirrors on every Ack, all public names.
-     *   <li><b>INTERNAL</b> adds {@code --network qits-net}, which survives a self-update (the
-     *       successor is started on the network its predecessor is on), and the builder's two
-     *       registry lists spelled with this platform's aliases. See {@link #INTERNAL_PLANE}.
-     * </ul>
+     * with the address qits-ci answered. It adds exactly one thing the install line cannot pass,
+     * {@code QITS_CI_RUNNER_BUILDKIT_STATE_VOLUME}: the runner's buildkitd defaults to
+     * {@code qits-buildkitd-state}, which this host's {@code qits-buildkitd} already holds. No
+     * network — docker's default bridge, as the install line starts it — and no registry lists:
+     * qits-ci hands a runner its registry mirrors on every Ack, all public names.
+     * <p>
      * <b>The registration token is an environment NAME on this line and a value only in the
      * process's own environment</b> — {@code -e NAME} hands docker the value from there, so it is
      * in no argv, no log and no {@code docker inspect} of a command line. It is masked as well.
@@ -2978,21 +2905,14 @@ public class PipelinePhases {
      * {@code client.json} of its state volume.
      *
      * @param token the registration token, or null for a runner that needs none
-     * @param plane the row's plane, as qits-ci answered it
      * @param url   where the runner dials qits-ci — see {@link #runnerUrl}
      */
     Cmd runnerRunCommand(String runnerId, String version, String image, int slots, String token,
-                         String plane, String url) {
-        String env = boot.config.envName();
-        boolean internal = INTERNAL_PLANE.equals(plane);
+                         String url) {
         List<String> command = new ArrayList<>(List.of(
                 "docker", "run", "-d",
                 "--name", runnerContainerName(runnerId, version),
-                "--restart", "unless-stopped"));
-        if (internal) {
-            command.addAll(List.of("--network", Boot.NETWORK));
-        }
-        command.addAll(List.of(
+                "--restart", "unless-stopped",
                 "--label", RUNNER_PROCESS_LABEL + "=" + runnerId,
                 "--label", RUNNER_VERSION_LABEL + "=" + version,
                 "-v", "/var/run/docker.sock:/var/run/docker.sock",
@@ -3003,12 +2923,6 @@ public class PipelinePhases {
         if (token != null) {
             command.add("-e");
             command.add(RUNNER_TOKEN_ENV);
-        }
-        if (internal) {
-            command.addAll(List.of(
-                    "-e", "QITS_CI_RUNNER_BUILDKIT_HTTP_REGISTRIES=" + runnerHttpRegistries(env),
-                    "-e", "QITS_CI_RUNNER_BUILDKIT_REGISTRY_MIRRORS="
-                            + runnerRegistryMirrors(boot.config)));
         }
         command.addAll(List.of(
                 "-e", "QITS_CI_RUNNER_BUILDKIT_STATE_VOLUME=" + RUNNER_BUILDKIT_STATE_VOLUME,
@@ -3032,8 +2946,8 @@ public class PipelinePhases {
      * like any other. It stays as the platform's default runner: nothing here or after it takes it
      * down again.
      * <p>
-     * <b>On the plane qits-ci chooses</b> — see {@link #INTERNAL_PLANE}: EDGE with a domain, through
-     * the edge the gate before this phase proved; INTERNAL, on qits-net, without one.
+     * <b>Through the public edge, like every runner</b> — the edge the gate before this phase
+     * proved. It declares no plane: EDGE is the only one qits-ci has.
      * <p>
      * <b>Not a deployment, and never one.</b> The runner rolls ITSELF over when qits-ci tells it a
      * newer version, by starting a successor container and leaving; a deployer replacing the same
@@ -3100,7 +3014,6 @@ public class PipelinePhases {
             int slots = boot.config.ciConcurrentBuildsEffective();
 
             String id;
-            String plane;
             String token = null;
             String url = null;
             boolean registered = false;
@@ -3120,13 +3033,10 @@ public class PipelinePhases {
                 record(recorded, id);
                 token = installToken(runner, "the create");
                 url = CiApi.runnerUrl(Json.text(runner, "installScript")).orElse(null);
-                plane = Json.text(runner, "plane");
                 ctx.log("  declared runner " + LOCALHOST_RUNNER + " (" + id + "): " + slots
-                        + " slots, " + plane + " plane, qits-ci's choice — recorded in "
-                        + recorded.file());
+                        + " slots — recorded in " + recorded.file());
             } else {
                 id = requireId(Json.text(decision.row(), "id"));
-                plane = Json.text(decision.row(), "plane");
                 registered = decision.row().path("registered").asBoolean(false);
                 if (!recorded.ciRunnerId().map(id::equals).orElse(false)) {
                     record(recorded, id);
@@ -3202,11 +3112,11 @@ public class PipelinePhases {
                 }
                 container = runnerContainerName(id, version);
                 if (url == null) {
-                    url = runnerUrl(plane, DomainName.of(boot.config), boot.config.envName());
+                    url = runnerUrl(DomainName.of(boot.config));
                 }
-                ctx.log("  " + container + ": " + plane + " plane, dialling " + url);
+                ctx.log("  " + container + ": dialling " + url);
                 Boot.must(boot.docker.run(runnerRunCommand(id, version, image, slots, token,
-                        plane, url), ctx::log), "the runner container did not start");
+                        url), ctx::log), "the runner container did not start");
             }
             boot.state.ciRunnerId = id;
             boot.state.ciRunnerContainer = container;

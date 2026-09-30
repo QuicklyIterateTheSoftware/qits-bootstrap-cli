@@ -96,20 +96,16 @@ class AcmeTest {
     }
 
     /**
-     * <b>A domain boot's runner needs a certificate it trusts, so only production passes.</b> The
-     * runner has no insecure mode and neither has docker for a TLS registry; staging issues from an
-     * untrusted root and off keeps the self-signed placeholder. Without a domain there is nothing to
-     * refuse: the runner stays on the platform's own network.
+     * <b>The runner needs a certificate it trusts, so only production passes.</b> The runner has
+     * no insecure mode and neither has docker for a TLS registry; staging issues from an untrusted
+     * root and off keeps the self-signed placeholder.
      */
     @Test
-    void aDomainBootRefusesEveryModeButProductionUpFront() {
-        assertThat(Acme.edgeRunnerRefusal(true, Acme.Mode.PRODUCTION)).isNull();
-        assertThat(Acme.edgeRunnerRefusal(true, Acme.Mode.STAGING))
+    void aBootRefusesEveryModeButProductionUpFront() {
+        assertThat(Acme.edgeRunnerRefusal(Acme.Mode.PRODUCTION)).isNull();
+        assertThat(Acme.edgeRunnerRefusal(Acme.Mode.STAGING))
                 .contains("QITS_ACME_MODE", "'staging'", "production", "untrusted staging root");
-        assertThat(Acme.edgeRunnerRefusal(true, Acme.Mode.OFF))
+        assertThat(Acme.edgeRunnerRefusal(Acme.Mode.OFF))
                 .contains("'off'", "self-signed placeholder");
-        for (Acme.Mode mode : Acme.Mode.values()) {
-            assertThat(Acme.edgeRunnerRefusal(false, mode)).isNull();
-        }
     }
 }

@@ -2182,22 +2182,18 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>Without a domain: the registry's name as this host's docker spells it, asked of the edge
-     * at its own alias</b> — the edge that has just replaced the seed one, routing the name a step
-     * image is pulled by.
+     * <b>Without a domain the gate can never pass</b>: the runner reaches the platform only through
+     * its public names. Refused before a poll, in the same words as the command's own refusal.
      */
     @Test
-    void withoutADomainTheGateAsksTheEdgeForTheRegistryName() throws Exception {
-        String asked = "GET http://prod-qits-edge:8080/v2/ as registry.prod.localhost:8080";
-        int[] polls = {0};
-        CannedHttp http = new CannedHttp().answer(asked, () -> ++polls[0] < 2
-                ? new Http.Response(503, "no route yet") : new Http.Response(401, ""));
+    void withoutADomainTheGateIsRefusedBeforeAnythingIsAsked() throws Exception {
+        CannedHttp http = new CannedHttp();
 
-        new PipelinePhases(edgeBoot(http, Map.of())).edgeReady().action()
-                .run(new CiLogStreamTest.Recorder());
-
-        assertThat(http.calls).containsOnly(asked);
-        assertThat(polls[0]).isEqualTo(2);
+        assertThatThrownBy(() -> new PipelinePhases(edgeBoot(http, Map.of())).edgeReady().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage(eu.wohlben.qits.cli.bootstrap.config.DomainName.missingRefusal(false));
+        assertThat(http.calls).isEmpty();
     }
 
     @Test
@@ -2231,8 +2227,8 @@ class PipelinePhasesTest {
 
     /** An install line shaped exactly as qits-ci's {@code RunnerInstallScript.line} renders it. */
     private static String installLine(String token) {
-        return "curl -fsSL -H 'Authorization: Bearer " + token + "' http://prod-qits-ci:8080"
-                + "/ci/api/runners/install.sh | sudo env QITS_CI_RUNNER_URL='http://prod-qits-ci:8080'"
+        return "curl -fsSL -H 'Authorization: Bearer " + token + "' https://ci.qits.qits-dev.eu"
+                + "/ci/api/runners/install.sh | sudo env QITS_CI_RUNNER_URL='https://ci.qits.qits-dev.eu'"
                 + " QITS_CI_RUNNER_ID='" + RUNNER_ID + "' QITS_CI_RUNNER_REGISTRATION_TOKEN='" + token
                 + "' QITS_CI_RUNNER_SLOTS='2' sh";
     }
@@ -2248,7 +2244,7 @@ class PipelinePhasesTest {
 
     private static String localhost(String id, boolean registered, boolean connected,
                                     String lastSeenAt) {
-        return row(id, "localhost", "INTERNAL", registered, connected, lastSeenAt, null);
+        return row(id, "localhost", "EDGE", registered, connected, lastSeenAt, null);
     }
 
     private static final String EXTERNAL = row(OTHER_ID, "qits-ci", "EDGE", true, true,
@@ -2372,10 +2368,14 @@ class PipelinePhasesTest {
         });
     }
 
-    /** The boot a runner phase runs in: a bootstrap client, so a machine write has a token. */
+    /**
+     * The boot a runner phase runs in: a bootstrap client, so a machine write has a token, and the
+     * domain every boot has.
+     */
     private Boot runnerPhaseBoot(ScriptedRunner runner, CannedHttp http, Map<String, String> env)
             throws Exception {
-        Map<String, String> config = new java.util.HashMap<>(env);
+        Map<String, String> config = new java.util.HashMap<>(DOMAIN);
+        config.putAll(env);
         config.putIfAbsent("QITS_CI_CONCURRENT_BUILDS", "2");
         http.answer("FORM http://prod-qits-idp:8080/idp/token", 200,
                 "{\"access_token\":\"bootstrap-bearer\",\"expires_in\":3600}");
@@ -2402,18 +2402,21 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>A COLD PLATFORM WITH NO DOMAIN, whole.</b> The row is declared with this host's slot count
-     * and no plane — qits-ci chooses, and with no domain it answers INTERNAL — its id is recorded
-     * before anything else, the volume's stale client is cleared, and the container is started with
-     * the install line's contract on qits-net, dialling the address the line names — element for
-     * element.
+     * <b>A COLD PLATFORM, whole: the container is the install line's own.</b> The row is declared
+     * with this host's slot count and no plane — EDGE is qits-ci's only one — its id is recorded
+     * before anything else, the volume's stale client is cleared, and the container is started
+     * dialling the public address the line names. No network — docker's default bridge — and no
+     * registry lists, which qits-ci hands a runner on every Ack. The one addition is the builder's
+     * own state volume, which the line cannot pass and without which the runner's buildkitd
+     * collides with this host's qits-buildkitd.
      */
     @Test
-    void aColdPlatformGetsItsRunnerDeclaredRecordedAndStarted() throws Exception {
+    void aColdPlatformGetsItsRunnerDeclaredRecordedAndStartedOnTheInstallLinesOwnContract()
+            throws Exception {
         ScriptedRunner runner = docker(List.of(), true, false);
         CannedHttp http = new CannedHttp()
                 .answer("GET " + RUNNERS, 200, listing())
-                .answer("POST " + RUNNERS, 201, row(RUNNER_ID, "localhost", "INTERNAL", false,
+                .answer("POST " + RUNNERS, 201, row(RUNNER_ID, "localhost", "EDGE", false,
                         false, null, "\"installScript\":"
                                 + eu.wohlben.qits.cli.bootstrap.api.Json.quote(installLine(TOKEN))));
         Boot boot = runnerPhaseBoot(runner, http, Map.of());
@@ -2433,27 +2436,14 @@ class PipelinePhasesTest {
                 "docker", "run", "-d",
                 "--name", RUNNER_CONTAINER,
                 "--restart", "unless-stopped",
-                "--network", "qits-net",
                 "--label", "qits.ci.runner.process=" + RUNNER_ID,
                 "--label", "qits.ci.runner.version=" + PIN,
                 "-v", "/var/run/docker.sock:/var/run/docker.sock",
                 "-v", "qits-ci-runner-state-7c1d2f0e:/var/lib/qits-ci-runner",
-                "-e", "QITS_CI_RUNNER_URL=http://prod-qits-ci:8080",
+                "-e", "QITS_CI_RUNNER_URL=https://ci.qits.qits-dev.eu",
                 "-e", "QITS_CI_RUNNER_ID=" + RUNNER_ID,
                 "-e", "QITS_CI_RUNNER_SLOTS=2",
                 "-e", "QITS_CI_RUNNER_REGISTRATION_TOKEN",
-                "-e", "QITS_CI_RUNNER_BUILDKIT_HTTP_REGISTRIES="
-                        + "prod-qits-artifacts:8080,prod-qits-mirror:8080",
-                "-e", "QITS_CI_RUNNER_BUILDKIT_REGISTRY_MIRRORS="
-                        + "registry.prod.localhost:8080=prod-qits-artifacts:8080,"
-                        + "mirror.prod.localhost:8080=prod-qits-mirror:8080,"
-                        + "registry.dev.localhost:8080=prod-qits-artifacts:8080,"
-                        + "mirror.dev.localhost:8080=prod-qits-mirror:8080,"
-                        + "localhost:8081=prod-qits-artifacts:8080,"
-                        + "localhost:8082=prod-qits-mirror:8080,"
-                        + "quay.io=prod-qits-mirror:8080/quay,"
-                        + "registry.access.redhat.com=prod-qits-mirror:8080/redhat,"
-                        + "docker.io=prod-qits-mirror:8080/hub",
                 "-e", "QITS_CI_RUNNER_BUILDKIT_STATE_VOLUME=qits-ci-runner-buildkitd-state",
                 RUNNER_IMAGE_REF);
         // The stale client goes before the runner starts; the volume stays.
@@ -2475,55 +2465,12 @@ class PipelinePhasesTest {
         assertThat(boot.state.ciRunnerContainer).isEqualTo(RUNNER_CONTAINER);
     }
 
-    /** An install line as qits-ci renders it for an EDGE runner: the public CI base. */
-    private static String edgeInstallLine(String token) {
-        return installLine(token).replace("http://prod-qits-ci:8080", "https://ci.qits.qits-dev.eu");
-    }
-
     /**
-     * <b>A COLD PLATFORM WITH A DOMAIN: qits-ci answers EDGE, and the container is the install
-     * line's own.</b> No network — docker's default bridge — and no registry lists, which qits-ci
-     * hands an EDGE runner on every Ack; the address is the public one the line names. The one
-     * addition is the builder's own state volume, which the line cannot pass and without which
-     * the runner's buildkitd collides with this host's qits-buildkitd.
+     * A registered runner restarted on its volume gets no install line, so its address is composed
+     * as qits-ci composes it: {@code https://ci.qits.<domain>}.
      */
     @Test
-    void aColdPlatformWithADomainGetsAnEdgeRunnerOnTheInstallLinesOwnContract() throws Exception {
-        ScriptedRunner runner = docker(List.of(), true, false);
-        CannedHttp http = new CannedHttp()
-                .answer("GET " + RUNNERS, 200, listing())
-                .answer("POST " + RUNNERS, 201, row(RUNNER_ID, "localhost", "EDGE", false,
-                        false, null, "\"installScript\":"
-                                + eu.wohlben.qits.cli.bootstrap.api.Json.quote(
-                                        edgeInstallLine(TOKEN))));
-        Boot boot = runnerPhaseBoot(runner, http, DOMAIN);
-
-        new PipelinePhases(boot).localhostRunner().action().run(new CiLogStreamTest.Recorder());
-
-        assertThat(http.bodies.get("POST " + RUNNERS))
-                .isEqualTo("{\"name\":\"localhost\",\"slots\":2}");
-        assertThat(runOf(runner)).containsExactly(
-                "docker", "run", "-d",
-                "--name", RUNNER_CONTAINER,
-                "--restart", "unless-stopped",
-                "--label", "qits.ci.runner.process=" + RUNNER_ID,
-                "--label", "qits.ci.runner.version=" + PIN,
-                "-v", "/var/run/docker.sock:/var/run/docker.sock",
-                "-v", "qits-ci-runner-state-7c1d2f0e:/var/lib/qits-ci-runner",
-                "-e", "QITS_CI_RUNNER_URL=https://ci.qits.qits-dev.eu",
-                "-e", "QITS_CI_RUNNER_ID=" + RUNNER_ID,
-                "-e", "QITS_CI_RUNNER_SLOTS=2",
-                "-e", "QITS_CI_RUNNER_REGISTRATION_TOKEN",
-                "-e", "QITS_CI_RUNNER_BUILDKIT_STATE_VOLUME=qits-ci-runner-buildkitd-state",
-                RUNNER_IMAGE_REF);
-    }
-
-    /**
-     * A registered EDGE runner restarted on its volume gets no install line, so its address is
-     * composed as qits-ci composes it for that plane: {@code https://ci.qits.<domain>}.
-     */
-    @Test
-    void aRegisteredEdgeRunnerIsRestartedDiallingThePublicName() throws Exception {
+    void aRegisteredRunnerIsRestartedDiallingThePublicName() throws Exception {
         record(RUNNER_ID);
         ScriptedRunner runner = docker(List.of(), true, true);
         CannedHttp http = new CannedHttp().answer("GET " + RUNNERS, 200, listing(row(RUNNER_ID,
@@ -2534,10 +2481,8 @@ class PipelinePhasesTest {
 
         assertThat(runOf(runner)).contains("QITS_CI_RUNNER_URL=https://ci.qits.qits-dev.eu")
                 .doesNotContain("--network", "QITS_CI_RUNNER_REGISTRATION_TOKEN");
-        assertThat(PipelinePhases.runnerUrl("INTERNAL", java.util.Optional.of("qits-dev.eu"),
-                "prod")).isEqualTo("http://prod-qits-ci:8080");
-        assertThatThrownBy(() -> PipelinePhases.runnerUrl("EDGE", java.util.Optional.empty(),
-                "prod")).hasMessageContaining("QITS_DOMAIN");
+        assertThatThrownBy(() -> PipelinePhases.runnerUrl(java.util.Optional.empty()))
+                .hasMessageContaining("QITS_DOMAIN");
     }
 
     /**
@@ -2641,7 +2586,7 @@ class PipelinePhasesTest {
         String rotate = "POST " + RUNNERS + "/" + RUNNER_ID + "/registration-token";
         CannedHttp http = new CannedHttp()
                 .answer("GET " + RUNNERS, 200, listing(localhost(RUNNER_ID, false, false, null)))
-                .answer(rotate, 200, row(RUNNER_ID, "localhost", "INTERNAL", false, false, null,
+                .answer(rotate, 200, row(RUNNER_ID, "localhost", "EDGE", false, false, null,
                         "\"installScript\":" + eu.wohlben.qits.cli.bootstrap.api.Json.quote(
                                 installLine("qits_tok_rotated789"))));
         Boot boot = runnerPhaseBoot(runner, http, Map.of());
@@ -2668,7 +2613,7 @@ class PipelinePhasesTest {
         String rotate = "POST " + RUNNERS + "/" + RUNNER_ID + "/registration-token";
         CannedHttp http = new CannedHttp()
                 .answer("GET " + RUNNERS, 200, listing(localhost(RUNNER_ID, false, false, null)))
-                .answer(rotate, 200, row(RUNNER_ID, "localhost", "INTERNAL", false, false, null,
+                .answer(rotate, 200, row(RUNNER_ID, "localhost", "EDGE", false, false, null,
                         "\"installScript\":" + eu.wohlben.qits.cli.bootstrap.api.Json.quote(
                                 installLine(TOKEN))));
         Boot boot = runnerPhaseBoot(runner, http, Map.of());
@@ -2800,7 +2745,7 @@ class PipelinePhasesTest {
         assertThat(runOf(runner)).isNull();
 
         CannedHttp tokenless = new CannedHttp().answer("GET " + RUNNERS, 200, listing())
-                .answer("POST " + RUNNERS, 201, row(RUNNER_ID, "localhost", "INTERNAL", false,
+                .answer("POST " + RUNNERS, 201, row(RUNNER_ID, "localhost", "EDGE", false,
                         false, null, "\"installScript\":\"curl | sh # secret-looking-body\""));
         Boot second = runnerPhaseBoot(runner, tokenless, Map.of());
 
@@ -2826,9 +2771,9 @@ class PipelinePhasesTest {
     @Test
     void aConnectedQuarantinedRunnerIsGreenlitAndThenProvenInService() throws Exception {
         List<String> listings = new ArrayList<>(List.of(
-                listing(row(RUNNER_ID, "localhost", "INTERNAL", true, true,
+                listing(row(RUNNER_ID, "localhost", "EDGE", true, true,
                         "2026-09-30T16:00:00Z", QUARANTINED)),
-                listing(row(RUNNER_ID, "localhost", "INTERNAL", true, true,
+                listing(row(RUNNER_ID, "localhost", "EDGE", true, true,
                         "2026-09-30T16:00:00Z", "\"quarantined\":false"))));
         String greenlight = "POST " + RUNNERS + "/" + RUNNER_ID + "/greenlight";
         CannedHttp http = new CannedHttp()
@@ -2851,7 +2796,7 @@ class PipelinePhasesTest {
     @Test
     void aRunnerAlreadyInServiceIsNotGreenlitAgain() throws Exception {
         CannedHttp http = new CannedHttp().answer("GET " + RUNNERS, 200,
-                listing(row(RUNNER_ID, "localhost", "INTERNAL", true, true,
+                listing(row(RUNNER_ID, "localhost", "EDGE", true, true,
                         "2026-09-30T16:00:00Z", "\"quarantined\":false")));
         Boot boot = runnerPhaseBoot(docker(List.of(), true, true), http, Map.of());
         boot.state.ciRunnerId = RUNNER_ID;
@@ -2866,7 +2811,7 @@ class PipelinePhasesTest {
     @Test
     void aRunnerStillQuarantinedAfterTheGreenlightStopsTheBoot() throws Exception {
         CannedHttp http = new CannedHttp()
-                .answer("GET " + RUNNERS, 200, listing(row(RUNNER_ID, "localhost", "INTERNAL",
+                .answer("GET " + RUNNERS, 200, listing(row(RUNNER_ID, "localhost", "EDGE",
                         true, true, "2026-09-30T16:00:00Z", QUARANTINED)))
                 .answer("POST " + RUNNERS + "/" + RUNNER_ID + "/greenlight", 200, "{}");
         Boot boot = runnerPhaseBoot(docker(List.of(), true, true), http, Map.of());
@@ -2879,7 +2824,7 @@ class PipelinePhasesTest {
                 .hasMessageContaining("awaiting its first health check");
 
         CannedHttp refused = new CannedHttp()
-                .answer("GET " + RUNNERS, 200, listing(row(RUNNER_ID, "localhost", "INTERNAL",
+                .answer("GET " + RUNNERS, 200, listing(row(RUNNER_ID, "localhost", "EDGE",
                         true, true, "2026-09-30T16:00:00Z", QUARANTINED)))
                 .answer("POST " + RUNNERS + "/" + RUNNER_ID + "/greenlight", 403, "admin only");
         Boot second = runnerPhaseBoot(docker(List.of(), true, true), refused, Map.of());
@@ -2944,31 +2889,5 @@ class PipelinePhasesTest {
         assertThat(other.observed()).contains(OTHER_ID);
         assertThat(PipelinePhases.runnerConnection(new Http.Response(503, "down"), RUNNER_ID)
                 .value()).isNull();
-    }
-
-    /**
-     * <b>The builder's two lists, on an environment that is not {@code dev} and a port that is not
-     * 8080.</b> The aliases are this environment's; the vhosts are spelled as this environment
-     * names them AND as every committed Dockerfile does, which is {@code dev} whatever the
-     * environment is called.
-     */
-    @Test
-    void theRunnersBuilderIsToldThisEnvironmentsAliases() throws Exception {
-        Boot boot = runnerBoot(docker(List.of(), true, true), new CannedHttp(),
-                Map.of("QITS_ENV_NAME", "dev"));
-
-        assertThat(PipelinePhases.runnerHttpRegistries("dev"))
-                .isEqualTo("dev-qits-artifacts:8080,dev-qits-mirror:8080");
-        // On dev the two spellings are one, and each source host appears once.
-        assertThat(PipelinePhases.runnerRegistryMirrors(boot.config)).isEqualTo(
-                "registry.dev.localhost:8080=dev-qits-artifacts:8080,"
-                        + "mirror.dev.localhost:8080=dev-qits-mirror:8080,"
-                        + "localhost:8081=dev-qits-artifacts:8080,"
-                        + "localhost:8082=dev-qits-mirror:8080,"
-                        + "quay.io=dev-qits-mirror:8080/quay,"
-                        + "registry.access.redhat.com=dev-qits-mirror:8080/redhat,"
-                        + "docker.io=dev-qits-mirror:8080/hub");
-        assertThat(PipelinePhases.runnerUrl("INTERNAL", java.util.Optional.empty(), "staging"))
-                .isEqualTo("http://staging-qits-ci:8080");
     }
 }

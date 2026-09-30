@@ -109,9 +109,7 @@ public class CiApi {
      * <b>Never {@link Http.Response#describe()} a successful answer</b>: its body carries the token.
      */
     public Http.Response createRunner(String name, int slots, String token) {
-        // NO PLANE, deliberately: qits-ci's default is EDGE where it knows the platform's domain
-        // and INTERNAL where it knows none, which is exactly the choice this runner needs. The
-        // answer says which it made.
+        // NO PLANE: EDGE is the only one qits-ci has.
         return http.postJson(base + "/api/runners",
                 Json.object("name", name, "slots", Json.verbatim(String.valueOf(slots))),
                 writer(token));
@@ -178,9 +176,8 @@ public class CiApi {
 
     /**
      * The install line's {@code QITS_CI_RUNNER_URL='…'}: where qits-ci tells THIS runner to dial it,
-     * composed for the plane it chose — the public {@code https://ci.qits.<domain>} on EDGE, its
-     * qits-net alias on INTERNAL. Read rather than composed again here, so the container is told
-     * what the line would have told it.
+     * the public {@code https://ci.qits.<domain>}. Read rather than composed again here, so the
+     * container is told what the line would have told it.
      */
     public static Optional<String> runnerUrl(String installScript) {
         if (installScript == null) {

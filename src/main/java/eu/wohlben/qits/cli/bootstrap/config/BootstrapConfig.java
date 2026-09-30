@@ -105,11 +105,11 @@ public interface BootstrapConfig {
      * <b>The domain this platform serves</b>, and the name the edge's Let's Encrypt certificate is
      * issued for.
      * <p>
-     * <b>Unset is the default and a supported state</b>, not a half-configured one: the edge
-     * publishes the one plain-HTTP port it always did. Everything the domain adds is absent rather
-     * than broken.
+     * <b>Required, though it has no default</b>: the platform addresses its services by subdomain
+     * and CI reaches it only through its public names, so a boot without one could never pass and
+     * {@code BootstrapCommand} refuses it up front ({@link DomainName#missingRefusal}).
      * <p>
-     * Set, the edge gets 80, 443 and a loopback management port with a certificate slot on a volume,
+     * The edge gets 80, 443 and a loopback management port with a certificate slot on a volume,
      * and a real Let's Encrypt certificate is ordered for the name. The closing report prints the
      * records the domain needs, which is why {@link #publicIp()} is mandatory beside this.
      * <p>
@@ -272,7 +272,7 @@ public interface BootstrapConfig {
 
     /**
      * How long the {@code edge-ready} gate waits for the platform's own edge to serve the names this
-     * host's runner dials — with a domain, over a TRUSTED certificate, which the edge orders itself
+     * host's runner dials — over a TRUSTED certificate, which the edge orders itself
      * and which Let's Encrypt usually issues within minutes of the records resolving.
      */
     @WithDefault("1800")

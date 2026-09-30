@@ -36,6 +36,31 @@ public final class DomainName {
                 .map(DomainName::checked);
     }
 
+    /**
+     * <b>A bootstrap without a domain can never pass, and says so before it starts.</b>
+     * <p>
+     * The platform addresses its services by subdomain, and CI reaches it only through its public
+     * names: qits-ci composes every address it hands a runner or a step from {@code QITS_DOMAIN},
+     * and without it hands out none — the register door answers 503 and every step fails
+     * {@code LAUNCH_FAILED EDGE_PLANE_UNCONFIGURED}. There is no internal plane to fall back to any
+     * more (qits-444), so a domain-less boot would pass the whole local build and then stop at the
+     * first thing CI has to do.
+     *
+     * @return the refusal, or null when there is nothing to refuse
+     */
+    public static String missingRefusal(boolean domain) {
+        if (domain) {
+            return null;
+        }
+        return "QITS_DOMAIN (--domain) is not set, and a bootstrap needs it. The platform addresses "
+                + "its services by subdomain, and CI reaches it only through its public names — "
+                + "https://ci.qits.<domain>, idp.qits.<domain>, registry.qits.<domain> — which "
+                + "qits-ci composes from this one value. Without it qits-ci gives this host's runner "
+                + "no address and launches no step, so the boot could never pass. Set QITS_DOMAIN "
+                + "(and QITS_PUBLIC_IP beside it) to a domain whose records resolve to this host, "
+                + "and rerun.";
+    }
+
     static String checked(String value) {
         if (!SHAPE.matcher(value).matches() || value.length() > 253
                 || Arrays.stream(value.split("\\.")).anyMatch(label -> label.length() > 63)) {
@@ -44,8 +69,7 @@ public final class DomainName {
                     + "least two labels, with no trailing dot and no scheme or path — qits.eu, "
                     + "qits-dev.eu. It becomes the name the edge's certificate is issued for and "
                     + "the name every record at your dns provider hangs under, so it is checked "
-                    + "here rather than later. Leave it unset to run without a domain: the edge "
-                    + "then stays on plain HTTP.");
+                    + "here rather than later.");
         }
         return value;
     }

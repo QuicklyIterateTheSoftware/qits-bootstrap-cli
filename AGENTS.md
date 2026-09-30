@@ -209,10 +209,10 @@ forced. Add to that list rather than deviating quietly.
 - **The door the runner dials is proved before it dials it, and a domain boot needs a real
   certificate.** `edge-ready` polls `https://{ci,idp,registry}.qits.<domain>` — qits-ci's own
   `RunnerAddresses` names — until each answers over a certificate the JVM trusts, bounded by
-  `QITS_EDGE_READY_TIMEOUT`; without a domain it asks the edge, at its alias, for the registry name
-  the host's docker pulls by (`Http.getAs`, because `java.net.http` will not send a `Host`).
-  `QITS_ACME_MODE` staging or off with a domain can never pass, so `BootstrapCommand` refuses it
-  before anything runs (`Acme.edgeRunnerRefusal`).
+  `QITS_EDGE_READY_TIMEOUT`. **A boot without a domain can never pass** — the platform is addressed
+  by subdomain and CI reaches it only through its public names — and neither can `QITS_ACME_MODE`
+  staging or off, so `BootstrapCommand` refuses both before anything runs
+  (`DomainName.missingRefusal`, `Acme.edgeRunnerRefusal`, exit 2) and `edge-ready` again.
 - **A rerun over a deployer-managed edge starts no bootstrap ingress.** Both ingress phases skip
   when the edge is a service under its bare alias or a `qits-pd-` container — `seedPlan`'s own test
   — because a second door would bind 80/443 against the platform's. With the edge deployed in the
@@ -381,11 +381,10 @@ forced. Add to that list rather than deviating quietly.
 - **This host's CI runner holds the socket as a CONTAINER, and never as a deployment.** qits-ci
   executes nothing itself, so `runner-localhost` starts the normal `qits/qits-ci-runner` image with
   a plain `docker run` — the install line's container contract — and the runner rolls itself over
-  from then on. It stays as the platform's default runner; nothing decommissions it. **The plane is
-  qits-ci's to choose, and the phase names none**: EDGE whenever qits-ci knows the domain (the
-  install line's container exactly, no network, plus a builder state volume of its own), INTERNAL
-  without one (`--network qits-net` and the alias-spelled registry lists — `INTERNAL_PLANE`, which
-  goes with qits-444). `QITS_CI_RUNNER_URL` is what the create's install line names. Do not give it
+  from then on. It stays as the platform's default runner; nothing decommissions it. **It is an EDGE
+  runner, the only plane qits-ci has** (qits-444 deleted INTERNAL), and the phase names none: the
+  install line's container exactly, no network, plus a builder state volume of its own.
+  `QITS_CI_RUNNER_URL` is what the create's install line names. Do not give it
   an extras block, a `DEPLOYABLES` entry or a stack service: a deployer replacing the container
   would race the runner's own rollover.
   **Whose runner it is decides whether anything is started**: the phase acts only when qits-ci lists
