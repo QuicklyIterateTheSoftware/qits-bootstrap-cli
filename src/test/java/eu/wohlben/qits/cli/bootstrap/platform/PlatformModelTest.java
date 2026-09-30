@@ -262,6 +262,9 @@ class PlatformModelTest {
         expected.put("ci-daemon", "qits-ci-daemon");
         expected.put("projects-daemon", "qits-projects-daemon");
         expected.put("workspace-daemon", "qits-workspace-daemon");
+        // The runner: its model name is the image's (qits/qits-ci-runner), and its repository is
+        // a daemon's.
+        expected.put("ci-runner", "qits-ci-runner-daemon");
         // The agent harness, born on 2026-09-08 under a name outside the grammar. The wrapper
         // declares it so, and the boot follows the wrapper.
         expected.put("coding-agents", "qits-coding-agents");
@@ -661,6 +664,52 @@ class PlatformModelTest {
         // Whole, and that is how the blob store is seeded: it is a module of this reactor.
         assertThat(PlatformModel.mavenModule("registries")).isEmpty();
         assertThat(PlatformModel.mavenModule("integrations-quarkus")).isEmpty();
+    }
+
+    /**
+     * <b>THE RUNNER IS A SEEDED REPOSITORY AND NEVER A DEPLOYABLE.</b> A cold boot needs its
+     * checkout — qits-ci pins the protocol jar out of it and the runner image is built from the
+     * pinned tag — and the bootstrap starts the runner itself, as a plain container. A
+     * {@code DEPLOYABLES} entry would hand it to the deployer, which has no deployments.yml to read
+     * for it and would wait an hour on a deployment nobody makes.
+     */
+    @Test
+    void theRunnerIsSeededAndNeitherDeployedNorReplayed() {
+        assertThat(PlatformModel.SEEDED_REPOS).contains("ci-runner");
+        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("ci-runner");
+        assertThat(PlatformModel.RELEASE_PUBLISHERS).doesNotContain("ci-runner");
+        assertThat(PlatformModel.repo("ci-runner")).isEqualTo("qits-ci-runner-daemon");
+        assertThat(PlatformModel.nameOf("qits-ci-runner-daemon")).isEqualTo("ci-runner");
+        assertThat(PlatformModel.repoPath("ci-runner")).isEqualTo("daemons/qits-ci-runner-daemon");
+        // Built from the tag qits-ci pins, so the checkout itself stays on main.
+        assertThat(PlatformModel.carriesVersionIdentity("ci-runner")).isFalse();
+    }
+
+    /**
+     * <b>A model name that says nothing of its kind answers from its repository's grammar.</b>
+     * {@code ci-runner} ends in no role, its repository is {@code qits-ci-runner-daemon}, and
+     * qits-projects holds it as a DAEMON — the adoption would otherwise hand it the SERVICE
+     * default.
+     */
+    @Test
+    void theRunnerIsADaemonByItsRepositorysName() {
+        assertThat(PlatformModel.archetype("ci-runner",
+                "components/qits-ci/qits-ci-runner-daemon")).isEqualTo("DAEMON");
+        // And the model names that say nothing answer as they always did.
+        assertThat(PlatformModel.archetype("ci", "components/qits-ci/qits-ci-service"))
+                .isEqualTo("SERVICE");
+        assertThat(PlatformModel.archetype("eventstream",
+                "components/qits-eventstream/qits-eventstream-javalib")).isEqualTo("LIBRARY");
+    }
+
+    /**
+     * The two wire contracts qits-ci compiles against, each one module of a daemon's reactor. The
+     * other module is a native binary, which the seed has no reason to build for a jar.
+     */
+    @Test
+    void theDaemonsAreSeededByTheirProtocolModule() {
+        assertThat(PlatformModel.mavenModule("ci-daemon")).isEqualTo("ci-daemon-protocol");
+        assertThat(PlatformModel.mavenModule("ci-runner")).isEqualTo("ci-runner-protocol");
     }
 
     @Test

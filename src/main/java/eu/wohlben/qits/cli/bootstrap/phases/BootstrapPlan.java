@@ -133,6 +133,16 @@ public final class BootstrapPlan {
                     "publish the qits-containers libraries into seed artifacts"));
             phases.add(seed.uiComponentsPublish());
             phases.add(seed.angularPublish());
+            // THE TWO WIRE CONTRACTS qits-ci COMPILES AGAINST, immediately before its image and
+            // for no other consumer. They are not libraries of the list above: each is one module
+            // of a daemon's reactor, published at the version the ci checkout PINS and built from
+            // that release tag, so neither is a checkout publish and neither has an order among
+            // the others — both resolve Maven Central alone. The runner's follows the daemon's
+            // because that is the order qits-ci's own pom names them in.
+            phases.add(seed.protocolPublish("ci-daemon", "qits-ci-daemon-protocol",
+                    "qits.ci-daemon-protocol.version"));
+            phases.add(seed.protocolPublish("ci-runner", "qits-ci-runner-protocol",
+                    "qits.ci-runner-protocol.version"));
             phases.add(seed.seedImage("ci"));
             phases.add(seed.seedImage("deployments"));
             phases.add(seed.seedImage("idp"));

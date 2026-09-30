@@ -77,6 +77,12 @@ public final class PinnedVersions {
      * host's event vocabulary and the orchestrator's client pair. {@link PlatformModel#mavenModule}
      * says which modules, and this reader uses that answer to decide which of a tag's own pins are
      * really needed.
+     * <p>
+     * <b>The two daemons are the same shape</b>: qits-ci pins {@code qits-ci-daemon-protocol} and
+     * {@code qits-ci-runner-protocol}, one module of each daemon's reactor. They are here so the
+     * closure says what is pinned rather than "no repository publishes it"; the publish itself is
+     * {@code SeedPhases.protocolPublish}, which builds the pinned tag and stops the boot where it
+     * is missing.
      */
     static final Map<String, String> PRODUCERS = Map.ofEntries(
             Map.entry("eventstream", "eventstream"),
@@ -91,6 +97,8 @@ public final class PinnedVersions {
             Map.entry("githost-events", "githost"),
             Map.entry("containers-client", "containers"),
             Map.entry("containers-core", "containers"),
+            Map.entry("ci-daemon-protocol", "ci-daemon"),
+            Map.entry("ci-runner-protocol", "ci-runner"),
             Map.entry("userflows", "userflows"),
             // One property for the harness reactor's two jars, spelled two ways: qits-workspace-
             // daemon says <qits.coding-agents.version>, qits-projects-daemon

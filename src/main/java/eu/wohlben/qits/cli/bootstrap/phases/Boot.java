@@ -48,7 +48,7 @@ public class Boot {
     public final BootstrapIngressLifecycle ingress;
     public final RunState state = new RunState();
 
-    public final Http http = new Http();
+    public final Http http;
     public final ArtifactsApi artifacts;
     /** The git host, a service of its own since the byte-plane split. */
     public final GitHostApi githost;
@@ -72,6 +72,16 @@ public class Boot {
      * daemon. Everything else is built exactly as the running program builds it.
      */
     Boot(BootstrapConfig config, RunLog log, ProcessRunner runner) {
+        this(config, log, runner, new Http());
+    }
+
+    /**
+     * And with the http given too — the other half of the same seam. A phase that asks the
+     * platform a question and then shells docker on the answer is only provable with both in a
+     * test's hands.
+     */
+    Boot(BootstrapConfig config, RunLog log, ProcessRunner runner, Http http) {
+        this.http = http;
         this.config = config;
         this.log = log;
         this.runner = runner;

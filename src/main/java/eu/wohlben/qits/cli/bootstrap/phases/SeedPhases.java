@@ -1249,6 +1249,143 @@ public class SeedPhases {
         });
     }
 
+    // --- the two wire contracts qits-ci compiles against -----------------------------------------
+
+    /** The Maven group every qits library is published under, as a path. */
+    static final String QITS_GROUP_PATH = "eu/wohlben/qits";
+
+    /**
+     * <b>The version of one protocol jar the ci checkout pins</b> — the value of a root-pom
+     * property such as {@code qits.ci-runner-protocol.version}.
+     * <p>
+     * It stops the boot rather than answering null, and says which of the three things is wrong:
+     * the property is gone, it names a snapshot, or it is a reference to something else. A cold
+     * boot can only publish what a release tag holds, so anything that is not a plain released
+     * version is a seed-image-ci that fails ten minutes later on a coordinate nobody can name.
+     */
+    static String protocolPin(String ciPom, String property) {
+        java.util.regex.Matcher pin = java.util.regex.Pattern.compile(
+                "<" + java.util.regex.Pattern.quote(property) + ">\\s*([^<]*?)\\s*</"
+                        + java.util.regex.Pattern.quote(property) + ">").matcher(ciPom);
+        if (!pin.find() || pin.group(1).isBlank()) {
+            throw new IllegalStateException("qits-ci's root pom carries no <" + property
+                    + "> — this boot does not know which protocol jar its image builds against");
+        }
+        String version = pin.group(1);
+        if (version.endsWith("-SNAPSHOT") || version.contains("$")) {
+            throw new IllegalStateException("qits-ci pins <" + property + "> to " + version
+                    + ", which is not a released version. A cold boot publishes the jar from its "
+                    + "release tag and nothing else — release the protocol, bump the pin and rerun");
+        }
+        return version;
+    }
+
+    /** Where one released jar sits in a Maven repository, relative to its root. */
+    static String protocolStorePath(String artifactId, String version) {
+        return QITS_GROUP_PATH + "/" + artifactId + "/" + version + "/" + artifactId + "-" + version
+                + ".jar";
+    }
+
+    /**
+     * One protocol module, built from its release tag, into the registries that still lack it.
+     * <p>
+     * <b>The file registry first</b>, for the reason the toolchain seed gives: it is the copy the
+     * next phase reads. One deploy per registry rather than one build copied twice, because
+     * {@code mvn deploy} is what writes the checksums and the metadata a Maven client expects
+     * beside a jar, and the module is a handful of records — the second build costs seconds.
+     */
+    String protocolScript(String repoName, String version, boolean toFileRegistry, boolean toStore,
+                          String authorization) {
+        StringBuilder script = new StringBuilder("set -eu\n").append(mavenSettings(authorization))
+                .append(MAVEN_PURGE_QITS);
+        String build = "cd " + publishTree(version)
+                + " && mvn -B -ntp -s /root/.m2/settings.xml deploy -DskipTests"
+                + mavenModuleArgs(repoName) + MAVEN_REPO_LOCAL;
+        if (toFileRegistry) {
+            script.append(build).append(" -DaltDeploymentRepository=seed::default::file:///repo\n");
+        }
+        if (toStore) {
+            script.append(build).append(" -DaltDeploymentRepository=qits::default::")
+                    .append(boot.config.artifactsUrl()).append("/maven/maven\n");
+        }
+        return script.toString();
+    }
+
+    /**
+     * <b>A wire contract qits-ci compiles against, published at the version qits-ci PINS — before
+     * {@code seed-image-ci}, which cannot be built without it.</b>
+     * <p>
+     * qits-ci's reactor dropped its own {@code ci-daemon-protocol} module for a dependency on the
+     * released jar, and took {@code qits-ci-runner-protocol} the same way: both are external
+     * coordinates now, and both belong to a daemon repository rather than to a library. No phase
+     * published either, so a cold boot died in the ci image build on
+     * {@code qits-ci-daemon-protocol:jar (absent)}. The live platform never saw it — its store
+     * holds every version ever released.
+     * <p>
+     * <b>The version is read out of the ci checkout, because that checkout is what is about to be
+     * built.</b> It is the value of a root-pom property, and it is rarely the daemon's newest
+     * release: the pin moves with a bump in qits-ci, days behind the daemon.
+     * <p>
+     * <b>Built from the release TAG and never from the daemon's working tree.</b> A released
+     * coordinate is immutable, and the store refuses to overwrite one; the checkout stands on main,
+     * whose pom says the daemon's NEWEST release and may carry commits past it, so the working
+     * tree is neither the pinned version nor provably any released one. A tag the clone does not
+     * hold stops the boot here, with the tag named, rather than in a native build that resolves
+     * nothing.
+     * <p>
+     * <b>BOTH registries, and the file registry first.</b> The seed image builds resolve through
+     * the bootstrap ingress, whose maven route serves the temporary file registry for the whole
+     * run — so a jar that reached only the store is a 404 to {@code seed-image-ci}, which is the
+     * toolchain seed's own lesson of 2026-09-05. The store needs it as well: qits-ci's release
+     * build, later in this boot, resolves from there. Whatever a registry already holds is left
+     * alone, one registry at a time.
+     *
+     * @param repoName    the model name of the daemon repository — {@code ci-daemon},
+     *                    {@code ci-runner}
+     * @param artifactId  the jar, {@code qits-ci-daemon-protocol}
+     * @param pomProperty the property in qits-ci's root pom that pins it
+     */
+    public Phase protocolPublish(String repoName, String artifactId, String pomProperty) {
+        return new Phase("publish-" + artifactId,
+                "publish " + artifactId + " at the version qits-ci pins", ctx -> {
+            String version = protocolPin(Files.readString(
+                    boot.state.repoDir("ci").resolve(PinnedVersions.ROOT_POM),
+                    StandardCharsets.UTF_8), pomProperty);
+            String repo = PlatformModel.repo(repoName);
+            if (boot.git.fileAt(boot.state.repoDir(repoName), version, PinnedVersions.ROOT_POM)
+                    == null) {
+                throw new IllegalStateException("qits-ci pins " + artifactId + " " + version
+                        + " and the " + repo + " checkout has no such tag, so there is nothing to "
+                        + "build the jar from. Fetch the tags of " + boot.state.repoDir(repoName)
+                        + " (git fetch --tags) and rerun");
+            }
+            boot.docker.ensureVolume(SEED_REPO_VOLUME, ctx::log);
+            boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
+            String path = protocolStorePath(artifactId, version);
+            boolean seeded = fileRegistryHolds(List.of(path)).contains(path);
+            boolean stored = boot.artifacts.mavenPublished(QITS_GROUP_PATH, artifactId, version,
+                    "jar");
+            ctx.log("  " + path + " — file registry: " + (seeded ? "held" : "to seed")
+                    + ", store: " + (stored ? "held" : "to publish"));
+            if (seeded && stored) {
+                ctx.skip(artifactId + " " + version + " is in both registries");
+            }
+            // The store half carries the publishing credential; the file registry is a file url
+            // and takes none.
+            String authorization = stored ? null : boot.publishAuthorization(ctx);
+            String cid = create(ctx, List.of(
+                    "docker", "create", "--network", Boot.NETWORK, "--user", "root",
+                    "--entrypoint", "sh", "-v", SEED_REPO_VOLUME + ":/repo",
+                    "-v", MAVEN_CACHE_MOUNT,
+                    "maven:3.9-eclipse-temurin-25",
+                    "-c", protocolScript(repoName, version, !seeded, !stored, authorization)),
+                    authorization);
+            copyTag(ctx, repoName, version, cid, publishTree(version));
+            startAndReap(ctx, cid, artifactId + " publish failed");
+            ctx.note(version);
+        });
+    }
+
     /**
      * The shared UI package, twice: the pinned version the checked-out lockfiles install, then
      * whatever the working tree is at now. Publish-if-absent makes both idempotent.
@@ -1485,7 +1622,8 @@ public class SeedPhases {
                                     StandardCharsets.UTF_8));
                     boot.docker.ensureVolume(SEED_REPO_VOLUME, ctx::log);
                     boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
-                    List<String> inFileRegistry = fileRegistryHolds(declared);
+                    List<String> inFileRegistry = fileRegistryHolds(declared.stream()
+                            .map(MuslToolchain.Tarball::storePath).toList());
                     List<Publish> wanted = new ArrayList<>();
                     for (MuslToolchain.Tarball tarball : declared) {
                         boolean seeded = inFileRegistry.contains(tarball.storePath());
@@ -1528,11 +1666,11 @@ public class SeedPhases {
      * themselves — so the question is a {@code test -f} in a throwaway container, on the image this
      * phase is about to use anyway.
      */
-    private List<String> fileRegistryHolds(List<MuslToolchain.Tarball> tarballs) {
+    private List<String> fileRegistryHolds(List<String> storePaths) {
         StringBuilder script = new StringBuilder();
-        for (MuslToolchain.Tarball tarball : tarballs) {
-            script.append("[ -f '/repo/").append(tarball.storePath()).append("' ] && echo '")
-                    .append(tarball.storePath()).append("'\n");
+        for (String path : storePaths) {
+            script.append("[ -f '/repo/").append(path).append("' ] && echo '")
+                    .append(path).append("'\n");
         }
         script.append("exit 0\n");
         ProcessResult result = boot.docker.run(Cmd.of(List.of("docker", "run", "--rm",

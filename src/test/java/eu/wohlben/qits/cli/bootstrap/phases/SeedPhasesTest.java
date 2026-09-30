@@ -1,10 +1,13 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
 import eu.wohlben.qits.cli.bootstrap.config.TestConfig;
+import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
+import eu.wohlben.qits.cli.bootstrap.engine.PhaseSkipped;
 import eu.wohlben.qits.cli.bootstrap.platform.MuslToolchain;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
+import eu.wohlben.qits.cli.bootstrap.proc.ScriptedRunner;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -17,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The phases shell docker and git, so a real bootstrap is their test. What is pure is tested here:
@@ -415,6 +419,181 @@ class SeedPhasesTest {
         assertThat(script.split("rm -rf /cache/repository", -1)).hasSize(2);
         // And the container's exit code is the FIRST failure's, not the last build's.
         assertThat(script).startsWith("set -eu\n");
+    }
+
+    // --- the two wire contracts qits-ci compiles against -----------------------------------------
+
+    private static final String CI_POM = """
+            <project>
+              <properties>
+                <qits.ci-daemon-protocol.version>2026.929.103640</qits.ci-daemon-protocol.version>
+                <qits.ci-runner-protocol.version>
+                    2026.930.132340
+                </qits.ci-runner-protocol.version>
+                <qits.eventstream.version>2026.929.142419</qits.eventstream.version>
+              </properties>
+            </project>
+            """;
+
+    /** The pin is the ci checkout's own property, whitespace and all. */
+    @Test
+    void theProtocolVersionIsTheOneTheCiCheckoutPins() {
+        assertThat(SeedPhases.protocolPin(CI_POM, "qits.ci-daemon-protocol.version"))
+                .isEqualTo("2026.929.103640");
+        assertThat(SeedPhases.protocolPin(CI_POM, "qits.ci-runner-protocol.version"))
+                .isEqualTo("2026.930.132340");
+    }
+
+    /**
+     * <b>Anything that is not a released version stops the boot, and says which thing it is.</b> A
+     * cold boot can only publish what a release tag holds: a snapshot has no tag, and a reference
+     * to another property is a value this reader cannot follow.
+     */
+    @Test
+    void aPinThatIsNotAReleaseStopsTheBootWithItsName() {
+        assertThatThrownBy(() -> SeedPhases.protocolPin(
+                "<qits.ci-runner-protocol.version>1.0.0-SNAPSHOT</qits.ci-runner-protocol.version>",
+                "qits.ci-runner-protocol.version"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("qits.ci-runner-protocol.version")
+                .hasMessageContaining("1.0.0-SNAPSHOT")
+                .hasMessageContaining("not a released version");
+        assertThatThrownBy(() -> SeedPhases.protocolPin(
+                "<qits.ci-runner-protocol.version>${revision}</qits.ci-runner-protocol.version>",
+                "qits.ci-runner-protocol.version"))
+                .hasMessageContaining("not a released version");
+        assertThatThrownBy(() -> SeedPhases.protocolPin("<project/>",
+                "qits.ci-daemon-protocol.version"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("carries no <qits.ci-daemon-protocol.version>");
+    }
+
+    /**
+     * <b>One module, from the tag's own tree, into BOTH registries — the file registry first.</b>
+     * The seed image builds resolve through the bootstrap ingress, which serves the file registry
+     * for the whole run, so a jar that reached only the store is a 404 to {@code seed-image-ci}.
+     */
+    @Test
+    void aProtocolJarIsBuiltFromItsTagIntoTheFileRegistryAndThenTheStore() {
+        SeedPhases phases = new SeedPhases(
+                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+
+        String script = phases.protocolScript("ci-runner", "2026.930.132340", true, true,
+                "Bearer publish-token");
+
+        assertThat(script).startsWith("set -eu\n");
+        assertThat(script.lines().filter(line -> line.startsWith("cd ")).toList())
+                .containsExactly(
+                        "cd /src@2026.930.132340 && mvn -B -ntp -s /root/.m2/settings.xml deploy "
+                                + "-DskipTests -pl ci-runner-protocol -am"
+                                + " -Dmaven.repo.local=/cache/repository"
+                                + " -DaltDeploymentRepository=seed::default::file:///repo",
+                        "cd /src@2026.930.132340 && mvn -B -ntp -s /root/.m2/settings.xml deploy "
+                                + "-DskipTests -pl ci-runner-protocol -am"
+                                + " -Dmaven.repo.local=/cache/repository"
+                                + " -DaltDeploymentRepository=qits::default::"
+                                + "http://prod-qits-artifacts:8080/artifacts/maven/maven");
+        // The store half presents the publishing credential under the id the target names.
+        assertThat(script).contains("<id>qits</id>").contains("<value>Bearer publish-token</value>");
+        // Never the working tree: the checkout's own /src is not in the script at all.
+        assertThat(script).doesNotContain("cd /src &&");
+        // And the daemon's contract is the daemon's module.
+        assertThat(phases.protocolScript("ci-daemon", "2026.929.103640", true, false, null))
+                .contains("-pl ci-daemon-protocol -am")
+                .doesNotContain("qits::default::");
+        assertThat(phases.protocolScript("ci-daemon", "2026.929.103640", false, true, null))
+                .doesNotContain("seed::default::");
+    }
+
+    private static final String RUNNER_PROTOCOL_JAR = "eu/wohlben/qits/qits-ci-runner-protocol/"
+            + "2026.930.132340/qits-ci-runner-protocol-2026.930.132340.jar";
+
+    private static final String STORE_JAR =
+            "GET http://prod-qits-artifacts:8080/artifacts/maven/maven/" + RUNNER_PROTOCOL_JAR;
+
+    /** A boot whose sources directory is this test's, holding a ci checkout that pins both jars. */
+    private Boot protocolBoot(ScriptedRunner runner, CannedHttp http) throws IOException {
+        Boot boot = new Boot(TestConfig.from(Map.of("QITS_MACHINE_AUTH", "0")),
+                new RunLog(temp.resolve("run.log")), runner, http);
+        boot.state.srcDir = temp.resolve("src");
+        boot.state.wrapperDir = temp;
+        Path ci = Files.createDirectories(boot.state.repoDir("ci"));
+        Files.writeString(ci.resolve("pom.xml"), CI_POM, StandardCharsets.UTF_8);
+        return boot;
+    }
+
+    private static void runProtocolPublish(Boot boot, PhaseContext ctx) throws Exception {
+        new SeedPhases(boot).protocolPublish("ci-runner", "qits-ci-runner-protocol",
+                "qits.ci-runner-protocol.version").action().run(ctx);
+    }
+
+    /**
+     * <b>A tag the clone does not hold stops the boot HERE, with the tag named.</b> The
+     * alternative is a ci image build that fails minutes later on a coordinate nothing published.
+     */
+    @Test
+    void aPinnedTagMissingFromTheDaemonCheckoutStopsTheBoot() throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command ->
+                command.contains("show") ? ScriptedRunner.failed("fatal: invalid object name")
+                        : ScriptedRunner.ok());
+        Boot boot = protocolBoot(runner, new CannedHttp());
+
+        assertThatThrownBy(() -> runProtocolPublish(boot, new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("qits-ci-runner-protocol 2026.930.132340")
+                .hasMessageContaining("qits-ci-runner-daemon")
+                .hasMessageContaining("no such tag");
+        // And nothing was started for a jar there is no source for.
+        assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker create"));
+    }
+
+    /** Both registries hold it: nothing is built, which is every warm rerun. */
+    @Test
+    void aProtocolJarBothRegistriesHoldIsNotPublishedAgain() throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command ->
+                command.contains("--rm") ? ScriptedRunner.ok(RUNNER_PROTOCOL_JAR)
+                        : ScriptedRunner.ok("<project/>"));
+        Boot boot = protocolBoot(runner, new CannedHttp().answer(STORE_JAR, 200, ""));
+
+        assertThatThrownBy(() -> runProtocolPublish(boot, new CiLogStreamTest.Recorder()))
+                .isInstanceOf(PhaseSkipped.class)
+                .hasMessageContaining("2026.930.132340 is in both registries");
+        assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker create"));
+    }
+
+    /**
+     * <b>The store holds it and the file registry does not — the state of every rerun whose worker
+     * rebuilt the file registry.</b> Only the missing half is written, the tag's tree is what goes
+     * into the container, and the volume the ingress serves is the one mounted.
+     */
+    @Test
+    void aProtocolJarTheFileRegistryLacksIsSeededFromTheTag() throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command -> {
+            String line = String.join(" ", command);
+            if (line.startsWith("docker create")) {
+                return ScriptedRunner.ok("cid-1");
+            }
+            // The file registry answers with nothing: the jar is not there.
+            return line.contains("--rm") ? ScriptedRunner.ok() : ScriptedRunner.ok("<project/>");
+        });
+        Boot boot = protocolBoot(runner, new CannedHttp().answer(STORE_JAR, 200, ""));
+
+        runProtocolPublish(boot, new CiLogStreamTest.Recorder());
+
+        List<String> create = runner.argv.stream()
+                .filter(command -> command.size() > 1 && command.get(1).equals("create"))
+                .findFirst().orElseThrow();
+        assertThat(create).containsSubsequence("--network", "qits-net")
+                .containsSubsequence("-v", "qits-maven-seed:/repo")
+                .containsSubsequence("-v", "qits-maven-cache:/cache");
+        assertThat(create.getLast()).contains("seed::default::file:///repo")
+                .doesNotContain("qits::default::");
+        // The tag is exported as a worktree and copied in beside nothing else.
+        assertThat(runner.lines()).anyMatch(line -> line.contains("worktree add")
+                && line.contains("2026.930.132340"));
+        assertThat(runner.lines()).anyMatch(line -> line.startsWith("docker cp ")
+                && line.endsWith("cid-1:/src@2026.930.132340"));
+        assertThat(runner.lines()).contains("docker start -a cid-1");
     }
 
     // --- what a publish presents at the store ----------------------------------------------------

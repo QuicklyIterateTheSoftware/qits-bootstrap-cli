@@ -275,9 +275,18 @@ public final class PlatformModel {
      * 2026-09-09 and now resolve as released jars from the platform's Maven registry. A boot that
      * did not know it cloned nothing, published nothing, and the two daemon release replays died
      * resolving a coordinate the fresh store had never seen.
+     * <p>
+     * <b>qits-ci-runner-daemon joined on 2026-09-30 (qits-588), beside ci-daemon and on its
+     * terms.</b> Since qits-506 qits-ci executes nothing itself, so a cold boot needs a runner
+     * before its first release replay — and the runner is a container this program starts with a
+     * plain {@code docker run}, never an application of the deployer: it has no deployments.yml and
+     * must not grow a {@link #DEPLOYABLES} entry. What the boot needs of the repository is a
+     * checkout: qits-ci pins {@code qits-ci-runner-protocol} out of it, and the runner image is
+     * built from the tag that pin names. The git-host repository and the main history are what let
+     * the platform release it afterwards.
      */
     public static final List<String> SEEDED_REPOS = List.of(
-            "oci", "oci-postgresql", "ci-daemon", "eventstream", "registries", "spa-ui-components",
+            "oci", "oci-postgresql", "ci-daemon", "ci-runner", "eventstream", "registries", "spa-ui-components",
             "userflows", "coding-agents", "spa-docs", "spa-deployments",
             "integrations-angular", "integrations-quarkus", "spa-projects",
             "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events",
@@ -413,7 +422,8 @@ public final class PlatformModel {
      */
     public static String repoPath(String name) {
         return switch (name) {
-            case "ci-daemon", "workspace-daemon", "projects-daemon" -> "daemons/" + repo(name);
+            case "ci-daemon", "ci-runner", "workspace-daemon", "projects-daemon" ->
+                    "daemons/" + repo(name);
             case "oci", "oci-postgresql", "oci-workspace", "oci-workspace-editor" ->
                     "images/" + repo(name);
             // Framework glue is shared code, so the integrations sit in libs/ like any other lib —
@@ -518,6 +528,16 @@ public final class PlatformModel {
         if (name.endsWith("-javalib") || name.endsWith("-jslib")) {
             return "LIBRARY";
         }
+        // The REPOSITORY's grammar next, for a model name that says nothing of its kind while its
+        // repository does: ci-runner is qits-ci-runner-daemon, and the model name — the image's,
+        // qits/qits-ci-runner — ends in no role at all.
+        String repository = repo(name);
+        if (!repository.equals(name) && !repository.equals("qits-" + name)) {
+            String kind = archetypeOfName(repository);
+            if (!"SERVICE".equals(kind)) {
+                return kind;
+            }
+        }
         if (LIBRARY_NAMES.contains(name)) {
             return "LIBRARY";
         }
@@ -566,6 +586,10 @@ public final class PlatformModel {
      * the two libraries and leaves the service to its own image build, which saves a native compile
      * inside a maven container and keeps a jar only one image loads out of the registry.
      * <p>
+     * <b>The two daemons are the same shape again, with the wire contract as the module.</b>
+     * qits-ci compiles against {@code qits-ci-daemon-protocol} and {@code qits-ci-runner-protocol}
+     * — plain jars — and the other module of each reactor is a native binary nobody resolves.
+     * <p>
      * {@code SeedPhases} turns this into {@code -pl <modules> -am}, and {@code -am} is not optional:
      * it carries the ROOT POM with the modules, and an artifact whose parent the registry does not
      * hold resolves nowhere.
@@ -574,6 +598,8 @@ public final class PlatformModel {
         return switch (name) {
             case "githost" -> "githost-events";
             case "containers" -> "core,client";
+            case "ci-daemon" -> "ci-daemon-protocol";
+            case "ci-runner" -> "ci-runner-protocol";
             default -> "";
         };
     }
@@ -620,6 +646,9 @@ public final class PlatformModel {
             // The environment tier's services.
             Map.entry("artifacts", "qits-artifacts-service"),
             Map.entry("ci", "qits-ci-service"),
+            // The runner: the model name is the image's (qits/qits-ci-runner) and the repository
+            // is the daemon's.
+            Map.entry("ci-runner", "qits-ci-runner-daemon"),
             Map.entry("containers", "qits-containers-service"),
             Map.entry("docs", "qits-docs-service"),
             Map.entry("githost", "qits-githost-service"),

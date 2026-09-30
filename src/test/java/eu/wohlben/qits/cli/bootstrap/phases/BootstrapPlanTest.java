@@ -50,6 +50,25 @@ class BootstrapPlanTest {
         assertThat(phases).allSatisfy(phase -> assertThat(phase.title()).isNotBlank());
     }
 
+    /**
+     * <b>The two protocol jars land immediately before the ci image, and nowhere on a warm
+     * rerun.</b> qits-ci pins both as released coordinates, so its image build resolves nothing
+     * until they are published; a run that builds no image publishes neither.
+     */
+    @Test
+    void theProtocolJarsArePublishedImmediatelyBeforeTheCiImage() {
+        List<String> ids = ids(plan(Map.of()));
+
+        int ci = ids.indexOf("seed-image-ci");
+        assertThat(ids.subList(ci - 2, ci)).containsExactly(
+                "publish-qits-ci-daemon-protocol", "publish-qits-ci-runner-protocol");
+        // After the store answers: half of each publish lands there.
+        assertThat(ids).containsSubsequence("seed-artifacts", "publish-qits-ci-daemon-protocol");
+
+        assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1")))).doesNotContain(
+                "publish-qits-ci-daemon-protocol", "publish-qits-ci-runner-protocol");
+    }
+
     @Test
     void theSeedOrderIsTheOneTheDependenciesForce() {
         List<String> ids = ids(plan(Map.of()));
