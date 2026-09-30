@@ -108,9 +108,12 @@ public class CiApi {
      * <p>
      * <b>Never {@link Http.Response#describe()} a successful answer</b>: its body carries the token.
      */
-    public Http.Response createRunner(String name, String plane, int slots, String token) {
+    public Http.Response createRunner(String name, int slots, String token) {
+        // NO PLANE, deliberately: qits-ci's default is EDGE where it knows the platform's domain
+        // and INTERNAL where it knows none, which is exactly the choice this runner needs. The
+        // answer says which it made.
         return http.postJson(base + "/api/runners",
-                Json.object("name", name, "plane", plane, "slots", Json.verbatim(String.valueOf(slots))),
+                Json.object("name", name, "slots", Json.verbatim(String.valueOf(slots))),
                 writer(token));
     }
 
@@ -172,6 +175,22 @@ public class CiApi {
         Matcher token = REGISTRATION_TOKEN.matcher(installScript);
         return token.find() ? Optional.of(token.group(1)) : Optional.empty();
     }
+
+    /**
+     * The install line's {@code QITS_CI_RUNNER_URL='…'}: where qits-ci tells THIS runner to dial it,
+     * composed for the plane it chose — the public {@code https://ci.qits.<domain>} on EDGE, its
+     * qits-net alias on INTERNAL. Read rather than composed again here, so the container is told
+     * what the line would have told it.
+     */
+    public static Optional<String> runnerUrl(String installScript) {
+        if (installScript == null) {
+            return Optional.empty();
+        }
+        Matcher url = RUNNER_URL.matcher(installScript);
+        return url.find() ? Optional.of(url.group(1)) : Optional.empty();
+    }
+
+    private static final Pattern RUNNER_URL = Pattern.compile("QITS_CI_RUNNER_URL='([^']+)'");
 
     private static final Pattern REGISTRATION_TOKEN =
             Pattern.compile("QITS_CI_RUNNER_REGISTRATION_TOKEN='([^']+)'");

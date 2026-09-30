@@ -115,17 +115,18 @@ class CiApiTest {
      * off and there is none.
      */
     @Test
-    void aRunnerIsDeclaredWithItsPlaneAndSlotsAsAMachineWrite() {
+    void aRunnerIsDeclaredWithItsSlotsAndQitsCisPlaneAsAMachineWrite() {
         RecordingHttp http = new RecordingHttp();
         CiApi ci = new CiApi(http, "http://ci/ci");
 
-        ci.createRunner("localhost", "INTERNAL", 2, "bootstrap-bearer");
+        ci.createRunner("localhost", 2, "bootstrap-bearer");
 
         assertThat(http.url).isEqualTo("http://ci/ci/api/runners");
-        assertThat(http.body).isEqualTo("{\"name\":\"localhost\",\"plane\":\"INTERNAL\",\"slots\":2}");
+        // No plane: qits-ci's default is the one this runner needs — EDGE with a domain.
+        assertThat(http.body).isEqualTo("{\"name\":\"localhost\",\"slots\":2}");
         assertThat(http.headers).containsExactly(Map.entry("Authorization", "Bearer bootstrap-bearer"));
 
-        ci.createRunner("localhost", "INTERNAL", 2, null);
+        ci.createRunner("localhost", 2, null);
         assertThat(http.headers).containsEntry("X-Qits-Roles", "qits:admin")
                 .doesNotContainKey("Authorization");
     }
@@ -166,6 +167,21 @@ class CiApiTest {
                 + "QITS_CI_RUNNER_SLOTS='2' sh")).contains("qits_tok_abc-123_DEF");
         assertThat(CiApi.registrationToken("curl … | sh")).isEmpty();
         assertThat(CiApi.registrationToken(null)).isEmpty();
+    }
+
+    /**
+     * The install line names where the runner dials — qits-ci's composition for the plane it
+     * chose — and the container is told exactly that. The CI base in the curl is the same value,
+     * but the variable is what the runner reads.
+     */
+    @Test
+    void theRunnerUrlIsReadOutOfTheInstallLine() {
+        assertThat(CiApi.runnerUrl("curl -fsSL -H 'Authorization: Bearer t' "
+                + "https://ci.qits.qits-dev.eu/ci/api/runners/install.sh | sudo env "
+                + "QITS_CI_RUNNER_URL='https://ci.qits.qits-dev.eu' QITS_CI_RUNNER_ID='r-1' sh"))
+                .contains("https://ci.qits.qits-dev.eu");
+        assertThat(CiApi.runnerUrl("curl … | sh")).isEmpty();
+        assertThat(CiApi.runnerUrl(null)).isEmpty();
     }
 
     /** A listing that did not answer names no runner — which a caller must not read as "none". */

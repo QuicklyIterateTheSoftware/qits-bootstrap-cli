@@ -2402,9 +2402,11 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>A COLD PLATFORM, whole.</b> The row is declared INTERNAL with this host's slot count, its
-     * id is recorded before anything else, the volume's stale client is cleared, and the container
-     * is started with the install line's contract on qits-net — element for element.
+     * <b>A COLD PLATFORM WITH NO DOMAIN, whole.</b> The row is declared with this host's slot count
+     * and no plane — qits-ci chooses, and with no domain it answers INTERNAL — its id is recorded
+     * before anything else, the volume's stale client is cleared, and the container is started with
+     * the install line's contract on qits-net, dialling the address the line names — element for
+     * element.
      */
     @Test
     void aColdPlatformGetsItsRunnerDeclaredRecordedAndStarted() throws Exception {
@@ -2420,7 +2422,7 @@ class PipelinePhasesTest {
         new PipelinePhases(boot).localhostRunner().action().run(ctx);
 
         assertThat(http.bodies.get("POST " + RUNNERS))
-                .isEqualTo("{\"name\":\"localhost\",\"plane\":\"INTERNAL\",\"slots\":2}");
+                .isEqualTo("{\"name\":\"localhost\",\"slots\":2}");
         // The machine write presents this run's own token — qits:system, audience qits-platform.
         assertThat(http.headers.get("POST " + RUNNERS))
                 .containsEntry("Authorization", "Bearer bootstrap-bearer");
@@ -2471,6 +2473,71 @@ class PipelinePhasesTest {
 
         assertThat(boot.state.ciRunnerId).isEqualTo(RUNNER_ID);
         assertThat(boot.state.ciRunnerContainer).isEqualTo(RUNNER_CONTAINER);
+    }
+
+    /** An install line as qits-ci renders it for an EDGE runner: the public CI base. */
+    private static String edgeInstallLine(String token) {
+        return installLine(token).replace("http://prod-qits-ci:8080", "https://ci.qits.qits-dev.eu");
+    }
+
+    /**
+     * <b>A COLD PLATFORM WITH A DOMAIN: qits-ci answers EDGE, and the container is the install
+     * line's own.</b> No network — docker's default bridge — and no registry lists, which qits-ci
+     * hands an EDGE runner on every Ack; the address is the public one the line names. The one
+     * addition is the builder's own state volume, which the line cannot pass and without which
+     * the runner's buildkitd collides with this host's qits-buildkitd.
+     */
+    @Test
+    void aColdPlatformWithADomainGetsAnEdgeRunnerOnTheInstallLinesOwnContract() throws Exception {
+        ScriptedRunner runner = docker(List.of(), true, false);
+        CannedHttp http = new CannedHttp()
+                .answer("GET " + RUNNERS, 200, listing())
+                .answer("POST " + RUNNERS, 201, row(RUNNER_ID, "localhost", "EDGE", false,
+                        false, null, "\"installScript\":"
+                                + eu.wohlben.qits.cli.bootstrap.api.Json.quote(
+                                        edgeInstallLine(TOKEN))));
+        Boot boot = runnerPhaseBoot(runner, http, DOMAIN);
+
+        new PipelinePhases(boot).localhostRunner().action().run(new CiLogStreamTest.Recorder());
+
+        assertThat(http.bodies.get("POST " + RUNNERS))
+                .isEqualTo("{\"name\":\"localhost\",\"slots\":2}");
+        assertThat(runOf(runner)).containsExactly(
+                "docker", "run", "-d",
+                "--name", RUNNER_CONTAINER,
+                "--restart", "unless-stopped",
+                "--label", "qits.ci.runner.process=" + RUNNER_ID,
+                "--label", "qits.ci.runner.version=" + PIN,
+                "-v", "/var/run/docker.sock:/var/run/docker.sock",
+                "-v", "qits-ci-runner-state-7c1d2f0e:/var/lib/qits-ci-runner",
+                "-e", "QITS_CI_RUNNER_URL=https://ci.qits.qits-dev.eu",
+                "-e", "QITS_CI_RUNNER_ID=" + RUNNER_ID,
+                "-e", "QITS_CI_RUNNER_SLOTS=2",
+                "-e", "QITS_CI_RUNNER_REGISTRATION_TOKEN",
+                "-e", "QITS_CI_RUNNER_BUILDKIT_STATE_VOLUME=qits-ci-runner-buildkitd-state",
+                RUNNER_IMAGE_REF);
+    }
+
+    /**
+     * A registered EDGE runner restarted on its volume gets no install line, so its address is
+     * composed as qits-ci composes it for that plane: {@code https://ci.qits.<domain>}.
+     */
+    @Test
+    void aRegisteredEdgeRunnerIsRestartedDiallingThePublicName() throws Exception {
+        record(RUNNER_ID);
+        ScriptedRunner runner = docker(List.of(), true, true);
+        CannedHttp http = new CannedHttp().answer("GET " + RUNNERS, 200, listing(row(RUNNER_ID,
+                "localhost", "EDGE", true, false, "2026-09-30T16:00:00Z", null)));
+        Boot boot = runnerPhaseBoot(runner, http, DOMAIN);
+
+        new PipelinePhases(boot).localhostRunner().action().run(new CiLogStreamTest.Recorder());
+
+        assertThat(runOf(runner)).contains("QITS_CI_RUNNER_URL=https://ci.qits.qits-dev.eu")
+                .doesNotContain("--network", "QITS_CI_RUNNER_REGISTRATION_TOKEN");
+        assertThat(PipelinePhases.runnerUrl("INTERNAL", java.util.Optional.of("qits-dev.eu"),
+                "prod")).isEqualTo("http://prod-qits-ci:8080");
+        assertThatThrownBy(() -> PipelinePhases.runnerUrl("EDGE", java.util.Optional.empty(),
+                "prod")).hasMessageContaining("QITS_DOMAIN");
     }
 
     /**
@@ -2901,6 +2968,7 @@ class PipelinePhasesTest {
                         + "quay.io=dev-qits-mirror:8080/quay,"
                         + "registry.access.redhat.com=dev-qits-mirror:8080/redhat,"
                         + "docker.io=dev-qits-mirror:8080/hub");
-        assertThat(PipelinePhases.runnerUrl("staging")).isEqualTo("http://staging-qits-ci:8080");
+        assertThat(PipelinePhases.runnerUrl("INTERNAL", java.util.Optional.empty(), "staging"))
+                .isEqualTo("http://staging-qits-ci:8080");
     }
 }

@@ -2771,12 +2771,18 @@ public class PipelinePhases {
     static final String LOCALHOST_RUNNER = "localhost";
 
     /**
-     * Where the runner and its steps reach the platform. INTERNAL, on qits-net: it is a container
-     * on the very host the platform's aliases resolve on, so the public names would be a detour
-     * through the edge for every clone and every publish — and on a cold boot the public door is
-     * still the bootstrap ingress, which routes no API at all.
+     * <b>The plane is qits-ci's to choose, and this program names none.</b> A runner declared with
+     * no plane is EDGE whenever qits-ci knows the platform's public domain and INTERNAL where it
+     * knows none ({@code CiRunnerController.defaultPlane}), and the owner's ruling is that this
+     * host's runner is EDGE whenever qits-ci will give one: a runner goes through the public edge
+     * like every other, and the {@code edge-ready} gate has just proved that edge serves it.
+     * <p>
+     * <b>INTERNAL is the no-domain answer, and it is the one branch that still puts the runner on
+     * qits-net</b> — the qits-net aliases are the only addresses there are then, and the runner's
+     * builder is told how to reach the registry and the mirror by them. qits-444 deletes that plane
+     * in qits-ci; everything this constant guards goes with it.
      */
-    static final String LOCALHOST_PLANE = "INTERNAL";
+    static final String INTERNAL_PLANE = "INTERNAL";
 
     /** The runner's own label. Never {@code qits.ci.runner}, which its boot sweep removes. */
     static final String RUNNER_PROCESS_LABEL = "qits.ci.runner.process";
@@ -2894,9 +2900,21 @@ public class PipelinePhases {
         return "qits-ci-runner-state-" + id8(runnerId);
     }
 
-    /** Where the runner dials qits-ci: the service's own alias, never the edge. */
-    static String runnerUrl(String envName) {
-        return "http://" + PlatformModel.wireAlias("ci", envName) + ":8080";
+    /**
+     * <b>Where the runner dials qits-ci, when qits-ci has not just said so.</b> The install line a
+     * create or a rotation answers names it ({@code QITS_CI_RUNNER_URL}) and is always preferred;
+     * a registered runner restarted on its volume gets no line, so the address is composed the way
+     * qits-ci composes it for the row's plane — {@code RunnerAddresses.ciBase}: the public
+     * {@code https://ci.qits.<domain>} on EDGE, the service's own alias on INTERNAL.
+     */
+    static String runnerUrl(String plane, Optional<String> domain, String envName) {
+        if (INTERNAL_PLANE.equals(plane)) {
+            return "http://" + PlatformModel.wireAlias("ci", envName) + ":8080";
+        }
+        return "https://ci." + PlatformModel.PROJECT + "." + domain.orElseThrow(() ->
+                new IllegalStateException("qits-ci's runner " + LOCALHOST_RUNNER + " is on the "
+                        + plane + " plane and this boot names no domain to reach it by — rerun "
+                        + "with the QITS_DOMAIN qits-ci was deployed with"));
     }
 
     /**
@@ -2938,12 +2956,21 @@ public class PipelinePhases {
     }
 
     /**
-     * <b>THE CONTAINER CONTRACT — the install line's, plus the network.</b> docker's restart policy
-     * is the supervisor; the socket is how the runner starts its steps and, when told to update,
-     * its own successor; the volume holds its client; the two labels are what a rollover finds its
-     * predecessor by. {@code --network qits-net} is the one thing the install line does not say,
-     * and it survives a self-update: the successor is started on the network its predecessor is on.
-     * <p>
+     * <b>THE CONTAINER CONTRACT — the install line's.</b> docker's restart policy is the
+     * supervisor; the socket is how the runner starts its steps and, when told to update, its own
+     * successor; the volume holds its client; the two labels are what a rollover finds its
+     * predecessor by. That is {@code runner-install.sh}'s {@code docker run}, element for element,
+     * with the address and the plane qits-ci answered:
+     * <ul>
+     *   <li><b>EDGE</b> adds exactly one thing the install line cannot pass,
+     *       {@code QITS_CI_RUNNER_BUILDKIT_STATE_VOLUME}: the runner's buildkitd defaults to
+     *       {@code qits-buildkitd-state}, which this host's {@code qits-buildkitd} already holds.
+     *       No network — docker's default bridge, as the install line starts it — and no registry
+     *       lists: qits-ci hands an EDGE runner its registry mirrors on every Ack, all public names.
+     *   <li><b>INTERNAL</b> adds {@code --network qits-net}, which survives a self-update (the
+     *       successor is started on the network its predecessor is on), and the builder's two
+     *       registry lists spelled with this platform's aliases. See {@link #INTERNAL_PLANE}.
+     * </ul>
      * <b>The registration token is an environment NAME on this line and a value only in the
      * process's own environment</b> — {@code -e NAME} hands docker the value from there, so it is
      * in no argv, no log and no {@code docker inspect} of a command line. It is masked as well.
@@ -2951,29 +2978,39 @@ public class PipelinePhases {
      * {@code client.json} of its state volume.
      *
      * @param token the registration token, or null for a runner that needs none
+     * @param plane the row's plane, as qits-ci answered it
+     * @param url   where the runner dials qits-ci — see {@link #runnerUrl}
      */
-    Cmd runnerRunCommand(String runnerId, String version, String image, int slots, String token) {
+    Cmd runnerRunCommand(String runnerId, String version, String image, int slots, String token,
+                         String plane, String url) {
         String env = boot.config.envName();
+        boolean internal = INTERNAL_PLANE.equals(plane);
         List<String> command = new ArrayList<>(List.of(
                 "docker", "run", "-d",
                 "--name", runnerContainerName(runnerId, version),
-                "--restart", "unless-stopped",
-                "--network", Boot.NETWORK,
+                "--restart", "unless-stopped"));
+        if (internal) {
+            command.addAll(List.of("--network", Boot.NETWORK));
+        }
+        command.addAll(List.of(
                 "--label", RUNNER_PROCESS_LABEL + "=" + runnerId,
                 "--label", RUNNER_VERSION_LABEL + "=" + version,
                 "-v", "/var/run/docker.sock:/var/run/docker.sock",
                 "-v", runnerStateVolume(runnerId) + ":" + RUNNER_STATE_DIR,
-                "-e", "QITS_CI_RUNNER_URL=" + runnerUrl(env),
+                "-e", "QITS_CI_RUNNER_URL=" + url,
                 "-e", "QITS_CI_RUNNER_ID=" + runnerId,
                 "-e", "QITS_CI_RUNNER_SLOTS=" + slots));
         if (token != null) {
             command.add("-e");
             command.add(RUNNER_TOKEN_ENV);
         }
+        if (internal) {
+            command.addAll(List.of(
+                    "-e", "QITS_CI_RUNNER_BUILDKIT_HTTP_REGISTRIES=" + runnerHttpRegistries(env),
+                    "-e", "QITS_CI_RUNNER_BUILDKIT_REGISTRY_MIRRORS="
+                            + runnerRegistryMirrors(boot.config)));
+        }
         command.addAll(List.of(
-                "-e", "QITS_CI_RUNNER_BUILDKIT_HTTP_REGISTRIES=" + runnerHttpRegistries(env),
-                "-e", "QITS_CI_RUNNER_BUILDKIT_REGISTRY_MIRRORS="
-                        + runnerRegistryMirrors(boot.config),
                 "-e", "QITS_CI_RUNNER_BUILDKIT_STATE_VOLUME=" + RUNNER_BUILDKIT_STATE_VOLUME,
                 image));
         Cmd run = Cmd.of(command);
@@ -2984,22 +3021,26 @@ public class PipelinePhases {
     }
 
     /**
-     * <b>THIS HOST'S CI RUNNER, started as a plain container on qits-net — before the first run
-     * this boot asks for.</b>
+     * <b>THIS HOST'S CI RUNNER, started as a plain container — after the platform is up and
+     * before the first run this boot asks for.</b>
      * <p>
      * <b>Why a cold start does this at all.</b> qits-ci has no executor of its own (qits-506): a
      * run is a connected runner's or nobody's. Every runner elsewhere is a container a person
-     * starts with the install line; a platform that is being made has no person and no public
-     * door yet, so this program is the one that starts the first — the normal runner image, with
-     * the install line's own container contract, registering itself at qits-ci's own alias with a
-     * registration token like any other.
+     * starts with the install line; on a platform that is being made there is no person, so this
+     * program starts the first — the normal runner image, with the install line's own container
+     * contract, registering at the address qits-ci's own answer names with a registration token
+     * like any other. It stays as the platform's default runner: nothing here or after it takes it
+     * down again.
+     * <p>
+     * <b>On the plane qits-ci chooses</b> — see {@link #INTERNAL_PLANE}: EDGE with a domain, through
+     * the edge the gate before this phase proved; INTERNAL, on qits-net, without one.
      * <p>
      * <b>Not a deployment, and never one.</b> The runner rolls ITSELF over when qits-ci tells it a
      * newer version, by starting a successor container and leaving; a deployer replacing the same
      * container would be two actors racing to remove it. So it is in no stack file, no extras
-     * block and no {@code DEPLOYABLES} entry, and the seed's cutovers pass it by: the row and its
-     * client are rows of qits-ci's database, which the deployed successor reads at the same alias,
-     * and the runner simply redials.
+     * block and no {@code DEPLOYABLES} entry, and the train's cutovers pass it by: the row and its
+     * client are rows of qits-ci's database, which every successor of qits-ci reads, and the runner
+     * simply redials.
      * <p>
      * <b>{@link #runnerDecision} is asked first, and a listing that is not ours ends the phase
      * there.</b> Everything below runs only for a runner this installation declared.
@@ -3021,7 +3062,7 @@ public class PipelinePhases {
      */
     public Phase localhostRunner() {
         return new Phase("runner-localhost",
-                "start this host's CI runner as a container on " + Boot.NETWORK, ctx -> {
+                "start this host's CI runner as a container", ctx -> {
             boot.state.ciRunnerId = null;
             boot.state.ciRunnerContainer = null;
             BootstrapState recorded = new BootstrapState(
@@ -3059,11 +3100,13 @@ public class PipelinePhases {
             int slots = boot.config.ciConcurrentBuildsEffective();
 
             String id;
+            String plane;
             String token = null;
+            String url = null;
             boolean registered = false;
             if (decision.claim() == RunnerClaim.DECLARE) {
-                Http.Response created = boot.ci.createRunner(LOCALHOST_RUNNER, LOCALHOST_PLANE,
-                        slots, boot.bootstrapToken());
+                Http.Response created = boot.ci.createRunner(LOCALHOST_RUNNER, slots,
+                        boot.bootstrapToken());
                 if (created.status() != 201) {
                     // Only a refusal is described: a 2xx body carries the token.
                     throw new IllegalStateException("declaring runner " + LOCALHOST_RUNNER
@@ -3076,11 +3119,14 @@ public class PipelinePhases {
                 // this row is ours, whatever happens to this process.
                 record(recorded, id);
                 token = installToken(runner, "the create");
+                url = CiApi.runnerUrl(Json.text(runner, "installScript")).orElse(null);
+                plane = Json.text(runner, "plane");
                 ctx.log("  declared runner " + LOCALHOST_RUNNER + " (" + id + "): " + slots
-                        + " slots, " + LOCALHOST_PLANE + " plane — recorded in "
+                        + " slots, " + plane + " plane, qits-ci's choice — recorded in "
                         + recorded.file());
             } else {
                 id = requireId(Json.text(decision.row(), "id"));
+                plane = Json.text(decision.row(), "plane");
                 registered = decision.row().path("registered").asBoolean(false);
                 if (!recorded.ciRunnerId().map(id::equals).orElse(false)) {
                     record(recorded, id);
@@ -3124,7 +3170,9 @@ public class PipelinePhases {
                         throw new IllegalStateException("a fresh registration token for runner "
                                 + LOCALHOST_RUNNER + " answered " + rotated.describe());
                     } else {
-                        token = installToken(Json.parse(rotated.body()), "the rotation");
+                        JsonNode answer = Json.parse(rotated.body());
+                        token = installToken(answer, "the rotation");
+                        url = CiApi.runnerUrl(Json.text(answer, "installScript")).orElse(null);
                         ctx.log("  runner " + LOCALHOST_RUNNER + " (" + id + ") never "
                                 + "registered — a fresh registration token was minted");
                     }
@@ -3153,8 +3201,12 @@ public class PipelinePhases {
                             "clearing the runner's stale client failed");
                 }
                 container = runnerContainerName(id, version);
-                Boot.must(boot.docker.run(runnerRunCommand(id, version, image, slots, token),
-                        ctx::log), "the runner container did not start");
+                if (url == null) {
+                    url = runnerUrl(plane, DomainName.of(boot.config), boot.config.envName());
+                }
+                ctx.log("  " + container + ": " + plane + " plane, dialling " + url);
+                Boot.must(boot.docker.run(runnerRunCommand(id, version, image, slots, token,
+                        plane, url), ctx::log), "the runner container did not start");
             }
             boot.state.ciRunnerId = id;
             boot.state.ciRunnerContainer = container;
