@@ -348,6 +348,16 @@ forced. Add to that list rather than deviating quietly.
   own: `SeedPhases.dockerConfig` writes one per holder, with the hosts that holder pulls from (the
   registry vhost for the first two, the registry AND the mirror for qits-platform-system, whose
   glances image is the mirror's).
+- **This host's CI runner holds the socket as a CONTAINER, and never as a deployment.** qits-ci
+  executes nothing itself, so `runner-localhost` starts the normal `qits/qits-ci-runner` image with
+  a plain `docker run` on `qits-net` — the install line's container contract, INTERNAL plane — and
+  the runner rolls itself over from then on. Do not give it an extras block, a `DEPLOYABLES` entry
+  or a stack service: a deployer replacing the container would race the runner's own rollover.
+  **Whose runner it is decides whether anything is started**: the phase acts only when qits-ci lists
+  no runner, or its `localhost` row carries the `CI_RUNNER_ID` this installation recorded in
+  `.qits-bootstrap.env` (plus the crash window: a lone `localhost` that never registered and was
+  never seen). Every other listing is somebody's runner and a skip — `PipelinePhases.runnerDecision`
+  is the one place that decides it, and its tests are the live platform's protection.
 - **THE ADDRESS AND THE IDENTITY ARE TWO THINGS NOW, and confusing them is a silent 401.**
   `PlatformModel.dialAlias` is what a peer DIALS and it carries the environment for every
   application, both planes: `<env>-qits-platform-idp`. `PlatformModel.wireAlias` is the seed stack's
@@ -387,7 +397,10 @@ forced. Add to that list rather than deviating quietly.
   assignment wins — so a credential in the extras would not configure the deployment, it would
   SHADOW the row that is kept current and outlive every rotation of it. `ExtrasWiringGuardTest`
   fails the build on `QITS_RESOURCE_IDP_*`, `QITS_IDP_CLIENT*`, `QITS_OIDC_CLIENT_*` and
-  `QUARKUS_OIDC_CLIENT_*` in any block.
+  `QUARKUS_OIDC_CLIENT_*` in any block — with ONE exemption, spelled whole:
+  `qits-ci.env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=true`, on the seed ci block and ci's extras. It is
+  a switch, not an identity: qits-ci ships its one client off and nothing the deployer injects turns
+  it on, so without it ci commissions nothing — no runner, no per-run credential.
   **No service is told which audience to validate either.** Every image ships
   `quarkus.oidc.token.audience=qits-platform` as one literal name, and the idp puts that name on
   every token it mints whatever the caller asked for, so there is no per-service audience for a
