@@ -7,8 +7,11 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * <b>How many builds qits-ci may run at once, computed from the memory of the host it will run
- * on.</b> The value fills {@code QITS_CI_CONCURRENT_BUILDS} in both generated files.
+ * <b>How many builds the platform's own qits-ci-runner may run at once, computed from the memory
+ * of the host it will run on.</b> The value fills {@code QITS_CI_RUNNER_SLOTS} in the runner's
+ * extras, as {@code CI_LOCAL_SLOTS}. It sized qits-ci's own retired in-process executor
+ * (`QITS_CI_CONCURRENT_BUILDS`) until qits-443 removed that executor; the formula and the reason
+ * for computing it carried over unchanged.
  * <p>
  * <b>It is computed rather than written down because a literal killed a machine.</b> On 2026-08-22
  * two concurrent GraalVM-native builds on a 16 GB host with no swap livelocked it and it needed a

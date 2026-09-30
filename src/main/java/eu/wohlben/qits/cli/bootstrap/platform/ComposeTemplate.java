@@ -997,9 +997,11 @@ public final class ComposeTemplate {
                 # NO SOCKET AND NO SOCKET GROUP, and that is the attack surface this cutover buys.
                 # ci held the host's docker socket to run every pipeline step, which is root on the
                 # host — and every step's script is repo-controlled code, so the one service most
-                # exposed to untrusted input was also the one holding the daemon. It asks
-                # ${ENV_NAME}-qits-containers now, over qits-net, with a bearer. Do not mount it
-                # back: nothing in the image reads it, and `docker` is not on this image's PATH.
+                # exposed to untrusted input was also the one holding the daemon. Since qits-443
+                # retired ci's in-process executor it starts no step itself at all — every run
+                # needs a connected qits-ci-runner — and it calls qits-containers for nothing. Do
+                # not mount the socket back: nothing in the image reads it, and `docker` is not on
+                # this image's PATH.
                 environment:
                   # TWO STORES, TWO TRIPLES. ci's own database and the outbox of the eventstream library
                   # it joins are two Flyway lineages and cannot share one. The library reads the
@@ -1048,33 +1050,15 @@ public final class ComposeTemplate {
                   # ci's choice and travels in the workload spec; the orchestrator puts the container
                   # on it.
                   QITS_CI_NETWORK: qits-net
-                  # COMPUTED FROM THIS HOST'S MEMORY, never a literal — see CiConcurrency, which
-                  # holds the formula and the accident behind it. Short version: a step's
-                  # `docker build` is served by the HOST daemon, so a GraalVM-native build runs
-                  # OUTSIDE the 4g cgroup below and costs several gigabytes of its own. Two of them
-                  # on a 16 GB host with no swap livelocked the machine on 2026-08-22 and it needed a
-                  # hard reset — and a literal here is also what silently reverted the 1 an operator
-                  # had set by hand. QITS_CI_CONCURRENT_BUILDS in the environment overrides it.
-                  QITS_CI_CONCURRENT_BUILDS: "${CI_CONCURRENT_BUILDS}"
-                  # qits-ci ships this OFF because the live estate's executor is an external runner
-                  # (epic qits-443). A platform this bootstrap creates has no runner yet, so its
-                  # executor is the in-process one, sized by QITS_CI_CONCURRENT_BUILDS above, until
-                  # the bootstrap provisions a same-node runner (follow-up).
-                  QITS_CI_IN_PROCESS_EXECUTOR_ENABLED: "true"
-                  # NOT the bound on a build. It is the step CONTAINER's limit, and the docker build
-                  # it starts is the host daemon's child — which is why the line above is sized by
-                  # the host instead.
+                  # NOT the bound on a build. It is the step CONTAINER's limit; a `docker build` a
+                  # step runs is served by the HOST daemon and is outside this cgroup entirely.
                   QITS_CI_MEMORY_LIMIT: 4g
                   QITS_CI_CPUS: "4"
-                  # WHERE STEP CONTAINERS COME FROM NOW. ci starts nothing itself: it asks this tier's
-                  # orchestrator, which is the only service a WORKLOAD may be started through. The
-                  # deployer and the base system panels hold a socket too, and neither runs anybody
-                  # else's container: one deploys, one shows an operator the machine. The
-                  # image ships the unqualified qits-containers:8080, which resolves to nothing here —
-                  # and an unreachable orchestrator is not a slow build but a failed one, recorded as
-                  # LAUNCH_FAILED on the first step. Same class of wire-alias spelling as the git host
-                  # and the bus above.
-                  QITS_CONTAINERS_URL: http://${ENV_NAME}-qits-containers:8080
+                  # THE SEED qits-ci HAS NO EXECUTOR OF ITS OWN since qits-443 retired the in-process
+                  # one: QITS_CONTAINERS_URL, QITS_CI_CONCURRENT_BUILDS and
+                  # QITS_CI_IN_PROCESS_EXECUTOR_ENABLED are gone with it, and this seed container
+                  # never calls qits-containers. Until qits-588 gives the bootstrap a same-node
+                  # runner, a cold start cannot run its release replays.
                   # NO QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL. ci's direct POST to the deployer was retired
                   # on 2026-08-10: a green build is announced on the BUS now, ci -> outbox ->
                   # ${ALIAS_EVENTS} -> the deployer's durable subscriber. qits-ci reads no such key
@@ -1151,13 +1135,6 @@ public final class ComposeTemplate {
                   QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP_DIAL}
                   # ITS OWN IDP CLIENT, as the resource triple — see the edge's block for why a
                   # credential this program creates is spelled the way the deployer will inject it.
-                  #
-                  # THE CLIENT ID IS ALSO CI'S OWNER STRING AT THE ORCHESTRATOR. Every route of
-                  # qits-containers compares the token's `sub` to the owner in the path, and ci's
-                  # qits.ci.containers.owner defaults to reading its own client id — which is what
-                  # keeps two tiers sharing one docker daemon out of each other's containers, since
-                  # dev-qits-ci and prod-qits-ci are different owners. That is one more reason the
-                  # id is the wire alias and is never spelled a second way.
                   QITS_RESOURCE_IDP_URL: ${IDP_DIAL}
                   QITS_RESOURCE_IDP_CLIENT_ID: ${ALIAS_CI}
                   QITS_RESOURCE_IDP_CLIENT_SECRET: "${IDP_CLIENT_SECRET_CI}"
@@ -1626,19 +1603,15 @@ public final class ComposeTemplate {
             # neither the id nor the secret — a stored one would shadow the row that is kept
             # current. The audience is qits-platform, the image's own shipped default, and needs no
             # line.
-            # THE CLIENT ID IS ALSO CI'S OWNER STRING at the orchestrator —
-            # qits.ci.containers.owner defaults to reading it, and qits-containers compares it to
-            # the token's `sub` on every route — which is what keeps two tiers sharing one docker
-            # daemon out of each other's step containers, and one more reason it is the wire alias
-            # and derived rather than written.
             #
-            # NO SOCKET MOUNT AND NO GROUP, AND THAT IS THE POINT OF THIS CUTOVER. This application used
-            # to start every ci successor with the host's docker socket and the socket's group: root on
-            # the host, held by the one service that executes repo-controlled pipelines. ci starts no
-            # container itself now — it asks ${ENV_NAME}-qits-containers, which is the only service
-            # granted that socket — so the grant is gone from here and the platform's most exposed
-            # service is the one with the least authority. Putting it back grants root for nothing:
-            # the image has no docker CLI and reads no socket path.
+            # NO SOCKET MOUNT AND NO GROUP, AND NO CALL TO qits-containers AT ALL. This application
+            # used to start every ci successor with the host's docker socket and the socket's group:
+            # root on the host, held by the one service that executes repo-controlled pipelines.
+            # ci held it a step further by asking ${ENV_NAME}-qits-containers instead, and qits-443
+            # retired even that: ci starts no step anywhere now, a connected qits-ci-runner does, so
+            # the platform's most exposed service is the one with the least authority. Putting the
+            # socket back grants root for nothing: the image has no docker CLI and reads no socket
+            # path.
             #
             # NO DATASOURCE ENV, AND NO DATA VOLUME — and the asymmetry with the seed stack block is
             # deliberate. ci's deployments.yml declares
@@ -1667,19 +1640,8 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_URL=http://githost.${ENV_NAME}.internal:8080
             qits.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_AUDIENCE=${ENV_NAME}-qits-githost
             qits.deployments.extras.qits-ci.env.QITS_CI_NETWORK=qits-net
-            # THE SAME COMPUTED NUMBER as the seed block's, and it has to be here too: this is what
-            # survives the seed container, and a re-bootstrap that wrote a literal back over an
-            # operator's hand-set value is exactly how a 16 GB host was livelocked on 2026-08-22.
-            # CiConcurrency holds the formula; QITS_CI_CONCURRENT_BUILDS overrides it.
-            qits.deployments.extras.qits-ci.env.QITS_CI_CONCURRENT_BUILDS=${CI_CONCURRENT_BUILDS}
-            # qits-ci ships this OFF because the live estate's executor is an external runner
-            # (epic qits-443). A platform this bootstrap creates has no runner yet, so its
-            # executor is the in-process one, sized by QITS_CI_CONCURRENT_BUILDS above, until the
-            # bootstrap provisions a same-node runner (follow-up).
-            qits.deployments.extras.qits-ci.env.QITS_CI_IN_PROCESS_EXECUTOR_ENABLED=true
             qits.deployments.extras.qits-ci.env.QITS_CI_MEMORY_LIMIT=4g
             qits.deployments.extras.qits-ci.env.QITS_CI_CPUS=4
-            qits.deployments.extras.qits-ci.env.QITS_CONTAINERS_URL=http://${ENV_NAME}-qits-containers:8080
             qits.deployments.extras.qits-ci.env.QITS_ARTIFACTS_REGISTRY_HOST=registry.${ENV_NAME}.localhost:${PORT}
             qits.deployments.extras.qits-ci.env.QITS_CI_DOCKER_AUTH_HOSTS=registry.${ENV_NAME}.localhost:${PORT},mirror.${ENV_NAME}.localhost:${PORT}
             qits.deployments.extras.qits-ci.env.QITS_ARTIFACTS_NPM_HOSTED_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/

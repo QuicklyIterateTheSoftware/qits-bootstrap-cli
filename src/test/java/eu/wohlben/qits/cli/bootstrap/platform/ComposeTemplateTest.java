@@ -69,9 +69,8 @@ class ComposeTemplateTest {
         values.put("IDP", "http://qits-idp:8080/idp");
         values.put("IDP_DIAL", "http://" + ENV + "-qits-idp:8080/idp");
         values.put("PUSH_TOKEN", "local-dev");
-        // A one-build host: the 16 GB VPS the formula exists for.
-        values.put("CI_CONCURRENT_BUILDS", "1");
-        // The platform's own runner starts at the same number — see SeedPhases.tokens.
+        // The platform's own runner's slot count: a one-build host, the 16 GB VPS the formula
+        // exists for. See SeedPhases.tokens and CiConcurrency.
         values.put("CI_LOCAL_SLOTS", "1");
         values.put("MACHINE_REQUIRED", "true");
         values.put("DOCKER_GID", "988");
@@ -933,29 +932,42 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>qits-ci's build concurrency is FILLED, in both files, and is never the literal 2.</b>
+     * <b>qits-ci-runner's slot count is FILLED, and is never the literal 2.</b>
      * <p>
-     * A step's {@code docker build} is served by the host daemon, so it runs outside the 4g step
-     * cgroup; two concurrent GraalVM-native ones livelocked a 16 GB host on 2026-08-22. The number
-     * is {@link CiConcurrency}'s, and it has to reach the extras as well as the seed — the extras
-     * are what the deployed ci gets, and a literal there is what wrote an operator's hand-set 1
-     * back to 2 on the next re-bootstrap.
+     * The number is {@link CiConcurrency}'s, sized off this host's memory the same way the retired
+     * in-process executor's {@code QITS_CI_CONCURRENT_BUILDS} used to be (qits-443): a literal here
+     * is what wrote an operator's hand-set 1 back to 2 on the next re-bootstrap.
      */
     @Test
-    void ciBuildConcurrencyComesFromTheHostAndReachesBothFiles() {
+    void ciRunnerSlotsComeFromTheHost() {
         Map<String, String> twoBuildHost = tokens();
-        twoBuildHost.put("CI_CONCURRENT_BUILDS", "2");
+        twoBuildHost.put("CI_LOCAL_SLOTS", "2");
 
-        assertThat(serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-ci"))
-                .contains("QITS_CI_CONCURRENT_BUILDS: \"1\"");
-        assertThat(serviceBlock(ComposeTemplate.compose(twoBuildHost), ENV + "-qits-ci"))
-                .contains("QITS_CI_CONCURRENT_BUILDS: \"2\"");
-        assertThat(extras("qits-ci")).contains("env.QITS_CI_CONCURRENT_BUILDS=1");
-        assertThat(extras("qits-ci", twoBuildHost)).contains("env.QITS_CI_CONCURRENT_BUILDS=2");
+        assertThat(extras("qits-ci-runner")).contains("env.QITS_CI_RUNNER_SLOTS=1");
+        assertThat(extras("qits-ci-runner", twoBuildHost)).contains("env.QITS_CI_RUNNER_SLOTS=2");
 
-        // The step container's own limits are NOT sized by this and must not move with it.
+        // The step container's own limits are qits-ci's, unrelated, and must not move with it.
         assertThat(extras("qits-ci")).contains("env.QITS_CI_MEMORY_LIMIT=4g")
                 .contains("env.QITS_CI_CPUS=4");
+    }
+
+    /**
+     * <b>qits-ci's extras carry none of the retired in-process executor's keys.</b> qits-443
+     * deleted the executor; qits-ci reads no such thing and never calls qits-containers.
+     */
+    @Test
+    void ciExtrasCarryNoRetiredExecutorKeys() {
+        // As env KEYS, not as prose: the seed block's own comment names the retired keys to
+        // explain their absence, so the check has to be the actual assignment form.
+        String ciExtras = extras("qits-ci");
+        assertThat(ciExtras).doesNotContain("env.QITS_CONTAINERS_URL=")
+                .doesNotContain("env.QITS_CI_CONCURRENT_BUILDS=")
+                .doesNotContain("env.QITS_CI_IN_PROCESS_EXECUTOR_ENABLED=");
+
+        String ci = serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-ci");
+        assertThat(ci).doesNotContain("QITS_CONTAINERS_URL:")
+                .doesNotContain("QITS_CI_CONCURRENT_BUILDS:")
+                .doesNotContain("QITS_CI_IN_PROCESS_EXECUTOR_ENABLED:");
     }
 
     /**
@@ -1563,27 +1575,27 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>ci asks the orchestrator, and holds no socket at all.</b> This is the cutover's whole
-     * observable shape in the generated files, and both halves matter: the address it dials, in
-     * both files, and the grant it no longer gets, in both files.
+     * <b>ci calls the orchestrator for nothing, and holds no socket at all.</b> qits-443 retired
+     * ci's in-process executor: it starts no step itself any more, a connected qits-ci-runner
+     * does, so ci neither dials qits-containers nor holds the socket that would let it start a
+     * container directly.
      * <p>
      * The socket half is the one worth a test rather than a comment. ci executes repo-controlled
      * pipelines, so it was the platform's most exposed service AND the holder of root on the host;
      * a mount left in either file would restore that authority silently, because nothing in the
-     * image reads it and no build would fail. The address half fails loudly instead — an
-     * unreachable orchestrator is LAUNCH_FAILED on the first step — which is exactly why it needs
-     * less protection than the mount.
+     * image reads it and no build would fail.
      */
     @Test
-    void ciAsksTheOrchestratorForItsStepContainersAndHoldsNoSocket() {
+    void ciCallsNoOrchestratorAndHoldsNoSocket() {
         String compose = ComposeTemplate.compose(tokens());
         String ci = serviceBlock(compose, ENV + "-qits-ci");
         String ciExtras = extras("qits-ci");
 
-        // The wire alias, in both files: the image ships the unqualified qits-containers:8080,
-        // which resolves to nothing on this network.
-        assertThat(ci).contains("QITS_CONTAINERS_URL: http://prod-qits-containers:8080");
-        assertThat(ciExtras).contains("env.QITS_CONTAINERS_URL=http://prod-qits-containers:8080");
+        // No orchestrator address anywhere, in either file: qits-443 removed the executor that
+        // dialled it. As the assignment form, not prose — the seed block's own comment names the
+        // retired key to explain its absence.
+        assertThat(ci).doesNotContain("QITS_CONTAINERS_URL:");
+        assertThat(ciExtras).doesNotContain("env.QITS_CONTAINERS_URL=");
 
         // And the grant that is gone. Not "no mount" alone — the socket group is the other half,
         // and either one without the other is a container that cannot use what it was given.

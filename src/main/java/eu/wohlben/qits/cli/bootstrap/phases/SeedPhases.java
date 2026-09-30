@@ -3056,14 +3056,12 @@ public class SeedPhases {
         values.put("BOOTSTRAP_INGRESS_GIT_EXPIRES_AT",
                 boot.state.bootstrapIngressExpiresAt == 0 ? "1970-01-01T00:00:00Z"
                         : java.time.Instant.ofEpochSecond(boot.state.bootstrapIngressExpiresAt).toString());
-        // Sized by the host this platform runs on, not by a number in the template — the seed block
-        // and the extras carry the reason. Read here rather than remembered, so a machine that grew
-        // memory gets the benefit on its next boot.
-        values.put("CI_CONCURRENT_BUILDS", String.valueOf(boot.config.ciConcurrentBuildsEffective()));
-        // THE PLATFORM'S OWN CI RUNNER'S SLOT COUNT, and it starts at the same number as the
-        // in-process executor it replaces (qits-443) rather than a second knob: the host that used
-        // to run QITS_CI_CONCURRENT_BUILDS builds at once through qits-containers has exactly that
-        // much room for the runner's own containers. A future operator override
+        // THE PLATFORM'S OWN CI RUNNER'S SLOT COUNT, sized by the host this platform runs on, not
+        // by a number in the template — CiConcurrency holds the formula. It starts at the same
+        // number the retired in-process executor used (qits-443) rather than a second knob: the
+        // host that used to run that many builds at once has exactly that much room for the
+        // runner's own containers. Read here rather than remembered, so a machine that grew memory
+        // gets the benefit on its next boot. A future operator override
         // (qits.deployments.extras.qits-ci-runner.env.QITS_CI_RUNNER_SLOTS) is a config write, not
         // a rerun of this boot.
         values.put("CI_LOCAL_SLOTS", String.valueOf(boot.config.ciConcurrentBuildsEffective()));
