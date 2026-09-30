@@ -132,19 +132,6 @@ class DomainTokensTest {
                 "qits.deployments.extras.qits-deployments.env.QITS_DOMAIN=wohlben.dev");
     }
 
-    /**
-     * <b>qits-ci-runner's own address is the one plain value in this class</b> — not a fragment
-     * appended to a line the template already has, because the whole line is this class's to fill:
-     * {@code eu.wohlben.qits.cirunner.RunnerEnv} is a plain binary with no {@code QITS_DOMAIN} of
-     * its own to derive a name from, unlike every application this class used to compose a browser
-     * name for. Composed with qits-ci's own grammar, {@code RunnerAddresses.publicOrigin}:
-     * {@code https://<host>.qits.<domain>}, no environment label.
-     */
-    @Test
-    void theRunnerIsToldItsOwnPublicAddress() {
-        assertThat(tokens().get("CI_RUNNER_PUBLIC_URL")).isEqualTo("https://ci.qits.wohlben.dev");
-    }
-
     /** A domainless platform spells none of it — the same answer it always gave. */
     @Test
     void noDomainSpellsNoTlsAtAll() {
@@ -160,9 +147,5 @@ class DomainTokensTest {
         // very service it configures.
         assertThat(none.get("SEED_DOMAIN")).isEmpty();
         assertThat(none.get("DEPLOYMENTS_DOMAIN_ARGS")).isEmpty();
-        // A runner handed an empty QITS_CI_RUNNER_URL fails to start with one clear sentence
-        // (RunnerEnv.parse: "QITS_CI_RUNNER_URL is not set") rather than being handed an internal
-        // alias it cannot resolve off the platform's own swarm.
-        assertThat(none.get("CI_RUNNER_PUBLIC_URL")).isEmpty();
     }
 }

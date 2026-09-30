@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
 
 /**
@@ -76,20 +77,10 @@ class ExtrasWiringGuardTest {
      * entry that is no longer earning its place — so the set cannot quietly stop meaning anything.
      * <b>An empty set is the epic's end-state proof</b>, and the day it empties this constant and
      * the exemption arm go with it.
-     * <p>
-     * <b>{@code qits-ci-runner} joined the set the day its block was first written (qits-502,
-     * epic qits-443), not the day the guard landed</b> — the one addition this set is allowed,
-     * because the migration this guard tracks has a destination every OTHER entry can reach and
-     * this one cannot: a {@code .config/qits/configuration.yml} ships with the Quarkus image that
-     * reads it, and the runner is not one — {@code eu.wohlben.qits.cirunner.RunnerEnv} parses raw
-     * environment strings with no config framework underneath it at all. Its non-indexed,
-     * non-secret keys (the url, the state dir, the slot count, the self-update flag, the id) stay
-     * exempt for as long as that is true.
      */
     private static final Set<String> NOT_YET_MIGRATED = Set.of(
             "qits-artifacts",
             "qits-ci",
-            "qits-ci-runner",
             "qits-configuration",
             "qits-containers",
             "qits-deployments",
@@ -143,6 +134,14 @@ class ExtrasWiringGuardTest {
      * Four prefixes, and one pair of them is deliberate. {@code QITS_OIDC_CLIENT_} is the spelling
      * the ruling used; {@code QUARKUS_OIDC_CLIENT_} is the spelling that actually existed in this
      * file. Both are named, so neither can come back under the other's name.
+     * <p>
+     * <b>ONE KEY PASSES, and it is a switch rather than an identity</b>:
+     * {@code qits-ci.env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED}. qits-ci ships its one oidc client off
+     * and reads this variable alone to turn it on — the injected triple has no twin for it — so a
+     * successor without it commissions nothing, neither a run's publishing credential nor a
+     * runner's. It names no id, no secret and no address, so it shadows nothing the deployer
+     * injects. The exemption is that one key of that one application, spelled whole: it goes the
+     * day qits-ci derives the switch from the triple, and it admits no sibling.
      */
     @Test
     void noExtrasBlockCarriesAnIdentity() {
@@ -153,6 +152,10 @@ class ExtrasWiringGuardTest {
                 continue;
             }
             String name = key.substring("env.".length());
+            if (CLIENT_SWITCH_APPLICATION.equals(application(line))
+                    && CLIENT_SWITCH.equals(name)) {
+                continue;
+            }
             if (name.startsWith("QITS_RESOURCE_IDP_") || name.startsWith("QITS_IDP_CLIENT")
                     || name.startsWith("QITS_OIDC_CLIENT_")
                     || name.startsWith("QUARKUS_OIDC_CLIENT_")) {
@@ -171,6 +174,27 @@ class ExtrasWiringGuardTest {
                     + "that is kept current and outlives every rotation of it. Nothing "
                     + "identity-shaped belongs in ComposeTemplate.EXTRAS.");
         }
+    }
+
+    /** The one oidc-client key an extras block may hold, and the one application that holds it. */
+    private static final String CLIENT_SWITCH = "QUARKUS_OIDC_CLIENT_CLIENT_ENABLED";
+
+    private static final String CLIENT_SWITCH_APPLICATION = "qits-ci";
+
+    /**
+     * <b>The switch is exempt only while it is really there, and only as a switch.</b> An
+     * exemption for a key nothing generates is a door left open for whatever is spelled that way
+     * next, and a value other than {@code true} is not the switch this exemption was written for.
+     */
+    @Test
+    void theOneExemptSwitchIsGeneratedOnceAndIsOn() {
+        List<String> switches = extrasKeys().stream()
+                .filter(line -> key(line).equals("env." + CLIENT_SWITCH))
+                .toList();
+
+        assertThat(switches).hasSize(1);
+        assertThat(application(switches.getFirst())).isEqualTo(CLIENT_SWITCH_APPLICATION);
+        assertThat(switches.getFirst()).endsWith("=true");
     }
 
     @Test

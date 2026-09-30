@@ -69,9 +69,6 @@ class ComposeTemplateTest {
         values.put("IDP", "http://qits-idp:8080/idp");
         values.put("IDP_DIAL", "http://" + ENV + "-qits-idp:8080/idp");
         values.put("PUSH_TOKEN", "local-dev");
-        // The platform's own runner's slot count: a one-build host, the 16 GB VPS the formula
-        // exists for. See SeedPhases.tokens and CiConcurrency.
-        values.put("CI_LOCAL_SLOTS", "1");
         values.put("MACHINE_REQUIRED", "true");
         values.put("DOCKER_GID", "988");
         values.put("DAEMON_SHA", "abc123");
@@ -311,9 +308,32 @@ class ComposeTemplateTest {
     @Test
     void theSeedStackNamesNoOidcClientAndNoIdpClientKey() {
         assertThat(ComposeTemplate.compose(tokens()).lines()
-                .filter(line -> !line.strip().startsWith("#")))
+                .filter(line -> !line.strip().startsWith("#"))
+                .filter(line -> !line.strip().equals(CI_CLIENT_SWITCH)))
                 .noneMatch(line -> line.contains("QUARKUS_OIDC_CLIENT_")
                         || line.contains("QITS_IDP_CLIENT_"));
+    }
+
+    /**
+     * The one oidc-client line the stack may hold: qits-ci's SWITCH, which is no identity — it
+     * names no id, no secret and no address.
+     */
+    private static final String CI_CLIENT_SWITCH = "QUARKUS_OIDC_CLIENT_CLIENT_ENABLED: \"true\"";
+
+    /**
+     * <b>The exception above is one line in one block, and that is all it may ever be.</b> qits-ci
+     * ships its client off and reads this variable alone to turn it on; the resource triple has no
+     * twin for it. Any second service carrying it, or any second spelling beside it, is the
+     * per-service oidc block coming back.
+     */
+    @Test
+    void theOneOidcClientSwitchIsCisAndCisAlone() {
+        String compose = ComposeTemplate.compose(tokens());
+
+        assertThat(compose.lines().filter(line -> line.strip().equals(CI_CLIENT_SWITCH)))
+                .hasSize(1);
+        assertThat(serviceBlock(compose, PlatformModel.wireAlias("ci", ENV)))
+                .contains(CI_CLIENT_SWITCH);
     }
 
     @Test
@@ -932,19 +952,15 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>qits-ci-runner's slot count is FILLED, and is never the literal 2.</b>
-     * <p>
-     * The number is {@link CiConcurrency}'s, sized off this host's memory the same way the retired
-     * in-process executor's {@code QITS_CI_CONCURRENT_BUILDS} used to be (qits-443): a literal here
-     * is what wrote an operator's hand-set 1 back to 2 on the next re-bootstrap.
+     * <b>The step container's limits are qits-ci's own, and nothing in either file sizes the
+     * runner.</b> How many builds run at once is the {@code localhost} runner's slot count, which
+     * the {@code runner-localhost} phase takes from {@link CiConcurrency} when it declares the row
+     * — a number that has to be right on this host cannot live in a template.
      */
     @Test
-    void ciRunnerSlotsComeFromTheHost() {
-        Map<String, String> twoBuildHost = tokens();
-        twoBuildHost.put("CI_LOCAL_SLOTS", "2");
-
-        assertThat(extras("qits-ci-runner")).contains("env.QITS_CI_RUNNER_SLOTS=1");
-        assertThat(extras("qits-ci-runner", twoBuildHost)).contains("env.QITS_CI_RUNNER_SLOTS=2");
+    void theStepLimitsAreCisAndNoFileSizesTheRunner() {
+        assertThat(String.join("\n", extrasKeys())).doesNotContain("QITS_CI_RUNNER_SLOTS");
+        assertThat(ComposeTemplate.compose(tokens())).doesNotContain("QITS_CI_RUNNER_SLOTS");
 
         // The step container's own limits are qits-ci's, unrelated, and must not move with it.
         assertThat(extras("qits-ci")).contains("env.QITS_CI_MEMORY_LIMIT=4g")
@@ -1981,67 +1997,91 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>THE HOST'S DOCKER SOCKET IS GRANTED TO FOUR APPLICATIONS, and each grant is a block
+     * <b>THE HOST'S DOCKER SOCKET IS GRANTED TO THREE APPLICATIONS, and each grant is a block
      * somebody wrote on purpose.</b> qits-containers starts every workload on the host,
-     * qits-deployments is a deployer, qits-system owns the admin console's terminals, and
-     * qits-ci-runner (qits-502, epic qits-443) is what qits-ci's in-process executor held
-     * indirectly, through qits-containers, until the executor was retired: a step's container is
-     * now something the platform's own CI runner starts itself, the same way any other runner on
-     * the estate does. A fifth is a decision and not a mount: it needs the bind AND
-     * {@code groups[0]}, which is what makes the socket usable by a container running as uid 1001,
-     * plus a comment saying why the power belongs there rather than behind an endpoint on one of
-     * the four.
+     * qits-deployments is a deployer, and qits-system owns the admin console's terminals. A fourth
+     * is a decision and not a mount: it needs the bind AND {@code groups[0]}, which is what makes
+     * the socket usable by a container running as uid 1001, plus a comment saying why the power
+     * belongs there rather than behind an endpoint on one of the three.
      * <p>
-     * This is the assertion the goldens cannot make. Each of the four blocks holds its own mount
+     * <b>The platform host's CI runner holds the socket too, and is deliberately not a fourth
+     * BLOCK.</b> It is no application of the deployer: the bootstrap starts it with a plain
+     * {@code docker run}, as the install line starts a runner on any other host, so its mount is
+     * that command's and not a line of this file.
+     * <p>
+     * This is the assertion the goldens cannot make. Each of the three blocks holds its own mount
      * and its own group, and a golden proves each of them; only a question asked across every block
-     * at once can say that there are four of them.
+     * at once can say that there are three of them.
      */
     @Test
-    void theHostsSocketIsGrantedToExactlyFourApplications() {
+    void theHostsSocketIsGrantedToExactlyThreeApplications() {
         // applicationsWith sorts, so this is alphabetical order, not the order the blocks appear in.
         assertThat(applicationsWith("/var/run/docker.sock")).containsExactly(
-                "qits-ci-runner", "qits-containers", "qits-deployments", "qits-system");
+                "qits-containers", "qits-deployments", "qits-system");
         // The group is the other half, and either one without the other is a container that cannot
-        // use what it was given — so the two lists are the same four names.
+        // use what it was given — so the two lists are the same three names.
         assertThat(applicationsWith(".groups[")).containsExactly(
-                "qits-ci-runner", "qits-containers", "qits-deployments", "qits-system");
+                "qits-containers", "qits-deployments", "qits-system");
     }
 
     /**
-     * <b>qits-ci-runner's own block</b>, holding what the golden file already proves whole plus the
-     * two things a golden of one rendering cannot: that a domain changes the URL and nothing else
-     * of it, and that with no domain the runner is handed no internal alias to fall back on.
+     * <b>THE RUNNER IS NOT DEPLOYER-MANAGED, SO NO EXTRAS NAME IT.</b> A block for an application
+     * nothing deploys is configuration waiting for somebody to deploy one — beside the runner the
+     * bootstrap already started, which would be two holders of one runner id. Asked of the keys
+     * and of the rendered file alike, with and without a domain.
      */
     @Test
-    void qitsCiRunnerHoldsTheSocketAndDialsThePublicEdgeAlone() {
-        String noDomain = extras("qits-ci-runner");
-        assertThat(noDomain)
-                .contains(".mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock")
-                .doesNotContain(".mounts[1]")
-                .contains(".groups[0]=988")
-                .contains(".env.QITS_CI_RUNNER_URL=")
-                .contains(".env.QITS_CI_RUNNER_STATE_DIR=/var/lib/qits-ci-runner")
-                .contains(".env.QITS_CI_RUNNER_SLOTS=1")
-                .contains(".env.QITS_CI_RUNNER_SELF_UPDATE=false")
-                .contains(".env.QITS_CI_RUNNER_ID=")
-                .contains(".env.QITS_CI_RUNNER_REGISTRATION_TOKEN=");
-        // No domain: the url key renders, but empty — never the internal wire alias. A runner off
-        // the platform's own swarm cannot resolve ${ALIAS_qits-ci} or ${DIAL_qits-ci} however they
-        // were spelled, so a fallback to one here would be a config line that looks configured and
-        // fails at the runner with a connect error instead of RunnerEnv's own clear refusal.
-        assertThat(noDomain.lines()).anyMatch(
-                line -> line.equals(EXTRAS + "qits-ci-runner.env.QITS_CI_RUNNER_URL="));
-        assertThat(noDomain).doesNotContain("qits-ci:8080").doesNotContain(ENV + "-qits-ci");
+    void noExtrasBlockConfiguresARunnerDeployment() {
+        assertThat(extrasKeys()).noneMatch(line -> line.startsWith(EXTRAS + "qits-ci-runner."));
+        for (Map<String, String> tokens : List.of(tokens(), tokens(DOMAIN))) {
+            assertThat(ComposeTemplate.extras(tokens).lines()
+                    .filter(line -> !line.strip().startsWith("#")))
+                    .noneMatch(line -> line.contains("QITS_CI_RUNNER_URL")
+                            || line.contains("QITS_CI_RUNNER_ID")
+                            || line.contains("QITS_CI_RUNNER_REGISTRATION_TOKEN"));
+        }
+    }
 
-        String withDomain = extras("qits-ci-runner", tokens(DOMAIN));
-        assertThat(withDomain)
-                .contains(".env.QITS_CI_RUNNER_URL=https://ci.qits." + DOMAIN)
-                .doesNotContain("qits-ci:8080")
-                .doesNotContain(ENV + "-qits-ci");
-        // Every OTHER line of the block is untouched by the domain — the invariant
-        // aDomainAddsItsFragmentsAndChangesNothingElse proves platform-wide; this is the same
-        // question asked of one block, in the shape a reader of this block would ask it.
-        assertThat(withDomain.replace("https://ci.qits." + DOMAIN, "")).isEqualTo(noDomain);
+    /**
+     * <b>WHAT THE BOOTSTRAP'S OWN RUNNER NEEDS OF qits-ci, on the seed and on its successor.</b>
+     * <ul>
+     *   <li>The oidc client's switch, on BOTH: ci ships it off and nothing the deployer injects
+     *       turns it on, so without the line ci commissions nothing — no runner, and no per-run
+     *       credential either. It went out with the per-service oidc blocks on 2026-09-15.
+     *   <li>The internal base an INTERNAL runner is told to dial, on the SEED alone: ci derives it
+     *       from QITS_ENVIRONMENT, which the seed block does not state and the deployer always
+     *       injects.
+     *   <li>The registry host, on both, in the spelling the HOST's daemon resolves: it is what ci
+     *       composes a runner's self-update image from, and what this boot tags and pushes the
+     *       runner image under.
+     * </ul>
+     */
+    @Test
+    void ciCommissionsAndTellsAnInternalRunnerTheQitsNetAddresses() {
+        String seed = serviceBlock(ComposeTemplate.compose(tokens()),
+                PlatformModel.wireAlias("ci", ENV));
+        assertThat(seed).contains("QUARKUS_OIDC_CLIENT_CLIENT_ENABLED: \"true\"")
+                .contains("QITS_CI_RUNNER_INTERNAL_URL: http://prod-qits-ci:8080")
+                .contains("QITS_ARTIFACTS_REGISTRY_HOST: registry.prod.localhost:8080")
+                // What the token endpoint an INTERNAL runner is told is derived from.
+                .contains("QITS_RESOURCE_IDP_URL: http://prod-qits-idp:8080/idp");
+
+        String deployed = extras("qits-ci");
+        assertThat(deployed).contains("env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=true")
+                .contains("env.QITS_ARTIFACTS_REGISTRY_HOST=registry.prod.localhost:8080")
+                // The deployer injects QITS_ENVIRONMENT and QITS_RESOURCE_IDP_URL, so neither the
+                // internal base nor the idp address is restated.
+                .doesNotContain("QITS_CI_RUNNER_INTERNAL_URL")
+                .doesNotContain("QITS_RESOURCE_IDP_");
+
+        // The environment is in every one of them, never a literal `dev`.
+        Map<String, String> staging = tokens();
+        staging.putAll(PlatformModel.modelTokens("staging"));
+        staging.put("ENV_NAME", "staging");
+        assertThat(serviceBlock(ComposeTemplate.compose(staging),
+                PlatformModel.wireAlias("ci", "staging")))
+                .contains("QITS_CI_RUNNER_INTERNAL_URL: http://staging-qits-ci:8080")
+                .contains("QITS_ARTIFACTS_REGISTRY_HOST: registry.staging.localhost:8080");
     }
 
     /**
@@ -2137,14 +2177,6 @@ class ComposeTemplateTest {
                 .map(line -> line.substring(EXTRAS.length()).split("\\.")[0])
                 .distinct()
                 .filter(application -> !application.equals("qits-oci-postgresql"))
-                // qits-ci-runner is the second exception, and it is the same shape as postgres':
-                // it is not a Quarkus application and ships no OTLP exporter to point anywhere with
-                // this key. Its telemetry address is QITS_CI_RUNNER_TELEMETRY_URL, and RunnerEnv
-                // derives that one ITSELF from QITS_CI_RUNNER_URL when unset — the "derive it
-                // yourself" rule this file applies to every browser name applies here too, and it
-                // is the one key of this runner's that actually can be derived rather than handed
-                // over as a literal.
-                .filter(application -> !application.equals("qits-ci-runner"))
                 .toList())
                 .isNotEmpty()
                 .allSatisfy(application -> assertThat(extras(application))

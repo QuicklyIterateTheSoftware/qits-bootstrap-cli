@@ -8,8 +8,9 @@ import java.util.Locale;
 
 /**
  * <b>How many builds the platform's own qits-ci-runner may run at once, computed from the memory
- * of the host it will run on.</b> The value fills {@code QITS_CI_RUNNER_SLOTS} in the runner's
- * extras, as {@code CI_LOCAL_SLOTS}. It sized qits-ci's own retired in-process executor
+ * of the host it will run on.</b> The value is the {@code slots} the {@code runner-localhost}
+ * phase declares the runner with, and the {@code QITS_CI_RUNNER_SLOTS} it starts the container
+ * with. It sized qits-ci's own retired in-process executor
  * (`QITS_CI_CONCURRENT_BUILDS`) until qits-443 removed that executor; the formula and the reason
  * for computing it carried over unchanged.
  * <p>

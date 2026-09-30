@@ -1057,8 +1057,10 @@ public final class ComposeTemplate {
                   # THE SEED qits-ci HAS NO EXECUTOR OF ITS OWN since qits-443 retired the in-process
                   # one: QITS_CONTAINERS_URL, QITS_CI_CONCURRENT_BUILDS and
                   # QITS_CI_IN_PROCESS_EXECUTOR_ENABLED are gone with it, and this seed container
-                  # never calls qits-containers. Until qits-588 gives the bootstrap a same-node
-                  # runner, a cold start cannot run its release replays.
+                  # never calls qits-containers. Every run of this boot is executed by the
+                  # `localhost` runner the bootstrap starts as a plain container on qits-net
+                  # (qits-588) — the two keys at the end of this block are what that runner needs
+                  # of this service.
                   # NO QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL. ci's direct POST to the deployer was retired
                   # on 2026-08-10: a green build is announced on the BUS now, ci -> outbox ->
                   # ${ALIAS_EVENTS} -> the deployer's durable subscriber. qits-ci reads no such key
@@ -1138,6 +1140,23 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_IDP_URL: ${IDP_DIAL}
                   QITS_RESOURCE_IDP_CLIENT_ID: ${ALIAS_CI}
                   QITS_RESOURCE_IDP_CLIENT_SECRET: "${IDP_CLIENT_SECRET_CI}"
+                  # THE SWITCH OF THAT CLIENT, AND NOT AN IDENTITY. qits-ci ships its one oidc
+                  # client OFF (`client-enabled=${QUARKUS_OIDC_CLIENT_CLIENT_ENABLED:false}`) and
+                  # the triple above does not turn it on: there is no QITS_RESOURCE_IDP_* twin of
+                  # this key. Off, ci commissions nothing — no per-run credential, and no runner:
+                  # `POST /ci/api/runners` answers 503 and a registration token introspects as
+                  # unknown. The line went out with the per-service oidc blocks on 2026-09-15 and
+                  # took the seed ci's commissioning with it, unnoticed because no boot was cold.
+                  # It carries no id, no secret and no address, which is why it is the ONE
+                  # QUARKUS_OIDC_CLIENT_* spelling this file may hold.
+                  QUARKUS_OIDC_CLIENT_CLIENT_ENABLED: "true"
+                  # WHAT AN INTERNAL RUNNER IS TOLD TO DIAL. The bootstrap's own runner is on
+                  # qits-net, and ci answers its registration with this base and the socket under
+                  # it. ci would derive it from QITS_ENVIRONMENT, which this block does not state —
+                  # so on any environment but `dev` the derivation names a host nothing answers to.
+                  # The deployed successor is handed QITS_ENVIRONMENT by the deployer and needs no
+                  # line.
+                  QITS_CI_RUNNER_INTERNAL_URL: http://${ENV_NAME}-qits-ci:8080
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}
                 # NO VOLUMES AT ALL, and there is nothing left to add. ci's /data held the H2 files,
                 # and before that a bare git mirror per repository — it reads pipeline config off the
@@ -1597,12 +1616,20 @@ public final class ComposeTemplate {
             # dies on a 401 with nothing in the step to explain it. The port is part of each entry —
             # a docker credential is keyed by host:port — and it is the edge's, the only port either
             # name answers on.
-            # NO AUDIENCE AND NO OIDC CLIENT OF ANY SPELLING. ci's identity is the `idp:client`
-            # resource it declares: the deployer creates the client, keeps the secret in its
-            # registry and injects QITS_RESOURCE_IDP_* into the successor, so this file stores
+            # NO AUDIENCE AND NO OIDC CLIENT IDENTITY OF ANY SPELLING. ci's identity is the
+            # `idp:client` resource it declares: the deployer creates the client, keeps the secret in
+            # its registry and injects QITS_RESOURCE_IDP_* into the successor, so this file stores
             # neither the id nor the secret — a stored one would shadow the row that is kept
             # current. The audience is qits-platform, the image's own shipped default, and needs no
             # line.
+            #
+            # ONE OIDC-CLIENT KEY IS HERE, AND IT IS A SWITCH: QUARKUS_OIDC_CLIENT_CLIENT_ENABLED.
+            # ci ships its client off and reads this variable alone to turn it on — the injected
+            # triple has no twin for it — so a successor without it commissions nothing: no
+            # credential for a run's publish step and none for a runner. The live platform carries
+            # the entry by hand; a cold one gets it from here. It names no id, no secret and no
+            # address, so it shadows nothing the deployer injects. It goes the day qits-ci derives
+            # the switch from the triple.
             #
             # NO SOCKET MOUNT AND NO GROUP, AND NO CALL TO qits-containers AT ALL. This application
             # used to start every ci successor with the host's docker socket and the socket's group:
@@ -1659,6 +1686,7 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-ci.env.QITS_EVENTS_URL=http://${DIAL_EVENTS}:8080
             qits.deployments.extras.qits-ci.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
             qits.deployments.extras.qits-ci.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
+            qits.deployments.extras.qits-ci.env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=true
             qits.deployments.extras.qits-ci.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE CONTAINER ORCHESTRATOR, and the SOCKET IS THE LINE. Every successor of this
             # application has to be started with /var/run/docker.sock and the socket's group, because
@@ -2273,62 +2301,12 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-system.env.QITS_SYSTEM_GLANCES_IMAGE_REPO=mirror.${ENV_NAME}.localhost:${PORT}/hub/nicolargo/glances
             qits.deployments.extras.qits-system.env.QITS_SYSTEM_GLANCES_IMAGE_VERSION=4.5.6-full
             qits.deployments.extras.qits-system.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
-            # THE FOURTH GRANT OF THE HOST'S DOCKER SOCKET — after qits-containers, qits-deployments
-            # and qits-system above. It is what qits-ci's IN-PROCESS EXECUTOR held, indirectly,
-            # through qits-containers, until the retirement epic (qits-443) took that executor out:
-            # a step used to be a container qits-ci asked qits-containers to start, and now it is a
-            # container THIS runner starts itself, the same way any other runner on the estate does.
-            # The socket is the runner's, not qits-ci's — qits-ci never touches the host directly —
-            # and it is root-equivalent control of THIS machine's daemon for exactly the reason
-            # qits-containers' grant is: something has to start a step's container, and a runner is
-            # what starts it now.
-            #
-            # NO SECOND MOUNT HERE FOR THE RUNNER'S OWN STATE — registration, its runner id, the
-            # boot sweep's bookkeeping. It still lands on a named volume rather than the container
-            # layer, so a redeploy is the same runner reconnecting rather than a new one
-            # registering, but the volume is declared where every other data volume of a repository
-            # this bootstrap did not write is: the runner's own
-            # {@code .config/qits/deployments.yml} (`volumes: private:state:/var/lib/qits-ci-runner`),
-            # which the deployer resolves and mounts itself. A second {@code mounts[]} entry at the
-            # same target here would be a second mount of one path, which docker refuses outright.
-            #
-            # QITS_CI_RUNNER_URL IS A PUBLIC EDGE ADDRESS, AND DELIBERATELY NOT THE INTERNAL ALIAS
-            # every other line in this file reaches for. A runner's registration token is the opaque
-            # `qits_tok_…` qits-ci mints and only the PUBLIC edge introspects — the internal alias
-            # answers no such door — so the runner has to dial out through the same edge a person's
-            # own runner would, even though this one happens to live on the platform's own host (see
-            # `ci-runners-go-through-the-edge`). It is composed with the one grammar
-            # RunnerAddresses.publicOrigin uses for every runner qits-ci tells this to
-            # (DomainTokens.ciRunnerPublicUrl explains why composing it here, once, does not reopen
-            # the browser-name question the rest of this file settled — it is a fragment like every
-            # other domain-derived value, empty with no domain and this with one).
-            #
-            # QITS_CI_RUNNER_SELF_UPDATE=false ON PURPOSE: this container is not the one that
-            # replaces itself. Every other runner rolls itself over on an Upgrade frame; this one is
-            # a deployed application like any other, so qits-deployments is what redeploys it on a
-            # release, and a runner also trying to self-update would be two actors racing to remove
-            # the same container.
-            #
-            # THE ID AND THE TOKEN ARE DELIBERATELY EMPTY HERE. Both are minted against the running
-            # idp and qits-ci once, by an operator, the moment the `localhost` runner row exists (a
-            # later task in this epic creates it) — never by this bootstrap, which runs before that
-            # row can exist and has no business minting a runner's own credential. An operator fills
-            # them through qits-configuration's PUT door, which is ConfigurationService.upsert
-            # (qits-configuration-service, ConfigurationService.java:487-508): every write it makes
-            # is class `plain`, unconditionally. A REBOOTSTRAP re-imports this whole block through
-            # ConfigurationService.importProperties (ConfigurationService.java:566-594), and that
-            # importer's per-line write (ConfigurationService.java:580-586) checks the row it would
-            # replace BEFORE comparing values: a `plain` row is counted `kept` and left untouched,
-            # full stop — so an operator's id and token survive every later rebootstrap, and only a
-            # row that is still `imported` (never set by hand) is what this empty value would go on
-            # blanking.
-            qits.deployments.extras.qits-ci-runner.mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock
-            qits.deployments.extras.qits-ci-runner.groups[0]=${DOCKER_GID}
-            qits.deployments.extras.qits-ci-runner.env.QITS_CI_RUNNER_URL=${CI_RUNNER_PUBLIC_URL}
-            qits.deployments.extras.qits-ci-runner.env.QITS_CI_RUNNER_STATE_DIR=/var/lib/qits-ci-runner
-            qits.deployments.extras.qits-ci-runner.env.QITS_CI_RUNNER_SLOTS=${CI_LOCAL_SLOTS}
-            qits.deployments.extras.qits-ci-runner.env.QITS_CI_RUNNER_SELF_UPDATE=false
-            qits.deployments.extras.qits-ci-runner.env.QITS_CI_RUNNER_ID=
-            qits.deployments.extras.qits-ci-runner.env.QITS_CI_RUNNER_REGISTRATION_TOKEN=
+            # NO qits-ci-runner BLOCK, AND ITS ABSENCE IS THE DECISION. The platform host's runner
+            # is a container the bootstrap starts with a plain `docker run` (the `runner-localhost`
+            # phase), exactly as the install line starts a runner on any other host: it registers
+            # itself, rolls itself over on an Upgrade, and is no application of the deployer. A
+            # block here would be configuration for a deployment nothing makes — and a standing
+            # invitation to make one beside the running runner, two holders of one runner id.
+            # Rows a platform imported from the block this replaced are orphans and harmless.
             """;
 }
