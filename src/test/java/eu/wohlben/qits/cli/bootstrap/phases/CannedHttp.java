@@ -61,6 +61,13 @@ final class CannedHttp extends Http {
         return answer("PUT " + url, json, sent);
     }
 
+    /** A token request: the form is not kept, the client that asked is — as {@code user}. */
+    @Override
+    public Http.Response postForm(String url, String user, String password,
+                                  Map<String, String> form) {
+        return answer("FORM " + url, user, Map.of());
+    }
+
     @Override
     public Http.Response delete(String url, Map<String, String> sent) {
         return answer("DELETE " + url, null, sent);

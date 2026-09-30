@@ -83,6 +83,24 @@ class BootstrapPlanTest {
         assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1")))).doesNotContain("runner-image");
     }
 
+    /**
+     * <b>The images go into the store after the seed stack is healthy and before the publishing
+     * credential is handed back — in both arms.</b> The push goes through the edge, it presents
+     * that credential, and qits-ci refuses a run whose step image the store cannot pin.
+     */
+    @Test
+    void theImagesArePushedBetweenTheStackAndTheCredentialsReturn() {
+        for (Map<String, String> env : List.of(Map.<String, String>of(),
+                Map.of("QITS_SKIP_BUILD", "1"))) {
+            List<String> ids = ids(plan(env));
+
+            assertThat(ids).containsSubsequence("seed-stack", "seed-health", "register-token",
+                    "images-publish", "daemon-publish", "publish-credential-release",
+                    "qits-project");
+            assertThat(ids.get(ids.indexOf("images-publish") + 1)).isEqualTo("daemon-publish");
+        }
+    }
+
     @Test
     void theSeedOrderIsTheOneTheDependenciesForce() {
         List<String> ids = ids(plan(Map.of()));

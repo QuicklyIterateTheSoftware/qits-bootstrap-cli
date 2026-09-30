@@ -10,12 +10,14 @@ import eu.wohlben.qits.cli.bootstrap.engine.PhaseSkipped;
 import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
+import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
 import eu.wohlben.qits.cli.bootstrap.proc.ScriptedRunner;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -1557,5 +1559,151 @@ class PipelinePhasesTest {
     @Test
     void aCheckoutWithNoSlotFileDeclaresNothing(@org.junit.jupiter.api.io.TempDir Path src) {
         assertThat(PipelinePhases.declaresReleasePhase(src)).isFalse();
+    }
+
+    // --- the images a run is started from --------------------------------------------------------
+
+    private static final String PIN = "2026.930.132340";
+
+    private static final String MANIFESTS = "GET http://prod-qits-artifacts:8080/v2/";
+
+    private static final List<String> STORE_IMAGES = List.of(
+            "qits/build-images/ci-base/manifests/latest",
+            "qits/build-images/maven-base/manifests/latest",
+            "qits/build-images/userflows-base/manifests/latest",
+            "qits/build-images/node-base/manifests/latest",
+            "qits/build-images/node-docker-base/manifests/latest",
+            "qits/qits-ci-runner/manifests/" + PIN);
+
+    /** A boot whose ci checkout pins the runner, with the process runner and the http in hand. */
+    private Boot runnerBoot(ScriptedRunner runner, CannedHttp http, Map<String, String> env)
+            throws Exception {
+        Map<String, String> config = new java.util.HashMap<>(env);
+        config.put("QITS_SRC", temp.resolve("src").toString());
+        Boot boot = new Boot(TestConfig.from(config), new RunLog(temp.resolve("run.log")), runner,
+                http);
+        boot.state.srcDir = temp.resolve("src");
+        boot.state.wrapperDir = temp;
+        Path ci = Files.createDirectories(boot.state.repoDir("ci"));
+        Files.writeString(ci.resolve("pom.xml"), "<project><properties>"
+                + "<qits.ci-runner-protocol.version>" + PIN + "</qits.ci-runner-protocol.version>"
+                + "</properties></project>", StandardCharsets.UTF_8);
+        return boot;
+    }
+
+    /** A store that answers 200 for the listed manifests and 404 for the rest. */
+    private static CannedHttp store(List<String> held) {
+        CannedHttp http = new CannedHttp();
+        for (String image : STORE_IMAGES) {
+            http.answer(MANIFESTS + image, held.contains(image) ? 200 : 404, "");
+        }
+        return http;
+    }
+
+    /**
+     * <b>A cold store: all six are pushed, under the registry host, with the publishing pair in a
+     * config of the phase's own.</b> The credential is a file the command names — never an
+     * argument — it is the pair docker's token dance needs, and the directory is gone when the
+     * phase ends.
+     */
+    @Test
+    void aColdStoreIsPushedEveryStepImageAndTheRunnerImage() throws Exception {
+        List<String> configs = new ArrayList<>();
+        ScriptedRunner runner = new ScriptedRunner(command -> {
+            if (command.contains("push")) {
+                try {
+                    configs.add(Files.readString(Path.of(command.get(2)).resolve("config.json")));
+                } catch (java.io.IOException e) {
+                    configs.add("unreadable: " + e);
+                }
+            }
+            return ScriptedRunner.ok();
+        });
+        CannedHttp http = store(List.of())
+                .answer("GET http://prod-qits-idp:8080/idp/q/health/ready", 200, "")
+                .answer("FORM http://prod-qits-idp:8080/idp/token", 200,
+                        "{\"access_token\":\"read-token\",\"expires_in\":3600}")
+                .answer("POST http://prod-qits-idp:8080/idp/api/clients", 201,
+                        "{\"clientId\":\"dyn-bootstrap-publish-1\",\"secret\":\"s3cr3t-pair\"}");
+        Boot boot = runnerBoot(runner, http, Map.of());
+        boot.state.bootstrapClientId = "prod-qits-bootstrap";
+        boot.state.bootstrapSecret = "boot";
+        CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
+
+        new PipelinePhases(boot).imagesPublish().action().run(ctx);
+
+        List<List<String>> pushes = runner.argv.stream()
+                .filter(command -> command.contains("push")).toList();
+        assertThat(pushes).hasSize(6).allSatisfy(command -> {
+            assertThat(command).hasSize(5);
+            assertThat(command.subList(0, 2)).containsExactly("docker", "--config");
+            assertThat(command.get(3)).isEqualTo("push");
+        });
+        assertThat(pushes.stream().map(List::getLast)).containsExactly(
+                "registry.prod.localhost:8080/qits/build-images/ci-base:latest",
+                "registry.prod.localhost:8080/qits/build-images/maven-base:latest",
+                "registry.prod.localhost:8080/qits/build-images/userflows-base:latest",
+                "registry.prod.localhost:8080/qits/build-images/node-base:latest",
+                "registry.prod.localhost:8080/qits/build-images/node-docker-base:latest",
+                "registry.prod.localhost:8080/qits/qits-ci-runner:" + PIN);
+        // The config names the registry host and carries the pair as docker login would.
+        String auth = java.util.Base64.getEncoder().encodeToString(
+                "dyn-bootstrap-publish-1:s3cr3t-pair".getBytes(StandardCharsets.UTF_8));
+        assertThat(configs).hasSize(6).allSatisfy(config -> assertThat(config)
+                .contains("\"registry.prod.localhost:8080\"").contains(auth));
+        // Neither the secret nor its base64 is on a command line or in the log.
+        assertThat(runner.lines()).noneMatch(line -> line.contains("s3cr3t-pair")
+                || line.contains(auth));
+        assertThat(ctx.logs).noneMatch(line -> line.contains("s3cr3t-pair") || line.contains(auth));
+        // And a line docker echoed either back on would be masked.
+        Cmd push = runner.cmds.stream().filter(cmd -> cmd.command().contains("push")).findFirst()
+                .orElseThrow();
+        assertThat(push.maskText("denied for s3cr3t-pair / " + auth)).isEqualTo(
+                "denied for *** / ***");
+        // The directory is the phase's own and is gone with it.
+        assertThat(Path.of(pushes.getFirst().get(2))).doesNotExist();
+    }
+
+    /** What the store holds is left alone — every rerun, and every live platform. */
+    @Test
+    void aStoreThatHoldsEveryImageIsPushedNothing() throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
+        Boot boot = runnerBoot(runner, store(STORE_IMAGES), Map.of());
+
+        assertThatThrownBy(() -> new PipelinePhases(boot).imagesPublish().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(PhaseSkipped.class)
+                .hasMessageContaining("the registry holds all 6 images");
+        assertThat(runner.argv).isEmpty();
+    }
+
+    /** Only the missing ones are pushed: a released {@code :latest} is never written over. */
+    @Test
+    void onlyTheImagesTheStoreLacksArePushed() throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
+        Boot boot = runnerBoot(runner, store(STORE_IMAGES.subList(0, 5)),
+                Map.of("QITS_MACHINE_AUTH", "0"));
+
+        new PipelinePhases(boot).imagesPublish().action().run(new CiLogStreamTest.Recorder());
+
+        assertThat(runner.argv.stream().filter(command -> command.contains("push"))
+                .map(List::getLast))
+                .containsExactly("registry.prod.localhost:8080/qits/qits-ci-runner:" + PIN);
+    }
+
+    /** An image that is nowhere stops the boot and says which flag hid its build. */
+    @Test
+    void anImageThatIsNeitherStoredNorBuiltStopsTheBoot() throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command ->
+                command.contains("inspect") ? ScriptedRunner.failed("No such image")
+                        : ScriptedRunner.ok());
+        Boot boot = runnerBoot(runner, store(List.of()), Map.of("QITS_MACHINE_AUTH", "0"));
+
+        assertThatThrownBy(() -> new PipelinePhases(boot).imagesPublish().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("registry.prod.localhost:8080/qits/build-images/ci-base:latest")
+                .hasMessageContaining("rerun without QITS_SKIP_BUILD");
+        assertThat(runner.argv).noneMatch(command -> command.contains("push"));
     }
 }

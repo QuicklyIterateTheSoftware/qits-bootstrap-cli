@@ -110,6 +110,32 @@ public class BootstrapPublishCredential implements AutoCloseable {
         return clientId;
     }
 
+    /** The credential as a client id and its secret — what a docker {@code config.json} is made of. */
+    public record Pair(String clientId, String secret) {
+        @Override
+        public String toString() {
+            return "Pair[clientId=" + clientId + "]";
+        }
+    }
+
+    /**
+     * <b>The pair itself, for the one publish that cannot present a bearer: a {@code docker
+     * push}.</b> docker does the Distribution spec's token dance — a 401 naming a realm, HTTP Basic
+     * to it, a bearer back — so what it needs on disk is the id and the secret, not a token this
+     * class minted. Commissioned on first use like {@link #bearer()}, and refused once the
+     * credential has been handed back, for the same reason.
+     */
+    public synchronized Pair pair() {
+        if (deleted) {
+            throw new IllegalStateException("the bootstrap's publishing credential was handed back"
+                    + " when the publish phase ended — nothing may publish after that");
+        }
+        if (clientId == null) {
+            commission();
+        }
+        return new Pair(clientId, secret);
+    }
+
     private void commission() {
         // gitRefs is sent as a LIST and not left out: absent means "no scope stated", which is a
         // credential that may push whatever its role allows, while [] is the ruling's "may push

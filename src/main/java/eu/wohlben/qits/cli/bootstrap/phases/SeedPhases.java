@@ -874,6 +874,10 @@ public class SeedPhases {
         });
     }
 
+    /** The step images a cold boot builds, each {@code qits/build-images/<name>:latest}. */
+    static final List<String> STEP_IMAGES = List.of("ci-base", "maven-base", "userflows-base",
+            "node-base", "node-docker-base");
+
     /**
      * The step images pipeline configs name. qits-oci is their single source of truth, but the
      * first ci-base cannot be built by the pipeline that needs ci-base to run.
@@ -891,7 +895,8 @@ public class SeedPhases {
             // pulls registry.<env>.localhost/qits/build-images/<name>. The seed loads it into the
             // host daemon under the bare tag and the fresh registry has not got it, so tag it under
             // the registry host too: docker run then finds it locally, before any pull. This is the
-            // seed's pull+retag.
+            // seed's pull+retag — and the tag the images-publish phase pushes, because a run is
+            // refused until the STORE answers for the image too.
             Boot.must(boot.docker.exec(ctx::log, "tag",
                     "qits/build-images/" + name + ":latest",
                     boot.config.registryVhost() + "/qits/build-images/" + name + ":latest"),
@@ -2895,7 +2900,7 @@ public class SeedPhases {
                 .collect(Collectors.joining(",", "{\"auths\":{", "}}\n"));
     }
 
-    private static String dockerAuth(String clientId, String secret) {
+    static String dockerAuth(String clientId, String secret) {
         return Base64.getEncoder()
                 .encodeToString((clientId + ":" + secret).getBytes(StandardCharsets.UTF_8));
     }

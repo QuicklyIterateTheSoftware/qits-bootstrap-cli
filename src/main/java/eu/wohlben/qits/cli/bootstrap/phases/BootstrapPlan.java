@@ -156,8 +156,7 @@ public final class BootstrapPlan {
             // client, so the seed places a placeholder bundle where its Dockerfile's `test -f`
             // looks — see PlatformModel.seedUiPath.
             phases.add(seed.seedImage("projects"));
-            for (String image : List.of("ci-base", "maven-base", "userflows-base", "node-base",
-                    "node-docker-base")) {
+            for (String image : SeedPhases.STEP_IMAGES) {
                 phases.add(seed.stepImage(image));
             }
             // BEFORE the daemon build, because the builder image it starts with reads two
@@ -202,6 +201,14 @@ public final class BootstrapPlan {
         phases.add(pipeline.registerToken());
         // DNS-01 issuance belongs to the running edge now. It starts asynchronously after the seed
         // stack is healthy and renews there; bootstrap neither runs certbot nor holds a challenge.
+        //
+        // THE IMAGES A RUN IS STARTED FROM, into the store — and it has to be a PUSH, through the
+        // edge, which is why it waits for the seed stack. qits-ci pins a step image by asking the
+        // store for its digest and refuses the run when the store has no such tag, so an image the
+        // host daemon merely holds is an image no run may use. Before the first run there is, and
+        // inside the publish half of the boot: it presents the publishing credential, which
+        // publish-credential-release hands back two phases down.
+        phases.add(pipeline.imagesPublish());
         phases.add(pipeline.daemonPublish());
         // IMMEDIATELY AFTER THE LAST PUBLISH. The bootstrap is the one exception to "only CI may
         // publish", and the exception is bounded by handing the credential back here rather than

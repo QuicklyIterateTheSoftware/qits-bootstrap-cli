@@ -124,6 +124,29 @@ class BootstrapPublishCredentialTest {
                 .hasMessageContaining("handed back");
     }
 
+    /**
+     * <b>A docker push takes the pair, not a bearer</b> — docker does the registry's token dance
+     * itself. It is the same one commission, it mints no token of its own, and it is refused after
+     * the hand-back on the same terms a bearer is.
+     */
+    @Test
+    void thePairIsTheSameCommissionAndIsRefusedOnceHandedBack() {
+        FakeHttp http = new FakeHttp();
+        BootstrapPublishCredential credential = credential(http);
+
+        BootstrapPublishCredential.Pair pair = credential.pair();
+        credential.pair();
+
+        assertThat(pair.clientId()).isEqualTo("dyn-bootstrap-publish-prod-qits-boot-abc");
+        assertThat(pair.secret()).isNotBlank();
+        assertThat(http.urls).containsExactly(CLIENTS);
+        // Printing the pair never prints the secret.
+        assertThat(pair.toString()).doesNotContain(pair.secret());
+
+        credential.delete();
+        assertThatThrownBy(credential::pair).hasMessageContaining("handed back");
+    }
+
     /** A run that never published leaves nothing at the idp — not even for a moment. */
     @Test
     void aRunThatCommissionedNothingSendsNoDelete() {

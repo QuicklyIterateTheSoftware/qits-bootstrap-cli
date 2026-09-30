@@ -472,6 +472,34 @@ public class Boot {
      *            screen rather than only in the shape of a later 401
      */
     public String publishAuthorization(PhaseContext ctx) {
+        BootstrapPublishCredential credential = publishCredential(ctx);
+        if (credential == null) {
+            return null;
+        }
+        String authorization = credential.authorization();
+        ctx.log("  publishing as " + credential.clientId() + " ("
+                + BootstrapPublishCredential.CONTEXT_KIND + ", may push nothing)");
+        return authorization;
+    }
+
+    /**
+     * <b>What a {@code docker push} into the store presents</b>: the same publishing credential,
+     * as the id and secret docker's own token dance needs — or null on the terms
+     * {@link #publishAuthorization} answers null on.
+     */
+    public BootstrapPublishCredential.Pair publishPair(PhaseContext ctx) {
+        BootstrapPublishCredential credential = publishCredential(ctx);
+        if (credential == null) {
+            return null;
+        }
+        BootstrapPublishCredential.Pair pair = credential.pair();
+        ctx.log("  pushing as " + pair.clientId() + " ("
+                + BootstrapPublishCredential.CONTEXT_KIND + ", may push no git ref)");
+        return pair;
+    }
+
+    /** The credential both forms present, made on first use — or null, with the reason logged. */
+    private BootstrapPublishCredential publishCredential(PhaseContext ctx) {
         if (!config.machineAuth()) {
             ctx.log("  the machine gate is off — publishing into the store without a credential");
             return null;
@@ -486,10 +514,7 @@ public class Boot {
                     state.bootstrapClientId, state.bootstrapSecret,
                     PlatformModel.bootstrapClientId(config.envName()), PLATFORM_AUDIENCE);
         }
-        String authorization = publishCredential.authorization();
-        ctx.log("  publishing as " + publishCredential.clientId() + " ("
-                + BootstrapPublishCredential.CONTEXT_KIND + ", may push nothing)");
-        return authorization;
+        return publishCredential;
     }
 
     /**

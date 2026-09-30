@@ -1,6 +1,7 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import eu.wohlben.qits.cli.bootstrap.api.BootstrapPublishCredential;
 import eu.wohlben.qits.cli.bootstrap.api.CiApi;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.Json;
@@ -664,6 +665,116 @@ public class PipelinePhases {
 
     // --- the cold-start publishes -----------------------------------------------------------------
 
+    /** One image the store has to answer for: its repository and its tag. */
+    record StoreImage(String repository, String tag) {
+
+        /** The image as the host daemon pushes it, under the registry host. */
+        String reference(String registryHost) {
+            return registryHost + "/" + repository + ":" + tag;
+        }
+    }
+
+    /** The step images and the runner image, in the order they are asked for and pushed. */
+    static List<StoreImage> storeImages(String runnerVersion) {
+        List<StoreImage> images = new ArrayList<>();
+        for (String name : SeedPhases.STEP_IMAGES) {
+            images.add(new StoreImage("qits/build-images/" + name, "latest"));
+        }
+        images.add(new StoreImage(SeedPhases.RUNNER_IMAGE, runnerVersion));
+        return images;
+    }
+
+    /**
+     * <b>THE STEP IMAGES AND THE RUNNER IMAGE, PUSHED INTO THE STORE — because a run is refused
+     * until the store answers for them.</b>
+     * <p>
+     * A cold boot builds {@code qits/build-images/*:latest} on the host daemon and tags them under
+     * the registry host, which used to be enough: a step's {@code docker run} found the image
+     * locally and pulled nothing. Since 2026-09-22 qits-ci pins each step image before it accepts
+     * a run — a {@code HEAD} on the store's manifest, answered with a digest — and a store that
+     * has never seen the tag answers 404, which is {@code UNRESOLVED} and no run at all. That is
+     * every release replay of a cold boot and the runner's own health check. So the images go into
+     * the store here, before the first run is asked for.
+     * <p>
+     * <b>The runner image rides with them for a different reason</b>: nothing pins it, but a
+     * runner told to update pulls {@code <registry host>/qits/qits-ci-runner:<version>}, and the
+     * version this boot built is the one a store of a fresh platform would otherwise not hold.
+     * <p>
+     * <b>Pushed by the HOST's daemon, through the edge</b>, under the registry host's name — the
+     * path a release step's own push takes. That is why this phase sits after the seed stack is
+     * healthy, and why a push leaves the local image knowing the digest the store will answer:
+     * the runner finds the pinned reference on the host and pulls nothing.
+     * <p>
+     * <b>The credential is the publishing one</b>, as the pair docker's token dance needs, in a
+     * {@code config.json} in a directory of this phase's own — 0700, named with {@code --config}
+     * and gone before the phase ends. The daemon's own config is nobody's to write: a login there
+     * would outlive the boot and serve every docker user of the host.
+     * <p>
+     * <b>What the store already holds is left alone</b>, one image at a time. That is every rerun,
+     * and it is what keeps a re-bootstrap of a live platform from writing a seed build over a
+     * released {@code :latest}.
+     */
+    public Phase imagesPublish() {
+        return new Phase("images-publish",
+                "push the step images and the runner image into the registry", ctx -> {
+            String registryHost = boot.config.registryVhost();
+            List<StoreImage> images = storeImages(SeedPhases.runnerVersion(boot));
+            List<StoreImage> missing = new ArrayList<>();
+            for (StoreImage image : images) {
+                boolean held = boot.artifacts.imagePublished(image.repository(), image.tag());
+                ctx.log("  " + image.repository() + ":" + image.tag() + " — "
+                        + (held ? "held" : "to push"));
+                if (!held) {
+                    missing.add(image);
+                }
+            }
+            if (missing.isEmpty()) {
+                ctx.skip("the registry holds all " + images.size() + " images");
+            }
+            for (StoreImage image : missing) {
+                if (!boot.docker.imageExists(image.reference(registryHost))) {
+                    throw new IllegalStateException(image.reference(registryHost) + " is neither "
+                            + "in the registry nor on this host — rerun without QITS_SKIP_BUILD");
+                }
+            }
+            BootstrapPublishCredential.Pair pair = boot.publishPair(ctx);
+            // createTempDirectory is 0700: the file it holds is a credential.
+            Path config = Files.createTempDirectory("qits-docker-push-");
+            try {
+                if (pair != null) {
+                    Files.writeString(config.resolve("config.json"), SeedPhases.dockerConfigJson(
+                                    List.of(registryHost), pair.clientId(), pair.secret()),
+                            StandardCharsets.UTF_8);
+                }
+                for (StoreImage image : missing) {
+                    ctx.status("pushing " + image.reference(registryHost));
+                    Boot.must(boot.docker.run(pushCommand(config, image.reference(registryHost),
+                                    pair), ctx::log),
+                            "the push of " + image.reference(registryHost) + " failed");
+                }
+            } finally {
+                Files.deleteIfExists(config.resolve("config.json"));
+                Files.deleteIfExists(config);
+            }
+            ctx.note(missing.size() + " pushed");
+        });
+    }
+
+    /**
+     * One push. The credential is a file the command names and never an argument, so there is
+     * nothing on this line to hide — it is masked all the same, against the day docker quotes a
+     * config back in an error.
+     */
+    static Cmd pushCommand(Path config, String reference,
+                           BootstrapPublishCredential.Pair pair) {
+        Cmd push = Cmd.of(List.of("docker", "--config", config.toString(), "push", reference))
+                .timeout(Duration.ofMinutes(30));
+        if (pair != null) {
+            push.mask(pair.secret()).mask(SeedPhases.dockerAuth(pair.clientId(), pair.secret()));
+        }
+        return push;
+    }
+
     public Phase daemonPublish() {
         return new Phase("daemon-publish", "publish the ci-daemon binary to the registry", ctx -> {
             String sha = boot.state.daemonSha;
@@ -680,10 +791,10 @@ public class PipelinePhases {
             }
             ctx.status("uploading " + (Files.size(binary) / (1024 * 1024)) + " MB to "
                     + boot.artifacts.base() + "/daemons/qits-ci-daemon/" + SeedPhases.shortSha(sha));
-            // THE LAST PUBLISH OF THE BOOT, and the one that meets a store which is gated by the
-            // time it runs: the seed stack is up above this phase. It presents the publishing
-            // credential the seed publishes used — the same commission, minted afresh — and the
-            // phase below hands that credential back.
+            // THE LAST PUBLISH OF THE BOOT, and with the image pushes just above it one of the two
+            // that meet a store which is gated by the time they run: the seed stack is up above
+            // both. It presents the publishing credential the seed publishes used — the same
+            // commission, minted afresh — and the phase below hands that credential back.
             Http.Response response = boot.artifacts.publishDaemon("qits-ci-daemon", sha, binary,
                     boot.publishAuthorization(ctx));
             if (response.status() != 201) {
