@@ -46,6 +46,12 @@ final class CannedHttp extends Http {
         return answer("GET " + url, null, sent);
     }
 
+    /** Asked as {@code GET <url> as <host>}. */
+    @Override
+    public Http.Response getAs(String url, String host) {
+        return answer("GET " + url + " as " + host, null, Map.of());
+    }
+
     @Override
     public Http.Response head(String url, Map<String, String> sent) {
         return answer("HEAD " + url, null, sent);

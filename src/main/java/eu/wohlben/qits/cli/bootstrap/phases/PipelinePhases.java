@@ -2666,6 +2666,102 @@ public class PipelinePhases {
         return Set.copyOf(current.stream().map(String::trim).toList()).containsAll(env);
     }
 
+    // --- the platform's own door, before the runner dials it -------------------------------------
+
+    /** One thing the edge has to answer before the runner is started: what, and how to ask. */
+    record EdgeProbe(String what, java.util.function.Supplier<Http.Response> ask) {
+    }
+
+    /**
+     * <b>What the runner is about to dial, asked of the platform's own edge.</b>
+     * <p>
+     * <b>With a domain</b>, the three public names qits-ci tells an EDGE runner — its own
+     * {@code RunnerAddresses}: {@code https://<host>.qits.<domain>}, the platform project's
+     * applications, with no environment label. Each at the path the runner or its docker uses: the
+     * install script's door, the token endpoint, the registry's {@code /v2/}. Over HTTPS with the
+     * JVM's own trust store, so an answer at all is a certificate a machine trusts; a placeholder or
+     * a staging certificate is a failed handshake, which is no answer.
+     * <p>
+     * <b>Without one</b>, the registry's name as this host's docker spells it, asked of the edge at
+     * its own alias — the name a step image is pinned under and pulled by, routed by the edge that
+     * has just replaced the seed one.
+     */
+    List<EdgeProbe> edgeProbes() {
+        Optional<String> domain = DomainName.of(boot.config);
+        if (domain.isPresent()) {
+            List<EdgeProbe> probes = new ArrayList<>();
+            for (String[] entry : List.of(new String[] {"ci", "/ci/api/runners/install.sh"},
+                    new String[] {"idp", "/idp/token"}, new String[] {"registry", "/v2/"})) {
+                String url = "https://" + entry[0] + "." + PlatformModel.PROJECT + "."
+                        + domain.get() + entry[1];
+                probes.add(new EdgeProbe(url, () -> boot.http.get(url, Map.of())));
+            }
+            return probes;
+        }
+        String url = "http://" + PlatformModel.wireAlias("edge", boot.config.envName()) + ":8080/v2/";
+        String host = boot.config.registryVhost();
+        return List.of(new EdgeProbe(host + "/v2/ through " + url,
+                () -> boot.http.getAs(url, host)));
+    }
+
+    /**
+     * Did the edge ROUTE this? Any answer of the service's own is: a 401 from a guarded door is the
+     * door. No answer is not (with a domain that includes a certificate nobody trusts), a 5xx is a
+     * service not up or an edge still projecting, and a 404 is a name the edge does not route yet.
+     */
+    static boolean edgeServes(Http.Response answer) {
+        return answer.reached() && answer.status() < 500 && answer.status() != 404;
+    }
+
+    /**
+     * <b>THE PLATFORM'S OWN EDGE SERVES WHAT THE RUNNER IS ABOUT TO DIAL — before the runner is
+     * started.</b>
+     * <p>
+     * The edge was deployed a phase ago and the bootstrap ingress retired with it, so this is the
+     * first moment the platform's door is the only door. With a domain, the runner is an EDGE runner
+     * and reaches qits-ci, the idp and the registry through it and nothing else; a certificate it
+     * does not trust is a runner that never connects, and waiting that out in
+     * {@code runner-connected} would say "not connected" about a TLS problem. So this waits,
+     * bounded ({@code QITS_EDGE_READY_TIMEOUT}), for the edge's own ACME order to have landed — it
+     * has been running since the seed edge came up, so the wait is usually already over — and names
+     * each host's last answer while it does.
+     * <p>
+     * <b>A domain with ACME off or on staging is refused</b>, here and before the boot started
+     * ({@link Acme#edgeRunnerRefusal}): neither can ever pass.
+     */
+    public Phase edgeReady() {
+        return new Phase("edge-ready", "wait for the platform's edge to serve what the runner dials",
+                ctx -> {
+            String refusal = Acme.edgeRunnerRefusal(DomainName.of(boot.config).isPresent(),
+                    Acme.mode(boot.config));
+            if (refusal != null) {
+                throw new IllegalStateException(refusal);
+            }
+            List<EdgeProbe> probes = edgeProbes();
+            probes.forEach(probe -> ctx.log("  " + probe.what()));
+            try {
+                Waiter.await(ctx, "the platform's edge", boot.config.edgeReadyTimeout(),
+                        boot.config.pollInterval(), () -> {
+                            List<String> waiting = new ArrayList<>();
+                            for (EdgeProbe probe : probes) {
+                                Http.Response answer = probe.ask().get();
+                                if (!edgeServes(answer)) {
+                                    waiting.add(probe.what() + ": " + answer.describe());
+                                }
+                            }
+                            return waiting.isEmpty() ? Waiter.Poll.done("served", "served")
+                                    : Waiter.Poll.pending(String.join("; ", waiting));
+                        });
+            } catch (TimeoutException gaveUp) {
+                throw new IllegalStateException(gaveUp.getMessage() + (DomainName.of(boot.config)
+                        .isPresent() ? "\nA failed handshake is a certificate this host does not "
+                        + "trust yet: the edge orders it over DNS-01, so the records have to "
+                        + "resolve — rerun once they do." : ""));
+            }
+            ctx.note(probes.size() == 1 ? "the registry is routed" : probes.size() + " names served");
+        });
+    }
+
     // --- the platform host's runner ---------------------------------------------------------------
 
     /**

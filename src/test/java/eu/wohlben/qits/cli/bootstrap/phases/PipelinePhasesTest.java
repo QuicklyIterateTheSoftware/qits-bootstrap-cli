@@ -2105,6 +2105,111 @@ class PipelinePhasesTest {
                 .isFalse();
     }
 
+    // --- the edge the runner dials ---------------------------------------------------------------
+
+    private static final Map<String, String> DOMAIN = Map.of("QITS_DOMAIN", "qits-dev.eu",
+            "QITS_PUBLIC_IP", "203.0.113.7", "QITS_ACME_MODE", "production");
+
+    private static final List<String> PUBLIC_NAMES = List.of(
+            "GET https://ci.qits.qits-dev.eu/ci/api/runners/install.sh",
+            "GET https://idp.qits.qits-dev.eu/idp/token",
+            "GET https://registry.qits.qits-dev.eu/v2/");
+
+    private static final String UNTRUSTED =
+            "javax.net.ssl.SSLHandshakeException: PKIX path building failed";
+
+    private Boot edgeBoot(CannedHttp http, Map<String, String> env) throws Exception {
+        Map<String, String> config = new java.util.HashMap<>(env);
+        config.put("QITS_POLL_INTERVAL", "PT0.001S");
+        config.putIfAbsent("QITS_EDGE_READY_TIMEOUT", "PT0.3S");
+        return runnerBoot(new ScriptedRunner(command -> ScriptedRunner.ok()), http, config);
+    }
+
+    /**
+     * <b>With a domain: the three names qits-ci tells an EDGE runner, over a certificate the JVM
+     * trusts.</b> A failed handshake is no answer and the wait goes on; any answer of the service's
+     * own — the 401 of a guarded door, the 405 of a POST-only one — ends it.
+     */
+    @Test
+    void withADomainTheGateWaitsForTheThreePublicNamesOverATrustedCertificate() throws Exception {
+        int[] asked = {0};
+        CannedHttp http = new CannedHttp();
+        http.answer(PUBLIC_NAMES.get(0), () -> ++asked[0] < 3
+                ? new Http.Response(0, UNTRUSTED) : new Http.Response(401, ""));
+        http.answer(PUBLIC_NAMES.get(1), 405, "");
+        http.answer(PUBLIC_NAMES.get(2), 401, "");
+        CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
+
+        new PipelinePhases(edgeBoot(http, DOMAIN)).edgeReady().action().run(ctx);
+
+        assertThat(asked[0]).isEqualTo(3);
+        assertThat(http.calls).containsAll(PUBLIC_NAMES);
+    }
+
+    /** A certificate that never becomes trusted stops the boot, naming the host and the reason. */
+    @Test
+    void anEdgeThatNeverServesATrustedCertificateStopsTheBoot() throws Exception {
+        CannedHttp http = new CannedHttp()
+                .answer(PUBLIC_NAMES.get(0), 0, UNTRUSTED)
+                .answer(PUBLIC_NAMES.get(1), 405, "")
+                .answer(PUBLIC_NAMES.get(2), 404, "");
+
+        assertThatThrownBy(() -> new PipelinePhases(edgeBoot(http, DOMAIN)).edgeReady().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("https://ci.qits.qits-dev.eu/ci/api/runners/install.sh: "
+                        + "no answer (" + UNTRUSTED)
+                // A 404 is a name the edge does not route yet.
+                .hasMessageContaining("https://registry.qits.qits-dev.eu/v2/: 404")
+                .hasMessageContaining("DNS-01");
+    }
+
+    /** A domain on staging or with issuance off can never pass, so it is refused before a poll. */
+    @Test
+    void aDomainWithoutAProductionCertificateIsRefusedBeforeAnythingIsAsked() throws Exception {
+        for (String mode : List.of("staging", "off")) {
+            Map<String, String> env = new java.util.HashMap<>(DOMAIN);
+            env.put("QITS_ACME_MODE", mode);
+            CannedHttp http = new CannedHttp();
+
+            assertThatThrownBy(() -> new PipelinePhases(edgeBoot(http, env)).edgeReady().action()
+                    .run(new CiLogStreamTest.Recorder()))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("'" + mode + "'")
+                    .hasMessageContaining("production");
+            assertThat(http.calls).isEmpty();
+        }
+    }
+
+    /**
+     * <b>Without a domain: the registry's name as this host's docker spells it, asked of the edge
+     * at its own alias</b> — the edge that has just replaced the seed one, routing the name a step
+     * image is pulled by.
+     */
+    @Test
+    void withoutADomainTheGateAsksTheEdgeForTheRegistryName() throws Exception {
+        String asked = "GET http://prod-qits-edge:8080/v2/ as registry.prod.localhost:8080";
+        int[] polls = {0};
+        CannedHttp http = new CannedHttp().answer(asked, () -> ++polls[0] < 2
+                ? new Http.Response(503, "no route yet") : new Http.Response(401, ""));
+
+        new PipelinePhases(edgeBoot(http, Map.of())).edgeReady().action()
+                .run(new CiLogStreamTest.Recorder());
+
+        assertThat(http.calls).containsOnly(asked);
+        assertThat(polls[0]).isEqualTo(2);
+    }
+
+    @Test
+    void theEdgeServesANameWhenTheServiceItselfAnswers() {
+        assertThat(PipelinePhases.edgeServes(new Http.Response(401, ""))).isTrue();
+        assertThat(PipelinePhases.edgeServes(new Http.Response(200, ""))).isTrue();
+        assertThat(PipelinePhases.edgeServes(new Http.Response(405, ""))).isTrue();
+        assertThat(PipelinePhases.edgeServes(new Http.Response(404, ""))).isFalse();
+        assertThat(PipelinePhases.edgeServes(new Http.Response(503, ""))).isFalse();
+        assertThat(PipelinePhases.edgeServes(new Http.Response(0, UNTRUSTED))).isFalse();
+    }
+
     // --- this host's runner -----------------------------------------------------------------------
     //
     // The two phases, driven through the two things they talk to: qits-ci over a canned http and

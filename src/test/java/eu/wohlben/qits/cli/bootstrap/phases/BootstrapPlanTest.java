@@ -119,11 +119,13 @@ class BootstrapPlanTest {
 
             assertThat(ids).containsSubsequence("seed-health", "images-publish",
                     "publish-credential-release", "qits-project", "git-repos",
-                    "seed-deploy-edge", "runner-localhost", "runner-connected",
+                    "seed-deploy-edge", "edge-ready", "runner-localhost", "runner-connected",
                     "release-train-push");
+            // The platform's own edge is proved to serve what the runner dials, right before it
+            // dials it.
             int runner = ids.indexOf("runner-localhost");
-            assertThat(ids.subList(runner - 1, runner + 3)).containsExactly(
-                    "seed-deploy-edge", "runner-localhost", "runner-connected",
+            assertThat(ids.subList(runner - 2, runner + 3)).containsExactly(
+                    "seed-deploy-edge", "edge-ready", "runner-localhost", "runner-connected",
                     "release-train-push");
             assertThat(ids).doesNotContain("deploy-ci-runner");
             assertThat(ids).noneMatch(id -> id.contains("decommission"));
@@ -164,7 +166,7 @@ class BootstrapPlanTest {
                     "publish-credential-release", "qits-project", "git-repos", "environment",
                     "seed-deploy-idp");
             assertThat(ids.get(first - 1)).isEqualTo("environment");
-            assertThat(ids).containsSubsequence("seed-deploy-edge", "runner-localhost",
+            assertThat(ids).containsSubsequence("seed-deploy-edge", "edge-ready", "runner-localhost",
                     "runner-connected", "release-train-push", "preseed",
                     "release-spa-ui-components", "deploy-observability", "deploy-idp",
                     "deploy-edge", "deploy-deployments", "summary");

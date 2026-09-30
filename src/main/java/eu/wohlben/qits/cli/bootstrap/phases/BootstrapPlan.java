@@ -241,6 +241,10 @@ public final class BootstrapPlan {
         for (String name : PlatformModel.SEED_DEPLOYED) {
             phases.add(pipeline.seedDeploy(name));
         }
+        // THE DOOR THE RUNNER DIALS, proved before it dials: with a domain the runner reaches
+        // qits-ci, the idp and the registry through the platform's own edge over a certificate it
+        // has to trust, and without one the host's docker pulls through that edge.
+        phases.add(pipeline.edgeReady());
         // STEP THREE: THE RUNNER, AND IT HAS TO BE CONNECTED BEFORE THE FIRST RUN IS ASKED FOR.
         // qits-ci executes nothing itself (qits-506), so every release replay below is this
         // runner's or nobody's — a replay with no runner is a run that queues until its wait gives
