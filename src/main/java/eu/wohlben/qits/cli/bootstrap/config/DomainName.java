@@ -61,7 +61,8 @@ public final class DomainName {
                 + "and rerun.";
     }
 
-    static String checked(String value) {
+    /** The shape check alone, for a caller that already has a value rather than a {@link BootstrapConfig}. */
+    public static String checked(String value) {
         if (!SHAPE.matcher(value).matches() || value.length() > 253
                 || Arrays.stream(value.split("\\.")).anyMatch(label -> label.length() > 63)) {
             throw new IllegalArgumentException("QITS_DOMAIN (--domain) is '" + value + "', which is "
