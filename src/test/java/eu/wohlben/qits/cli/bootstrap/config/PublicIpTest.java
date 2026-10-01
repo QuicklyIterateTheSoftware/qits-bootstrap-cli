@@ -29,16 +29,9 @@ class PublicIpTest {
 
     @Test
     void aDomainAndAnAddressAreTheOrdinaryPair() {
-        assertThat(PublicIp.of(config("qits-dev.eu", "203.0.113.7"))).contains("203.0.113.7");
+        assertThat(PublicIp.of(config("qits-dev.eu", "203.0.113.7"))).isEqualTo("203.0.113.7");
         // Surrounding whitespace in a .env line is not part of the address.
-        assertThat(PublicIp.of(config("qits-dev.eu", "  203.0.113.7 "))).contains("203.0.113.7");
-    }
-
-    /** Neither knob set is the default platform: no zone, no records, nothing to address. */
-    @Test
-    void neitherKnobSetIsNoAddress() {
-        assertThat(PublicIp.of(config(null, null))).isEmpty();
-        assertThat(PublicIp.of(config(null, "   "))).isEmpty();
+        assertThat(PublicIp.of(config("qits-dev.eu", "  203.0.113.7 "))).isEqualTo("203.0.113.7");
     }
 
     /**
@@ -57,19 +50,6 @@ class PublicIpTest {
         assertThatThrownBy(() -> PublicIp.of(config("qits-dev.eu", "   ")))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("QITS_PUBLIC_IP");
-    }
-
-    /**
-     * An address with no domain is refused rather than ignored, which is what every other check on
-     * this half does. It says the person believes this run will serve public names; it will not.
-     */
-    @Test
-    void anAddressWithNoDomainIsRefusedRatherThanIgnored() {
-        assertThatThrownBy(() -> PublicIp.of(config(null, "203.0.113.7")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("QITS_PUBLIC_IP")
-                .hasMessageContaining("QITS_DOMAIN")
-                .hasMessageContaining("203.0.113.7");
     }
 
     @Test
@@ -98,9 +78,9 @@ class PublicIpTest {
     /** The edges of the range are addresses, and are taken. */
     @Test
     void theEndsOfEachOctetAreStillAddresses() {
-        assertThat(PublicIp.of(config("qits-dev.eu", "0.0.0.0"))).contains("0.0.0.0");
+        assertThat(PublicIp.of(config("qits-dev.eu", "0.0.0.0"))).isEqualTo("0.0.0.0");
         assertThat(PublicIp.of(config("qits-dev.eu", "255.255.255.255")))
-                .contains("255.255.255.255");
+                .isEqualTo("255.255.255.255");
     }
 
     /** {@code --public-ip} beats {@code .env}, and a blank one is no answer at all. */

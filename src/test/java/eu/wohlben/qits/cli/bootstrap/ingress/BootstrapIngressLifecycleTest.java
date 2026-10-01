@@ -69,7 +69,7 @@ class BootstrapIngressLifecycleTest {
                 .isEqualTo(BootstrapIngressMode.PUBLIC_TLS);
         assertThat(BootstrapIngressLifecycle.decide(true, false))
                 .isEqualTo(BootstrapIngressMode.PUBLIC_HTTP);
-        // No domain, or a domain node told to stay private: the volume is not even asked.
+        // A node told to stay private: the volume is not even asked.
         assertThat(BootstrapIngressLifecycle.decide(false, true))
                 .isEqualTo(BootstrapIngressMode.LOOPBACK);
         assertThat(BootstrapIngressLifecycle.decide(false, false))

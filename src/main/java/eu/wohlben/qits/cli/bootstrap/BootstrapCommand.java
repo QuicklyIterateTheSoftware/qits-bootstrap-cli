@@ -173,7 +173,7 @@ public class BootstrapCommand implements Callable<Integer> {
             Acme.mode(effective);
             // The extra SANs leave the machine the same way, inside the same order — and one bad
             // name fails the WHOLE order, taking the names that would have worked with it.
-            ExtraSans.of(effective, DomainName.of(effective));
+            ExtraSans.of(effective, effective.requiredDomain());
             // And the certificate has to be one this host's runner can trust — which the boot
             // only finds out at the edge-ready gate, after the whole local build.
             String refusal = Acme.edgeRunnerRefusal(Acme.mode(effective));

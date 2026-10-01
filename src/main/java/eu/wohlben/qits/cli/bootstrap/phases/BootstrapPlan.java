@@ -1,12 +1,10 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
-import eu.wohlben.qits.cli.bootstrap.config.DomainName;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 /**
  * The boot, as an ordered list built from configuration. The order is the script's, and the
@@ -186,14 +184,14 @@ public final class BootstrapPlan {
         phases.add(seed.idpBootstrapClient());
         phases.add(pipeline.seedIdp());
         phases.add(seed.idpClients());
-        DomainName.of(boot.config).ifPresent(name -> phases.add(seed.dnsHetznerSecret(name)));
+        String domain = boot.config.requiredDomain();
+        phases.add(seed.dnsHetznerSecret(domain));
         phases.add(seed.composeFile());
         phases.add(seed.pdExtras());
         // BEFORE the edge is started with a keystore, which is what the next phase does: a keystore
         // naming files that do not exist fails startup, so the volume has to hold a certificate
-        // first. Only with a domain — without one the edge has no keystore at all.
-        Optional<String> domain = DomainName.of(boot.config);
-        domain.ifPresent(name -> phases.add(seed.placeholderCertificate(name)));
+        // first.
+        phases.add(seed.placeholderCertificate(domain));
         phases.add(pipeline.seedStackUp());
         phases.add(pipeline.seedHealth());
         // The earliest point the idp answers, which is all this needs: the token is a row in
@@ -242,9 +240,8 @@ public final class BootstrapPlan {
         for (String name : PlatformModel.SEED_DEPLOYED) {
             phases.add(pipeline.seedDeploy(name));
         }
-        // THE DOOR THE RUNNER DIALS, proved before it dials: with a domain the runner reaches
-        // qits-ci, the idp and the registry through the platform's own edge over a certificate it
-        // has to trust, and without one the host's docker pulls through that edge.
+        // THE DOOR THE RUNNER DIALS, proved before it dials: the runner reaches qits-ci, the idp
+        // and the registry through the platform's own edge over a certificate it has to trust.
         phases.add(pipeline.edgeReady());
         // STEP THREE: THE RUNNER, AND IT HAS TO BE CONNECTED BEFORE THE FIRST RUN IS ASKED FOR.
         // qits-ci executes nothing itself (qits-506), so every release replay below is this

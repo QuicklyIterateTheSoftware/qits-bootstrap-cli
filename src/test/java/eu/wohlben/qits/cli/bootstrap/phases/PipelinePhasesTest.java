@@ -391,11 +391,12 @@ class PipelinePhasesTest {
      */
     @Test
     void theRunThatMintedTheTokenPrintsIt() {
-        List<String> lines = PipelinePhases.registerLines("http://localhost:8080/idp/register",
-                "rt-0123456789", false, "/home/me/code/qits-qits/.qits-bootstrap.env");
+        List<String> lines = PipelinePhases.registerLines(
+                "https://idp.dev.qits.qits-dev.eu/idp/register", "rt-0123456789", false,
+                "/home/me/code/qits-qits/.qits-bootstrap.env");
 
         assertThat(String.join("\n", lines))
-                .contains("http://localhost:8080/idp/register")
+                .contains("https://idp.dev.qits.qits-dev.eu/idp/register")
                 .contains("rt-0123456789")
                 .contains("ONE-TIME")
                 .contains("/home/me/code/qits-qits/.qits-bootstrap.env");
@@ -408,8 +409,9 @@ class PipelinePhasesTest {
      */
     @Test
     void aRerunPointsAtTheStateFileRatherThanReprintingTheToken() {
-        List<String> lines = PipelinePhases.registerLines("http://localhost:8080/idp/register",
-                null, true, "/home/me/code/qits-qits/.qits-bootstrap.env");
+        List<String> lines = PipelinePhases.registerLines(
+                "https://idp.dev.qits.qits-dev.eu/idp/register", null, true,
+                "/home/me/code/qits-qits/.qits-bootstrap.env");
 
         assertThat(String.join("\n", lines)).contains("IDP_REGISTER_TOKEN")
                 .contains("/home/me/code/qits-qits/.qits-bootstrap.env")
@@ -419,7 +421,8 @@ class PipelinePhasesTest {
     /** Nothing minted and nothing recorded: the phase warned, and the report stays quiet. */
     @Test
     void aBootThatMintedNothingSaysNothingHere() {
-        assertThat(PipelinePhases.registerLines("http://localhost:8080/idp/register", "", false,
+        assertThat(PipelinePhases.registerLines(
+                "https://idp.dev.qits.qits-dev.eu/idp/register", "", false,
                 "/tmp/.qits-bootstrap.env")).isEmpty();
     }
 
@@ -682,7 +685,8 @@ class PipelinePhasesTest {
 
     /** The extras exactly as a run renders them, with the deployer's own client secret resolved. */
     private String renderedExtras() {
-        Boot boot = new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log")));
+        Boot boot = new Boot(TestConfig.from(Map.of("QITS_DOMAIN", "qits-dev.eu",
+                "QITS_PUBLIC_IP", "203.0.113.7")), new RunLog(temp.resolve("run.log")));
         boot.state.serviceClientSecrets.put(PlatformModel.application("deployments"), "s3cr3t");
         return ComposeTemplate.extras(new SeedPhases(boot).tokens());
     }
@@ -1249,7 +1253,8 @@ class PipelinePhasesTest {
     @Test
     void theReportPrintsTheProjectScopedCloneUrl(@TempDir Path temp) throws Exception {
         ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
-        Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev", "QITS_PORT", "8080")),
+        Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev", "QITS_PORT", "8080",
+                "QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7")),
                 new RunLog(temp.resolve("run.log")), runner);
         boot.state.wrapperDir = temp;
         boot.state.projectId = "1f0a-project";
@@ -1277,7 +1282,8 @@ class PipelinePhasesTest {
     @Test
     void theReportNamesThePlaceholderWhenNothingWasRegistered(@TempDir Path temp) throws Exception {
         ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
-        Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev", "QITS_PORT", "8080")),
+        Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev", "QITS_PORT", "8080",
+                "QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7")),
                 new RunLog(temp.resolve("run.log")), runner);
         boot.state.wrapperDir = temp;
         Ctx ctx = new Ctx();
@@ -1289,52 +1295,12 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>The report hands over the browser door and the hosts under it.</b> Every name carries this
-     * platform's project label now — {@code <app>.<env>.qits.localhost} — while the local DOOR is
-     * the bare apex, because with ACME off the edge reads the stated domain out of it. What a
-     * person needs from this block is the door, the shape of an app host, the one check for a
-     * resolver that does not synthesise *.localhost, and the fact that an old passkey is dead.
-     */
-    @Test
-    void theReportHandsOverTheBrowserDoorAndTheHostsUnderIt(@TempDir Path temp) throws Exception {
-        ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
-        Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev", "QITS_PORT", "8080")),
-                new RunLog(temp.resolve("run.log")), runner);
-        boot.state.wrapperDir = temp;
-        Ctx ctx = new Ctx();
-
-        new PipelinePhases(boot).summary().action().run(ctx);
-
-        assertThat(ctx.lines).anyMatch(line -> line.startsWith("edge:      http://localhost:8080/"));
-        assertThat(ctx.lines).anyMatch(line ->
-                line.contains("http://<app>.dev.qits.localhost:8080/"));
-        // The session is the point of the move, so the report says what carries it.
-        assertThat(ctx.lines).anyMatch(line -> line.contains("scoped to qits.localhost"));
-        assertThat(ctx.lines).anyMatch(line -> line.contains("*.dev.qits.localhost:8080"));
-        // The resolver check, and the hosts-file line for the resolver that fails it.
-        assertThat(ctx.lines).anyMatch(line -> line.contains("getent hosts ci.dev.qits.localhost"));
-        assertThat(ctx.lines).anyMatch(line ->
-                line.contains("127.0.0.1  <app>.dev.qits.localhost"));
-        // A passkey made under an older rp id asserts nowhere now.
-        assertThat(ctx.lines).anyMatch(line -> line.startsWith("passkeys:"));
-        assertThat(ctx.lines).anyMatch(line ->
-                line.contains("http://idp.dev.qits.localhost:8080/idp/register"));
-        // THE LOGIN IS ON THE IDP'S OWN HOST, and no door is given an /idp path: it redirects /
-        // and 404s everything else.
-        assertThat(ctx.lines).anyMatch(line ->
-                line.startsWith("sign in:   http://idp.dev.qits.localhost:8080/idp/login"));
-        assertThat(ctx.lines).noneMatch(line -> line.contains("http://localhost:8080/idp"));
-        // And the retired local shape — an app host with no project label — is nowhere in it.
-        assertThat(ctx.lines).noneMatch(line -> line.contains("<app>.dev.localhost"));
-    }
-
-    /**
      * <b>A domain platform prints the PROJECT-QUALIFIED app host, and names what it retired.</b>
      * Names are read right to left — {@code <app>[.<env>].<project>.<domain>} — so {@code ci.<domain>}
      * and {@code ci.<env>.<domain>} are both gone, and so is the bare apex as a door: the front
      * door is this platform's own project door, {@code qits.<domain>}, and its login host sits
-     * inside it. The local blocks — the resolver check and the dead passkey — belong to a platform
-     * with no domain and are not printed here.
+     * inside it. The blocks the retired no-domain mode printed — a resolver check for
+     * {@code *.localhost} browser names and a dead-passkey warning — are gone.
      */
     @Test
     void theReportPrintsTheProjectQualifiedAppHostOnADomainPlatform(@TempDir Path temp)
@@ -1352,6 +1318,11 @@ class PipelinePhasesTest {
                 line.startsWith("edge:      https://qits.qits-dev.eu/"));
         assertThat(ctx.lines).anyMatch(line ->
                 line.startsWith("sign in:   https://idp.dev.qits.qits-dev.eu/idp/login"));
+        // THE LOGIN IS ON THE IDP'S OWN HOST, and no door is given an /idp path: it redirects /
+        // and 404s everything else.
+        assertThat(ctx.lines).noneMatch(line -> line.contains("https://qits.qits-dev.eu/idp"));
+        // The session is the point of the move, so the report says what carries it.
+        assertThat(ctx.lines).anyMatch(line -> line.contains("scoped to qits-dev.eu"));
         assertThat(ctx.lines).anyMatch(line ->
                 line.contains("https://<app>.dev.qits.qits-dev.eu/"));
         // The retired shapes are NAMED rather than left out: a person who knew the old platform
@@ -1367,9 +1338,10 @@ class PipelinePhasesTest {
         // router, and supportsEnvironments is live data.
         assertThat(ctx.lines).anyMatch(line ->
                 line.contains("*.qits.qits-dev.eu and *.dev.qits.qits-dev.eu"));
-        // Nothing local: no hosts-file fallback and no passkey warning.
+        // No browser name under *.localhost: no hosts-file fallback and no passkey warning.
         assertThat(ctx.lines).noneMatch(line -> line.contains("getent hosts"));
         assertThat(ctx.lines).noneMatch(line -> line.startsWith("passkeys:"));
+        assertThat(ctx.lines).noneMatch(line -> line.contains("qits.localhost"));
     }
 
     /**
@@ -2481,8 +2453,6 @@ class PipelinePhasesTest {
 
         assertThat(runOf(runner)).contains("QITS_CI_RUNNER_URL=https://ci.qits.qits-dev.eu")
                 .doesNotContain("--network", "QITS_CI_RUNNER_REGISTRATION_TOKEN");
-        assertThatThrownBy(() -> PipelinePhases.runnerUrl(java.util.Optional.empty()))
-                .hasMessageContaining("QITS_DOMAIN");
     }
 
     /**

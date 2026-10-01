@@ -120,11 +120,28 @@ public interface BootstrapConfig {
      * <p>
      * Validated by {@link DomainName}, on the host half, before the payload image is built: a typo
      * here would otherwise become a certificate request for a name nobody owns.
+     * <p>
+     * <b>Optional only as a PARSE.</b> An absent value is how the refusal finds out there is none;
+     * past it, nothing reads this — every reader asks {@link #requiredDomain()}.
      */
     Optional<String> domain();
 
     /**
-     * <b>This host's public IPv4 address, and MANDATORY whenever {@link #domain()} is set</b> —
+     * <b>The domain, as a plain value — the one point where it stops being optional.</b>
+     * {@code BootstrapCommand} refuses a run without one before either half starts, so every phase,
+     * every generated file and the closing report read it here rather than threading an
+     * {@code Optional} that is never empty.
+     *
+     * @throws IllegalStateException with the refusal's own words, if a caller ever runs ahead of
+     *     the refusal
+     */
+    default String requiredDomain() {
+        return DomainName.of(this).orElseThrow(
+                () -> new IllegalStateException(DomainName.missingRefusal(false)));
+    }
+
+    /**
+     * <b>This host's public IPv4 address, and MANDATORY beside {@link #domain()}</b> —
      * {@code --public-ip} on the command line, {@code QITS_PUBLIC_IP} in {@code .env}.
      * <p>
      * It is the data of every A record the domain needs at its dns provider, and the run cannot
@@ -132,7 +149,7 @@ public interface BootstrapConfig {
      * report prints the records with it filled in.
      * <p>
      * Checked by {@link PublicIp} on the host half, beside the domain and in the same manner: four
-     * dotted octets, a hostname refused rather than resolved, and set without a domain refused too.
+     * dotted octets, and a hostname refused rather than resolved.
      */
     Optional<String> publicIp();
 
@@ -150,7 +167,7 @@ public interface BootstrapConfig {
      * production certificate, atomically switches the PEM lineage and its TLS registry reloads it.
      * <p>
      * {@code off} keeps the placeholder certificate. Read by {@link Acme}, which refuses any other
-     * word. Ignored with no domain, because there is nothing to issue for.
+     * word.
      */
     @WithDefault("staging")
     String acmeMode();
@@ -183,8 +200,6 @@ public interface BootstrapConfig {
      * Generic on purpose. It says "put these names on the certificate" and knows nothing about
      * editors or projects; {@link ExtraSans} is where the shape and the refusals live, and the
      * closing report prints what a run resolved, against the 100-name cap.
-     * <p>
-     * Ignored with no domain, because there is nothing to issue for.
      */
     Optional<String> acmeExtraSans();
 
@@ -406,24 +421,11 @@ public interface BootstrapConfig {
     /**
      * Whether to publish the disposable ingress on the platform domain ({@code :80}/{@code :443}) so
      * the live progress page is reachable at the same URL the normal edge takes over afterwards,
-     * rather than on loopback only. <b>Defaults to on, but only takes effect where a {@link #domain()}
-     * is set</b> — see {@link #bootstrapIngressPublicEffective()}. So a domain node is public by
-     * default with no per-node configuration, while a domainless local boot stays loopback with no
-     * error. Set to {@code false} to force loopback even on a domain node.
+     * rather than on loopback only. On by default; set to {@code false} to keep it on loopback, at
+     * {@link #bootstrapIngressHost()}.
      */
     @WithDefault("true")
     boolean bootstrapIngressPublic();
-
-    /**
-     * The effective decision every consumer reads: public only when it was requested (the default)
-     * AND a domain is configured, because public mode binds {@code :80}/{@code :443} and answers
-     * exactly the domain's Host header. Without a domain there is no public URL to serve, so it falls
-     * back to the loopback publish rather than failing — that is what lets the default be "public" on
-     * every node without breaking a domainless dev boot.
-     */
-    default boolean bootstrapIngressPublicEffective() {
-        return bootstrapIngressPublic() && domain().isPresent();
-    }
     // WHETHER PUBLIC MODE IS TLS IS NOT A CONFIGURATION QUESTION, and there is deliberately no knob
     // for it: it depends on whether the certificate volume holds a pair, which is a fact about the
     // machine. See BootstrapIngressMode.
@@ -436,7 +438,10 @@ public interface BootstrapConfig {
     @WithDefault("127.0.0.1")
     String bootstrapIngressBind();
 
-    /** The only Host header the ingress accepts, apart from its optional port. */
+    /**
+     * The only Host header the LOOPBACK ingress accepts, apart from its optional port — the mode
+     * {@code QITS_BOOTSTRAP_INGRESS_PUBLIC=false} asks for. Public mode answers the domain instead.
+     */
     @WithDefault("localhost")
     String bootstrapIngressHost();
 
@@ -678,18 +683,15 @@ public interface BootstrapConfig {
     }
 
     /**
-     * <b>The STATED DOMAIN, as an authority</b>: {@code <domain>} where one is configured,
-     * {@code localhost:<port>} where there is none.
+     * <b>The STATED DOMAIN, as an authority</b>: {@code <domain>}, served over TLS on 443, so it
+     * carries no port.
      * <p>
      * <b>The edge reads every name it serves right to left against this value</b>, and it has to be
-     * stated because it cannot be derived — {@code example.co.uk} is two labels of domain and
-     * {@code localhost} is one. The edge takes it from {@code qits.edge.acme.domain}, which
-     * {@code DomainTokens} writes whenever a domain is configured, and with ACME off from the
-     * authority of {@link #publicOrigin()}. Both sources are this one value, which is why the local
-     * door is the bare apex: see {@link #publicOrigin()}.
+     * stated because it cannot be derived — {@code example.co.uk} is two labels of domain. The edge
+     * takes it from the {@code QITS_DOMAIN} the seed stack and the deployer state.
      */
     default String domainAuthority() {
-        return DomainName.of(this).orElse("localhost:" + port());
+        return requiredDomain();
     }
 
     /**
@@ -709,7 +711,7 @@ public interface BootstrapConfig {
 
     /**
      * <b>The INNERMOST DOOR of this platform's own project, and the one place the environment label
-     * lives</b>: {@code <env>.qits.<domain>}, or {@code <env>.qits.localhost:<port>} locally. An
+     * lives</b>: {@code <env>.qits.<domain>}. An
      * application of this platform is exactly one label in front of it —
      * {@code ci.<env>.qits.<domain>}.
      * <p>
@@ -726,10 +728,6 @@ public interface BootstrapConfig {
      * naming a depth the edge had stopped serving. Each service derives its own names from
      * {@code QITS_DOMAIN} now. What is left of this here is the CLOSING REPORT: {@link
      * #idpOrigin()} is where a person logs in, and it is one host, so it still spells the label.
-     * <p>
-     * Nothing has to resolve the local form: every {@code *.localhost} name answers loopback in
-     * Chromium and Firefox, and on the host through nss-myhostname or systemd-resolved — no
-     * hosts-file entry. It stays a secure context too, so passkeys work over plain HTTP.
      */
     default String envAuthority() {
         return envName() + "." + projectAuthority();
@@ -737,9 +735,7 @@ public interface BootstrapConfig {
 
     /**
      * <b>The address a person's browser arrives at</b>, which is the edge's canonical session
-     * origin: this platform's own PROJECT DOOR over TLS where there is a domain,
-     * {@code https://qits.<domain>}, and the bare apex {@code http://localhost:<port>} where there
-     * is none.
+     * origin: this platform's own PROJECT DOOR over TLS, {@code https://qits.<domain>}.
      * <p>
      * Derived rather than configured, because it is decided twice already: the port is the edge's
      * publish and the domain is the certificate's name. A third address told to a browser would be
@@ -752,27 +748,18 @@ public interface BootstrapConfig {
      * the edge reads THIS value by the same right-to-left grammar as a request's own Host, and a
      * name that names no project falls back to it.
      * <p>
-     * <b>The local half must stay the bare apex, and that is not an inconsistency.</b> With ACME
-     * off the edge has no {@code qits.edge.acme.domain} and takes the stated domain from this
-     * value's authority — so {@code http://qits.localhost:8080} here would make
-     * {@code qits.localhost} the DOMAIN and the grammar would read every name one tier out. On a
-     * domain platform the two are independent, which is where naming the project's door is the
-     * useful spelling. See {@link #domainAuthority()}.
-     * <p>
      * <b>NOTHING IS SERVED ON A DOOR BUT A REDIRECT.</b> It answers {@code GET /} with a 302 to the
      * projects host and 404s every other path — the login is on the idp's own host, see
      * {@link #idpOrigin()}.
      */
     default String publicOrigin() {
-        return DomainName.of(this).map(domain -> "https://" + PlatformModel.PROJECT + "." + domain)
-                .orElse("http://" + domainAuthority());
+        return "https://" + PlatformModel.PROJECT + "." + domainAuthority();
     }
 
     /**
      * <b>Where a person logs in</b>, and an application of the {@code qits} project like every
-     * other, which means {@code idp.} of {@link #envAuthority()} on both kinds of platform:
-     * {@code idp.<env>.qits.<domain>} with a domain, {@code idp.<env>.qits.localhost:<port>}
-     * locally. The login page is {@code <idpOrigin>/idp/login}.
+     * other, which means {@code idp.} of {@link #envAuthority()}: {@code idp.<env>.qits.<domain>}.
+     * The login page is {@code <idpOrigin>/idp/login}.
      * <p>
      * It is the idp's canonical browser origin and the one origin a WebAuthn ceremony is accepted
      * from. A door serves no {@code /idp/...} path, so an address built on {@link #publicOrigin()}
@@ -789,7 +776,7 @@ public interface BootstrapConfig {
      * against this platform.
      */
     default String idpOrigin() {
-        return (DomainName.of(this).isPresent() ? "https://idp." : "http://idp.") + envAuthority();
+        return "https://idp." + envAuthority();
     }
 
     /**
@@ -798,28 +785,14 @@ public interface BootstrapConfig {
      * it.
      * <p>
      * <b>Moving the login to {@link #idpOrigin()} does not move this.</b> A credential asserts on
-     * the rp id AND its children, so {@code idp.<domain>} is covered by {@code <domain>} and
-     * {@code idp.<env>.localhost} by {@code <env>.localhost}. Registered passkeys keep working.
+     * the rp id AND its children, so {@code idp.<env>.qits.<domain>} is covered by
+     * {@code <domain>}. Registered passkeys keep working.
      * <p>
-     * Every {@code *.localhost} name is a secure context by itself — no certificate needed — which
-     * is what lets a passkey work on this platform's plain HTTP port. The one route without a
-     * secure context is a raw IP, where the browser offers no ceremony at all and only a password
-     * logs in.
-     * <p>
-     * <b>Locally it is {@code qits.localhost}, the PROJECT's door</b>, because that is what the
-     * local login host is a child of: the ceremony happens at
-     * {@code idp.<env>.qits.localhost:<port>}, and a credential asserts on the rp id and every name
-     * under it. It was {@code <env>.localhost}, which the project label retired — that name is not
-     * a parent of anything the platform serves any more, so a passkey bound to it asserts nowhere
-     * and has to be registered again; the closing report says so. It is deliberately the project's
-     * door rather than the environment's, so the {@code supportsEnvironments} flag cannot invalidate
-     * a passkey by flipping.
-     * <p>
-     * The binding costs nothing here: accounts are per-installation, so a platform that gains a
-     * domain registers its own from its own register token.
+     * The one route without a secure context is a raw IP, where the browser offers no ceremony at
+     * all and only a password logs in.
      */
     default String webauthnRpId() {
-        return DomainName.of(this).orElse(PlatformModel.PROJECT + ".localhost");
+        return domainAuthority();
     }
 
     /*
@@ -838,19 +811,11 @@ public interface BootstrapConfig {
      */
 
     /**
-     * The parent a session cookie is shared with: the domain where there is one —
-     * {@code Domain=<domain>} covers {@code <app>.<env>.qits.<domain>} and every other project's
-     * names with it — and this platform's project door {@code qits.localhost} locally. A cookie
-     * domain carries no port, so the local value drops it.
-     * <p>
-     * <b>It cannot be bare {@code localhost}</b>: that name is a public suffix and browsers drop a
-     * cookie scoped to it, which is what the local platform needed a parent label for at all. It is
-     * the PROJECT's door rather than the environment's for the same reason
-     * {@link #webauthnRpId()} is — one label further out costs nothing and survives the
-     * {@code supportsEnvironments} flag.
+     * The parent a session cookie is shared with: the domain — {@code Domain=<domain>} covers
+     * {@code <app>.<env>.qits.<domain>} and every other project's names with it.
      */
     default String browserSsoCookieDomain() {
-        return DomainName.of(this).orElse(PlatformModel.PROJECT + ".localhost");
+        return domainAuthority();
     }
 
     /**

@@ -1,10 +1,9 @@
 package eu.wohlben.qits.cli.bootstrap.config;
 
-import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
- * {@code QITS_PUBLIC_IP}, read and checked, and <b>mandatory whenever {@link DomainName} answers</b>.
+ * {@code QITS_PUBLIC_IP}, read and checked, and <b>mandatory beside the domain</b>.
  * <p>
  * <b>Why the bootstrap needs an address at all.</b> Every name this platform serves resolves to
  * this one host, and the A records that say so live at the domain's own dns provider — this platform
@@ -35,36 +34,13 @@ public final class PublicIp {
     }
 
     /**
-     * The configured address, checked, or empty when there is no domain and no address.
-     * <p>
-     * The pairing is the whole point of this method, so it reads the domain too: with a domain and
-     * no address the run is refused, and with an address and no domain it is refused as well.
+     * The configured address, checked. The domain is required — {@code BootstrapCommand} refuses a
+     * run without one first — and so is this, beside it: a domain with no address is refused.
      */
-    public static Optional<String> of(BootstrapConfig config) {
-        Optional<String> address = config.publicIp().map(String::strip).filter(v -> !v.isEmpty());
-        Optional<String> domain = DomainName.of(config);
-        if (domain.isEmpty()) {
-            address.ifPresent(PublicIp::refuseWithoutDomain);
-            return Optional.empty();
-        }
-        return Optional.of(checked(address.orElseThrow(() -> missing(domain.get()))));
-    }
-
-    /**
-     * <b>Refused rather than ignored, which is what every other check on this half does.</b> There
-     * is no ignore-with-a-note anywhere in this configuration surface: a misspelled domain stops the
-     * run and a re-bootstrap under a second environment name stops it too, both because the person
-     * believed something about the run that is not true and a note in the scrollback of a four-hour
-     * boot is not read. An address with no domain is exactly that belief — this platform will serve
-     * public names — and this run will serve none. One line fixes it, in whichever direction the
-     * person meant.
-     */
-    private static void refuseWithoutDomain(String value) {
-        throw new IllegalArgumentException("QITS_PUBLIC_IP (--public-ip) is '" + value + "', but "
-                + "QITS_DOMAIN (--domain) is unset, so this run has no public name to serve and no "
-                + "certificate to issue. The address is only ever the data of this platform's own A "
-                + "records. Set the domain as well, or drop the address: a platform with no domain "
-                + "is a supported platform — the edge stays on plain HTTP.");
+    public static String of(BootstrapConfig config) {
+        String domain = config.requiredDomain();
+        return checked(config.publicIp().map(String::strip).filter(v -> !v.isEmpty())
+                .orElseThrow(() -> missing(domain)));
     }
 
     private static IllegalArgumentException missing(String domain) {

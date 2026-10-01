@@ -7,7 +7,6 @@ import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.Json;
 import eu.wohlben.qits.cli.bootstrap.config.Acme;
 import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
-import eu.wohlben.qits.cli.bootstrap.config.DomainName;
 import eu.wohlben.qits.cli.bootstrap.config.ExtraSans;
 import eu.wohlben.qits.cli.bootstrap.config.PublicIp;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
@@ -2715,18 +2714,17 @@ public class PipelinePhases {
      * each host's last answer while it does.
      * <p>
      * <b>No domain, or ACME off or on staging, is refused</b>, here and before the boot started
-     * ({@link DomainName#missingRefusal}, {@link Acme#edgeRunnerRefusal}): none can ever pass.
+     * ({@link BootstrapConfig#requiredDomain}, {@link Acme#edgeRunnerRefusal}): none can ever pass.
      */
     public Phase edgeReady() {
         return new Phase("edge-ready", "wait for the platform's edge to serve what the runner dials",
                 ctx -> {
-            Optional<String> domain = DomainName.of(boot.config);
-            String refusal = domain.isEmpty() ? DomainName.missingRefusal(false)
-                    : Acme.edgeRunnerRefusal(Acme.mode(boot.config));
+            String domain = boot.config.requiredDomain();
+            String refusal = Acme.edgeRunnerRefusal(Acme.mode(boot.config));
             if (refusal != null) {
                 throw new IllegalStateException(refusal);
             }
-            List<EdgeProbe> probes = edgeProbes(domain.get());
+            List<EdgeProbe> probes = edgeProbes(domain);
             probes.forEach(probe -> ctx.log("  " + probe.what()));
             try {
                 Waiter.await(ctx, "the platform's edge", boot.config.edgeReadyTimeout(),
@@ -2882,9 +2880,8 @@ public class PipelinePhases {
      * {@code https://ci.qits.<domain>}. It is the only address a runner has: every runner goes
      * through the public edge.
      */
-    static String runnerUrl(Optional<String> domain) {
-        return "https://ci." + PlatformModel.PROJECT + "." + domain.orElseThrow(() ->
-                new IllegalStateException(DomainName.missingRefusal(false)));
+    static String runnerUrl(String domain) {
+        return "https://ci." + PlatformModel.PROJECT + "." + domain;
     }
 
     /**
@@ -3112,7 +3109,7 @@ public class PipelinePhases {
                 }
                 container = runnerContainerName(id, version);
                 if (url == null) {
-                    url = runnerUrl(DomainName.of(boot.config));
+                    url = runnerUrl(boot.config.requiredDomain());
                 }
                 ctx.log("  " + container + ": dialling " + url);
                 Boot.must(boot.docker.run(runnerRunCommand(id, version, image, slots, token,
@@ -3411,9 +3408,8 @@ public class PipelinePhases {
             }
             String env = boot.config.envName();
             report.add("");
-            // THE BROWSER DOOR IS THIS PLATFORM'S OWN PROJECT DOOR where there is a domain, and
-            // the bare apex locally — see BootstrapConfig.publicOrigin, which says why the local
-            // half cannot carry the project label.
+            // THE BROWSER DOOR IS THIS PLATFORM'S OWN PROJECT DOOR — see
+            // BootstrapConfig.publicOrigin.
             String door = boot.config.publicOrigin();
             // THE LOGIN IS A SERVICE HOST, like every other. A door serves no /idp path.
             String idp = boot.config.idpOrigin();
@@ -3422,8 +3418,8 @@ public class PipelinePhases {
             // PROJECT LABEL IS MANDATORY: there is no unqualified application tier and no
             // top-level <env>.<domain> tier. This platform is simply the project called `qits`, so
             // an app host is <app>. of ITS innermost door and nothing else.
-            String apex = DomainName.of(boot.config).orElse(null);
-            String appHost = (apex == null ? "http://<app>." : "https://<app>.") + authority;
+            String apex = boot.config.requiredDomain();
+            String appHost = "https://<app>." + authority;
             String returns = "*." + boot.config.projectAuthority() + " and *." + authority;
             report.add("edge:      " + door + "/  — the host's one HTTP port, in front of every "
                     + "environment. The");
@@ -3441,17 +3437,15 @@ public class PipelinePhases {
             report.add("           workspaces, docs, configuration, artifacts, events, "
                     + "deployments, system, and the");
             report.add("           three above.");
-            if (apex != null) {
-                report.add("           EVERY NAME CARRIES ITS PROJECT: <app>." + apex + " and "
-                        + "<app>." + env + "." + apex + " are retired");
-                report.add("           and serve nothing, and so is the bare apex " + apex
-                        + " — a name is read right to");
-                report.add("           left, <app>[.<env>].<project>." + apex + ". Another "
-                        + "project's hosts have the same");
-                report.add("           shape with its own slug: <app>.<env>.<project>." + apex
-                        + ", or <app>.<project>." + apex);
-                report.add("           where that project supports no environments.");
-            }
+            report.add("           EVERY NAME CARRIES ITS PROJECT: <app>." + apex + " and "
+                    + "<app>." + env + "." + apex + " are retired");
+            report.add("           and serve nothing, and so is the bare apex " + apex
+                    + " — a name is read right to");
+            report.add("           left, <app>[.<env>].<project>." + apex + ". Another "
+                    + "project's hosts have the same");
+            report.add("           shape with its own slug: <app>.<env>.<project>." + apex
+                    + ", or <app>.<project>." + apex);
+            report.add("           where that project supports no environments.");
             report.add("           ONE LOGIN COVERS THEM ALL: the session cookie is scoped to "
                     + boot.config.browserSsoCookieDomain() + " and the");
             report.add("           idp accepts a return to " + returns + " — exactly one extra "
@@ -3461,19 +3455,6 @@ public class PipelinePhases {
                     + "idp accepts one");
             report.add("           from. Any service host sends an anonymous browser here and "
                     + "takes it back after.");
-            if (apex == null) {
-                report.add("           Every *.localhost name resolves to loopback on its own "
-                        + "(Chromium, Firefox and");
-                report.add("           nss-myhostname), so there is nothing to add. Ask this "
-                        + "host's resolver:");
-                // The names themselves, without the port an authority carries and a resolver
-                // does not: ci.<env>.qits.localhost.
-                String name = authority.replace(":" + boot.config.port(), "");
-                report.add("             getent hosts ci." + name);
-                report.add("           An empty answer is the one case that needs /etc/hosts, one "
-                        + "line per name:");
-                report.add("             127.0.0.1  <app>." + name);
-            }
             report.add("registry:  " + boot.config.registryVhost()
                     + " — the platform's OWN images and packages (" + env + "-qits-artifacts)");
             report.add("mirror:    " + boot.config.mirrorVhost()
@@ -3486,8 +3467,7 @@ public class PipelinePhases {
             report.add("             \"insecure-registries\": [\"" + boot.config.registryVhost()
                     + "\", \"" + boot.config.mirrorVhost() + "\"]");
             report.add("           Both names resolve by themselves, as every *.localhost name "
-                    + "does — the apps: note");
-            report.add("           above has the check for the resolver that does not.");
+                    + "does.");
             report.add("login:     a PULL needs a credential now as much as a PUSH, and a person's "
                     + "is COMMISSIONED —");
             report.add("           the idp issues one per context, so no static pair is handed "
@@ -3513,20 +3493,6 @@ public class PipelinePhases {
             report.addAll(registerLines(idp + "/idp/register",
                     boot.state.registerToken, boot.state.registerTokenRecorded,
                     boot.state.wrapperDir.resolve(BootstrapState.FILE_NAME).toString()));
-            if (apex == null) {
-                // A passkey is bound to the rp id it was made under and asserts on that host and
-                // its children. The local rp id is the PROJECT's door now that every name carries
-                // a project label; an older platform's 'localhost' or '<env>.localhost' parents
-                // nothing served here, so those credentials assert nowhere and nothing about them
-                // can be migrated.
-                report.add("passkeys:  the local names carry a project label now, so the passkey "
-                        + "binding is");
-                report.add("           " + boot.config.webauthnRpId() + ". A passkey made on an "
-                        + "older local platform, under the rp id");
-                report.add("           'localhost' or '" + env + ".localhost', asserts here for "
-                        + "nobody. Register it again at");
-                report.add("             " + idp + "/idp/register");
-            }
             report.add("ipv6:      ONE HOST RULE, and without it every vhost client HANGS rather "
                     + "than fails. The");
             report.add("           launcher installs it on each run, so it is already in place "
@@ -3669,19 +3635,18 @@ public class PipelinePhases {
                         + "and artifacts trust the network");
             }
             report.add("state:     seed compose + .qits-bootstrap.env in " + boot.state.wrapperDir);
-            // Only with a domain. This platform serves no dns, so the records are printed as a
-            // step to CHECK at whatever provider holds the domain; the certificate is the one thing
-            // under it the run does itself.
+            // This platform serves no dns, so the records are printed as a step to CHECK at
+            // whatever provider holds the domain; the certificate is the one thing under it the
+            // run does itself.
             // NOTE: this could be a hook to read those records back from an external dns provider,
             // and say which of them are actually in place.
-            DomainName.of(boot.config).ifPresent(domain -> report.addAll(domainLines(domain, env,
-                    PublicIp.of(boot.config).orElse(""), Acme.mode(boot.config),
-                    Acme.email(boot.config, domain), boot.state.certificate,
+            report.addAll(domainLines(apex, env, PublicIp.of(boot.config), Acme.mode(boot.config),
+                    Acme.email(boot.config, apex), boot.state.certificate,
                     // The editor hosts are per PROJECT, so the list comes from the platform. A
                     // read that does not answer prints the shape instead of a table — the same
                     // courtesy every optional read in this program keeps.
                     projectSlugs(),
-                    ExtraSans.of(boot.config, Optional.of(domain)))));
+                    ExtraSans.of(boot.config, apex)));
             report.add("images:    the release replays published qits/workspace-base, qits/workspace,");
             report.add("           qits/projects-daemon and qits/project-agent at their released "
                     + "versions —");

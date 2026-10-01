@@ -89,24 +89,25 @@ class ComposeTemplateTest {
         // generated files carry now is the domain itself, told to qits-deployments alone, which
         // propagates it as QITS_DOMAIN and lets every service derive its own names.
         //
-        // No domain: every fragment is empty, which is the ordinary platform.
-        values.putAll(DomainTokens.of(Optional.empty()));
+        // The domain is required, so the canonical fixture carries one, and every fragment is
+        // filled.
+        values.putAll(DomainTokens.of(DOMAIN));
         return values;
     }
 
-    /** The same values with a domain configured. */
+    /** The same values with another domain. */
     static Map<String, String> tokens(String domain) {
         Map<String, String> values = tokens();
         // A domain changes exactly one family of tokens now, and it is the fragment family: there
         // is no second spelling left for it to move.
-        values.putAll(DomainTokens.of(Optional.of(domain)));
+        values.putAll(DomainTokens.of(domain));
         return values;
     }
 
     /** The same values again, with names the derived wildcards cannot reach. */
     static Map<String, String> tokens(String domain, List<String> extraSans) {
         Map<String, String> values = tokens(domain);
-        values.putAll(DomainTokens.of(Optional.of(domain), "staging", "hostmaster@" + domain,
+        values.putAll(DomainTokens.of(domain, "staging", "hostmaster@" + domain,
                 "hetzner-token", Optional.empty(), extraSans));
         return values;
     }
@@ -243,8 +244,8 @@ class ComposeTemplateTest {
                 .doesNotContain("${PG_CONTAINERS_PASSWORD}")
                 .doesNotContain("${PG_CONTAINERS_EVENTSTREAM_PASSWORD}");
         assertThat(compose).doesNotContain("${MIRROR_PORT}").doesNotContain("${GIT_HOST_PORT}");
-        // The domain fragments are filled even when they are empty: a leftover placeholder would
-        // reach the file as literal text and compose would refuse it.
+        // The domain fragments are filled: a leftover placeholder would reach the file as literal
+        // text and compose would refuse it.
         assertThat(compose).doesNotContain("${LETSENCRYPT_VOLUME}")
                 .doesNotContain("${EDGE_SEED_TLS_PORTS}")
                 .doesNotContain("${EDGE_TLS}");
@@ -615,9 +616,6 @@ class ComposeTemplateTest {
         assertThat(ComposeTemplate.compose(tokens(DOMAIN)))
                 .doesNotContain("QITS_EDGE_ACME_ADDITIONAL_NAMES");
         assertThat(ComposeTemplate.extras(tokens(DOMAIN)))
-                .doesNotContain("QITS_EDGE_ACME_ADDITIONAL_NAMES");
-        // And a platform with no domain has no TLS wiring for one to hide in.
-        assertThat(ComposeTemplate.compose(tokens()))
                 .doesNotContain("QITS_EDGE_ACME_ADDITIONAL_NAMES");
     }
 
@@ -1145,10 +1143,6 @@ class ComposeTemplateTest {
      * where each could go stale on its own. The edge's list and the idp's did exactly that, and
      * sign-in broke on the live platform.
      * <p>
-     * <b>It is asserted on both platforms on purpose.</b> A domain platform is where the values had
-     * content, so a key that came back would come back there first; a local one is where an empty
-     * value would look harmless.
-     * <p>
      * The comments are excluded rather than the keys quoted loosely: this file still EXPLAINS the
      * retirement at each site, and a test that could not tell a paragraph from a setting would go
      * red on the explanation.
@@ -1163,12 +1157,11 @@ class ComposeTemplateTest {
                 // The edge's ACME domain went with them: it is the stated domain a second time,
                 // and the edge reads the one QITS_DOMAIN the deployer injects.
                 "QITS_EDGE_ACME_DOMAIN");
-        for (Map<String, String> values : List.of(tokens(), tokens(DOMAIN))) {
-            assertThat(settings(ComposeTemplate.compose(values)))
-                    .noneMatch(line -> retired.stream().anyMatch(line::contains));
-            assertThat(extrasKeys(values))
-                    .noneMatch(line -> retired.stream().anyMatch(line::contains));
-        }
+        Map<String, String> values = tokens();
+        assertThat(settings(ComposeTemplate.compose(values)))
+                .noneMatch(line -> retired.stream().anyMatch(line::contains));
+        assertThat(extrasKeys(values))
+                .noneMatch(line -> retired.stream().anyMatch(line::contains));
     }
 
     /**
@@ -1223,12 +1216,6 @@ class ComposeTemplateTest {
                 .contains("env.QITS_DOMAIN=" + DOMAIN);
         assertThat(applicationsWith("env.QITS_DOMAIN=", tokens(DOMAIN)))
                 .containsExactly("qits-deployments");
-
-        // No domain, no key — in either file, on any service. Absent, never empty: a consumer
-        // handed QITS_DOMAIN= has been told the domain is the empty string.
-        assertThat(settings(ComposeTemplate.compose(tokens())))
-                .noneMatch(line -> line.contains("QITS_DOMAIN"));
-        assertThat(extrasKeys(tokens())).noneMatch(line -> line.contains("QITS_DOMAIN"));
     }
 
     /**
@@ -2026,7 +2013,7 @@ class ComposeTemplateTest {
      * <b>THE RUNNER IS NOT DEPLOYER-MANAGED, SO NO EXTRAS NAME IT.</b> A block for an application
      * nothing deploys is configuration waiting for somebody to deploy one — beside the runner the
      * bootstrap already started, which would be two holders of one runner id. Asked of the keys
-     * and of the rendered file alike, with and without a domain.
+     * and of the rendered file alike, on two domains.
      */
     @Test
     void noExtrasBlockConfiguresARunnerDeployment() {
@@ -2204,46 +2191,34 @@ class ComposeTemplateTest {
     /**
      * <b>THE INVARIANT OF THE WHOLE DOMAIN FEATURE.</b> Every fragment a domain adds is appended to a
      * line the template already had, so taking the fragments back out of the rendered files leaves
-     * exactly what a platform with no domain renders — no blank line, no orphan comment about a
-     * feature that is off, nothing for the next reader to wonder about.
+     * the same file whichever domain was rendered — the domain reaches nothing else.
      * <p>
      * <b>It is now the WHOLE of what a domain does, and that is the change worth reading.</b> The
      * test used to have to put six values back by hand before it could compare: the rp id, the
      * ceremony origins, the two canonical origins, the allow-list and the cookie domain were
      * composed from the domain and REPLACED into lines the template already had, so a domain both
      * added fragments and moved values. Those six are gone — every service derives its own names
-     * from the one QITS_DOMAIN the deployer propagates — so removing the fragments now leaves the
-     * no-domain file exactly, with nothing to restore.
+     * from the one QITS_DOMAIN the deployer propagates — so two domains' files, each with its
+     * own fragments removed, are the same file, with nothing to restore.
      */
     @Test
     void aDomainAddsItsFragmentsAndChangesNothingElse() {
-        String compose = ComposeTemplate.compose(tokens(DOMAIN));
-        String extras = ComposeTemplate.extras(tokens(DOMAIN));
-        for (String fragment : DomainTokens.of(Optional.of(DOMAIN)).values()) {
-            assertThat(fragment).isNotEmpty();
-            compose = compose.replace(fragment, "");
-            extras = extras.replace(fragment, "");
-        }
+        String other = "other.example";
+        String compose = withoutFragments(ComposeTemplate.compose(tokens(DOMAIN)), DOMAIN);
+        String extras = withoutFragments(ComposeTemplate.extras(tokens(DOMAIN)), DOMAIN);
 
-        assertThat(compose).isEqualTo(ComposeTemplate.compose(tokens()));
-        assertThat(extras).isEqualTo(ComposeTemplate.extras(tokens()));
+        assertThat(compose).isEqualTo(
+                withoutFragments(ComposeTemplate.compose(tokens(other)), other));
+        assertThat(extras).isEqualTo(
+                withoutFragments(ComposeTemplate.extras(tokens(other)), other));
     }
 
-    /** With no domain, not one trace of the TLS ports or the certificate volume. */
-    @Test
-    void withNoDomainThereIsNoTls() {
-        String compose = ComposeTemplate.compose(tokens());
-        String extras = ComposeTemplate.extras(tokens());
-
-        assertThat(compose).doesNotContain("letsencrypt")
-                .doesNotContain("QUARKUS_TLS_")
-                .doesNotContain("443:8443")
-                .doesNotContain("127.0.0.1:9000");
-        assertThat(extras).doesNotContain("letsencrypt")
-                .doesNotContain("QUARKUS_TLS_");
-        // The edge keeps the one port it always published, and nothing asks for an ip.
-        assertThat(extras("qits-edge")).contains(".publishes[0]=8080:8080")
-                .doesNotContain(".publishes[1]");
+    private static String withoutFragments(String rendered, String domain) {
+        for (String fragment : DomainTokens.of(domain).values()) {
+            assertThat(fragment).isNotEmpty();
+            rendered = rendered.replace(fragment, "");
+        }
+        return rendered;
     }
 
     /**
@@ -2293,7 +2268,7 @@ class ComposeTemplateTest {
     void aDomainCanReuseAnExistingDnsSecret() {
         String existing = "qits-dns-hetzner-token-v1";
         Map<String, String> values = tokens(DOMAIN);
-        values.putAll(DomainTokens.of(Optional.of(DOMAIN), "staging",
+        values.putAll(DomainTokens.of(DOMAIN, "staging",
                 "hostmaster@" + DOMAIN, "", Optional.of(existing)));
 
         String compose = ComposeTemplate.compose(values);

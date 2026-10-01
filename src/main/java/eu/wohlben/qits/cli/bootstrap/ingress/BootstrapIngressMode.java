@@ -23,7 +23,7 @@ package eu.wohlben.qits.cli.bootstrap.ingress;
  */
 public enum BootstrapIngressMode {
 
-    /** Published on loopback only: no domain, or a domain node told to stay private. */
+    /** Published on loopback only: a node told to stay private. */
     LOOPBACK,
 
     /** The domain on port 80, no TLS — a machine whose certificate volume is empty. */

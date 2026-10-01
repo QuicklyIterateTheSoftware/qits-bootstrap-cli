@@ -5,7 +5,6 @@ import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.Json;
 import eu.wohlben.qits.cli.bootstrap.api.ServiceClientsApi;
 import eu.wohlben.qits.cli.bootstrap.config.Acme;
-import eu.wohlben.qits.cli.bootstrap.config.DomainName;
 import eu.wohlben.qits.cli.bootstrap.config.ExtraSans;
 import eu.wohlben.qits.cli.bootstrap.config.PublicIp;
 import eu.wohlben.qits.cli.bootstrap.config.WrapperDir;
@@ -241,16 +240,13 @@ public class SeedPhases {
                 ctx.log("  cold start: the wrapper phase clones it from " + boot.config.orgUrl());
             }
             ctx.log("  sources: " + boot.state.srcDir);
-            // Printed rather than assumed: everything the domain switches on — the edge's TLS ports
-            // and its certificate — is invisible in a log that never says which of the two runs this
-            // is. The value was checked before the payload image was built, so this line cannot be
+            // Printed rather than assumed: every public name and the certificate hang under it.
+            // The value was checked before the payload image was built, so this line cannot be
             // the first place a typo shows.
-            DomainName.of(boot.config).ifPresentOrElse(
-                    domain -> ctx.log("  domain: " + domain + "  (its dns records are held "
-                            + "outside this platform)"),
-                    () -> ctx.log("  domain: none — the edge stays on plain HTTP"));
+            ctx.log("  domain: " + boot.config.requiredDomain() + "  (its dns records are held "
+                    + "outside this platform)");
             // REFUSED HERE RATHER THAN DISCOVERED AT THE CUTOVER. See DomainTokens.
-            String refusal = DomainTokens.hetznerTokenRefusal(DomainName.of(boot.config).isPresent(),
+            String refusal = DomainTokens.hetznerTokenRefusal(
                     Acme.mode(boot.config) != Acme.Mode.OFF,
                     boot.config.dnsHetznerToken().orElse(null),
                     boot.config.dnsHetznerSecret().orElse(null));
@@ -1741,7 +1737,7 @@ public class SeedPhases {
             Path repo = boot.state.repoDir("ci-daemon");
             String dockerfile = SeedDockerfile.read(repo.resolve("docker/Dockerfile.musl-builder"));
             // THE TARBALL URLS ARE THIS RUN'S, never the Dockerfile's default. That default names
-            // registry.dev.localhost, an edge vhost — the domainless local spelling, and no edge
+            // registry.dev.localhost, an edge vhost — the host's local spelling, and no edge
             // exists this early in any boot. BuildKit resolves an ADD in the BUILDER's own network
             // context, and the bootstrap's qits-buildkitd runs on the host network, so the ingress
             // the seed builds already resolve maven through is exactly the address that works here
@@ -3445,16 +3441,16 @@ public class SeedPhases {
         // where to go and what their passkey is bound to. Telling a person is not configuring a
         // service.
         //
-        // What QITS_DOMAIN adds, and nothing when there is none: every one of these is empty then,
-        // so both files render exactly as a platform with no public names always rendered them.
-        values.putAll(DomainTokens.of(DomainName.of(boot.config), Acme.mode(boot.config).word(),
-                DomainName.of(boot.config).map(domain -> Acme.email(boot.config, domain)).orElse(""),
+        // What QITS_DOMAIN adds: the edge's TLS wiring and the domain itself, stated once.
+        String domain = boot.config.requiredDomain();
+        values.putAll(DomainTokens.of(domain, Acme.mode(boot.config).word(),
+                Acme.email(boot.config, domain),
                 boot.config.dnsHetznerToken().orElse(""), boot.config.dnsHetznerSecret(),
                 // The names the derived wildcards cannot reach, and there are usually none: the
                 // edge works the per-environment AND per-project wildcards out for itself, so
                 // this is ad-hoc names only. Checked here, where a refusal is a message about a
                 // knob rather than a failed order.
-                ExtraSans.of(boot.config, DomainName.of(boot.config))));
+                ExtraSans.of(boot.config, domain)));
         // While the disposable edge owns the public domain, the seed edge remains an internal
         // service. The deployment extras deliberately keep 80/443 so the real edge can take them
         // at the explicit handoff: the edge's seed deploy, the end of the local-build step.

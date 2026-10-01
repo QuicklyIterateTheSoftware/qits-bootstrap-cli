@@ -481,13 +481,13 @@ forced. Add to that list rather than deviating quietly.
   `QITS_IDP_WEBAUTHN_RP_ID` and `_ORIGINS`, and `QITS_EDGE_ACME_DOMAIN` — every one the same
   stated domain read a different way, and each free to go stale alone. Two did: the edge's
   return-host list and the idp's drifted apart and sign-in broke on the live platform. Like the
-  tier line it is a fragment (`${DEPLOYMENTS_DOMAIN}`, `${DEPLOYMENTS_DOMAIN_ARGS}` from
-  `DomainTokens`) and renders NOTHING where no domain is stated — the deployer withholds the
-  variable rather than writing an empty one, and a file that stated emptiness would disagree with
-  it. What still spells a browser name is the CLOSING REPORT — `publicOrigin`, `idpOrigin`,
-  `envAuthority`, `projectAuthority`, `webauthnRpId`, `browserSsoCookieDomain` on
-  `BootstrapConfig` — and that is the whole of what those accessors are for now. Telling a person
-  where to go is not configuring a service.
+  tier line it is a fragment (`${SEED_DOMAIN}`, `${DEPLOYMENTS_DOMAIN_ARGS}` from
+  `DomainTokens`). The domain is REQUIRED — `BootstrapConfig.requiredDomain()` is the one place it
+  stops being an `Optional`, and a boot without it is refused up front — so the fragments are always
+  filled and nothing here has a no-domain branch. What still spells a browser name is the CLOSING
+  REPORT — `publicOrigin`, `idpOrigin`, `envAuthority`, `projectAuthority`, `webauthnRpId`,
+  `browserSsoCookieDomain` on `BootstrapConfig` — and that is the whole of what those accessors are
+  for now. Telling a person where to go is not configuring a service.
 - **A source this program cannot trust stops the boot.** It decides which sha the whole platform is
   built from, so a wrapper path that is not a checkout and a refresh that will not fast-forward are
   both failures, not log lines. What is ABSENT is a different question and has a different answer:

@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The knobs arrive the way the script's did: as environment names, from a {@code .env} file in the
@@ -54,9 +55,9 @@ class BootstrapConfigTest {
         // qits-net. /q is the management root path and lets-encrypt is the extension's own segment.
         assertThat(config.edgeLetsEncryptUrl())
                 .isEqualTo("http://prod-qits-edge:9000/q/lets-encrypt");
-        // No default, and unset is a supported platform: the edge stays on plain HTTP.
+        // No default — and unset is REFUSED before a run starts, so there is nothing to default.
         assertThat(config.domain()).isEmpty();
-        // Mandatory WITH a domain and refused without one, so there is nothing to default it to.
+        // Mandatory beside the domain, so there is nothing to default it to either.
         assertThat(config.publicIp()).isEmpty();
         // STAGING by default: the first order is the one most likely to meet a delegation the world
         // has not seen yet, and production counts failed orders per domain per week.
@@ -185,19 +186,14 @@ class BootstrapConfigTest {
      * inside the one to its right — so the parent of each application host is the INNERMOST DOOR of
      * this platform's own project, {@code <env>.qits.<domain>}. The project label is mandatory:
      * there is no unqualified application tier and no top-level {@code <env>.<domain>} tier, and
-     * the platform is simply the project called {@code qits}. Local and hosted are the same shape,
-     * one with a port and one without, because a domain's browser names carry no port.
+     * the platform is simply the project called {@code qits}. A domain's browser names carry no
+     * port.
      * <p>
      * The environment label is here because the {@code qits} project supports environments today;
      * this is the one method that spells it, so it is the one method that moves when the flag does.
      */
     @Test
     void theInnermostDoorOfThePlatformProjectIsTheParentOfEveryServiceHost() {
-        BootstrapConfig plain = from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev"));
-        assertThat(plain.domainAuthority()).isEqualTo("localhost:9090");
-        assertThat(plain.projectAuthority()).isEqualTo("qits.localhost:9090");
-        assertThat(plain.envAuthority()).isEqualTo("dev.qits.localhost:9090");
-
         BootstrapConfig hosted = from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev",
                 "QITS_DOMAIN", "qits-dev.eu"));
         assertThat(hosted.domainAuthority()).isEqualTo("qits-dev.eu");
@@ -209,30 +205,10 @@ class BootstrapConfigTest {
      * <b>Where a BROWSER arrives.</b> The passkey binding follows it and cannot be told anything
      * else: a credential registered under an rp id asserts on that host and its children only, and
      * an origin the ceremony was not told is refused.
-     * <p>
-     * <b>The local door is the BARE APEX, and that is load-bearing rather than a leftover.</b> With
-     * ACME off the edge has no stated domain of its own and takes one from this value's authority,
-     * so {@code http://qits.localhost:9090} here would make {@code qits.localhost} the domain and
-     * every name would be read one tier out. The names under it still carry the project label —
-     * {@code ci.dev.qits.localhost:9090} — and the cookie and the passkey binding hang off
-     * {@code qits.localhost}, which is a parent bare {@code localhost} could never be: that name is
-     * a public suffix. Every {@code *.localhost} name is still a secure context, so this platform
-     * needs no certificate for passkeys; a raw IP is not one, which is why the fallback there is a
-     * password rather than another origin in this list.
      */
     @Test
-    void theBrowsersDoorIsTheProjectDoorUntilThereIsNoDomainToHangItOn() {
-        BootstrapConfig plain = from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev"));
-
-        assertThat(plain.publicOrigin()).isEqualTo("http://localhost:9090");
-        // The rp id is a HOST and carries no port. Locally it is the PROJECT's door, which parents
-        // the login host either way the supportsEnvironments flag stands.
-        assertThat(plain.webauthnRpId()).isEqualTo("qits.localhost");
-        // THE CEREMONY HAPPENS ON THE IDP'S OWN HOST, not on a door, which serves no /idp path.
-        // It is a child of the rp id, so the binding holds.
-        assertThat(plain.idpOrigin()).isEqualTo("http://idp.dev.qits.localhost:9090");
-
-        // With a domain the door is TLS on THIS PLATFORM'S PROJECT DOOR. It was the apex, and the
+    void theBrowsersDoorIsTheProjectDoor() {
+        // The door is TLS on THIS PLATFORM'S PROJECT DOOR. It was the apex, and the
         // apex is not a name any more: every application address carries a project label, so an
         // edge pointed at the apex composes nothing and answers an honest 404 instead of a
         // redirect to a name that 404s one hop later.
@@ -244,7 +220,26 @@ class BootstrapConfigTest {
         // id and its children, so idp.dev.qits.qits-dev.eu is covered exactly as idp.qits-dev.eu
         // was — and changing it would invalidate every passkey this platform ever registered.
         assertThat(hosted.webauthnRpId()).isEqualTo("qits-dev.eu");
+        // THE CEREMONY HAPPENS ON THE IDP'S OWN HOST, not on a door, which serves no /idp path.
+        // It is a child of the rp id, so the binding holds.
         assertThat(hosted.idpOrigin()).isEqualTo("https://idp.dev.qits.qits-dev.eu");
+    }
+
+    /**
+     * <b>The domain stops being optional in exactly one place.</b> A run without one is refused
+     * before either half starts, so nothing past the refusal threads an {@code Optional}; a caller
+     * that ever runs ahead of it is told the refusal's own words rather than handed a fallback.
+     */
+    @Test
+    void theRequiredDomainIsThePlainValueOrTheRefusal() {
+        assertThat(from(Map.of("QITS_DOMAIN", "qits-dev.eu")).requiredDomain())
+                .isEqualTo("qits-dev.eu");
+        assertThatThrownBy(() -> from(Map.of()).requiredDomain())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage(DomainName.missingRefusal(false));
+        // And no browser name is composed without one: every accessor goes through it.
+        assertThatThrownBy(() -> from(Map.of()).publicOrigin())
+                .isInstanceOf(IllegalStateException.class);
     }
 
     /**
@@ -255,18 +250,12 @@ class BootstrapConfigTest {
      * the deployer propagates. What survives here is what the CLOSING REPORT says to a person.
      */
     @Test
-    void theSessionCookiesParentIsTheProjectDoorUntilThereIsADomain() {
-        BootstrapConfig plain = from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev"));
-
-        // A cookie domain is a host: no port, and no leading dot. Locally it is the PROJECT's
-        // door, because bare `localhost` is a public suffix and a cookie scoped to it is dropped.
-        assertThat(plain.browserSsoCookieDomain()).isEqualTo("qits.localhost");
-
+    void theSessionCookiesParentIsTheDomain() {
         BootstrapConfig hosted = from(Map.of("QITS_PORT", "9090", "QITS_ENV_NAME", "dev",
                 "QITS_DOMAIN", "qits-dev.eu"));
 
-        // With a domain it is the domain, which parents every project's names and not only this
-        // platform's.
+        // A cookie domain is a host: no port, and no leading dot. It is the domain, which parents
+        // every project's names and not only this platform's.
         assertThat(hosted.browserSsoCookieDomain()).isEqualTo("qits-dev.eu");
     }
 

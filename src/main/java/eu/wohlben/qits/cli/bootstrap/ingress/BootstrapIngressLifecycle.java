@@ -231,8 +231,8 @@ public final class BootstrapIngressLifecycle {
     /**
      * <b>WHICH MODE THIS RUN IS IN, and it is decided by what is on the certificate volume.</b>
      * <p>
-     * Configuration decides only whether public mode is wanted at all: it needs a domain and it is
-     * on by default there. What it cannot decide is whether the machine can serve TLS, because
+     * Configuration decides only whether public mode is wanted at all, and it is on by default.
+     * What it cannot decide is whether the machine can serve TLS, because
      * that is a fact about the volume — a re-bootstrap keeps the pair its last run wrote, a fresh
      * host has an empty volume, and the placeholder certificate is written forty phases below this
      * one. Asking the volume is the only honest question, and asking it wrongly costs the boot its
@@ -244,11 +244,11 @@ public final class BootstrapIngressLifecycle {
      * {@code start} refuses a run with no payload image two phases later anyway.
      */
     private BootstrapIngressMode decide(Consumer<String> out) {
-        BootstrapIngressMode decided = decide(boot.config.bootstrapIngressPublicEffective(),
+        BootstrapIngressMode decided = decide(boot.config.bootstrapIngressPublic(),
                 certificatePairPresent());
         if (decided == BootstrapIngressMode.PUBLIC_HTTP) {
             out.accept("  " + CERTIFICATE_VOLUME + " holds no certificate pair yet — the bootstrap "
-                    + "ingress serves " + boot.config.domain().orElseThrow() + " over plain HTTP "
+                    + "ingress serves " + boot.config.requiredDomain() + " over plain HTTP "
                     + "on port 80 for this run");
         }
         return decided;
@@ -281,7 +281,7 @@ public final class BootstrapIngressLifecycle {
     public BootstrapIngressMode mode() {
         return mode != null ? mode
                 : decide(boot.config.bootstrapIngress()
-                        && boot.config.bootstrapIngressPublicEffective(), true);
+                        && boot.config.bootstrapIngressPublic(), true);
     }
 
     /** The seam the address tests drive: a decided mode without a docker daemon to ask. */
@@ -307,7 +307,7 @@ public final class BootstrapIngressLifecycle {
 
     private String ingressHost() {
         return mode().isPublic()
-                ? boot.config.domain().orElseThrow() : boot.config.bootstrapIngressHost();
+                ? boot.config.requiredDomain() : boot.config.bootstrapIngressHost();
     }
 
     /** Keep the capability on the same durable host mount as the supervisor journal. */

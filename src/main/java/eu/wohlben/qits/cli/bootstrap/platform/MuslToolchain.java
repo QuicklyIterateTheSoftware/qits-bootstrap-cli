@@ -19,8 +19,8 @@ import java.util.regex.Pattern;
  * <b>Which is a coordinate a cold platform's store does not hold.</b> Nothing in the estate seeds
  * them — they were uploaded by hand on the live platform — so the first bootstrap of a fresh host
  * reaches phase 37 and dies in the {@code ADD}, and the default ARG host makes the failure read as
- * a network fault rather than a missing artifact: {@code registry.dev.localhost:8080} is the
- * domainless local vhost, and no edge exists that early in a boot. Measured on 2026-09-05:
+ * a network fault rather than a missing artifact: {@code registry.dev.localhost:8080} is an edge
+ * vhost, and no edge exists that early in a boot. Measured on 2026-09-05:
  * {@code dial tcp [::1]:8080: connection refused}.
  * <p>
  * <b>The pins are the consuming repository's, and they are read rather than copied.</b> The

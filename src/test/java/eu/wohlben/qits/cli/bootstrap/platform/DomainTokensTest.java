@@ -18,7 +18,7 @@ class DomainTokensTest {
     private static final String TOKEN = "hetzner-token-value";
 
     private static Map<String, String> tokens() {
-        return DomainTokens.of(Optional.of("wohlben.dev"), "staging", "hostmaster@wohlben.dev",
+        return DomainTokens.of("wohlben.dev", "staging", "hostmaster@wohlben.dev",
                 TOKEN, Optional.empty(), List.of());
     }
 
@@ -70,30 +70,28 @@ class DomainTokensTest {
      */
     @Test
     void aSwarmSecretWithNoTokenValueIsRefused() {
-        assertThat(DomainTokens.hetznerTokenRefusal(true, true, null, "qits-dns-hetzner-token-abc"))
+        assertThat(DomainTokens.hetznerTokenRefusal(true, null, "qits-dns-hetzner-token-abc"))
                 .contains("QITS_DNS_HETZNER_TOKEN")
                 .contains("no swarm secrets");
-        assertThat(DomainTokens.hetznerTokenRefusal(true, true, "  ", "some-secret")).isNotNull();
+        assertThat(DomainTokens.hetznerTokenRefusal(true, "  ", "some-secret")).isNotNull();
     }
 
-    /** Everything else is allowed: a token given, no domain, or issuance off. */
+    /** Everything else is allowed: a token given, or issuance off. */
     @Test
     void aRunThatCanHandOverATokenIsNotRefused() {
         // The ordinary domain platform: a token, with or without a secret name beside it.
-        assertThat(DomainTokens.hetznerTokenRefusal(true, true, TOKEN, "some-secret")).isNull();
-        assertThat(DomainTokens.hetznerTokenRefusal(true, true, TOKEN, null)).isNull();
-        // No domain, so no certificate to order and no credential to hand anybody.
-        assertThat(DomainTokens.hetznerTokenRefusal(false, true, null, "some-secret")).isNull();
+        assertThat(DomainTokens.hetznerTokenRefusal(true, TOKEN, "some-secret")).isNull();
+        assertThat(DomainTokens.hetznerTokenRefusal(true, TOKEN, null)).isNull();
         // QITS_ACME_MODE=off: the edge keeps the placeholder on purpose.
-        assertThat(DomainTokens.hetznerTokenRefusal(true, false, null, "some-secret")).isNull();
+        assertThat(DomainTokens.hetznerTokenRefusal(false, null, "some-secret")).isNull();
         // Neither configured is a different failure, and the secret phase is where it is named.
-        assertThat(DomainTokens.hetznerTokenRefusal(true, true, null, null)).isNull();
+        assertThat(DomainTokens.hetznerTokenRefusal(true, null, null)).isNull();
     }
 
     /**
      * <b>THE DOMAIN IS STATED FOR THE ROUTING AS WELL AS FOR THE ORDER — and it is stated ONCE.</b>
      * The edge reads every name it serves right to left against a domain it cannot derive
-     * ({@code example.co.uk} is two labels and {@code localhost} is one), so it needs the value
+     * ({@code example.co.uk} is two labels), so it needs the value
      * whether issuance is on or off. It used to be told twice: {@code QITS_EDGE_ACME_DOMAIN} here,
      * and the same fact again inside the canonical origin and the return-host list. That is the
      * fan-out this retires — the edge reads the one {@code QITS_DOMAIN} qits-deployments injects —
@@ -101,7 +99,7 @@ class DomainTokensTest {
      */
     @Test
     void theEdgeIsToldTheDomainItReadsNamesAgainstEvenWithIssuanceOff() {
-        Map<String, String> off = DomainTokens.of(Optional.of("wohlben.dev"), "off",
+        Map<String, String> off = DomainTokens.of("wohlben.dev", "off",
                 "hostmaster@wohlben.dev", TOKEN, Optional.empty(), List.of());
 
         // STILL TOLD, AND TOLD WHATEVER ISSUANCE IS DOING — under the single name now. The ACME
@@ -130,22 +128,5 @@ class DomainTokensTest {
         assertThat(tokens.get("SEED_DOMAIN")).contains("QITS_DOMAIN: wohlben.dev");
         assertThat(tokens.get("DEPLOYMENTS_DOMAIN_ARGS")).contains(
                 "qits.deployments.extras.qits-deployments.env.QITS_DOMAIN=wohlben.dev");
-    }
-
-    /** A domainless platform spells none of it — the same answer it always gave. */
-    @Test
-    void noDomainSpellsNoTlsAtAll() {
-        Map<String, String> none = DomainTokens.of(Optional.empty(), "staging", "", "",
-                Optional.empty(), List.of());
-
-        assertThat(none.get("EDGE_TLS_ARGS")).isEmpty();
-        assertThat(none.get("EDGE_TLS")).isEmpty();
-        assertThat(none.get("EDGE_TLS_NOTE")).isEmpty();
-        // The deployer's statement of the domain obeys the same rule, and it is the one that
-        // matters most: the deployer WITHHOLDS the variable where there is no domain rather than
-        // writing an empty one, so a generated file that stated emptiness would disagree with the
-        // very service it configures.
-        assertThat(none.get("SEED_DOMAIN")).isEmpty();
-        assertThat(none.get("DEPLOYMENTS_DOMAIN_ARGS")).isEmpty();
     }
 }

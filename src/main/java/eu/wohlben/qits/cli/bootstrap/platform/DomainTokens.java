@@ -10,12 +10,12 @@ import java.security.MessageDigest;
 /**
  * What {@code QITS_DOMAIN} adds to the two generated files, as template values.
  * <p>
- * <b>Every fragment here is APPENDED to the end of a line the template already has, and that is
- * deliberate.</b> With no domain each one is the empty string, so the rendered compose file and the
- * rendered extras are byte for byte what a platform without a domain always had — no blank line,
- * no orphan comment about a feature that is off, nothing for the next reader to wonder about. With a
- * domain the fragment carries its own newlines, its own indentation and its own comments, so the
- * generated file explains itself exactly where the lines appear.
+ * <b>Every fragment here is APPENDED to the end of a line the template already has.</b> The
+ * fragment carries its own newlines, its own indentation and its own comments, so the generated
+ * file explains itself exactly where the lines appear. The domain is required — a run without one
+ * is refused before anything renders — so every fragment is always filled; the one that can still
+ * come out empty is the seed edge's TLS ports, which {@code SeedPhases} blanks while the bootstrap
+ * ingress holds 443.
  * <p>
  * <b>The indentation is spelled out rather than written as a text block, because here it is data.</b>
  * The templates are text blocks whose common indent is stripped before these values are substituted,
@@ -31,19 +31,19 @@ public final class DomainTokens {
     private DomainTokens() {
     }
 
-    /** The token values for this domain, or the empty answers when there is none. */
-    public static Map<String, String> of(Optional<String> domain) {
-        return of(domain, "staging", domain.map(value -> "hostmaster@" + value).orElse(""), "");
+    /** The token values for this domain, with the defaults a fixture wants. */
+    public static Map<String, String> of(String domain) {
+        return of(domain, "staging", "hostmaster@" + domain, "");
     }
 
     /** The complete edge runtime contract for an externally served domain. */
-    public static Map<String, String> of(Optional<String> domain, String mode, String email,
+    public static Map<String, String> of(String domain, String mode, String email,
             String hetznerToken) {
         return of(domain, mode, email, hetznerToken, Optional.empty());
     }
 
     /** The complete edge runtime contract, optionally reusing an existing Swarm secret. */
-    public static Map<String, String> of(Optional<String> domain, String mode, String email,
+    public static Map<String, String> of(String domain, String mode, String email,
             String hetznerToken, Optional<String> existingSecret) {
         return of(domain, mode, email, hetznerToken, existingSecret, List.of());
     }
@@ -56,10 +56,10 @@ public final class DomainTokens {
      *     ordinary platform and spells no key at all: an empty list and an absent one are the same
      *     answer, and a key holding nothing is a line for the next reader to wonder about.
      */
-    public static Map<String, String> of(Optional<String> domain, String mode, String email,
+    public static Map<String, String> of(String domain, String mode, String email,
             String hetznerToken, Optional<String> existingSecret, List<String> extraSans) {
         Map<String, String> values = new LinkedHashMap<>();
-        String additional = domain.isPresent() ? String.join(",", extraSans) : "";
+        String additional = String.join(",", extraSans);
         String secret = existingSecret.map(String::strip).filter(value -> !value.isEmpty())
                 .orElseGet(() -> secretName(hetznerToken));
         // NOTE: this could be a hook to register the domain's dns records with an external dns
@@ -67,17 +67,13 @@ public final class DomainTokens {
         // serves have to resolve to QITS_PUBLIC_IP before the certificate order can be answered,
         // and nothing here writes them. qits-platform-dns used to be given its own SOA and NS
         // identity here.
-        values.put("LETSENCRYPT_VOLUME", domain.map(ignored -> letsEncryptVolume(secret)).orElse(""));
-        values.put("EDGE_SEED_TLS_PORTS", domain.isPresent() ? EDGE_TLS_PORTS : "");
-        values.put("EDGE_TLS",
-                domain.map(value -> edgeTls(mode, email, secret, additional)).orElse(""));
-        values.put("EDGE_TLS_NOTE", domain.isPresent() ? EDGE_TLS_NOTE : "");
-        values.put("EDGE_TLS_ARGS", domain
-                .map(value -> edgeTlsArgs(mode, email, hetznerToken, additional))
-                .orElse(""));
-        values.put("SEED_DOMAIN", domain.map(DomainTokens::seedDomain).orElse(""));
-        values.put("DEPLOYMENTS_DOMAIN_ARGS",
-                domain.map(DomainTokens::deploymentsDomain).orElse(""));
+        values.put("LETSENCRYPT_VOLUME", letsEncryptVolume(secret));
+        values.put("EDGE_SEED_TLS_PORTS", EDGE_TLS_PORTS);
+        values.put("EDGE_TLS", edgeTls(mode, email, secret, additional));
+        values.put("EDGE_TLS_NOTE", EDGE_TLS_NOTE);
+        values.put("EDGE_TLS_ARGS", edgeTlsArgs(mode, email, hetznerToken, additional));
+        values.put("SEED_DOMAIN", seedDomain(domain));
+        values.put("DEPLOYMENTS_DOMAIN_ARGS", deploymentsDomain(domain));
         return values;
     }
 
@@ -102,11 +98,6 @@ public final class DomainTokens {
      * per-service setting, and a service that starts deriving tomorrow should need no edit here.
      * The one seed container that does not get it is the upstream postgres image, which is not a
      * qits application at all — the same reason it carries no observability url and no tier.
-     * <p>
-     * <b>Absent, never empty, where no domain is stated</b> — the deployer's own guard, one word
-     * further on. A consumer that finds nothing falls back to the default it ships; a consumer
-     * handed {@code QITS_DOMAIN=} has been told that the domain is the empty string and composes
-     * nonsense out of it.
      */
     private static String seedDomain(String domain) {
         return "\n"
@@ -139,7 +130,7 @@ public final class DomainTokens {
 
     private static String letsEncryptVolume(String secretName) {
         return "\n"
-            + "  # THE EDGE'S TLS MATERIAL, and it is declared only because a domain is configured.\n"
+            + "  # THE EDGE'S TLS MATERIAL.\n"
             + "  # It holds the placeholder certificate this bootstrap writes before the edge first\n"
             + "  # starts with a keystore; the edge replaces it with versioned DNS-01 PEMs and\n"
             + "  # atomically switches the current symlink once validation succeeds. A keystore\n"
@@ -272,11 +263,10 @@ public final class DomainTokens {
      *
      * @return the refusal, or null when this run can hand the deployed edge a token
      */
-    public static String hetznerTokenRefusal(boolean domain, boolean acmeEnabled, String token,
-            String secret) {
+    public static String hetznerTokenRefusal(boolean acmeEnabled, String token, String secret) {
         boolean haveToken = token != null && !token.isBlank();
         boolean haveSecret = secret != null && !secret.isBlank();
-        if (!domain || !acmeEnabled || haveToken || !haveSecret) {
+        if (!acmeEnabled || haveToken || !haveSecret) {
             return null;
         }
         return "QITS_DNS_HETZNER_SECRET names a swarm secret and QITS_DNS_HETZNER_TOKEN is unset, "

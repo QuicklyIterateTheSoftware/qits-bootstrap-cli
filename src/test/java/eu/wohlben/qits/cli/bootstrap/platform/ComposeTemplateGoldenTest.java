@@ -33,8 +33,8 @@ import static org.assertj.core.api.Assertions.fail;
  * this from becoming a directory nobody prunes. {@link ExtrasWiringGuardTest} is the other half of
  * the pair: a golden says what a block HOLDS, the guard says what a block is ALLOWED to hold.
  * <p>
- * <b>What a golden cannot do</b> is render a second platform. The fixture is one environment with
- * no domain, so everything that varies with the tokens — the domain fragments, a second environment
+ * <b>What a golden cannot do</b> is render a second platform. The fixture is one environment on
+ * one domain, so everything that varies with the tokens — a second domain, a second environment
  * name, a two-build host — stays an assertion in {@link ComposeTemplateTest}, and so does every
  * cross-check between the seed stack and the extras, because a golden of one file cannot say the
  * two files agree.

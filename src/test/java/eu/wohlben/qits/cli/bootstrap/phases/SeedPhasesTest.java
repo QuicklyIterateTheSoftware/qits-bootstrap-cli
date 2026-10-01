@@ -1009,7 +1009,8 @@ class SeedPhasesTest {
      */
     @Test
     void theEdgesSecretIsRecordedByApplicationAndReadByApplication() {
-        Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "prod")),
+        Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "prod",
+                "QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7")),
                 new RunLog(temp.resolve("run.log")));
         boot.state.serviceClientSecrets.put(PlatformModel.application("edge"), "s3cr3t");
 
@@ -1026,9 +1027,6 @@ class SeedPhasesTest {
         // domain is rendered once, for qits-deployments, which propagates it as QITS_DOMAIN.
         assertThat(tokens).doesNotContainKeys("WEBAUTHN_RP_ID", "WEBAUTHN_ORIGINS",
                 "PUBLIC_ORIGIN", "IDP_ORIGIN", "BROWSER_HOSTS", "SESSION_COOKIE_DOMAIN");
-        // A local platform has no domain, so the deployer's fragment is empty too.
-        assertThat(tokens).containsEntry("SEED_DOMAIN", "")
-                .containsEntry("DEPLOYMENTS_DOMAIN_ARGS", "");
     }
 
     /**
@@ -1056,7 +1054,7 @@ class SeedPhasesTest {
         assertThat(tokens.get("SEED_DOMAIN")).contains("QITS_DOMAIN: qits-dev.eu");
         assertThat(tokens.get("DEPLOYMENTS_DOMAIN_ARGS")).contains(
                 "qits.deployments.extras.qits-deployments.env.QITS_DOMAIN=qits-dev.eu");
-        // And no composed spelling beside it, on a domain platform least of all.
+        // And no composed spelling beside it.
         assertThat(tokens).doesNotContainKeys("WEBAUTHN_RP_ID", "WEBAUTHN_ORIGINS",
                 "PUBLIC_ORIGIN", "IDP_ORIGIN", "BROWSER_HOSTS", "SESSION_COOKIE_DOMAIN");
     }

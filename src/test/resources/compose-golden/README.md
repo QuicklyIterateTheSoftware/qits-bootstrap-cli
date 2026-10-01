@@ -6,7 +6,8 @@ The rendered deployment extras, one checked-in file per application.
 
 Each file is the block `ComposeTemplate.extras` generates for that application, whole and in
 generation order, rendered from the canonical fixture in `ComposeTemplateTest.tokens()`:
-environment `prod`, no domain, and fake secrets. `ComposeTemplateGoldenTest` compares each block
+environment `prod`, domain `qits-dev.eu` (the domain is required, so the fixture has one and the
+edge's TLS wiring and the deployer's `QITS_DOMAIN` are in its goldens), and fake secrets. `ComposeTemplateGoldenTest` compares each block
 against its file byte for byte, normalising nothing but the trailing newline.
 
 ## Regenerating

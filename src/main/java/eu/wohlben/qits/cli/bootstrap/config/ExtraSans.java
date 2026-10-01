@@ -4,7 +4,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
@@ -72,12 +71,10 @@ public final class ExtraSans {
      * The configured extra names for this domain, checked, in the order they were written and with
      * duplicates dropped.
      *
-     * @param domain the configured domain, or empty — with no domain there is no certificate, so
-     *     the answer is empty whatever was configured
+     * @param domain the configured domain
      */
-    public static List<String> of(BootstrapConfig config, Optional<String> domain) {
-        return domain.map(name -> of(config.acmeExtraSans().orElse(""), name))
-                .orElseGet(List::of);
+    public static List<String> of(BootstrapConfig config, String domain) {
+        return of(config.acmeExtraSans().orElse(""), domain);
     }
 
     /**

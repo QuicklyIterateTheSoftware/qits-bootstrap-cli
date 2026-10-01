@@ -34,8 +34,8 @@ class ExtraSansTest {
     /** No knob is the ordinary platform, and the derived wildcards are the whole set. */
     @Test
     void nothingConfiguredIsNoExtraNames() {
-        assertThat(ExtraSans.of(TestConfig.from(Map.of()), Optional.of(DOMAIN))).isEmpty();
-        assertThat(ExtraSans.of(config("   "), Optional.of(DOMAIN))).isEmpty();
+        assertThat(ExtraSans.of(TestConfig.from(Map.of()), DOMAIN)).isEmpty();
+        assertThat(ExtraSans.of(config("   "), DOMAIN)).isEmpty();
     }
 
     /**
@@ -48,19 +48,10 @@ class ExtraSansTest {
     @Test
     void anOrdinaryPlatformOrdersNoAdditionalNames() {
         Map<String, String> tokens = eu.wohlben.qits.cli.bootstrap.platform.DomainTokens.of(
-                Optional.of(DOMAIN), "staging", "hostmaster@" + DOMAIN, "token", Optional.empty(),
-                ExtraSans.of(TestConfig.from(Map.of()), Optional.of(DOMAIN)));
+                DOMAIN, "staging", "hostmaster@" + DOMAIN, "token", Optional.empty(),
+                ExtraSans.of(TestConfig.from(Map.of()), DOMAIN));
 
         assertThat(tokens.values()).noneMatch(value -> value.contains("ADDITIONAL_NAMES"));
-    }
-
-    /**
-     * With no domain there is no certificate at all, so a value left in {@code .env} from a
-     * platform that had one is not a set of names to order — it is nothing.
-     */
-    @Test
-    void withNoDomainThereIsNothingToPutANameOn() {
-        assertThat(ExtraSans.of(config("editor.acme"), Optional.empty())).isEmpty();
     }
 
     /**
@@ -166,10 +157,10 @@ class ExtraSansTest {
         BootstrapConfig base = config("editor.from-env");
 
         assertThat(ExtraSans.of(new OverridableConfig(base).acmeExtraSans("editor.a,editor.b"),
-                Optional.of(DOMAIN)))
+                DOMAIN))
                 .containsExactly("editor.a." + DOMAIN, "editor.b." + DOMAIN);
         assertThat(ExtraSans.of(new OverridableConfig(base).acmeExtraSans("  "),
-                Optional.of(DOMAIN)))
+                DOMAIN))
                 .containsExactly("editor.from-env." + DOMAIN);
     }
 }

@@ -61,8 +61,8 @@ public class RunState {
      * <b>Which certificate the edge is serving when this run ends</b>: {@code staging},
      * {@code production}, or null for the self-signed placeholder.
      * <p>
-     * Set by the {@code edge-acme} phase, and null is the honest answer in three different
-     * situations — issuance was off, the order failed, or there is no domain at all — which is why
+     * Set by the {@code edge-acme} phase, and null is the honest answer in two different
+     * situations — issuance was off, or the order failed — which is why
      * the closing report reads the MODE beside it rather than this word alone.
      */
     public String certificate;

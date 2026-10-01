@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** The plan is built before anything runs, which is what makes "9 of 47" a fact. */
 class BootstrapPlanTest {
@@ -19,7 +20,18 @@ class BootstrapPlanTest {
     @TempDir
     Path temp;
 
+    /**
+     * Every plan is a domain boot: a run without one is refused before the plan is built, so the
+     * domain and its address are the fixture's, under whatever the test adds.
+     */
     private List<Phase> plan(Map<String, String> env) {
+        Map<String, String> withDomain = new java.util.HashMap<>(Map.of(
+                "QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7"));
+        withDomain.putAll(env);
+        return planExactly(withDomain);
+    }
+
+    private List<Phase> planExactly(Map<String, String> env) {
         BootstrapConfig config = TestConfig.from(env);
         return BootstrapPlan.build(new Boot(config, new RunLog(temp.resolve("run.log"))));
     }
@@ -113,8 +125,7 @@ class BootstrapPlanTest {
     @Test
     void theRunnerIsStartedAndConnectedBeforeTheFirstRun() {
         for (Map<String, String> env : List.of(Map.<String, String>of(),
-                Map.of("QITS_SKIP_BUILD", "1"),
-                Map.of("QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7"))) {
+                Map.of("QITS_SKIP_BUILD", "1"))) {
             List<String> ids = ids(plan(env));
 
             assertThat(ids).containsSubsequence("seed-health", "images-publish",
@@ -435,7 +446,7 @@ class BootstrapPlanTest {
     }
 
     /**
-     * The two phases a domain adds, and where each of them has to sit.
+     * The phase the domain brings, and where it has to sit.
      * <p>
      * The PLACEHOLDER certificate goes before the seed stack, because the edge is started there with
      * a keystore and a keystore whose files are missing fails startup. The ACME order goes after the
@@ -446,19 +457,24 @@ class BootstrapPlanTest {
      * held at the domain's own provider, before the run.
      */
     @Test
-    void aDomainAddsThePlaceholderAndTheRunningEdgeOwnsIssuance() {
-        List<String> ids = ids(plan(Map.of("QITS_DOMAIN", "qits-dev.eu",
-                "QITS_PUBLIC_IP", "203.0.113.7")));
+    void theDomainAddsThePlaceholderAndTheRunningEdgeOwnsIssuance() {
+        List<String> ids = ids(plan(Map.of()));
 
         assertThat(ids).containsSubsequence("pd-extras", "edge-cert", "seed-stack", "seed-health");
         assertThat(ids).doesNotContain("dns-zone", "edge-acme");
     }
 
-    /** No domain is the default, and then neither phase exists — nothing to skip at runtime. */
+    /**
+     * <b>There is no plan without a domain.</b> The command refuses such a run before it builds
+     * one; a caller that got ahead of the refusal is told the refusal's own words rather than
+     * handed a plan with the domain's phases quietly missing.
+     */
     @Test
-    void withNoDomainNeitherIsInThePlan() {
-        assertThat(ids(plan(Map.of()))).doesNotContain("edge-cert", "dns-zone", "edge-acme");
-        // The nameserver is retired outright: no seed image and no deployment, domain or not.
+    void thereIsNoPlanWithoutADomain() {
+        assertThatThrownBy(() -> planExactly(Map.of()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("QITS_DOMAIN");
+        // The nameserver is retired outright: no seed image and no deployment.
         assertThat(ids(plan(Map.of())))
                 .doesNotContain("seed-image-platform-dns", "deploy-platform-dns");
     }
