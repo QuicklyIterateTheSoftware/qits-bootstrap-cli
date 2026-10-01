@@ -2272,6 +2272,14 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-system.env.QITS_SYSTEM_GLANCES_IMAGE_REPO=mirror.${ENV_NAME}.localhost:${PORT}/hub/nicolargo/glances
             qits.deployments.extras.qits-system.env.QITS_SYSTEM_GLANCES_IMAGE_VERSION=4.5.6-full
             qits.deployments.extras.qits-system.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            # THE MCP SURFACE. A Quarkus service with quarkus-oidc for bearer validation ONLY — it
+            # has no oidc-client, dials no platform client of its own and mints nothing, so none of
+            # the QUARKUS_OIDC_CLIENT_* or QITS_COMMISSIONED_CLIENT_* keys belong here. QITS_ENV
+            # names the environment a tool call answers for.
+            qits.deployments.extras.qits-platform-access-mcp-service.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
+            qits.deployments.extras.qits-platform-access-mcp-service.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
+            qits.deployments.extras.qits-platform-access-mcp-service.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.deployments.extras.qits-platform-access-mcp-service.env.QITS_ENV=${ENV_NAME}
             # NO qits-ci-runner BLOCK, AND ITS ABSENCE IS THE DECISION. The platform host's runner
             # is a container the bootstrap starts with a plain `docker run` (the `runner-localhost`
             # phase), exactly as the install line starts a runner on any other host: it registers

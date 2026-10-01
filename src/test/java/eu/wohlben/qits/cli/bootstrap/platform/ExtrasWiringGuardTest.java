@@ -93,6 +93,7 @@ class ExtrasWiringGuardTest {
             "qits-maintenance",
             "qits-mirror",
             "qits-orchestrator",
+            "qits-platform-access-mcp-service",
             "qits-system",
             "qits-projects",
             "qits-stt",
