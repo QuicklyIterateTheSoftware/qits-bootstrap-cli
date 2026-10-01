@@ -3417,10 +3417,14 @@ public class PipelinePhases {
             // EVERY PUBLIC NAME IS READ RIGHT TO LEFT, <app>[.<env>].<project>.<domain>, and the
             // PROJECT LABEL IS MANDATORY: there is no unqualified application tier and no
             // top-level <env>.<domain> tier. This platform is simply the project called `qits`, so
-            // an app host is <app>. of ITS innermost door and nothing else.
+            // an app host is <app>. of ITS innermost door and nothing else — <app>.qits.<domain>,
+            // since that project has environments disabled (PlatformModel.PROJECT_HAS_ENVIRONMENTS).
             String apex = boot.config.requiredDomain();
             String appHost = "https://<app>." + authority;
-            String returns = "*." + boot.config.projectAuthority() + " and *." + authority;
+            // Both depths on the return list whatever this project's shape: it is an allow-list,
+            // not a router.
+            String returns = "*." + boot.config.projectAuthority() + " and *."
+                    + PlatformModel.innermostDoor(true, env, boot.config.projectAuthority());
             report.add("edge:      " + door + "/  — the host's one HTTP port, in front of every "
                     + "environment. The");
             report.add("           DOOR ITSELF SERVES ONE ROUTE: GET / redirects to the projects "

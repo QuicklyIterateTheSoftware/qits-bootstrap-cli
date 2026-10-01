@@ -9,7 +9,9 @@ import eu.wohlben.qits.cli.bootstrap.workstation.Pkce;
 import eu.wohlben.qits.cli.bootstrap.workstation.SecretToolCredentialStore;
 import eu.wohlben.qits.cli.bootstrap.workstation.TokenClient;
 import eu.wohlben.qits.cli.bootstrap.workstation.WorkstationCredential;
+import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.config.ConfigProvider;
+import org.eclipse.microprofile.config.ConfigValue;
 import picocli.CommandLine;
 
 import java.net.URLEncoder;
@@ -41,9 +43,11 @@ public class LoginCommand implements Callable<Integer> {
     public Integer call() throws Exception {
         // EVERY SERVICE HAS A HOST OF ITS OWN, the idp and the git host included, and EVERY PUBLIC
         // NAME IS READ RIGHT TO LEFT: <app>[.<env>].<project>.<domain>. This platform is the
-        // project called `qits`, so the names are idp.<env>.qits.<domain> and
-        // githost.<env>.qits.<domain>. There is no second arm any more: since 2026.1001.41945 a
-        // platform cannot be bootstrapped without QITS_DOMAIN (BootstrapConfig.requiredDomain), so a
+        // project called `qits`, which has environments disabled, so the names are flat:
+        // idp.qits.<domain> and githost.qits.<domain> (PlatformModel.PROJECT_HAS_ENVIRONMENTS).
+        // The environment still matters — the githost audience is <env>-qits-githost. There is no
+        // localhost arm any more: since 2026.1001.41945 a platform cannot be bootstrapped without
+        // QITS_DOMAIN (BootstrapConfig.requiredDomain), so a
         // platform this command could reach under a localhost name does not exist. Both QITS_DOMAIN
         // and QITS_ENV_NAME are therefore read as settled facts of the platform being logged in to,
         // not as a switch between two kinds of platform, and both are required.
@@ -52,7 +56,7 @@ public class LoginCommand implements Callable<Integer> {
         // `.env` file in the working directory as a config source, the way the rest of this CLI's
         // knobs are read (BootstrapConfig), and System.getenv never sees that file. Reading the raw
         // environment here would silently miss a QITS_DOMAIN set only in `.env`.
-        Settings settings = Settings.resolve(name -> ConfigProvider.getConfig().getOptionalValue(name, String.class));
+        Settings settings = Settings.resolve(configured(ConfigProvider.getConfig()));
         if (settings.domain().isBlank()) {
             System.err.println(DOMAIN_REFUSAL);
             return 2;
@@ -106,26 +110,28 @@ public class LoginCommand implements Callable<Integer> {
     }
 
     /**
-     * One service's public origin, <b>carrying the platform's PROJECT label as well as its
-     * environment</b>: {@code https://<app>.<env>.qits.<domain>}.
+     * One service's public origin, <b>carrying the platform's PROJECT label</b>:
+     * {@code https://<app>.qits.<domain>}. The {@code qits} project has environments disabled, so
+     * no env label is in the name; {@link PlatformModel#innermostDoor} makes that choice for login
+     * and the closing report alike.
      * <p>
-     * Names are read right to left — {@code <app>.<env>.<project>.<domain>}, each label inside the
+     * Names are read right to left — {@code <app>[.<env>].<project>.<domain>}, each label inside the
      * one to its right — and the project label is MANDATORY: there is no unqualified application
      * tier and no top-level {@code <env>.<domain>} tier. The platform this command logs a
      * workstation in to is simply the project called {@code qits}, which is why that slug is spelled
      * here and nowhere else in this file.
      */
     static String serviceHost(String app, String domain, String environment) {
-        return "https://" + app + "." + environment + "." + PlatformModel.PROJECT + "." + domain;
+        return "https://" + app + "." + PlatformModel.innermostDoor(environment, PlatformModel.PROJECT + "." + domain);
     }
 
     /**
      * <b>The environment name, or null when it is not configured.</b>
      * <p>
-     * {@code QITS_ENV_NAME} decides it, and there is no default: every public name spells the
-     * environment it reaches — {@code idp.<env>.qits.<domain>} — and a guessed one resolves,
-     * reaches the edge and comes back a 404 from the right host, which reads as a broken platform
-     * rather than as a wrong name. So it is refused before the browser is opened rather than guessed.
+     * {@code QITS_ENV_NAME} decides it, and there is no default: the hostnames are flat
+     * ({@code idp.qits.<domain>}) but the githost audience spells it, {@code <env>-qits-githost}, and
+     * a guessed one is a token the git host refuses, which reads as a broken platform rather than
+     * as a wrong name. So it is refused before the browser is opened rather than guessed.
      *
      * @param configured {@code QITS_ENV_NAME} as the environment gives it, null or blank when unset
      */
@@ -135,13 +141,12 @@ public class LoginCommand implements Callable<Integer> {
 
     /** What the refusal says, and it names the one value that fixes it. */
     static String environmentRefusal(String domain) {
-        return "QITS_DOMAIN is set to '" + domain + "' and QITS_ENV_NAME is not, and every public "
-                + "name spells its environment: this workstation would ask "
-                + "idp.<env>." + PlatformModel.PROJECT + "." + domain + " and githost.<env>."
-                + PlatformModel.PROJECT + "." + domain + " without knowing what "
-                + "<env> is. There is no safe default — a guess resolves, reaches the edge and "
-                + "comes back a 404 from the right host, which reads as a broken platform rather "
-                + "than as a wrong name. Set QITS_ENV_NAME to that platform's environment (the "
+        return "QITS_DOMAIN is set to '" + domain + "' and QITS_ENV_NAME is not, and login needs "
+                + "it: the hosts are idp." + PlatformModel.PROJECT + "." + domain + " and githost."
+                + PlatformModel.PROJECT + "." + domain + ", but the token is asked for the git "
+                + "host's audience, <env>-qits-githost. There is no safe default — a guessed "
+                + "audience is a token the git host refuses, which reads as a broken platform "
+                + "rather than as a wrong name. Set QITS_ENV_NAME to that platform's environment (the "
                 + "value its bootstrap was given as --platform-env) and run `qits-bootstrap login` again.";
     }
 
@@ -177,6 +182,29 @@ public class LoginCommand implements Callable<Integer> {
                     lookup.apply("qits.idp-url").map(String::strip).filter(value -> !value.isEmpty()),
                     lookup.apply("qits.git-host-url").map(String::strip).filter(value -> !value.isEmpty()));
         }
+    }
+
+    /**
+     * <b>The lookup {@code call()} feeds {@link Settings}: a value somebody SET, never a default.</b>
+     * {@code BootstrapConfig} is a {@code @ConfigMapping} over the same {@code qits} prefix, and
+     * registering it puts its {@code @WithDefault} values into the config itself — so a plain
+     * {@code getOptionalValue("qits.env-name")} answers {@code prod} on a workstation that never set
+     * {@code QITS_ENV_NAME}, which is exactly the guess the refusal exists to prevent.
+     * <p>
+     * A default lives in a source below every real one: SmallRye's {@code DefaultValuesConfigSource}
+     * sits at {@code Integer.MIN_VALUE}, and Quarkus' recorded {@code RunTime Defaults} just above
+     * it, while application.properties, {@code .env}, the environment and system properties all
+     * carry positive ordinals. So the test is the ordinal rather than a source's name, which is an
+     * implementation detail that has changed between releases.
+     */
+    static Function<String, Optional<String>> configured(Config config) {
+        return name -> {
+            ConfigValue value = config.getConfigValue(name);
+            if (value == null || value.getValue() == null || value.getSourceOrdinal() <= 0) {
+                return Optional.empty();
+            }
+            return Optional.of(value.getValue());
+        };
     }
 
     private static void openBrowser(String url) throws Exception {

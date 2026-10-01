@@ -1,5 +1,8 @@
 package eu.wohlben.qits.cli.bootstrap;
 
+import eu.wohlben.qits.cli.bootstrap.config.TestConfig;
+import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
+import io.smallrye.config.SmallRyeConfig;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -16,13 +19,25 @@ class LoginCommandTest {
     @Test
     void theDefaultsAreTheIdpsAndTheGitHostsOwnNames() {
         // EVERY PUBLIC NAME CARRIES ITS PROJECT. Names are read right to left —
-        // <app>.<env>.<project>.<domain> — and the project label is mandatory: this platform is
-        // the project called `qits`, so both the short idp.<domain> and the project-less
-        // idp.<env>.<domain> are names the edge does not serve.
+        // <app>[.<env>].<project>.<domain> — and the project label is mandatory. This platform is
+        // the project called `qits`, which has environments disabled, so its names are flat.
         assertThat(LoginCommand.serviceHost("idp", "qits-dev.eu", "dev"))
-                .isEqualTo("https://idp.dev.qits.qits-dev.eu");
+                .isEqualTo("https://idp.qits.qits-dev.eu");
         assertThat(LoginCommand.serviceHost("githost", "qits-dev.eu", "dev"))
-                .isEqualTo("https://githost.dev.qits.qits-dev.eu");
+                .isEqualTo("https://githost.qits.qits-dev.eu");
+    }
+
+    /**
+     * <b>Both shapes come from one helper</b>, {@link PlatformModel#innermostDoor}: a project with
+     * environments nests its apps under {@code <env>.<project>.<domain>}, one without under
+     * {@code <project>.<domain>}. The {@code qits} project is the second kind.
+     */
+    @Test
+    void theHostnameShapeFollowsWhetherTheProjectHasEnvironments() {
+        assertThat(PlatformModel.innermostDoor(true, "dev", "qits.wohlben.eu")).isEqualTo("dev.qits.wohlben.eu");
+        assertThat(PlatformModel.innermostDoor(false, "dev", "qits.wohlben.eu")).isEqualTo("qits.wohlben.eu");
+        assertThat(PlatformModel.PROJECT_HAS_ENVIRONMENTS).isFalse();
+        assertThat(PlatformModel.innermostDoor("dev", "qits.wohlben.eu")).isEqualTo("qits.wohlben.eu");
     }
 
     /**
@@ -54,7 +69,9 @@ class LoginCommandTest {
         assertThat(LoginCommand.environmentName(" dev ")).isEqualTo("dev");
         assertThat(LoginCommand.environmentRefusal("qits-dev.eu"))
                 .contains("QITS_ENV_NAME")
-                .contains("idp.<env>.qits.qits-dev.eu")
+                .contains("<env>-qits-githost")
+                .contains("idp.qits.qits-dev.eu")
+                .doesNotContain("idp.<env>.")
                 .contains("--platform-env");
     }
 
@@ -74,7 +91,7 @@ class LoginCommandTest {
         String domain = settings.domain();
         String environment = LoginCommand.environmentName(settings.environment());
         assertThat(LoginCommand.serviceHost("idp", domain, environment))
-                .isEqualTo("https://idp.dev.qits.qits-dev.eu");
+                .isEqualTo("https://idp.qits.qits-dev.eu");
     }
 
     @Test
@@ -83,6 +100,40 @@ class LoginCommandTest {
                 "qits.idp-url", " https://idp.example/idp ", "qits.git-host-url", "")));
         assertThat(settings.idpUrl()).contains("https://idp.example/idp");
         assertThat(settings.gitHostUrl()).isEmpty();
+    }
+
+    /**
+     * <b>A mapping default is not a configured value.</b> {@code BootstrapConfig} declares
+     * {@code @WithDefault("prod") envName()}, and registering the mapping puts that default into the
+     * config itself — so a plain {@code getOptionalValue("qits.env-name")} answers {@code prod} on a
+     * workstation that never set {@code QITS_ENV_NAME}, and login opened
+     * {@code idp.prod.qits.<domain>} instead of refusing. This runs the REAL config wiring: a
+     * SmallRye config with the mapping registered and only {@code QITS_DOMAIN} set.
+     */
+    @Test
+    void aMappingDefaultDoesNotCountAsAConfiguredEnvironment() {
+        SmallRyeConfig config = TestConfig.config(Map.of("QITS_DOMAIN", "wohlben.eu"));
+        // The premise: the mapping default really is visible through the plain lookup.
+        assertThat(config.getOptionalValue("qits.env-name", String.class)).contains("prod");
+
+        LoginCommand.Settings settings = LoginCommand.Settings.resolve(LoginCommand.configured(config));
+
+        assertThat(settings.domain()).isEqualTo("wohlben.eu");
+        assertThat(settings.environment()).isNull();
+        assertThat(settings.idpUrl()).isEmpty();
+        assertThat(settings.gitHostUrl()).isEmpty();
+    }
+
+    /** And a value that IS configured still comes through the same lookup. */
+    @Test
+    void aConfiguredEnvironmentStillComesThroughTheRealConfig() {
+        SmallRyeConfig config = TestConfig.config(Map.of("QITS_DOMAIN", "wohlben.eu",
+                "QITS_ENV_NAME", "dev", "QITS_IDP_URL", "https://idp.example/idp"));
+
+        LoginCommand.Settings settings = LoginCommand.Settings.resolve(LoginCommand.configured(config));
+
+        assertThat(settings.environment()).isEqualTo("dev");
+        assertThat(settings.idpUrl()).contains("https://idp.example/idp");
     }
 
     private static java.util.function.Function<String, Optional<String>> lookupOf(Map<String, String> values) {

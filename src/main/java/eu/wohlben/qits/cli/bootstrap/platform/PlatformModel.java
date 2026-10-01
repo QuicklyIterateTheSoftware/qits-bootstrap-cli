@@ -755,6 +755,27 @@ public final class PlatformModel {
     public static final String PROJECT = "qits";
 
     /**
+     * The {@code qits} project has environments disabled, so its apps are {@code <app>.qits.<domain>}.
+     * Hardcoded by owner decision 2026-10-01; an edge {@code /.well-known} may replace it someday.
+     */
+    public static final boolean PROJECT_HAS_ENVIRONMENTS = false;
+
+    /**
+     * <b>The innermost door of this platform's project</b> — the parent of every app host — and the
+     * one place the hostname shape is chosen: {@code <env>.<projectAuthority>} for a project with
+     * environments, {@code <projectAuthority>} for one without. Login and the closing report both
+     * compose through it.
+     */
+    public static String innermostDoor(String environment, String projectAuthority) {
+        return innermostDoor(PROJECT_HAS_ENVIRONMENTS, environment, projectAuthority);
+    }
+
+    /** The same, for either shape; {@link #innermostDoor(String, String)} passes the constant. */
+    public static String innermostDoor(boolean hasEnvironments, String environment, String projectAuthority) {
+        return hasEnvironments ? environment + "." + projectAuthority : projectAuthority;
+    }
+
+    /**
      * <b>A FRESH STORAGE ID for a platform repository's bare</b> — the key {@code PUT /git/<id>}
      * uses, which is qits-githost's alone and never a clone url.
      * <p>

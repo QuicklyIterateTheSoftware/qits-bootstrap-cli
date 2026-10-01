@@ -1,5 +1,6 @@
 package eu.wohlben.qits.cli.bootstrap.config;
 
+import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -184,13 +185,13 @@ class BootstrapConfigTest {
     /**
      * <b>Names are read right to left, {@code <app>[.<env>].<project>.<domain>}</b>, every label
      * inside the one to its right — so the parent of each application host is the INNERMOST DOOR of
-     * this platform's own project, {@code <env>.qits.<domain>}. The project label is mandatory:
+     * this platform's own project — {@code qits.<domain>}, because the {@code qits} project has
+     * environments disabled. The project label is mandatory:
      * there is no unqualified application tier and no top-level {@code <env>.<domain>} tier, and
      * the platform is simply the project called {@code qits}. A domain's browser names carry no
      * port.
      * <p>
-     * The environment label is here because the {@code qits} project supports environments today;
-     * this is the one method that spells it, so it is the one method that moves when the flag does.
+     * Whether an env label is in it is {@link PlatformModel#innermostDoor}'s choice alone.
      */
     @Test
     void theInnermostDoorOfThePlatformProjectIsTheParentOfEveryServiceHost() {
@@ -198,7 +199,7 @@ class BootstrapConfigTest {
                 "QITS_DOMAIN", "qits-dev.eu"));
         assertThat(hosted.domainAuthority()).isEqualTo("qits-dev.eu");
         assertThat(hosted.projectAuthority()).isEqualTo("qits.qits-dev.eu");
-        assertThat(hosted.envAuthority()).isEqualTo("dev.qits.qits-dev.eu");
+        assertThat(hosted.envAuthority()).isEqualTo("qits.qits-dev.eu");
     }
 
     /**
@@ -217,12 +218,12 @@ class BootstrapConfigTest {
 
         assertThat(hosted.publicOrigin()).isEqualTo("https://qits.qits-dev.eu");
         // AND THE RP ID DOES NOT MOVE WITH IT. It is the bare apex, a credential asserts on the rp
-        // id and its children, so idp.dev.qits.qits-dev.eu is covered exactly as idp.qits-dev.eu
+        // id and its children, so idp.qits.qits-dev.eu is covered exactly as idp.qits-dev.eu
         // was — and changing it would invalidate every passkey this platform ever registered.
         assertThat(hosted.webauthnRpId()).isEqualTo("qits-dev.eu");
         // THE CEREMONY HAPPENS ON THE IDP'S OWN HOST, not on a door, which serves no /idp path.
         // It is a child of the rp id, so the binding holds.
-        assertThat(hosted.idpOrigin()).isEqualTo("https://idp.dev.qits.qits-dev.eu");
+        assertThat(hosted.idpOrigin()).isEqualTo("https://idp.qits.qits-dev.eu");
     }
 
     /**

@@ -392,11 +392,11 @@ class PipelinePhasesTest {
     @Test
     void theRunThatMintedTheTokenPrintsIt() {
         List<String> lines = PipelinePhases.registerLines(
-                "https://idp.dev.qits.qits-dev.eu/idp/register", "rt-0123456789", false,
+                "https://idp.qits.qits-dev.eu/idp/register", "rt-0123456789", false,
                 "/home/me/code/qits-qits/.qits-bootstrap.env");
 
         assertThat(String.join("\n", lines))
-                .contains("https://idp.dev.qits.qits-dev.eu/idp/register")
+                .contains("https://idp.qits.qits-dev.eu/idp/register")
                 .contains("rt-0123456789")
                 .contains("ONE-TIME")
                 .contains("/home/me/code/qits-qits/.qits-bootstrap.env");
@@ -410,7 +410,7 @@ class PipelinePhasesTest {
     @Test
     void aRerunPointsAtTheStateFileRatherThanReprintingTheToken() {
         List<String> lines = PipelinePhases.registerLines(
-                "https://idp.dev.qits.qits-dev.eu/idp/register", null, true,
+                "https://idp.qits.qits-dev.eu/idp/register", null, true,
                 "/home/me/code/qits-qits/.qits-bootstrap.env");
 
         assertThat(String.join("\n", lines)).contains("IDP_REGISTER_TOKEN")
@@ -422,7 +422,7 @@ class PipelinePhasesTest {
     @Test
     void aBootThatMintedNothingSaysNothingHere() {
         assertThat(PipelinePhases.registerLines(
-                "https://idp.dev.qits.qits-dev.eu/idp/register", "", false,
+                "https://idp.qits.qits-dev.eu/idp/register", "", false,
                 "/tmp/.qits-bootstrap.env")).isEmpty();
     }
 
@@ -1295,7 +1295,8 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>A domain platform prints the PROJECT-QUALIFIED app host, and names what it retired.</b>
+     * <b>A domain platform prints the PROJECT-QUALIFIED app host, flat because the {@code qits}
+     * project has environments disabled, and names what it retired.</b>
      * Names are read right to left — {@code <app>[.<env>].<project>.<domain>} — so {@code ci.<domain>}
      * and {@code ci.<env>.<domain>} are both gone, and so is the bare apex as a door: the front
      * door is this platform's own project door, {@code qits.<domain>}, and its login host sits
@@ -1317,14 +1318,18 @@ class PipelinePhasesTest {
         assertThat(ctx.lines).anyMatch(line ->
                 line.startsWith("edge:      https://qits.qits-dev.eu/"));
         assertThat(ctx.lines).anyMatch(line ->
-                line.startsWith("sign in:   https://idp.dev.qits.qits-dev.eu/idp/login"));
+                line.startsWith("sign in:   https://idp.qits.qits-dev.eu/idp/login"));
+        // THE qits PROJECT HAS ENVIRONMENTS DISABLED, so no browser name spells the env:
+        // idp.dev.qits.qits-dev.eu 404s on such a platform.
+        assertThat(ctx.lines).noneMatch(line -> line.contains("idp.dev.qits.qits-dev.eu"));
         // THE LOGIN IS ON THE IDP'S OWN HOST, and no door is given an /idp path: it redirects /
         // and 404s everything else.
         assertThat(ctx.lines).noneMatch(line -> line.contains("https://qits.qits-dev.eu/idp"));
         // The session is the point of the move, so the report says what carries it.
         assertThat(ctx.lines).anyMatch(line -> line.contains("scoped to qits-dev.eu"));
         assertThat(ctx.lines).anyMatch(line ->
-                line.contains("https://<app>.dev.qits.qits-dev.eu/"));
+                line.contains("https://<app>.qits.qits-dev.eu/"));
+        assertThat(ctx.lines).noneMatch(line -> line.contains("https://<app>.dev.qits.qits-dev.eu"));
         // The retired shapes are NAMED rather than left out: a person who knew the old platform
         // will type them, and a report that says nothing about them reads as a broken edge.
         assertThat(ctx.lines).anyMatch(line ->
@@ -1334,8 +1339,8 @@ class PipelinePhasesTest {
         // Another project's hosts have the same shape with its own slug.
         assertThat(ctx.lines).anyMatch(line ->
                 line.contains("<app>.<env>.<project>.qits-dev.eu"));
-        // Both depths of this project are on the idp's return list: it is an allow-list, not a
-        // router, and supportsEnvironments is live data.
+        // Both depths of this project are on the idp's return list whatever its shape: it is an
+        // allow-list, not a router.
         assertThat(ctx.lines).anyMatch(line ->
                 line.contains("*.qits.qits-dev.eu and *.dev.qits.qits-dev.eu"));
         // No browser name under *.localhost: no hosts-file fallback and no passkey warning.

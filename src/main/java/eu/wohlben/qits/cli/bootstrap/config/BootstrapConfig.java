@@ -710,27 +710,25 @@ public interface BootstrapConfig {
     }
 
     /**
-     * <b>The INNERMOST DOOR of this platform's own project, and the one place the environment label
-     * lives</b>: {@code <env>.qits.<domain>}. An
-     * application of this platform is exactly one label in front of it —
-     * {@code ci.<env>.qits.<domain>}.
+     * <b>The INNERMOST DOOR of this platform's own project</b>: {@code qits.<domain>}. An
+     * application of this platform is exactly one label in front of it — {@code ci.qits.<domain>}.
      * <p>
-     * <b>Which door is innermost is decided by the project's {@code supportsEnvironments} flag and
-     * by nothing else.</b> An env-supporting project's innermost door is its environment's, an
-     * env-less project's is its own — one rule, because the grammar nests. The {@code qits} project
-     * supports environments today, so the env label is here; when its {@code project.yml} declares
-     * otherwise this method loses that label and every browser name below follows it, which is why
-     * there is one method rather than a spelling per key.
+     * <b>Which door is innermost is decided by whether the project has environments and by nothing
+     * else.</b> An env-supporting project's innermost door is its environment's
+     * ({@code <env>.<project>.<domain>}), an env-less project's is its own — one rule, because the
+     * grammar nests. The {@code qits} project has environments disabled
+     * ({@link PlatformModel#PROJECT_HAS_ENVIRONMENTS}), so no env label is here, and
+     * {@link PlatformModel#innermostDoor} is the one place that choice is made.
      * <p>
      * <b>No SERVICE is configured from this any more, and that is what makes a flip cheap.</b> The
      * allow-list and the ceremony's origins used to be derived here and rendered into the idp's and
      * the edge's configuration, so a flag that flipped under a running platform left two files
      * naming a depth the edge had stopped serving. Each service derives its own names from
      * {@code QITS_DOMAIN} now. What is left of this here is the CLOSING REPORT: {@link
-     * #idpOrigin()} is where a person logs in, and it is one host, so it still spells the label.
+     * #idpOrigin()} is where a person logs in, and it is one host.
      */
     default String envAuthority() {
-        return envName() + "." + projectAuthority();
+        return PlatformModel.innermostDoor(envName(), projectAuthority());
     }
 
     /**
@@ -758,20 +756,19 @@ public interface BootstrapConfig {
 
     /**
      * <b>Where a person logs in</b>, and an application of the {@code qits} project like every
-     * other, which means {@code idp.} of {@link #envAuthority()}: {@code idp.<env>.qits.<domain>}.
+     * other, which means {@code idp.} of {@link #envAuthority()}: {@code idp.qits.<domain>}.
      * The login page is {@code <idpOrigin>/idp/login}.
      * <p>
      * It is the idp's canonical browser origin and the one origin a WebAuthn ceremony is accepted
      * from. A door serves no {@code /idp/...} path, so an address built on {@link #publicOrigin()}
      * would be a 404.
      * <p>
-     * <b>It names ONE host and cannot hold two</b>, so it is one of the two values that move when
-     * the {@code qits} project's {@code supportsEnvironments} flag flips — through
-     * {@link #envAuthority()}, which is where that label lives and the only place it is spelled.
+     * <b>It names ONE host and cannot hold two</b>, so it follows {@link #envAuthority()} — and
+     * through it {@link PlatformModel#PROJECT_HAS_ENVIRONMENTS} — rather than spelling a shape.
      * <p>
      * <b>This does NOT move {@link #webauthnRpId()}, and moving it would be the expensive
      * mistake.</b> A passkey is bound to the rp id; a credential asserts on the rp id AND its
-     * children, so {@code idp.<env>.qits.<domain>} is covered by {@code <domain>} exactly as
+     * children, so {@code idp.qits.<domain>} is covered by {@code <domain>} exactly as
      * {@code idp.<domain>} was. Changing the rp id invalidates every passkey ever registered
      * against this platform.
      */
@@ -785,7 +782,7 @@ public interface BootstrapConfig {
      * it.
      * <p>
      * <b>Moving the login to {@link #idpOrigin()} does not move this.</b> A credential asserts on
-     * the rp id AND its children, so {@code idp.<env>.qits.<domain>} is covered by
+     * the rp id AND its children, so {@code idp.qits.<domain>} is covered by
      * {@code <domain>}. Registered passkeys keep working.
      * <p>
      * The one route without a secure context is a raw IP, where the browser offers no ceremony at
@@ -812,7 +809,7 @@ public interface BootstrapConfig {
 
     /**
      * The parent a session cookie is shared with: the domain — {@code Domain=<domain>} covers
-     * {@code <app>.<env>.qits.<domain>} and every other project's names with it.
+     * {@code <app>.qits.<domain>} and every other project's names with it.
      */
     default String browserSsoCookieDomain() {
         return domainAuthority();
