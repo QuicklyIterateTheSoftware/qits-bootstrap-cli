@@ -239,26 +239,10 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_DB_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_platform_idp
                   QITS_RESOURCE_DB_USERNAME: qits_platform_idp
                   QITS_RESOURCE_DB_PASSWORD: "${PG_PLATFORM_IDP_PASSWORD}"
-                  # The 'iss' of every token and the base of every endpoint the discovery document advertises.
-                  # Spelled here although it equals the shipped default, for the reason every other address in
-                  # this file is spelled: an address a deployment inherits silently is one nobody knows to
-                  # change.
-                  #
-                  # IT KEEPS THE BARE SPELLING WHILE EVERY DIALLED ADDRESS MOVES TO ${IDP_DIAL}, and
-                  # the split is deliberate. This is not an address — it is the STRING stamped into
-                  # every token's `iss` and compared for equality by every consumer against the
-                  # issuer it discovered. Both spellings resolving on qits-net, which is what makes
-                  # every other move in this file safe, buys this key nothing: a string comparison
-                  # asks no resolver. Moving it would reject every token already minted and every
-                  # token minted for a consumer whose cached discovery document still says the old
-                  # issuer, across the whole estate at once, and it cannot hold two values to cover
-                  # the gap. So it moves in a step of its own, after every consumer is dialling the
-                  # qualified address, and not here.
-                  #
-                  # Consumers dial ${IDP_DIAL} and discover this value from it, which is why the two
-                  # may differ: discovery is addressed, validation is compared, and only the second
-                  # one reads this line.
-                  QITS_IDP_ISSUER: ${IDP}
+                  # Nothing is spelled for the token issuer here (qits-730). The idp derives its own `iss` —
+                  # https://idp.qits.<domain> — from QITS_DOMAIN in code and reads no environment
+                  # variable for it any more, so there is nothing here for this program to write
+                  # or move.
                   # NO BROWSER NAMES HERE ANY MORE. The canonical origin, the return-host
                   # allow-list and the cookie domain were composed in this file and handed to the
                   # idp spelled out — three values derived from the one stated domain, each able to
@@ -1904,12 +1888,9 @@ public final class ComposeTemplate {
             # QITS_IDP_SEED_CLIENT_ID/_SECRET on the SEED stack alone, gated by an idp_seed marker
             # row — so a redeployed idp needs neither the pair nor anything else identity-shaped.
             #
-            # THE BARE SPELLING IS HELD HERE ON PURPOSE. Every DIALLED idp address in this file is
-            # ${IDP_DIAL} now; this one is a token claim compared for equality, not a name anybody
-            # resolves, so the dual alias that makes the rest safe does nothing for it. It moves in
-            # its own step once every consumer discovers from the qualified address. The seed stack's
-            # block says the same thing at more length.
-            qits.deployments.extras.qits-idp.env.QITS_IDP_ISSUER=${IDP}
+            # Nothing is spelled for the token issuer here (qits-730). The idp derives its own `iss` —
+            # https://idp.qits.<domain> — from QITS_DOMAIN in code and reads no environment
+            # variable for it any more, so there is no entry here for it.
             # BROWSER SSO AND THE PASSKEY BINDING ARE DERIVED, NOT SPELLED. The canonical origin,
             # the return-host allow-list, the cookie domain, the rp id and the ceremony's origins
             # are five readings of ONE stated domain, and composing all five here put five values

@@ -171,15 +171,10 @@ class BootstrapConfigTest {
         // QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL, which REFUSES a deployment it cannot resolve
         // rather than falling back to the file. Still no path, because that reader appends its own.
         assertThat(config.configurationUrl()).isEqualTo("http://preprod-qits-configuration:8080");
-        // THE IDP IS TWO VALUES, AND THIS PAIR IS THE WHOLE REASON THEY SPLIT. The address is
-        // qualified like every other; the ISSUER is not, because it is not an address — it is the
-        // `iss` claim every consumer compares for equality against the issuer it discovered. Both
-        // names resolving on qits-net is what makes every other move above safe, and it buys a
-        // string comparison nothing. Moving the issuer rejects every token in flight across the
-        // estate at once, so it moves in a step of its own, after every consumer is discovering
-        // from the qualified address.
+        // THE IDP'S ADDRESS IS QUALIFIED LIKE EVERY OTHER. Its issuer is no longer this program's
+        // concern at all (qits-730): the idp derives its own `iss` from QITS_DOMAIN in code and
+        // there is no BootstrapConfig accessor for it any more.
         assertThat(config.idpDialUrl()).isEqualTo("http://preprod-qits-idp:8080/idp");
-        assertThat(config.idpIssuer()).isEqualTo("http://qits-platform-idp:8080/idp");
     }
 
     /**

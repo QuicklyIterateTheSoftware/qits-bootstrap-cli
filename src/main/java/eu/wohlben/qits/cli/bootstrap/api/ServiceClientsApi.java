@@ -48,9 +48,9 @@ public class ServiceClientsApi {
     /**
      * @param address the idp's ADDRESS, e.g. {@code http://<env>-qits-platform-idp:8080/idp} — the
      *                API sits directly under it, like every other of the idp's own routes.
-     *                <b>Not its ISSUER string</b>, which is a claim compared for equality rather
-     *                than resolved and is still spelled bare: see {@code BootstrapConfig.idpDialUrl}
-     *                beside {@code idpIssuer}.
+     *                <b>Not its issuer string</b>, which the idp now derives itself from the
+     *                domain (qits-730) and this program never spells: see
+     *                {@code BootstrapConfig.idpDialUrl}.
      */
     public ServiceClientsApi(Http http, String address, String clientId, String secret) {
         this.http = http;

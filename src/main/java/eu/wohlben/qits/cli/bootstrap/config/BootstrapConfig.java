@@ -460,21 +460,6 @@ public interface BootstrapConfig {
     // third ref.
 
     /**
-     * <b>The issuer string alone.</b> It is the {@code iss} claim of every token the platform mints
-     * and the base of every endpoint the discovery document advertises — a value consumers COMPARE,
-     * not a name they resolve.
-     * <p>
-     * It used to be the dialled address as well, and the two parted company when the platform
-     * service lost its bare address. {@link #idpDialUrl} is the address now. The issuer keeps the
-     * bare spelling for exactly as long as it takes every consumer to be discovering from the
-     * qualified one: a string compared for equality cannot be covered by a second DNS alias, and it
-     * cannot hold two values, so moving it with the addresses would reject every token in flight.
-     */
-    default String idpIssuer() {
-        return "http://qits-platform-idp:8080/idp";
-    }
-
-    /**
      * <b>The idp's address</b> — what a consumer dials for discovery and what this program dials for
      * every call it makes. Environment-qualified like every other address on qits-net, because
      * qits-deployments gives a platform service the {@code <env>-<app>} alias beside its bare name

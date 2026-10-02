@@ -3627,8 +3627,8 @@ public class PipelinePhases {
             report.add("           tag back. A direct push needs -o qits.token="
                     + boot.config.pushToken());
             if (boot.config.machineAuth()) {
-                report.add("machines:  ENFORCED on ci, deployments, artifacts — issuer "
-                        + boot.config.idpIssuer());
+                report.add("machines:  ENFORCED on ci, deployments, artifacts — the idp "
+                        + "derives its own issuer from the domain");
                 report.add("           the seed services' clients were created at the idp and "
                         + "their secrets recorded");
                 report.add("           in qits-deployments' resource registry. Only "

@@ -64,9 +64,8 @@ class ComposeTemplateTest {
         values.put("PG_PROJECTS_EVENTSTREAM_PASSWORD", "abcdabcdabcdabcd");
         values.put("PG_CONTAINERS_PASSWORD", "def0def0def0def0");
         values.put("PG_CONTAINERS_EVENTSTREAM_PASSWORD", "0f0f0f0f0f0f0f0f");
-        // The issuer and the address, which are two values now. IDP is the `iss` claim, still
-        // bare because it is compared and not resolved; IDP_DIAL is what every consumer dials.
-        values.put("IDP", "http://qits-idp:8080/idp");
+        // The idp derives its own issuer from QITS_DOMAIN now (qits-730); IDP_DIAL is still what
+        // every consumer dials.
         values.put("IDP_DIAL", "http://" + ENV + "-qits-idp:8080/idp");
         values.put("PUSH_TOKEN", "local-dev");
         values.put("MACHINE_REQUIRED", "true");
@@ -220,7 +219,7 @@ class ComposeTemplateTest {
         String compose = ComposeTemplate.compose(tokens());
 
         assertThat(compose).contains("published: 8080");
-        assertThat(compose).contains("QITS_IDP_ISSUER: http://qits-idp:8080/idp");
+        assertThat(compose).doesNotContain("ISSUER");
         assertThat(compose).contains(
                 "QITS_IDP_SEED_CLIENT_ID: \"prod-qits-bootstrap\"")
                 .contains("QITS_IDP_SEED_CLIENT_SECRET: \"secret-prod-qits-bootstrap\"");
@@ -355,11 +354,10 @@ class ComposeTemplateTest {
      * it guards is the derivation itself: an address concatenated by hand somewhere in these
      * templates would be the one that does not carry the qualifier.
      * <p>
-     * <b>The one exemption is QITS_IDP_ISSUER, and naming it here is the point.</b> It is not an
-     * address: it is the {@code iss} claim consumers compare for equality against the issuer they
-     * discovered, so both names resolving on qits-net buys it nothing and it cannot hold two
-     * values. It moves in a step of its own once every consumer discovers from the qualified
-     * address. When that step lands, this exemption goes and the sweep needs no other change.
+     * <b>There is no exemption any more.</b> The idp's issuer variable used to be one, held bare
+     * because it was a claim compared for equality rather than an address resolved — the idp
+     * derives its own issuer from the domain now (qits-730) and this program writes nothing for
+     * it, so the sweep needs no carve-out.
      */
     @Test
     void noGeneratedAddressDialsAnApplicationByItsBareName() {
@@ -372,7 +370,6 @@ class ComposeTemplateTest {
                 assertThat(file.lines()
                         .filter(line -> !line.strip().startsWith("#"))
                         .filter(line -> line.contains("http://" + bare + ":"))
-                        .filter(line -> !line.contains("QITS_IDP_ISSUER"))
                         .toList())
                         .as("lines dialling %s by its bare name", bare)
                         .isEmpty();
@@ -1861,11 +1858,11 @@ class ComposeTemplateTest {
                 .doesNotContain("QITS_IDP_SEED_CLIENT_ID")
                 .doesNotContain("QITS_IDP_SEED_CLIENT_SECRET")
                 .doesNotContain("secret-");
-        // What stays is what a repository cannot know AND no other service can be told: the
-        // issuer, which is a compared claim rather than a derived name. The browser-SSO trio and
-        // the passkey binding used to be here too; they are the stated domain read five ways, so
-        // the idp derives them from QITS_DOMAIN and this block spells none of them.
-        assertThat(idp).contains("env.QITS_IDP_ISSUER=");
+        // NOR THE ISSUER (qits-730): the idp derives its own `iss` from QITS_DOMAIN in code and
+        // reads no environment variable for it any more, so this block spells none of it. The
+        // browser-SSO trio and the passkey binding are the same story — the stated domain read
+        // five ways, derived by the idp rather than spelled here.
+        assertThat(idp).doesNotContain("ISSUER");
     }
 
     /**

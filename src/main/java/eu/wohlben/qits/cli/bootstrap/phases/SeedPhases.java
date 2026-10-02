@@ -3391,10 +3391,9 @@ public class SeedPhases {
         values.put("PG_PLATFORM_EDGE_PASSWORD", orEmpty(boot.state.pgPlatformEdgePassword));
         values.put("PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD",
                 orEmpty(boot.state.pgPlatformEdgeEventstreamPassword));
-        // Two idp addresses, and the pair is the point. IDP is the ISSUER — the `iss` claim, held at
-        // the bare spelling because it is compared and not resolved. IDP_DIAL is the ADDRESS, now
-        // environment-qualified like every other. See BootstrapConfig.idpDialUrl.
-        values.put("IDP", boot.config.idpIssuer());
+        // The idp derives its own issuer from QITS_DOMAIN now (qits-730) and reads no
+        // environment variable for it, so this program writes nothing for it any more. IDP_DIAL
+        // is the ADDRESS, environment-qualified like every other. See BootstrapConfig.idpDialUrl.
         values.put("IDP_DIAL", boot.config.idpDialUrl());
         values.put("PUSH_TOKEN", boot.config.pushToken());
         values.put("BOOTSTRAP_INGRESS_GIT_ENABLED", String.valueOf(boot.config.bootstrapIngress()));

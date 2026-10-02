@@ -402,10 +402,10 @@ forced. Add to that list rather than deviating quietly.
   deployed peer holding a credential for the first. The templates carry `${DIAL_<APP>}` and
   `${ALIAS_<APP>}` for the two, and `${SEED_NETWORKS_<APP>}` is what makes a seed platform service
   answer to both names before any deployer exists to grant the second.
-  **`QITS_IDP_ISSUER` is neither**: it is the `iss` claim, compared for equality and not resolved, so
-  it is deliberately still bare (`${IDP}`) while every dialled idp address is `${IDP_DIAL}`. It moves
-  in a step of its own, after every consumer discovers from the qualified address — moving it with
-  the addresses would reject every token in flight across the estate at once.
+  **The idp's old issuer variable is gone (qits-730).** The idp derives its own issuer —
+  `https://idp.qits.<domain>` — from `QITS_DOMAIN` in code and reads no environment variable for
+  it any more, so this program writes nothing for it: no bare placeholder, no seed stack entry,
+  no extras entry.
 - **Nothing outside `PlatformModel` decides a wire alias or whether a service is told its tier.**
   Both change when an application moves plane, so `wireAlias`, `pdNamePrefix` and
   `PlatformModel.modelTokens` are the only places either is built — the generated stack and extras
