@@ -403,13 +403,10 @@ class ComposeTemplateTest {
                         + "-qits-maintenance:8080")
                 .contains("env.QITS_MAINTENANCE_MIRROR_MAVEN_URL=http://" + ENV
                         + "-qits-mirror:8080/artifacts/maven/central");
-        // The edge's mirror vhost is the one address that is a PATTERN rather than a name: {env} is
-        // the edge's own placeholder, expanded at runtime from the host it was asked for. It gained
-        // the qualifier with the rest — the one mirror answers every tier's expansion.
-        assertThat(compose)
-                .contains("QITS_EDGE_APPS_MIRROR_HOST_PATTERN: \"{env}-qits-mirror\"");
-        assertThat(extras)
-                .contains("env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN={env}-qits-mirror");
+        // The edge derives its own upstream host patterns in code now; this program states none of
+        // them any more, in either generated file.
+        assertThat(compose).doesNotContain("QITS_EDGE_APPS_");
+        assertThat(extras).doesNotContain("QITS_EDGE_APPS_");
     }
 
     /**
@@ -504,55 +501,38 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>The three names that closed three host ports.</b> registry, mirror and githost are matched
-     * by HOST NAME rather than by path prefix — a docker client and a git client own their own
-     * roots. What each name is answered by is here; what a caller must present to be answered at
-     * all is {@link #theFlipIsOn()}.
+     * <b>The three names that closed three host ports are no longer stated here at all.</b>
+     * registry, mirror and githost are matched by HOST NAME rather than by path prefix — a docker
+     * client and a git client own their own roots — but which host pattern answers each name is now
+     * the edge's own platform constant, derived in code as {@code <env>-qits-<application>}, and
+     * neither generated file states it. What a caller must present to be answered at all is
+     * {@link #theFlipIsOn()}.
      */
     @Test
     void theEdgeRoutesTheByteplaneByNameInBothFiles() {
         String edge = serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-edge");
         String edgeExtras = extras("qits-edge");
 
-        assertThat(edge).contains("QITS_EDGE_APPS_REGISTRY_HOST_PATTERN: \"{env}-qits-artifacts\"")
-                .contains("QITS_EDGE_APPS_MIRROR_HOST_PATTERN: \"{env}-qits-mirror\"")
-                .contains("QITS_EDGE_APPS_GITHOST_HOST_PATTERN: \"{env}-qits-githost\"");
-        assertThat(edgeExtras)
-                .contains("env.QITS_EDGE_APPS_REGISTRY_HOST_PATTERN={env}-qits-artifacts")
-                .contains("env.QITS_EDGE_APPS_MIRROR_HOST_PATTERN={env}-qits-mirror")
-                .contains("env.QITS_EDGE_APPS_GITHOST_HOST_PATTERN={env}-qits-githost");
+        assertThat(edge).doesNotContain("QITS_EDGE_APPS_");
+        assertThat(edgeExtras).doesNotContain("QITS_EDGE_APPS_");
     }
 
     /**
      * <b>The web editor is a fourth app alias and nothing more.</b> {@code
      * editor.<project>.<env>.<domain>} is one origin per project per environment, and the edge
      * reads three labels: the project sits at position 1 and the environment the editor is served
-     * out of is the host's OWN label at position 2 — not a default and not a fallthrough. The entry
-     * is therefore the same shape the byte plane uses, and {@code {env}} in it resolves out of the
-     * name the browser arrived at.
-     * <p>
-     * <b>The audience is the assertion that matters.</b> An app entry that names none inherits the
-     * REGISTRY audience, so an unspelled editor entry would let a token bought for {@code docker
-     * pull} open any project's editor.
+     * out of is the host's OWN label at position 2 — not a default and not a fallthrough. Its
+     * upstream host and the audience it admits are both the edge's own derived
+     * {@code <env>-qits-workspaces}, the same platform-constant rule the other three apps follow,
+     * and this program states neither any more.
      */
     @Test
     void theEditorVhostFrontsWorkspacesOnTheWorkspacesAudienceInBothFiles() {
         String edge = serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-edge");
         String edgeExtras = extras("qits-edge");
 
-        assertThat(edge).contains("QITS_EDGE_APPS_EDITOR_HOST_PATTERN: \"{env}-qits-workspaces\"")
-                .contains("QITS_EDGE_APPS_EDITOR_AUDIENCE_PATTERN: \"{env}-qits-workspaces\"");
-        assertThat(edgeExtras)
-                .contains("env.QITS_EDGE_APPS_EDITOR_HOST_PATTERN={env}-qits-workspaces")
-                .contains("env.QITS_EDGE_APPS_EDITOR_AUDIENCE_PATTERN={env}-qits-workspaces");
-        // The port is the edge's own default for an app, and the three byte-plane entries keep the
-        // same silence. A key here would be a second place to keep 8080 in step.
-        assertThat(edge).doesNotContain("QITS_EDGE_APPS_EDITOR_PORT");
-        assertThat(edgeExtras).doesNotContain("QITS_EDGE_APPS_EDITOR_PORT");
-        // The host pattern is the WIRE ALIAS of qits-workspaces, spelled with the edge's own
-        // runtime placeholder — never this generator's ${ENV_NAME}, which would pin one tier.
-        assertThat(edge).doesNotContain("QITS_EDGE_APPS_EDITOR_HOST_PATTERN: \"" + ENV
-                + "-qits-workspaces\"");
+        assertThat(edge).doesNotContain("QITS_EDGE_APPS_");
+        assertThat(edgeExtras).doesNotContain("QITS_EDGE_APPS_");
     }
 
     /**

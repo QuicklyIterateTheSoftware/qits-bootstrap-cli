@@ -896,16 +896,17 @@ public final class PlatformModel {
     }
 
     /**
-     * <b>The labels the EDGE publishes that no application name spells</b> — the four
-     * {@code QITS_EDGE_APPS_<name>_HOST_PATTERN} entries {@link ComposeTemplate} renders, keyed by
-     * the label rather than by the service behind it.
+     * <b>The labels the EDGE publishes that no application name spells</b> — the four app names the
+     * edge itself derives its upstream host and audience patterns for, in code, keyed by the label
+     * rather than by the service behind it. This program renders none of those patterns any more
+     * ({@code qits.edge.apps.<app>.host-pattern} / {@code audience-pattern} are gone from the edge's
+     * configuration); it only needs the four labels for {@link #reservedSlugs}.
      * <p>
      * Two of them are derivable and two are not, which is the whole reason this list exists.
      * {@code mirror} and {@code githost} are {@link #browserLabel}s of qits-platform-mirror and
      * qits-githost; {@code registry} is qits-artifacts under a name a docker client understands, and
      * {@code editor} is qits-workspaces under a name a person understands. Nothing derives those
-     * two from any application name, so they are written here once — beside the entries in the
-     * template they mirror — rather than being pasted into the value that has to hold them.
+     * two from any application name, so they are written here once.
      * <p>
      * All four are in {@link #reservedSlugs} for the same reason every other label is: a project may
      * not take a name the edge already answers at.
