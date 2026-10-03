@@ -698,9 +698,10 @@ class PipelinePhasesTest {
      * <p>
      * ONE VALUE, and it used to be six: the five
      * {@code QUARKUS_OIDC_CLIENT_CONFIGURATION_*} pairs were the credential the moved read
-     * presents, and no extras block carries a credential any more. The deployer's identity is the
-     * {@code idp:client} resource it declares — the seed stack hands this very container the
-     * triple, so the flip moves the authority and nothing else.
+     * presents, and no extras block carries a credential any more. The deployer's identity is not
+     * an {@code idp:client} resource its own deployments.yml declares (D10) — it is one of the five
+     * applications this bootstrap creates an idp client for directly — and the seed stack hands
+     * this very container the triple, so the flip moves the authority and nothing else.
      */
     @Test
     void theFlipTakesItsValueFromTheRenderedExtras() {

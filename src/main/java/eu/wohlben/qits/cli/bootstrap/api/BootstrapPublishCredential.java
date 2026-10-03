@@ -51,7 +51,7 @@ public class BootstrapPublishCredential implements AutoCloseable {
     private boolean deleted;
 
     /**
-     * @param address     the idp's ADDRESS, {@code http://<env>-qits-platform-idp:8080/idp} — the
+     * @param address     the idp's ADDRESS, {@code http://<env>-qits-idp:8080/idp} — the
      *                    API sits directly under it. <b>Not its ISSUER string</b>, which is a claim
      *                    compared for equality rather than resolved, and is still spelled bare.
      * @param ownerId     the STATIC client this program owns, which is what may commission

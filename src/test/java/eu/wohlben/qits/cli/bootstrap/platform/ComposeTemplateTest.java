@@ -300,40 +300,20 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>And no other identity survives in the stack, under either spelling.</b> A named oidc
-     * client is five env lines of one identity the resource triple already carries, and a
-     * per-client idp key is the registry the idp holds in its own store now. Read off the KEYS
-     * rather than the text: the comments that explain both absences name them.
+     * <b>No identity survives in the stack, under any spelling, and no switch beside one
+     * either.</b> A named oidc client is five env lines of one identity the resource triple already
+     * carries, and a per-client idp key is the registry the idp holds in its own store now.
+     * qits-ci's client used to ship off and read {@code QUARKUS_OIDC_CLIENT_CLIENT_ENABLED} alone
+     * to turn it on; qits-711 made it resource-only and enabled by default, so that line is gone
+     * too and no {@code QUARKUS_OIDC_CLIENT_*} spelling may appear anywhere in the stack any more.
+     * Read off the KEYS rather than the text: the comments that explain both absences name them.
      */
     @Test
     void theSeedStackNamesNoOidcClientAndNoIdpClientKey() {
         assertThat(ComposeTemplate.compose(tokens()).lines()
-                .filter(line -> !line.strip().startsWith("#"))
-                .filter(line -> !line.strip().equals(CI_CLIENT_SWITCH)))
+                .filter(line -> !line.strip().startsWith("#")))
                 .noneMatch(line -> line.contains("QUARKUS_OIDC_CLIENT_")
                         || line.contains("QITS_IDP_CLIENT_"));
-    }
-
-    /**
-     * The one oidc-client line the stack may hold: qits-ci's SWITCH, which is no identity — it
-     * names no id, no secret and no address.
-     */
-    private static final String CI_CLIENT_SWITCH = "QUARKUS_OIDC_CLIENT_CLIENT_ENABLED: \"true\"";
-
-    /**
-     * <b>The exception above is one line in one block, and that is all it may ever be.</b> qits-ci
-     * ships its client off and reads this variable alone to turn it on; the resource triple has no
-     * twin for it. Any second service carrying it, or any second spelling beside it, is the
-     * per-service oidc block coming back.
-     */
-    @Test
-    void theOneOidcClientSwitchIsCisAndCisAlone() {
-        String compose = ComposeTemplate.compose(tokens());
-
-        assertThat(compose.lines().filter(line -> line.strip().equals(CI_CLIENT_SWITCH)))
-                .hasSize(1);
-        assertThat(serviceBlock(compose, PlatformModel.wireAlias("ci", ENV)))
-                .contains(CI_CLIENT_SWITCH);
     }
 
     @Test
@@ -811,9 +791,12 @@ class ComposeTemplateTest {
                 + "http://prod-qits-configuration:8080");
         // AND THE CREDENTIAL THAT READ PRESENTS IS NOT HERE. The read is behind
         // qits-configuration's machine gate, so it carries a bearer — minted from the deployer's
-        // OWN client, which is the idp:client resource it declares and the row it injects into its
-        // own successor. The five QUARKUS_OIDC_CLIENT_CONFIGURATION_* lines this block used to
-        // carry would shadow that row and survive every rotation of it.
+        // OWN client. qits-deployments is one of the five applications this bootstrap creates an
+        // idp client for directly (SEED_IDP_CLIENT_APPS), not an idp:client resource its own
+        // deployments.yml declares (D10); the deployer injects that same row into its own
+        // successor exactly as it does for any other application's row. The five
+        // QUARKUS_OIDC_CLIENT_CONFIGURATION_* lines this block used to carry would shadow that row
+        // and survive every rotation of it.
         assertThat(deployer).doesNotContain("QUARKUS_OIDC_CLIENT_")
                 .doesNotContain("QITS_RESOURCE_IDP_");
         // The seed deployer is handed it on the stack instead, because it starts before anything
@@ -2002,9 +1985,9 @@ class ComposeTemplateTest {
      * step-address plane it belonged to are retired (qits-515): neither file states it, on any
      * environment, domain or no.
      * <ul>
-     *   <li>The oidc client's switch, on BOTH: ci ships it off and nothing the deployer injects
-     *       turns it on, so without the line ci commissions nothing — no runner, and no per-run
-     *       credential either. It went out with the per-service oidc blocks on 2026-09-15.
+     *   <li>The resource triple, on both: since qits-711 ci's one oidc client is resource-only and
+     *       enabled by default, so the triple alone is what commissions it — no runner, and no
+     *       per-run credential either, needs a switch beside it any more.
      *   <li>The registry host, on both, in the spelling the HOST's daemon resolves: it is what ci
      *       composes a runner's self-update image from, and what this boot tags and pushes the
      *       runner image under.
@@ -2014,16 +1997,16 @@ class ComposeTemplateTest {
     void ciCommissionsARunnerOverThePublicEdgeNotAQitsNetAddress() {
         String seed = serviceBlock(ComposeTemplate.compose(tokens()),
                 PlatformModel.wireAlias("ci", ENV));
-        assertThat(seed).contains("QUARKUS_OIDC_CLIENT_CLIENT_ENABLED: \"true\"")
-                .contains("QITS_ARTIFACTS_REGISTRY_HOST: registry.prod.localhost:8080")
+        assertThat(seed).contains("QITS_ARTIFACTS_REGISTRY_HOST: registry.prod.localhost:8080")
                 .doesNotContain("QITS_CI_RUNNER_INTERNAL_URL")
+                .doesNotContain("QUARKUS_OIDC_CLIENT_")
                 // What the token endpoint a runner is told is derived from.
                 .contains("QITS_RESOURCE_IDP_URL: http://prod-qits-idp:8080/idp");
 
         String deployed = extras("qits-ci");
-        assertThat(deployed).contains("env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=true")
-                .contains("env.QITS_ARTIFACTS_REGISTRY_HOST=registry.prod.localhost:8080")
+        assertThat(deployed).contains("env.QITS_ARTIFACTS_REGISTRY_HOST=registry.prod.localhost:8080")
                 .doesNotContain("QITS_CI_RUNNER_INTERNAL_URL")
+                .doesNotContain("QUARKUS_OIDC_CLIENT_")
                 // The deployer injects QITS_RESOURCE_IDP_URL, so it is not restated here.
                 .doesNotContain("QITS_RESOURCE_IDP_");
 

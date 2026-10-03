@@ -46,7 +46,7 @@ public class ServiceClientsApi {
     private final String authorization;
 
     /**
-     * @param address the idp's ADDRESS, e.g. {@code http://<env>-qits-platform-idp:8080/idp} — the
+     * @param address the idp's ADDRESS, e.g. {@code http://<env>-qits-idp:8080/idp} — the
      *                API sits directly under it, like every other of the idp's own routes.
      *                <b>Not its issuer string</b>, which the idp now derives itself from the
      *                domain (qits-730) and this program never spells: see

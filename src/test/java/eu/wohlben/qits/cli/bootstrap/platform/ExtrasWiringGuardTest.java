@@ -136,13 +136,19 @@ class ExtrasWiringGuardTest {
      * the ruling used; {@code QUARKUS_OIDC_CLIENT_} is the spelling that actually existed in this
      * file. Both are named, so neither can come back under the other's name.
      * <p>
-     * <b>ONE KEY PASSES, and it is a switch rather than an identity</b>:
-     * {@code qits-ci.env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED}. qits-ci ships its one oidc client off
-     * and reads this variable alone to turn it on — the injected triple has no twin for it — so a
-     * successor without it commissions nothing, neither a run's publishing credential nor a
-     * runner's. It names no id, no secret and no address, so it shadows nothing the deployer
-     * injects. The exemption is that one key of that one application, spelled whole: it goes the
-     * day qits-ci derives the switch from the triple, and it admits no sibling.
+     * <b>NO EXEMPTION ANY MORE.</b> The one key that used to pass,
+     * {@code qits-ci.env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED}, was a switch rather than an identity —
+     * qits-ci shipped its one oidc client off and read that variable alone to turn it on. qits-711
+     * made the client resource-only and enabled by default, so qits-ci reads it no more and this
+     * file renders it no more either: the exemption is retired along with the key it covered, not
+     * widened for a stand-in. A {@code QUARKUS_OIDC_CLIENT_*} key appearing in ANY block — ci's
+     * included — fails here now. (The deployer's old
+     * {@code QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ID}/{@code _CREDENTIALS_SECRET} fallback pair
+     * is still read by qits-deployments' own code as a last resort, but this file has not rendered
+     * it since the demotion — see the deployer's extras block — so there is nothing here to
+     * allow-list for it either. If a future application needs this bootstrap to render a real
+     * {@code QUARKUS_OIDC_CLIENT_*} fallback again, that is a new, explicitly commented exemption
+     * here — never a silent widening of this guard.)
      */
     @Test
     void noExtrasBlockCarriesAnIdentity() {
@@ -153,10 +159,6 @@ class ExtrasWiringGuardTest {
                 continue;
             }
             String name = key.substring("env.".length());
-            if (CLIENT_SWITCH_APPLICATION.equals(application(line))
-                    && CLIENT_SWITCH.equals(name)) {
-                continue;
-            }
             if (name.startsWith("QITS_RESOURCE_IDP_") || name.startsWith("QITS_IDP_CLIENT")
                     || name.startsWith("QITS_OIDC_CLIENT_")
                     || name.startsWith("QUARKUS_OIDC_CLIENT_")) {
@@ -175,27 +177,6 @@ class ExtrasWiringGuardTest {
                     + "that is kept current and outlives every rotation of it. Nothing "
                     + "identity-shaped belongs in ComposeTemplate.EXTRAS.");
         }
-    }
-
-    /** The one oidc-client key an extras block may hold, and the one application that holds it. */
-    private static final String CLIENT_SWITCH = "QUARKUS_OIDC_CLIENT_CLIENT_ENABLED";
-
-    private static final String CLIENT_SWITCH_APPLICATION = "qits-ci";
-
-    /**
-     * <b>The switch is exempt only while it is really there, and only as a switch.</b> An
-     * exemption for a key nothing generates is a door left open for whatever is spelled that way
-     * next, and a value other than {@code true} is not the switch this exemption was written for.
-     */
-    @Test
-    void theOneExemptSwitchIsGeneratedOnceAndIsOn() {
-        List<String> switches = extrasKeys().stream()
-                .filter(line -> key(line).equals("env." + CLIENT_SWITCH))
-                .toList();
-
-        assertThat(switches).hasSize(1);
-        assertThat(application(switches.getFirst())).isEqualTo(CLIENT_SWITCH_APPLICATION);
-        assertThat(switches.getFirst()).endsWith("=true");
     }
 
     @Test

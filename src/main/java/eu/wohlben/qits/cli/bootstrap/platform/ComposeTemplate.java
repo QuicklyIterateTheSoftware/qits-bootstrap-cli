@@ -1088,16 +1088,12 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_IDP_URL: ${IDP_DIAL}
                   QITS_RESOURCE_IDP_CLIENT_ID: ${ALIAS_CI}
                   QITS_RESOURCE_IDP_CLIENT_SECRET: "${IDP_CLIENT_SECRET_CI}"
-                  # THE SWITCH OF THAT CLIENT, AND NOT AN IDENTITY. qits-ci ships its one oidc
-                  # client OFF (`client-enabled=${QUARKUS_OIDC_CLIENT_CLIENT_ENABLED:false}`) and
-                  # the triple above does not turn it on: there is no QITS_RESOURCE_IDP_* twin of
-                  # this key. Off, ci commissions nothing — no per-run credential, and no runner:
-                  # `POST /ci/api/runners` answers 503 and a registration token introspects as
-                  # unknown. The line went out with the per-service oidc blocks on 2026-09-15 and
-                  # took the seed ci's commissioning with it, unnoticed because no boot was cold.
-                  # It carries no id, no secret and no address, which is why it is the ONE
-                  # QUARKUS_OIDC_CLIENT_* spelling this file may hold.
-                  QUARKUS_OIDC_CLIENT_CLIENT_ENABLED: "true"
+                  # NO SWITCH BESIDE THE TRIPLE ANY MORE. qits-ci's one oidc client used to ship off
+                  # and read an env override of its own alone to turn it on; qits-711 made the
+                  # client resource-only and enabled by default (client-enabled=true, off only
+                  # under %dev and %test), so the triple above is now the whole of what commissions
+                  # it — no runner door and no per-run credential needs a line this file does not
+                  # carry.
                   # QITS_DOMAIN REACHES THIS BLOCK TOO, through the SEED_DOMAIN fragment appended
                   # to the line below — every seed service gets it, not just this one
                   # (DomainTokens.seedDomain).
@@ -1567,13 +1563,9 @@ public final class ComposeTemplate {
             # current. The audience is qits-platform, the image's own shipped default, and needs no
             # line.
             #
-            # ONE OIDC-CLIENT KEY IS HERE, AND IT IS A SWITCH: QUARKUS_OIDC_CLIENT_CLIENT_ENABLED.
-            # ci ships its client off and reads this variable alone to turn it on — the injected
-            # triple has no twin for it — so a successor without it commissions nothing: no
-            # credential for a run's publish step and none for a runner. The live platform carries
-            # the entry by hand; a cold one gets it from here. It names no id, no secret and no
-            # address, so it shadows nothing the deployer injects. It goes the day qits-ci derives
-            # the switch from the triple.
+            # NO SWITCH BESIDE THE TRIPLE EITHER. qits-ci's client used to ship off and read
+            # QUARKUS_OIDC_CLIENT_CLIENT_ENABLED alone to turn it on; qits-711 made it resource-only
+            # and enabled by default, so there is nothing left here to flip.
             #
             # NO SOCKET MOUNT AND NO GROUP, AND NO CALL TO qits-containers AT ALL. This application
             # used to start every ci successor with the host's docker socket and the socket's group:
@@ -1622,7 +1614,6 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-ci.env.QITS_EVENTS_URL=http://${DIAL_EVENTS}:8080
             qits.deployments.extras.qits-ci.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
             qits.deployments.extras.qits-ci.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
-            qits.deployments.extras.qits-ci.env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=true
             qits.deployments.extras.qits-ci.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # QITS_DOMAIN NAMES NO LINE HERE, AND THAT IS THE POINT — it is the one variable this
             # block must NOT state, because qits-deployments writes it into every container it
@@ -1856,13 +1847,18 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-deployments.env.QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://${DIAL_CONFIGURATION}:8080
             # THE CREDENTIAL THAT READ PRESENTS IS NOT IN THIS FILE, and that is the whole of the
             # change. qits-configuration is the deployer's one guarded peer, so the read carries a
-            # bearer — minted from the deployer's OWN idp client, which is the `idp:client` resource
-            # it declares. The deployer creates that client against the running idp, keeps the
-            # secret in its pd_resource registry and injects QITS_RESOURCE_IDP_* into its successor,
-            # so the five QUARKUS_OIDC_CLIENT_CONFIGURATION_* lines this block used to carry would
-            # only shadow a row that is kept current — which is how a rotated credential comes back
-            # out of a file nobody emptied. With the gate down there is no client and the read goes
-            # out on forward-auth headers alone, which qits-configuration accepts.
+            # bearer — minted from the deployer's OWN idp client. Unlike an ordinary application's,
+            # this one is not an `idp:client` resource qits-deployments' own deployments.yml
+            # declares (D10): the deployer is one of the five applications this bootstrap creates
+            # an idp client for directly, against the running idp, before any deployer exists to
+            # provision one for itself. The bootstrap records that secret in the same pd_resource
+            # registry row the deployer itself reads, and the deployer injects
+            # QITS_RESOURCE_IDP_* into its own successor off that row exactly as it does for any
+            # other application's, so the five QUARKUS_OIDC_CLIENT_CONFIGURATION_* lines this block
+            # used to carry would only shadow a row that is kept current — which is how a rotated
+            # credential comes back out of a file nobody emptied. With the gate down there is no
+            # client and the read goes out on forward-auth headers alone, which qits-configuration
+            # accepts.
             qits.deployments.extras.qits-deployments.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # The idp's own deployment. NO DATASOURCE ENV AND NO VOLUME: `resources: postgresql:db` in its
             # deployments.yml is what gets it a store, and the deployer injects the triple from the
