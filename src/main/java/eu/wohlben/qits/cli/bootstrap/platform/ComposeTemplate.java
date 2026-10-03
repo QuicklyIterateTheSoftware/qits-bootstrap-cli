@@ -2104,19 +2104,14 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-workspaces.env.QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080
             qits.deployments.extras.qits-workspaces.env.QITS_GITHOST_AUDIENCE=${ENV_NAME}-qits-githost
             qits.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_CONTAINER_GIT_URL=http://githost.${ENV_NAME}.internal:8080
-            # The hosted-registry addresses a WORKSPACE CONTAINER builds against — the same two
-            # addresses qits-ci's block above carries, and for the same reason: they are dialled by
-            # a container on qits-net, so they are wire aliases and never a *.localhost name the
-            # host resolves. qits-workspaces passes them through to each container it creates.
-            #
-            # Told here because they cannot be defaulted in the service: the artifacts alias carries
-            # the environment name. Without them a workspace can reach neither registry, so
-            # `./mvnw verify` dies on Maven's plain-http blocker and npm resolves the public
-            # registry, where the @qits scope does not exist. The npmjs cache is NOT one of these:
-            # qits-workspaces derives it in code from QITS_DOMAIN through the edge, so it is not
-            # stated here.
-            qits.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_MAVEN_REPOSITORY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/maven/maven
-            qits.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_NPM_REGISTRY_URL=http://${ENV_NAME}-qits-artifacts:8080/artifacts/npm/npm/
+            # NO HOSTED-REGISTRY ADDRESSES HERE ANY MORE (qits-731). A workspace container used to be
+            # handed the internal `${ENV_NAME}-qits-artifacts:8080` wire alias for both the maven
+            # repository and the npm registry — an address that only resolves on qits-net, so it
+            # leaked into every workspace's `settings.xml`/`.npmrc` and would never answer from
+            # anywhere else. qits-workspaces now composes both from QITS_DOMAIN in code, the same way
+            # it already derived the npmjs cache: `registry.qits.<domain>` for the hosted npm and
+            # maven roots. A workspace container authenticates to them like any other caller — see the
+            # ticket's contract — so nothing here hands out a bare, unauthenticated internal address.
             qits.deployments.extras.qits-workspaces.env.QITS_EVENTS_URL=http://${DIAL_EVENTS}:8080
             qits.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_GIT_HOST=${ENV_NAME}-qits-workspaces
             # NO RELEASE ENTRY BRANCH. QITS_WORKSPACES_RELEASE_ENTRY_BRANCH named the

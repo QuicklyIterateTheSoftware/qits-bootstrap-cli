@@ -1012,38 +1012,28 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>A workspace builds against the same hosted Maven registry a CI step does.</b> The address
-     * is asserted against ci's own so the two cannot drift: a workspace that resolved a different
-     * maven store would build something CI cannot reproduce — and the failure would not look like
-     * a configuration difference, it would look like a flaky test.
+     * <b>A workspace is handed NO internal registry address any more (qits-731).</b> This generator
+     * used to state the qits-net wire alias for both the hosted maven repository and the hosted npm
+     * registry, so a workspace container built against an address that only resolves inside the
+     * platform network and would never answer anywhere else. qits-workspaces now composes both from
+     * QITS_DOMAIN in code — the same way it already derived the npmjs cache — so neither key is
+     * spelled here, and this asserts the keys stay gone rather than creeping back as a convenience.
      *
-     * <p>They are wire aliases and never a {@code *.localhost} name: the consumer is a container on
-     * qits-net, whose resolver knows no such name. That is the same rule ci's block follows, and
-     * the reason the registry HOST (which the host daemon resolves) is absent here — a workspace
-     * pushes no image.
-     *
-     * <p>The npm registry is NOT one of the compared addresses any more: ci no longer states one at
-     * all (qits-515 — a step container is told the PUBLIC npm name now, composed from
-     * QITS_DOMAIN), where a workspace still gets the qits-net one directly.
+     * <p>ci's own reach into the hosted maven repository is a different address for a different
+     * purpose — {@code HttpImagePins}' own lookup, never a step's — and is untouched; see
+     * {@link #noStaticRegistryCredentialReachesCi()} and the comment on ci's own block.
      */
     @Test
-    void aWorkspaceIsToldTheSameRegistriesCiUses() {
+    void aWorkspaceIsHandedNoInternalRegistryAddress() {
         String workspaces = extras("qits-workspaces");
-        String ci = extras("qits-ci");
 
         assertThat(workspaces)
-                .contains("env.QITS_WORKSPACE_MAVEN_REPOSITORY_URL=http://prod-qits-artifacts:8080"
-                        + "/artifacts/maven/maven")
-                .contains("env.QITS_WORKSPACE_NPM_REGISTRY_URL=http://prod-qits-artifacts:8080"
-                        + "/artifacts/npm/npm/");
-        assertThat(ci).doesNotContain("QITS_ARTIFACTS_NPM_PROXY_URL")
-                .doesNotContain("QITS_ARTIFACTS_NPM_HOSTED_URL");
-        assertThat(workspaces).doesNotContain("QITS_WORKSPACE_NPM_PROXY_URL");
-        // Same maven address, stated once per consumer: if ci's moves and a workspace's does not,
-        // this fails rather than leaving one of them pointed at a registry that no longer serves.
-        String mavenSuffix = "/artifacts/maven/maven";
-        assertThat(ci).contains(mavenSuffix);
-        assertThat(workspaces).contains(mavenSuffix);
+                .doesNotContain("QITS_WORKSPACE_MAVEN_REPOSITORY_URL")
+                .doesNotContain("QITS_WORKSPACE_NPM_REGISTRY_URL")
+                .doesNotContain("QITS_WORKSPACE_MAVEN_CENTRAL")
+                .doesNotContain("QITS_ARTIFACTS_NPM_PROXY_URL")
+                .doesNotContain("QITS_ARTIFACTS_NPM_HOSTED_URL")
+                .doesNotContain("QITS_WORKSPACE_NPM_PROXY_URL");
     }
 
     /**
