@@ -1114,18 +1114,17 @@ public class PipelinePhases {
     /**
      * Deployable repositories contain gitlinks to the frontend repositories, and those commits must
      * exist on the platform git host BEFORE the first wrapper pipeline clones its submodules. A
-     * push is the only door into the store, and {@code -o qits.no-ci} is what keeps it quiet:
-     * firing all release-train pipelines here would race them against the deliberately serial
-     * deployment train.
+     * push is the only door into the store, and an ordinary one is all it takes now: CI is gated
+     * only by release requests, so there is no release-train pipeline for this push to fire.
      */
     public Phase releaseTrainPreseed() {
         return new Phase("preseed", "pre-seed release-train histories for deployable submodules", ctx -> {
             for (String name : PlatformModel.SEEDED_REPOS) {
                 String repo = PlatformModel.repo(name);
                 Path src = boot.state.repoDir(name);
-                ctx.status("pushing " + repo + " main, quietly");
+                ctx.status("pushing " + repo + " main");
                 boot.push(ctx, repo + " main", src, boot.gitUrl(name),
-                        List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()), "main");
+                        List.of("qits.token=" + boot.config.pushToken()), "main");
                 ctx.log("  " + repo + " history at " + boot.git.shortRef(src, "main"));
             }
             ctx.note(PlatformModel.SEEDED_REPOS.size() + " histories");
@@ -1277,12 +1276,10 @@ public class PipelinePhases {
      */
     private boolean replayTag(PhaseContext ctx, String name, String repo, Path src,
                               String storageId, String version) throws Exception {
-        // THE TAG FIRST, because the build checks it out. `qits.no-ci` stays and suppresses
-        // nothing here: it is a fact on the COMMIT event and this push moves no branch — one
-        // refspec, one tag.
+        // THE TAG FIRST, because the build checks it out. An ordinary push, one refspec, one tag.
         ProcessResult push = boot.push(ctx, repo + " " + version, src,
                 boot.gitUrl(name),
-                List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
+                List.of("qits.token=" + boot.config.pushToken()),
                 "refs/tags/" + version);
         if (upToDate(push)) {
             // NO REF MOVED, WHICH IS NOT THE SAME AS "PUBLISHED". An earlier boot pushed this tag
@@ -1663,10 +1660,9 @@ public class PipelinePhases {
      * {@code qits/<app>:<version>} — so this phase re-establishes the two SCM facts a release is
      * made of and then asks for the release build:
      * <ol>
-     *   <li><b>main, quietly.</b> The trunk, and the tree qits-ci discovers a trigger file in. It
-     *       goes up with {@code -o qits.no-ci} because the option is a FACT on the push event and
-     *       qits-ci's listener honours it; without it every boot would queue a build of a commit
-     *       nothing deploys.
+     *   <li><b>main, an ordinary push.</b> The trunk, and the tree qits-ci discovers a trigger file
+     *       in. CI is gated only by release requests now, so there is no build for a push to queue
+     *       and nothing left for a push option to suppress.
      *   <li><b>the newest release tag, quietly.</b> The stamp that says this commit is that
      *       release. It starts nothing by itself: a deployable's release recipe selects
      *       {@code SCMRelease}, not {@code SCMPublishTag}.
@@ -1804,13 +1800,13 @@ public class PipelinePhases {
         String repo = PlatformModel.repo(name);
         String application = PlatformModel.application(name);
         Path src = boot.state.repoDir(name);
-        ctx.status("pushing " + repo + " to main (quietly)");
+        ctx.status("pushing " + repo + " to main");
         // THE BRANCH, NOT HEAD. A restoring boot leaves the checkout detached at the release
         // tag, so HEAD:refs/heads/main would push the RELEASE onto main — a rewind of the trunk
         // on the git host, refused as a non-fast-forward and wrong even where it was accepted.
         // The trunk is the local main branch and goes up as itself.
         boot.push(ctx, repo + " to main", src, boot.gitUrl(name),
-                List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
+                List.of("qits.token=" + boot.config.pushToken()),
                 "main:refs/heads/main");
 
         // WHICH VERSION DEPLOYS, read after main is up so the commit it names is already in the
@@ -1840,7 +1836,7 @@ public class PipelinePhases {
         // across every repository qits-ci knows. The older tags restore nothing this boot needs.
         ctx.status("pushing " + repo + " " + version);
         boot.push(ctx, repo + " " + version, src, boot.gitUrl(name),
-                List.of("qits.no-ci", "qits.token=" + boot.config.pushToken()),
+                List.of("qits.token=" + boot.config.pushToken()),
                 "refs/tags/" + version);
 
         if ("edge".equals(name)) {
@@ -2348,8 +2344,8 @@ public class PipelinePhases {
     // The PUSH half is retired, because there is no longer an announcement to lose: qits-githost
     // writes SCMPublishCommit to its outbox inside the push's own transaction, and qits-ci's
     // durable listener reads it back after any outage of its own. POST /ci/api/events/post-receive
-    // is gone from that service too. A push starts nothing this boot waits for in any case — every
-    // push this program makes carries -o qits.no-ci or moves a tag.
+    // is gone from that service too. A push starts nothing this boot waits for in any case — CI is
+    // gated only by release requests now, so no push this program makes starts a build at all.
 
     private static void sleep(long millis) {
         try {

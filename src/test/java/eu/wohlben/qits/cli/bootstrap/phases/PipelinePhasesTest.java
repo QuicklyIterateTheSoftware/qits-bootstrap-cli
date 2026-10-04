@@ -1913,9 +1913,9 @@ class PipelinePhasesTest {
 
         new PipelinePhases(boot).seedDeploy("ci").action().run(ctx);
 
-        assertThat(runner.lines()).anyMatch(line -> line.contains(" push -o qits.no-ci")
+        assertThat(runner.lines()).anyMatch(line -> line.contains(" push -o qits.token=")
                 && line.endsWith("main:refs/heads/main"));
-        assertThat(runner.lines()).anyMatch(line -> line.contains(" push -o qits.no-ci")
+        assertThat(runner.lines()).anyMatch(line -> line.contains(" push -o qits.token=")
                 && line.endsWith("refs/tags/" + RELEASE));
         assertThat(http.calls.stream().filter(DOOR::equals)).hasSize(1);
         assertThat(http.bodies.get(DOOR)).isEqualTo("{\"repoId\":\"" + CI_STORAGE_ID

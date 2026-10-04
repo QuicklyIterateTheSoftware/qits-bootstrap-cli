@@ -227,8 +227,8 @@ public class Git {
     /**
      * A push to the platform git host.
      *
-     * @param options push options; {@code qits.no-ci} keeps a push quiet, {@code qits.token} is
-     *                the bootstrap's standing exception to "release is the only door into main"
+     * @param options push options; {@code qits.token} is the bootstrap's standing exception to
+     *                "release is the only door into main"
      */
     public ProcessResult push(Path repo, String url, List<String> options, String refspec,
                               String pushToken, String bearer, Consumer<String> out) {

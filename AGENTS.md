@@ -17,10 +17,10 @@ it replaced is in that repository's git history (`git log -- qits-local-up.sh`).
 That changes what care means here:
 
 - **The operational knowledge is in these comments and nowhere else** — ordering constraints, the
-  409/PATCH reconcile, the quiet pushes with `-o qits.no-ci`, the release each deployable is
-  restored to, the wire aliases the seed services are named after, the mirror-prefix rewrite, the
-  release replays, the lost-event self-heal, the machine-token minting. They were ported from the
-  script on purpose, and the script is no longer there to check them against. Do not thin them out.
+  409/PATCH reconcile, the release each deployable is restored to, the wire aliases the seed
+  services are named after, the mirror-prefix rewrite, the release replays, the lost-event
+  self-heal, the machine-token minting. They were ported from the script on purpose, and the script
+  is no longer there to check them against. Do not thin them out.
 - **A behaviour change is a change to the only bring-up path there is.** Prove it with a real
   bootstrap, not with reasoning about what the script used to do.
 
