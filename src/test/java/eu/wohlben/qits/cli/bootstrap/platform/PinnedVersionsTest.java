@@ -215,7 +215,8 @@ class PinnedVersionsTest {
                 .containsEntry("auth-core", "integrations-quarkus")
                 .containsEntry("blobstore", "registries")
                 .containsEntry("githost-events", "githost")
-                .containsEntry("containers-client", "containers");
+                .containsEntry("containers-client", "containers")
+                .containsEntry("containers-driver", "containers-driver");
     }
 
     /** A property nothing publishes is said once rather than chased. */

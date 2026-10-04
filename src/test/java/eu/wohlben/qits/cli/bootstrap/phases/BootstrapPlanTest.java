@@ -211,9 +211,13 @@ class BootstrapPlanTest {
                 // The git host's vocabulary follows its own dependency: it is built against
                 // qits-eventstream and against nothing else of this platform.
                 "publish-qits-githost-events",
-                // The orchestrator's two libraries, last of the publishes: they are built against
-                // qits-db-core, qits-arch-rules, qits-auth-core and qits-eventstream, so everything
-                // they resolve is already in the store.
+                // qits-containers-javalib, on qits-eventstream's own terms — no qits dependency of
+                // its own, and it joins here because qits-containers-service's client now depends
+                // on it, so it has to be in the store before that publish below.
+                "publish-qits-containers-driver",
+                // The orchestrator's client, last of the publishes: it is built against
+                // qits-db-core, qits-arch-rules, qits-auth-core, qits-eventstream and
+                // qits-containers-driver, so everything it resolves is already in the store.
                 "publish-qits-containers-client", "publish-ui-components",
                 "publish-angular", "seed-image-ci", "seed-image-deployments",
                 "seed-image-idp", "seed-image-containers", "seed-image-projects",
@@ -221,7 +225,8 @@ class BootstrapPlanTest {
         // BEFORE the ci image, because ci pins qits-containers-client and a step-container image
         // build resolves from the platform's own Maven registry — there is no host ~/.m2 in this
         // run to fall back on.
-        assertThat(ids).containsSubsequence("publish-qits-containers-client", "seed-image-ci");
+        assertThat(ids).containsSubsequence("publish-qits-containers-driver",
+                "publish-qits-containers-client", "seed-image-ci");
         // The ci image consumes qits-githost-events, so the publish is before it — and qits-projects
         // consumes it too, which the deploy train reaches long before the git host's own deployment.
         assertThat(ids).containsSubsequence("publish-qits-githost-events", "seed-image-ci",
@@ -487,7 +492,8 @@ class BootstrapPlanTest {
         assertThat(warm).contains("seed-skipped")
                 .doesNotContain("ci-daemon", "seed-image-ci", "seed-image-edge",
                         "seed-image-oci-postgresql", "seed-image-events",
-                        "seed-image-containers", "publish-qits-containers-client", "maven-seed",
+                        "seed-image-containers", "publish-qits-containers-client",
+                        "publish-qits-containers-driver", "maven-seed",
                         // The mirror is started by hand only on the build path; a warm rerun's
                         // compose file starts it like every other seed service.
                         "seed-mirror", "seed-artifacts");

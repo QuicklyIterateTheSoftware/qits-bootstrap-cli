@@ -235,7 +235,7 @@ class SeedPhasesTest {
     void theSeedLibrariesAreEveryJarASeedImageResolves() {
         assertThat(SeedPhases.SEED_LIBRARIES).containsExactly(
                 "userflows", "coding-agents", "integrations-quarkus", "registries", "eventstream",
-                "githost", "containers");
+                "containers-driver", "githost", "containers");
         // Dependency order, and every pair is forced by a pom: the blob store is written against
         // qits-db-core (a module of qits-integrations-quarkus) since its DbRetry release,
         // qits-eventstream against qits-db-core too, qits-githost-events against qits-eventstream,
@@ -251,6 +251,9 @@ class SeedPhasesTest {
         assertThat(SeedPhases.SEED_LIBRARIES)
                 .containsSubsequence("integrations-quarkus", "containers");
         assertThat(SeedPhases.SEED_LIBRARIES).containsSubsequence("eventstream", "containers");
+        // The new library, beside eventstream and before the service that now depends on it.
+        assertThat(SeedPhases.SEED_LIBRARIES)
+                .containsSubsequence("eventstream", "containers-driver", "containers");
         // containers is last, because the probe that skips the whole phase asks for
         // qits-containers-client — the last thing this phase publishes, so its presence is the one
         // honest answer for the whole set.
@@ -271,7 +274,8 @@ class SeedPhasesTest {
     @Test
     void theGitHostPublishesItsEventVocabularyAndNothingElse() {
         assertThat(SeedPhases.mavenModuleArgs("githost")).isEqualTo(" -pl githost-events -am");
-        assertThat(SeedPhases.mavenModuleArgs("containers")).isEqualTo(" -pl core,client -am");
+        assertThat(SeedPhases.mavenModuleArgs("containers")).isEqualTo(" -pl client -am");
+        assertThat(SeedPhases.mavenModuleArgs("containers-driver")).isEmpty();
         assertThat(SeedPhases.mavenModuleArgs("eventstream")).isEmpty();
         // Whole, and that is what carries the blob store: it is a module of this reactor.
         assertThat(SeedPhases.mavenModuleArgs("registries")).isEmpty();

@@ -86,6 +86,7 @@ public final class PinnedVersions {
      */
     static final Map<String, String> PRODUCERS = Map.ofEntries(
             Map.entry("eventstream", "eventstream"),
+            Map.entry("containers-driver", "containers-driver"),
             Map.entry("blobstore", "registries"),
             Map.entry("registries", "registries"),
             Map.entry("integrations-quarkus", "integrations-quarkus"),

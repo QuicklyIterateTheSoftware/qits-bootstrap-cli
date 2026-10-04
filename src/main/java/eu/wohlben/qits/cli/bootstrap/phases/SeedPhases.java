@@ -108,8 +108,12 @@ public class SeedPhases {
      *       used to be last, and the day eventstream grew the dependency the seed died the same
      *       way, minutes into the phase.
      *   <li>qits-githost-events is written against qits-eventstream and follows it.
-     *   <li>qits-containers' two libraries are written against qits-db-core and qits-eventstream,
-     *       so the orchestrator is last.
+     *   <li><b>qits-containers-javalib joined on 2026-10-04 (qits-796), on qits-eventstream's own
+     *       terms</b> — it resolves nothing of ours, so nothing above forces an order on it. It goes
+     *       beside eventstream rather than after githost because qits-containers-service, which now
+     *       depends on it, is otherwise unrelated to the git host's module.
+     *   <li>qits-containers' client is written against qits-db-core, qits-eventstream and
+     *       qits-containers-driver, so the orchestrator is last.
      *   <li><b>qits-userflows is FIRST and depends on nothing of ours</b> — playwright, jackson,
      *       rest-assured, junit. It is here at all because seventeen root poms pin it and every one
      *       of those builds resolves it: it is TEST-scoped, and {@code mvn package -DskipTests}
@@ -123,8 +127,9 @@ public class SeedPhases {
      *       temporary registry holds every qits jar a seed image could ask for, and a daemon that
      *       becomes a seed image must not be able to turn that into a failed build.
      * </ul>
-     * <b>githost and containers name SERVICE repositories and publish modules of them</b> — the git
-     * host's event vocabulary, and the orchestrator's core and client. {@link
+     * <b>githost and containers name SERVICE repositories and publish one module of them each</b> —
+     * the git host's event vocabulary, and the orchestrator's client. {@code containers-driver} is
+     * not this shape: it is a library repository of its own, published WHOLE like eventstream. {@link
      * PlatformModel#mavenModule} says which modules and why.
      * <p>
      * <b>Each entry is a SET OF VERSIONS, not one.</b> The checkout's own version is published, and
@@ -137,7 +142,7 @@ public class SeedPhases {
      */
     static final List<String> SEED_LIBRARIES = List.of(
             "userflows", "coding-agents", "integrations-quarkus", "registries", "eventstream",
-            "githost", "containers");
+            "containers-driver", "githost", "containers");
 
     /**
      * <b>The third-party download cache every maven container this program starts shares.</b>

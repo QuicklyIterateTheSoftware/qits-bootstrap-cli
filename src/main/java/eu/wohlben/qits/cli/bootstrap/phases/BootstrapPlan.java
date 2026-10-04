@@ -120,16 +120,21 @@ public final class BootstrapPlan {
             // could have published anything.
             phases.add(seed.mavenPublish("githost", "qits-githost-events",
                     "publish qits-githost-events into seed artifacts"));
-            // The orchestrator's two libraries, LAST of the maven publishes and before every image
-            // built out of them. It has to be last: the pair is built against qits-db-core,
-            // qits-arch-rules and qits-auth-core (all three from qits-integrations-quarkus) and
-            // against qits-eventstream, so every jar it resolves is already in the store.
+            // qits-containers-javalib, on qits-eventstream's own terms: no qits dependency of its
+            // own, so nothing above forces an order on it, but qits-containers-service now depends
+            // on it — so it has to be published before the line below.
+            phases.add(seed.mavenPublish("containers-driver", "qits-containers-driver",
+                    "publish qits-containers-driver into seed artifacts"));
+            // The orchestrator's library, LAST of the maven publishes and before every image built
+            // out of it. It has to be last: it is built against qits-db-core, qits-arch-rules and
+            // qits-auth-core (all three from qits-integrations-quarkus), qits-eventstream and
+            // qits-containers-driver, so every jar it resolves is already in the store.
             //
             // It has to be BEFORE seed-image-ci: ci pins qits-containers-client, and a step
             // container's image build resolves from the platform's own Maven registry. There is no
             // host ~/.m2 anywhere in this run to fall back on.
             phases.add(seed.mavenPublish("containers", "qits-containers-client",
-                    "publish the qits-containers libraries into seed artifacts"));
+                    "publish the qits-containers client into seed artifacts"));
             phases.add(seed.uiComponentsPublish());
             phases.add(seed.angularPublish());
             // THE TWO WIRE CONTRACTS qits-ci COMPILES AGAINST, immediately before its image and

@@ -1351,7 +1351,7 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>Which publishers the pinned-tag replay is for.</b> Two of the eight are seed libraries,
+     * <b>Which publishers the pinned-tag replay is for.</b> Three of the nine are seed libraries,
      * and the maven publishes of phases 18-25 already put every pinned version of those in the
      * store out of the same closure — so replaying their older tags would cost a ci run per tag
      * for bytes the registry has. The six below are the ones nothing else publishes.
@@ -1362,7 +1362,8 @@ class PipelinePhasesTest {
                 .filter(SeedPhases.SEED_LIBRARIES::contains)
                 .toList();
 
-        assertThat(alsoSeeded).containsExactlyInAnyOrder("integrations-quarkus", "eventstream");
+        assertThat(alsoSeeded).containsExactlyInAnyOrder(
+                "integrations-quarkus", "eventstream", "containers-driver");
         assertThat(PlatformModel.RELEASE_PUBLISHERS)
                 .filteredOn(name -> !SeedPhases.SEED_LIBRARIES.contains(name))
                 .containsExactly("spa-ui-components", "integrations-angular", "oci-workspace",
@@ -1414,6 +1415,9 @@ class PipelinePhasesTest {
         assertThat(PlatformModel.releasePackages("eventstream")).singleElement()
                 .isEqualTo(new PlatformModel.ReleasePackage(
                         PlatformModel.ReleasePackage.Kind.MAVEN, "qits-eventstream"));
+        assertThat(PlatformModel.releasePackages("containers-driver")).singleElement()
+                .isEqualTo(new PlatformModel.ReleasePackage(
+                        PlatformModel.ReleasePackage.Kind.MAVEN, "qits-containers-driver"));
         assertThat(PlatformModel.releasePackages("integrations-quarkus")).singleElement()
                 .extracting(PlatformModel.ReleasePackage::coordinate).isEqualTo("qits-auth-core");
         // The npm pair publishes one version per release tag, so they answer like the rest.

@@ -305,10 +305,19 @@ public final class PlatformModel {
      * checkout: qits-ci pins {@code qits-ci-runner-protocol} out of it, and the runner image is
      * built from the tag that pin names. The git-host repository and the main history are what let
      * the platform release it afterwards.
+     * <p>
+     * <b>qits-containers-javalib joined on 2026-10-04 (qits-796), a library on qits-eventstream's
+     * terms.</b> It publishes {@code qits-containers-driver}, which qits-containers-service now
+     * depends on, and it has no dependency of its own on this platform — so like qits-eventstream it
+     * is cloned, seed-published whole and replayed with nothing above it in {@link #RELEASE_PUBLISHERS}
+     * forcing an order. qits-containers-service dropped {@code qits-containers-core} the same day:
+     * that module stays an internal part of its reactor (the registry, the entities, the Flyway
+     * migrations), with no consumer and therefore no seed publish of its own — see
+     * {@link #mavenModule}.
      */
     public static final List<String> SEEDED_REPOS = List.of(
-            "oci", "oci-postgresql", "ci-daemon", "ci-runner", "eventstream", "registries",
-            "spa-ui-components",
+            "oci", "oci-postgresql", "ci-daemon", "ci-runner", "eventstream", "containers-driver",
+            "registries", "spa-ui-components",
             "userflows", "coding-agents", "spa-docs", "spa-deployments",
             "integrations-angular", "integrations-quarkus", "spa-projects",
             "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events",
@@ -323,13 +332,17 @@ public final class PlatformModel {
      * list is where that order lives — {@code BootstrapPlan} makes one phase per entry, in this
      * sequence.
      * <p>
-     * The first four are the Maven and npm packages the wrapper's builds install. The last four are
+     * The first five are the Maven and npm packages the wrapper's builds install. The last four are
      * DOCKER IMAGES, added on 2026-08-10 after a fresh registry was measured to hold no
      * qits/workspace-base at all, which fails every workspace launch:
      * <ul>
      *   <li><b>qits-integrations-quarkus before qits-eventstream.</b> Eventstream's released POM
      *       pins {@code qits-db-core} to the Quarkus integration release; replaying eventstream
      *       first therefore asks the empty registry for an artifact the next phase would publish.
+     *   <li><b>qits-containers-javalib beside qits-eventstream, and before every service build.</b>
+     *       It is on 2026-10-04 (qits-796) the terms eventstream joined on: no qits dependency of
+     *       its own, so no order among the maven packages forces it, and it has to be replayed
+     *       before qits-containers-service — its one consumer — is deployed from the train below.
      *   <li><b>qits-oci-workspace strictly before qits-workspace-daemon.</b> The daemon's
      *       {@code docker/Dockerfile} carries {@code ARG WORKSPACE_BASE=…/qits/workspace-base:<pin>}
      *       and its build PULLS that image through the registry — which the base's own replay is what
@@ -352,7 +365,7 @@ public final class PlatformModel {
      */
     public static final List<String> RELEASE_PUBLISHERS =
             List.of("spa-ui-components", "integrations-angular", "integrations-quarkus",
-                    "eventstream",
+                    "eventstream", "containers-driver",
                     "oci-workspace", "workspace-daemon", "oci-workspace-editor",
                     "projects-daemon");
 
@@ -385,6 +398,8 @@ public final class PlatformModel {
         return switch (name) {
             case "eventstream" ->
                     List.of(new ReleasePackage(ReleasePackage.Kind.MAVEN, "qits-eventstream"));
+            case "containers-driver" ->
+                    List.of(new ReleasePackage(ReleasePackage.Kind.MAVEN, "qits-containers-driver"));
             // One of its six jars stands for the reactor, the same one the seed publish probes.
             case "integrations-quarkus" ->
                     List.of(new ReleasePackage(ReleasePackage.Kind.MAVEN, "qits-auth-core"));
@@ -451,7 +466,7 @@ public final class PlatformModel {
             // Framework glue is shared code, so the integrations sit in libs/ like any other lib —
             // and so does the byte plane's own, a library by the same test: three services consume
             // it and it is not deployed.
-            case "eventstream", "registries", "spa-ui-components", "userflows",
+            case "eventstream", "containers-driver", "registries", "spa-ui-components", "userflows",
                  "integrations-angular", "integrations-quarkus", "coding-agents" ->
                     "libs/" + repo(name);
             // Anything served at a URL is a frontend, and there is one spelling now. It was two
@@ -517,8 +532,8 @@ public final class PlatformModel {
      * entry here. Nothing is missing from this list; it is the table for the names that say nothing.
      */
     private static final List<String> LIBRARY_NAMES =
-            List.of("eventstream", "registries", "spa-ui-components", "userflows",
-                    "integrations-angular", "integrations-quarkus", "coding-agents");
+            List.of("eventstream", "containers-driver", "registries", "spa-ui-components",
+                    "userflows", "integrations-angular", "integrations-quarkus", "coding-agents");
 
     /**
      * The names that are image builds today, and are none of them spelled so. Their renamed
@@ -601,12 +616,19 @@ public final class PlatformModel {
      * work for bytes nobody asked for, and would put a service jar in the registry that only its
      * own image ever loads.
      * <p>
-     * <b>qits-containers is the same shape with two modules instead of one.</b> Its consumers depend
-     * on {@code qits-containers-client} — the wire records and the HttpClient behind them — and
-     * {@code qits-containers-core} is what the client's own reactor is built beside; its
-     * {@code service} module is the deployable, a native image nobody resolves. So the seed publishes
-     * the two libraries and leaves the service to its own image build, which saves a native compile
-     * inside a maven container and keeps a jar only one image loads out of the registry.
+     * <b>qits-containers is the same shape, one module since qits-796.</b> Its consumers depend on
+     * {@code qits-containers-client} — the wire records and the HttpClient behind them — which is
+     * what the seed publishes; its {@code service} module is the deployable, a native image nobody
+     * resolves, and the seed leaves it to its own image build, which saves a native compile inside a
+     * maven container and keeps a jar only one image loads out of the registry.
+     * {@code qits-containers-core} USED TO be a second published module, but qits-containers-service
+     * stopped publishing it on 2026-10-04: it is an internal module of that reactor now — the
+     * container registry, the entities and the Flyway migrations behind {@code qits-containers-client}
+     * — with no consumer of its own, so publishing it bought nothing and cost a jar in the registry
+     * nobody resolved. {@code qits-containers-driver} is the library that replaced the gap a consumer
+     * had: a repository of its own ({@code qits-containers-javalib}), seeded and replayed on
+     * qits-eventstream's terms rather than published by this method — see {@link #SEEDED_REPOS} and
+     * {@link #RELEASE_PUBLISHERS}.
      * <p>
      * <b>The two daemons are the same shape again, with the wire contract as the module.</b>
      * qits-ci compiles against {@code qits-ci-daemon-protocol} and {@code qits-ci-runner-protocol}
@@ -619,7 +641,7 @@ public final class PlatformModel {
     public static String mavenModule(String name) {
         return switch (name) {
             case "githost" -> "githost-events";
-            case "containers" -> "core,client";
+            case "containers" -> "client";
             case "ci-daemon" -> "ci-daemon-protocol";
             case "ci-runner" -> "ci-runner-protocol";
             default -> "";
@@ -659,6 +681,7 @@ public final class PlatformModel {
             Map.entry("oci-workspace", "qits-workspace-oci"),
             Map.entry("oci-workspace-editor", "qits-workspace-editor-oci"),
             Map.entry("eventstream", "qits-eventstream-javalib"),
+            Map.entry("containers-driver", "qits-containers-javalib"),
             Map.entry("registries", "qits-registries-javalib"),
             Map.entry("userflows", "qits-userflows-javalib"),
             Map.entry("integrations-angular", "qits-integrations-angular-jslib"),

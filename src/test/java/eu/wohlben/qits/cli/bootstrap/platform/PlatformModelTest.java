@@ -74,6 +74,8 @@ class PlatformModelTest {
         assertThat(PlatformModel.repoPath("oci-postgresql")).isEqualTo("images/qits-database-oci");
         assertThat(PlatformModel.repoPath("eventstream"))
                 .isEqualTo("libs/qits-eventstream-javalib");
+        assertThat(PlatformModel.repoPath("containers-driver"))
+                .isEqualTo("libs/qits-containers-javalib");
         assertThat(PlatformModel.repoPath("spa-docs")).isEqualTo("frontends/qits-docs-frontend");
         // There is ONE frontend spelling now. It was two while a client took its service's plane
         // as well as its component — spa-<x> and platform-spa-<x> — and the plane is gone from the
@@ -249,6 +251,7 @@ class PlatformModelTest {
         expected.put("spa-system", "qits-system-frontend");
         // The libraries and the image builds, renamed on 2026-08-30.
         expected.put("eventstream", "qits-eventstream-javalib");
+        expected.put("containers-driver", "qits-containers-javalib");
         expected.put("integrations-angular", "qits-integrations-angular-jslib");
         expected.put("integrations-quarkus", "qits-integrations-quarkus-javalib");
         expected.put("registries", "qits-registries-javalib");
@@ -670,11 +673,15 @@ class PlatformModelTest {
     @Test
     void theGitHostIsSeededByItsEventModuleAndEveryOtherRepositoryWhole() {
         assertThat(PlatformModel.mavenModule("githost")).isEqualTo("githost-events");
-        // The orchestrator's two LIBRARIES, and not its service: consumers pin
-        // qits-containers-client, `core` is what the reactor builds it beside, and the service
-        // module is a native image nobody resolves. Comma-separated is maven's own -pl spelling.
-        assertThat(PlatformModel.mavenModule("containers")).isEqualTo("core,client");
+        // The orchestrator's one published LIBRARY, and not its service: consumers pin
+        // qits-containers-client, and the service module is a native image nobody resolves. Since
+        // qits-796 `core` is no longer a second one — it is an internal module of this reactor with
+        // no consumer, so publishing it bought nothing.
+        assertThat(PlatformModel.mavenModule("containers")).isEqualTo("client");
         assertThat(PlatformModel.mavenModule("eventstream")).isEmpty();
+        // qits-containers-driver is a repository of its own now, seeded on eventstream's terms —
+        // published whole, like eventstream, rather than filtered to one module of a reactor.
+        assertThat(PlatformModel.mavenModule("containers-driver")).isEmpty();
         // Whole, and that is how the blob store is seeded: it is a module of this reactor.
         assertThat(PlatformModel.mavenModule("registries")).isEmpty();
         assertThat(PlatformModel.mavenModule("integrations-quarkus")).isEmpty();
@@ -786,6 +793,33 @@ class PlatformModelTest {
         // restores a pin, and every consumer still pins 1.0.0-SNAPSHOT, which the seed publishes
         // restore. When it joins, it goes before eventstream.
         assertThat(PlatformModel.RELEASE_PUBLISHERS).doesNotContain("registries");
+    }
+
+    /**
+     * <b>qits-containers-javalib, added on 2026-10-04 (qits-796), on qits-eventstream's own
+     * terms.</b> It is a seeded, replayed library with no platform dependency of its own, and
+     * qits-containers-service now depends on its one published jar — which is why
+     * qits-containers-service stopped publishing {@code qits-containers-core} the same day: that
+     * module has no consumer left and stays internal to the service's own reactor.
+     */
+    @Test
+    void theContainersDriverIsASeededLibraryOnEventstreamsTerms() {
+        assertThat(PlatformModel.SEEDED_REPOS).contains("containers-driver");
+        assertThat(PlatformModel.RELEASE_PUBLISHERS).contains("containers-driver");
+        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("containers-driver");
+        assertThat(PlatformModel.repo("containers-driver")).isEqualTo("qits-containers-javalib");
+        assertThat(PlatformModel.nameOf("qits-containers-javalib")).isEqualTo("containers-driver");
+        assertThat(PlatformModel.repoPath("containers-driver"))
+                .isEqualTo("libs/qits-containers-javalib");
+        assertThat(PlatformModel.archetype("containers-driver",
+                "components/qits-containers/qits-containers-javalib")).isEqualTo("LIBRARY");
+        assertThat(PlatformModel.mavenModule("containers-driver")).isEmpty();
+        assertThat(PlatformModel.releasePackages("containers-driver")).singleElement()
+                .isEqualTo(new PlatformModel.ReleasePackage(
+                        PlatformModel.ReleasePackage.Kind.MAVEN, "qits-containers-driver"));
+        assertThat(PlatformModel.carriesVersionIdentity("containers-driver")).isTrue();
+        // The service's own client module no longer publishes core beside it.
+        assertThat(PlatformModel.mavenModule("containers")).isEqualTo("client");
     }
 
     @Test
