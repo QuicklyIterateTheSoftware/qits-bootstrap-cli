@@ -1034,8 +1034,9 @@ public final class ComposeTemplate {
                   # one: QITS_CONTAINERS_URL, QITS_CI_CONCURRENT_BUILDS and
                   # QITS_CI_IN_PROCESS_EXECUTOR_ENABLED are gone with it, and this seed container
                   # never calls qits-containers. Every run of this boot is executed by the
-                  # `localhost` runner the bootstrap starts as a plain container on qits-net
-                  # (qits-588), over the public edge — see the QITS_DOMAIN note below.
+                  # `localhost` runner the bootstrap starts as a plain container on the default
+                  # bridge, no platform network (qits-588), over the public edge — see the
+                  # QITS_DOMAIN note below.
                   # NO QITS_PLATFORM_DEPLOYMENTS_INTAKE_URL. ci's direct POST to the deployer was retired
                   # on 2026-08-10: a green build is announced on the BUS now, ci -> outbox ->
                   # ${ALIAS_EVENTS} -> the deployer's durable subscriber. qits-ci reads no such key
