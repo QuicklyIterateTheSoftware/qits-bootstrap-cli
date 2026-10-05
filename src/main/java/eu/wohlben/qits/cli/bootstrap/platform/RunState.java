@@ -167,6 +167,21 @@ public class RunState {
     public String ciRunnerId;
     /** That runner's container, for the log a failed wait quotes. */
     public String ciRunnerContainer;
+    /**
+     * <b>What {@code runner-localhost} decided about qits-ci's runners</b> — a
+     * {@code PipelinePhases.RunnerClaim} name, or null when it never got as far as deciding. The
+     * workspaces runner reads it: this host gets a workspaces runner of its own only on a platform
+     * whose CI runner is this installation's too.
+     */
+    public String ciRunnerClaim;
+    /**
+     * This host's workspaces runner, when {@code workspaces-runner-localhost} started or found one
+     * that is this installation's — and null when it stood aside, which is what tells
+     * {@code workspaces-runner-connected} there is nothing of ours to wait for.
+     */
+    public String workspacesRunnerId;
+    /** That runner's container, for the log a failed wait quotes and the closing report. */
+    public String workspacesRunnerContainer;
     public final List<String> summary = new ArrayList<>();
 
     public Path repoDir(String name) {

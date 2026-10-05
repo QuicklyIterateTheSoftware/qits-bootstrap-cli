@@ -1270,16 +1270,21 @@ public class SeedPhases {
      * version is a seed-image-ci that fails ten minutes later on a coordinate nobody can name.
      */
     static String protocolPin(String ciPom, String property) {
+        return protocolPin(ciPom, property, "qits-ci");
+    }
+
+    /** The same read of another service's root pom, whose refusals name that service. */
+    static String protocolPin(String pom, String property, String owner) {
         java.util.regex.Matcher pin = java.util.regex.Pattern.compile(
                 "<" + java.util.regex.Pattern.quote(property) + ">\\s*([^<]*?)\\s*</"
-                        + java.util.regex.Pattern.quote(property) + ">").matcher(ciPom);
+                        + java.util.regex.Pattern.quote(property) + ">").matcher(pom);
         if (!pin.find() || pin.group(1).isBlank()) {
-            throw new IllegalStateException("qits-ci's root pom carries no <" + property
+            throw new IllegalStateException(owner + "'s root pom carries no <" + property
                     + "> — this boot does not know which protocol jar its image builds against");
         }
         String version = pin.group(1);
         if (version.endsWith("-SNAPSHOT") || version.contains("$")) {
-            throw new IllegalStateException("qits-ci pins <" + property + "> to " + version
+            throw new IllegalStateException(owner + " pins <" + property + "> to " + version
                     + ", which is not a released version. A cold boot publishes the jar from its "
                     + "release tag and nothing else — release the protocol, bump the pin and rerun");
         }
@@ -1816,6 +1821,25 @@ public class SeedPhases {
         return protocolPin(Files.readString(
                 boot.state.repoDir("ci").resolve(PinnedVersions.ROOT_POM), StandardCharsets.UTF_8),
                 RUNNER_PIN_PROPERTY);
+    }
+
+    /** The workspaces runner's image repository, as its own release publishes it. */
+    static final String WORKSPACES_RUNNER_IMAGE = "qits/qits-workspaces-runner";
+
+    /** The property in qits-workspaces' root pom that says which workspaces runner it expects. */
+    static final String WORKSPACES_RUNNER_PIN_PROPERTY = "qits.workspaces-runner-protocol.version";
+
+    /**
+     * <b>WHICH WORKSPACES RUNNER THIS BOOT STARTS: the one qits-workspaces pins</b>, for
+     * {@link #runnerVersion}'s reason — a runner of any other version is told to update to the pin
+     * at its first hello. Read from the workspaces checkout, which a restore stands at the release
+     * the train deploys, so the runner and the service it dials agree. Nothing builds it here: the
+     * release replay of qits-workspaces-runner-daemon is what puts that image in the store.
+     */
+    static String workspacesRunnerVersion(Boot boot) throws IOException {
+        String pom = Files.readString(boot.state.repoDir("workspaces")
+                .resolve(PinnedVersions.ROOT_POM), StandardCharsets.UTF_8);
+        return protocolPin(pom, WORKSPACES_RUNNER_PIN_PROPERTY, "qits-workspaces");
     }
 
     /** The image as the host daemon holds it after the build: {@code qits/qits-ci-runner:<pin>}. */

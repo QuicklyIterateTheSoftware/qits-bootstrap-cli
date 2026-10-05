@@ -2253,5 +2253,9 @@ public final class ComposeTemplate {
             # block here would be configuration for a deployment nothing makes — and a standing
             # invitation to make one beside the running runner, two holders of one runner id.
             # Rows a platform imported from the block this replaced are orphans and harmless.
+            # NO qits-workspaces-runner BLOCK either, for the same reason: the platform host's
+            # workspaces runner is a plain `docker run` too (the `workspaces-runner-localhost` phase,
+            # after the train), on docker's default bridge like any runner, registering itself and
+            # rolling itself over. It is no application of the deployer and must not become one.
             """;
 }

@@ -546,6 +546,16 @@ public interface BootstrapConfig {
     }
 
     /**
+     * qits-workspaces at its own alias, for the reason {@link #ciUrl()} gives and one more: the
+     * runner doors' reads and greenlight assert {@code X-Qits-User}/{@code X-Qits-Roles}, which
+     * the edge strips. It is not a seed service, so it answers only once the train has deployed it
+     * — which is why the {@code workspaces-runner-*} phases come after the train.
+     */
+    default String workspacesUrl() {
+        return "http://" + PlatformModel.wireAlias("workspaces", envName()) + ":8080/workspaces";
+    }
+
+    /**
      * qits-deployments at its fixed seed alias, for the reason above.
      * <p>
      * <b>The route segment HAS moved now, and the old rule was right about why it had not.</b> It

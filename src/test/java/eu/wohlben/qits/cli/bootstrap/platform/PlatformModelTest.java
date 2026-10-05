@@ -268,6 +268,8 @@ class PlatformModelTest {
         // The runner: its model name is the image's (qits/qits-ci-runner), and its repository is
         // a daemon's.
         expected.put("ci-runner", "qits-ci-runner-daemon");
+        // The workspaces runner: a release publisher, its name already the repository's.
+        expected.put("workspaces-runner-daemon", "qits-workspaces-runner-daemon");
         // The agent harness, born on 2026-09-08 under a name outside the grammar. The wrapper
         // declares it so, and the boot follows the wrapper.
         expected.put("coding-agents", "qits-coding-agents");
@@ -793,6 +795,36 @@ class PlatformModelTest {
         // restores a pin, and every consumer still pins 1.0.0-SNAPSHOT, which the seed publishes
         // restore. When it joins, it goes before eventstream.
         assertThat(PlatformModel.RELEASE_PUBLISHERS).doesNotContain("registries");
+    }
+
+    /**
+     * <b>qits-workspaces-runner-daemon, added on 2026-10-05 (qits-626): a release publisher, never
+     * a deployable.</b> The workspaces runner phase starts {@code qits/qits-workspaces-runner} at the
+     * version qits-workspaces pins, and only this repository's release run puts it in the store —
+     * so it is replayed after qits-workspace-daemon, and the replay asks for the image AND the
+     * protocol jar qits-workspaces' own build resolves.
+     */
+    @Test
+    void theWorkspacesRunnerDaemonIsAReplayedImagePublisher() {
+        assertThat(PlatformModel.SEEDED_REPOS).contains("workspaces-runner-daemon");
+        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("workspaces-runner-daemon");
+        assertThat(PlatformModel.RELEASE_PUBLISHERS)
+                .containsSubsequence("workspace-daemon", "workspaces-runner-daemon");
+        assertThat(PlatformModel.RELEASE_PUBLISHERS.get(
+                PlatformModel.RELEASE_PUBLISHERS.indexOf("workspace-daemon") + 1))
+                .isEqualTo("workspaces-runner-daemon");
+        assertThat(PlatformModel.releasePackages("workspaces-runner-daemon")).containsExactly(
+                new PlatformModel.ReleasePackage(PlatformModel.ReleasePackage.Kind.OCI,
+                        "qits/qits-workspaces-runner"),
+                new PlatformModel.ReleasePackage(PlatformModel.ReleasePackage.Kind.MAVEN,
+                        "qits-workspaces-runner-protocol"));
+        assertThat(PlatformModel.repo("workspaces-runner-daemon"))
+                .isEqualTo("qits-workspaces-runner-daemon");
+        assertThat(PlatformModel.repoPath("workspaces-runner-daemon"))
+                .isEqualTo("daemons/qits-workspaces-runner-daemon");
+        assertThat(PlatformModel.archetype("workspaces-runner-daemon",
+                "components/qits-workspaces/qits-workspaces-runner-daemon")).isEqualTo("DAEMON");
+        assertThat(PlatformModel.carriesVersionIdentity("workspaces-runner-daemon")).isTrue();
     }
 
     /**

@@ -293,6 +293,17 @@ public final class BootstrapPlan {
             // most to the addresses: qits-githost, six below it, closes the id-addressed scheme,
             // and by then this run has been name-addressing every push since its first.
         }
+        // THIS HOST'S WORKSPACES RUNNER, the CI runner's twin, and AFTER THE TRAIN rather than
+        // beside it: qits-workspaces is not seed-deployed (PlatformModel.CORE lacks it), so until
+        // its deployment above there is no runner listing to ask and no row to declare. Its image
+        // is no seed build either — the release replay of qits-workspaces-runner-daemon published
+        // it, at the version qits-workspaces pins. Two phases for the CI pair's reason: the first
+        // starts a container, the second waits for qits-workspaces to say it is connected and
+        // lifts the quarantine. A platform whose CI runner is somebody else's — the live estate,
+        // whose runner is an external machine's and which recorded no id — is NOT_OURS here too,
+        // so a rebootstrap there never starts one. See PipelinePhases.workspacesRunnerDecision.
+        phases.add(pipeline.workspacesLocalhostRunner());
+        phases.add(pipeline.workspacesLocalhostRunnerConnected());
         phases.add(pipeline.summary());
         // LAST, AND AFTER THE SUMMARY ON PURPOSE. The summary phase only BUILDS the account —
         // BootstrapCommand prints it once the engine has run everything — so a phase below it still

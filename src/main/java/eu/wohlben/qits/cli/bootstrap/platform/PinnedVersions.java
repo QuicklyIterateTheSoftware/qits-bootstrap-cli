@@ -100,6 +100,10 @@ public final class PinnedVersions {
             Map.entry("containers-core", "containers"),
             Map.entry("ci-daemon-protocol", "ci-daemon"),
             Map.entry("ci-runner-protocol", "ci-runner"),
+            // qits-workspaces pins its runner the way qits-ci pins its own — one jar beside the
+            // image, both at the runner's release tag — and the release replay of that repository
+            // is what publishes both, so a lagging pin is one more version to replay.
+            Map.entry("workspaces-runner-protocol", "workspaces-runner-daemon"),
             Map.entry("userflows", "userflows"),
             // One property for the harness reactor's two jars, spelled two ways: qits-workspace-
             // daemon says <qits.coding-agents.version>, qits-projects-daemon

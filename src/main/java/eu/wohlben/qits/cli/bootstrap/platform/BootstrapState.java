@@ -107,6 +107,18 @@ public class BootstrapState {
     }
 
     /**
+     * <b>The id of the WORKSPACES runner this installation declared for its own host</b> — the
+     * same rule as {@link #CI_RUNNER_ID_KEY}, against qits-workspaces' {@code localhost} row: only
+     * the runner whose id is written here is started, restarted or re-registered by a rerun.
+     * Written the moment qits-workspaces answers the create, before the container exists.
+     */
+    public static final String WORKSPACES_RUNNER_ID_KEY = "WORKSPACES_RUNNER_ID";
+
+    public Optional<String> workspacesRunnerId() {
+        return value(WORKSPACES_RUNNER_ID_KEY);
+    }
+
+    /**
      * <b>Which storage id the git host keys each platform repository by</b>, one line per
      * repository: {@code REPO_ID_QITS_CI=8b1f0f0e-9a0c-4c3a-9a5b-000000000001}.
      * <p>

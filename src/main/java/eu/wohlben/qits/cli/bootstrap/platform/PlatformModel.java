@@ -314,6 +314,13 @@ public final class PlatformModel {
      * that module stays an internal part of its reactor (the registry, the entities, the Flyway
      * migrations), with no consumer and therefore no seed publish of its own — see
      * {@link #mavenModule}.
+     * <p>
+     * <b>qits-workspaces-runner-daemon joined on 2026-10-05 (qits-626), as a release publisher.</b>
+     * A cold boot starts this host's workspaces runner from {@code qits/qits-workspaces-runner} at
+     * the version qits-workspaces pins, and nothing but that repository's own release run puts the
+     * image in the store — so it is cloned, hosted and replayed like qits-workspace-daemon, and it
+     * is never a deployable: the runner is a container the bootstrap starts and that rolls itself
+     * over, exactly as the CI runner is.
      */
     public static final List<String> SEEDED_REPOS = List.of(
             "oci", "oci-postgresql", "ci-daemon", "ci-runner", "eventstream", "containers-driver",
@@ -324,7 +331,8 @@ public final class PlatformModel {
             "spa-ci", "spa-githost", "spa-configuration", "spa-idp",
             "spa-mirror", "spa-orchestrator", "spa-maintenance",
             "spa-system",
-            "oci-workspace", "oci-workspace-editor", "workspace-daemon", "projects-daemon");
+            "oci-workspace", "oci-workspace-editor", "workspace-daemon", "workspaces-runner-daemon",
+            "projects-daemon");
 
     /**
      * The publishers whose released versions the platform pins, replayed on a fresh platform because
@@ -355,6 +363,11 @@ public final class PlatformModel {
      *       layered {@code qits/project-agent} build reads the pin out of
      *       {@code .config/qits/workspace-base.version} and passes it as {@code --build-arg BASE}.
      *       It is independent of qits-workspace-daemon; only the base has to precede it.
+     *   <li><b>qits-workspaces-runner-daemon after qits-workspace-daemon</b>, though nothing in its
+     *       build pulls the workspace image: it is the image the {@code workspaces-runner-localhost}
+     *       phase starts after the train, at the version qits-workspaces pins, and the jar beside it
+     *       ({@code qits-workspaces-runner-protocol}) is what qits-workspaces' own build in the train
+     *       resolves. Next to the workspace image because the two are one runtime's halves.
      * </ul>
      * <p>
      * <b>qits-registries is NOT here yet, deliberately.</b> A replay restores a pin, and nothing
@@ -366,8 +379,8 @@ public final class PlatformModel {
     public static final List<String> RELEASE_PUBLISHERS =
             List.of("spa-ui-components", "integrations-angular", "integrations-quarkus",
                     "eventstream", "containers-driver",
-                    "oci-workspace", "workspace-daemon", "oci-workspace-editor",
-                    "projects-daemon");
+                    "oci-workspace", "workspace-daemon", "workspaces-runner-daemon",
+                    "oci-workspace-editor", "projects-daemon");
 
     /**
      * <b>What a release publisher's green run leaves in a registry, addressed by the RELEASE
@@ -409,6 +422,14 @@ public final class PlatformModel {
                     List.of(new ReleasePackage(ReleasePackage.Kind.OCI, "qits/workspace"));
             case "oci-workspace-editor" ->
                     List.of(new ReleasePackage(ReleasePackage.Kind.OCI, "qits/workspace-editor"));
+            // The image is the one the workspaces runner phase starts, and refuses without. The
+            // pin-and-protocol jar rides the same run, after the image, and is asked for too:
+            // qits-workspaces' own build in the train resolves it, so a run that died between the
+            // two published half of what this replay owes.
+            case "workspaces-runner-daemon" -> List.of(
+                    new ReleasePackage(ReleasePackage.Kind.OCI, "qits/qits-workspaces-runner"),
+                    new ReleasePackage(ReleasePackage.Kind.MAVEN,
+                            "qits-workspaces-runner-protocol"));
             // Two images from one run, and a replay that found either one missing has to ask again.
             case "projects-daemon" -> List.of(
                     new ReleasePackage(ReleasePackage.Kind.OCI, "qits/projects-daemon"),
@@ -459,7 +480,8 @@ public final class PlatformModel {
      */
     public static String repoPath(String name) {
         return switch (name) {
-            case "ci-daemon", "ci-runner", "workspace-daemon", "projects-daemon" ->
+            case "ci-daemon", "ci-runner", "workspace-daemon", "workspaces-runner-daemon",
+                 "projects-daemon" ->
                     "daemons/" + repo(name);
             case "oci", "oci-postgresql", "oci-workspace", "oci-workspace-editor" ->
                     "images/" + repo(name);

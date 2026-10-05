@@ -4,6 +4,7 @@ import eu.wohlben.qits.cli.bootstrap.api.ArtifactsApi;
 import eu.wohlben.qits.cli.bootstrap.api.BootstrapPublishCredential;
 import eu.wohlben.qits.cli.bootstrap.api.PdApi;
 import eu.wohlben.qits.cli.bootstrap.api.CiApi;
+import eu.wohlben.qits.cli.bootstrap.api.WorkspacesApi;
 import eu.wohlben.qits.cli.bootstrap.api.ConfigurationApi;
 import eu.wohlben.qits.cli.bootstrap.api.GitHostApi;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
@@ -53,6 +54,8 @@ public class Boot {
     /** The git host, a service of its own since the byte-plane split. */
     public final GitHostApi githost;
     public final CiApi ci;
+    /** qits-workspaces' runner doors, for this host's workspaces runner. */
+    public final WorkspacesApi workspaces;
     public final PdApi pd;
     public final IdpApi idp;
     /** Deployment configuration as platform state, seeded by this run and read by the deployer. */
@@ -98,6 +101,7 @@ public class Boot {
                 this::storeReadAuthorization);
         this.githost = new GitHostApi(http, config.gitHostUrl(), config.gitHostHealthUrl());
         this.ci = new CiApi(http, config.ciUrl());
+        this.workspaces = new WorkspacesApi(http, config.workspacesUrl());
         this.pd = new PdApi(http, config.platformDeploymentsUrl());
         this.idp = new IdpApi(http, config.idpDialUrl());
         this.configuration = new ConfigurationApi(http, config.configurationUrl(),
