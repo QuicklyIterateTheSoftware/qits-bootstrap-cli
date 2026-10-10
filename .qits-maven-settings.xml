@@ -3,25 +3,42 @@
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 https://maven.apache.org/xsd/settings-1.2.0.xsd">
   <mirrors>
-    <!-- THIS FILE EXISTS FOR ONE REASON: Maven Central through qits-platform-mirror's pull-through
-         cache. It carries no platform-registry mirror, unlike the lib repositories' copies of it,
-         because this pom is PARENTLESS and depends on no qits artifact — nothing here declares a
-         repository the platform serves, so there would be nothing for such a mirror to match. If
-         this repository ever takes a qits dependency, the registry mirror comes back with it.
+    <!-- The platform's hosted Maven, https://registry.qits.$QITS_DOMAIN/artifacts/maven/maven, for
+         the `qits-maven` repository the pom declares (since qits-1149, for the providers' golden
+         masters jars, which the consumer pact tests read). Maven cannot compute a string, so the
+         URL arrives derived: release.yml's QA step exports QITS_MAVEN_REPOSITORY_URL. An exact
+         repository-id match is what wins over Maven's external:http:* blocker.
 
          Read only by the QA pipeline in .config/qits (`-s .qits-maven-settings.xml`), which runs
-         inside a step container. A developer's build needs none of it and passes no -s at all.
-
-         An exact repository-id match is what wins over Maven's external:http:* blocker, which is
-         why the mirror below is scoped to the one repository the profile declares rather than to
-         `*` — so while QITS_MAVEN_CENTRAL_URL is unset or empty, nothing declares qits-central,
-         this entry matches nothing, and the unexpanded URL is never dialled. -->
+         inside a step container. A developer's build needs none of it and passes no -s at all. -->
+    <mirror>
+      <id>qits-maven-network</id>
+      <mirrorOf>qits-maven</mirrorOf>
+      <url>${env.QITS_MAVEN_REPOSITORY_URL}</url>
+    </mirror>
+    <!-- Maven Central through qits-platform-mirror's pull-through cache. The mirror below is
+         scoped to the one repository the profile declares rather than to `*` — so while
+         QITS_MAVEN_CENTRAL_URL is unset or empty, nothing declares qits-central, this entry matches
+         nothing, and the unexpanded URL is never dialled. -->
     <mirror>
       <id>qits-central-proxy</id>
       <mirrorOf>qits-central</mirrorOf>
       <url>${env.QITS_MAVEN_CENTRAL_URL}</url>
     </mirror>
   </mirrors>
+  <servers>
+    <!-- The step's commissioned client, for the platform registry, which answers 401 anonymously. -->
+    <server>
+      <id>qits-maven-network</id>
+      <username>${env.QITS_MAVEN_AUTH_USR}</username>
+      <password>${env.QITS_MAVEN_AUTH_PSW}</password>
+    </server>
+    <server>
+      <id>qits-central-proxy</id>
+      <username>${env.QITS_MAVEN_AUTH_USR}</username>
+      <password>${env.QITS_MAVEN_AUTH_PSW}</password>
+    </server>
+  </servers>
   <profiles>
     <!-- Active only while QITS_MAVEN_CENTRAL_URL is NON-EMPTY — measured on Maven 3.9: an empty
          environment value does not activate a property-presence profile, so an injected-empty

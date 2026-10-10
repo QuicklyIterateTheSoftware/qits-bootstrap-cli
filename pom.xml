@@ -38,6 +38,20 @@
         <!-- Not in any BOM, so it is pinned here. -->
         <assertj.version>3.27.4</assertj.version>
 
+        <!-- THE PROVIDERS' RECORDED ANSWERS, read by the consumer pacts in src/test/.../contracts
+             (qits-1149). One pin per provider that publishes golden masters; qits-maintenance
+             bumps them, and a changed answer the bootstrap cannot read goes red here before it
+             ships. Do not hand-edit them to chase a release. -->
+        <qits.projects-golden-masters.version>2026.1009.210714</qits.projects-golden-masters.version>
+        <qits.events-golden-masters.version>2026.1002.210125</qits.events-golden-masters.version>
+        <!-- pact-jvm, test scope only. An external library, so it moves by hand; the same version
+             as the providers' verifiers and every other consumer on the estate. -->
+        <pact-jvm.version>4.6.21</pact-jvm.version>
+        <!-- Where the golden masters jars come from: the platform's hosted Maven. The default is
+             the public address; .qits-maven-settings.xml mirrors the `qits-maven` repository to
+             QITS_MAVEN_REPOSITORY_URL, which the QA step exports. -->
+        <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
+
         <compiler-plugin.version>3.15.0</compiler-plugin.version>
         <surefire-plugin.version>3.5.4</surefire-plugin.version>
         <failsafe-plugin.version>3.5.4</failsafe-plugin.version>
@@ -142,7 +156,35 @@
             <version>${assertj.version}</version>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <!-- The consumer half of every contract this CLI has with a qits service. -->
+            <groupId>au.com.dius.pact.consumer</groupId>
+            <artifactId>junit5</artifactId>
+            <version>${pact-jvm.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Recordings a test reads, never code: test scope only. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-projects-golden-masters</artifactId>
+            <version>${qits.projects-golden-masters.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-events-golden-masters</artifactId>
+            <version>${qits.events-golden-masters.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
+
+    <repositories>
+        <!-- The one repository beside Central: the platform's, for the golden masters jars. -->
+        <repository>
+            <id>qits-maven</id>
+            <url>${qits.maven.repository.url}</url>
+        </repository>
+    </repositories>
 
     <build>
         <plugins>
