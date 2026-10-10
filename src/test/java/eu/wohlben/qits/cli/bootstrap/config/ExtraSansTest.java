@@ -18,10 +18,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * empty on an ordinary platform.
  * <p>
  * <b>It used to hold one name per project</b>, because no derived wildcard could reach
- * {@code editor.<project>.<domain>}. The per-project half is a live read off qits-projects' events
- * now, so that debt is retired — the names below are still spelled {@code editor.<something>} where
- * the case under test is about parsing rather than about what the name is for, because those are
- * the values this knob was written against and the parse did not change.
+ * {@code <app>.<project>.<domain>}. The per-project half is a live read off qits-projects' events
+ * now, so that debt is retired.
  */
 class ExtraSansTest {
 
@@ -61,12 +59,12 @@ class ExtraSansTest {
      */
     @Test
     void aRelativeNameAndTheWholeOneAreTheSameName() {
-        assertThat(ExtraSans.of("editor.acme", DOMAIN))
-                .containsExactly("editor.acme." + DOMAIN);
-        assertThat(ExtraSans.of("editor.acme." + DOMAIN, DOMAIN))
-                .containsExactly("editor.acme." + DOMAIN);
-        assertThat(ExtraSans.of("editor.acme, editor.acme." + DOMAIN, DOMAIN))
-                .containsExactly("editor.acme." + DOMAIN);
+        assertThat(ExtraSans.of("status.acme", DOMAIN))
+                .containsExactly("status.acme." + DOMAIN);
+        assertThat(ExtraSans.of("status.acme." + DOMAIN, DOMAIN))
+                .containsExactly("status.acme." + DOMAIN);
+        assertThat(ExtraSans.of("status.acme, status.acme." + DOMAIN, DOMAIN))
+                .containsExactly("status.acme." + DOMAIN);
     }
 
     /**
@@ -75,16 +73,16 @@ class ExtraSansTest {
      */
     @Test
     void namesAreSeparatedByCommasOrSpaceAndKeepTheirOrder() {
-        assertThat(ExtraSans.of("editor.acme,editor.gizmo  editor.qits", DOMAIN))
-                .containsExactly("editor.acme." + DOMAIN, "editor.gizmo." + DOMAIN,
-                        "editor.qits." + DOMAIN);
+        assertThat(ExtraSans.of("status.acme,status.gizmo  status.qits", DOMAIN))
+                .containsExactly("status.acme." + DOMAIN, "status.gizmo." + DOMAIN,
+                        "status.qits." + DOMAIN);
     }
 
     /** Case and a trailing root dot are two spellings of one name, not two names. */
     @Test
     void caseAndATrailingDotAreNotPartOfTheName() {
-        assertThat(ExtraSans.of(" Editor.Acme. ", DOMAIN))
-                .containsExactly("editor.acme." + DOMAIN);
+        assertThat(ExtraSans.of(" Status.Acme. ", DOMAIN))
+                .containsExactly("status.acme." + DOMAIN);
     }
 
     /**
@@ -98,8 +96,8 @@ class ExtraSansTest {
      */
     @Test
     void everyNameEndsUpInsideTheDomain() {
-        assertThat(ExtraSans.of("editor.acme.example.com", DOMAIN))
-                .containsExactly("editor.acme.example.com." + DOMAIN);
+        assertThat(ExtraSans.of("status.acme.example.com", DOMAIN))
+                .containsExactly("status.acme.example.com." + DOMAIN);
     }
 
     /** The apex is refused: the edge already orders it, and a second copy is a name to keep in step. */
@@ -127,16 +125,16 @@ class ExtraSansTest {
 
     @Test
     void aLabelThatIsNotALabelIsRefused() {
-        assertThatThrownBy(() -> ExtraSans.of("editor..acme", DOMAIN))
+        assertThatThrownBy(() -> ExtraSans.of("status..acme", DOMAIN))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> ExtraSans.of("editor.-acme", DOMAIN))
+        assertThatThrownBy(() -> ExtraSans.of("status.-acme", DOMAIN))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> ExtraSans.of("editor.ac_me", DOMAIN))
+        assertThatThrownBy(() -> ExtraSans.of("status.ac_me", DOMAIN))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     /**
-     * <b>The editor origin is not this knob's business any more.</b> {@code editorHost} lived here
+     * <b>A project's host is not this knob's business any more.</b> A per-project helper lived here
      * so the closing report and the value a person wrote could not disagree about one project's
      * name. The edge derives the per-project wildcards from qits-projects' events now, so there is
      * no per-project name to write and nothing for a second spelling to contradict — the helper is
@@ -146,7 +144,7 @@ class ExtraSansTest {
      * against the domain the same way.
      */
     @Test
-    void anAdHocNameIsParsedTheSameWayTheEditorNamesWere() {
+    void anAdHocNameIsParsedTheSameWayTheProjectNamesWere() {
         assertThat(ExtraSans.of("status.support", DOMAIN))
                 .containsExactly("status.support." + DOMAIN);
     }
@@ -154,13 +152,13 @@ class ExtraSansTest {
     /** Answerable for one run, and a blank answer leaves {@code .env} alone. */
     @Test
     void theCommandLineAnswersItToo() {
-        BootstrapConfig base = config("editor.from-env");
+        BootstrapConfig base = config("status.from-env");
 
-        assertThat(ExtraSans.of(new OverridableConfig(base).acmeExtraSans("editor.a,editor.b"),
+        assertThat(ExtraSans.of(new OverridableConfig(base).acmeExtraSans("status.a,status.b"),
                 DOMAIN))
-                .containsExactly("editor.a." + DOMAIN, "editor.b." + DOMAIN);
+                .containsExactly("status.a." + DOMAIN, "status.b." + DOMAIN);
         assertThat(ExtraSans.of(new OverridableConfig(base).acmeExtraSans("  "),
                 DOMAIN))
-                .containsExactly("editor.from-env." + DOMAIN);
+                .containsExactly("status.from-env." + DOMAIN);
     }
 }

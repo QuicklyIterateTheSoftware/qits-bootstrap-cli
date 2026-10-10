@@ -360,23 +360,11 @@ public final class ComposeTemplate {
                   # step-address plane (qits-515): a step logs in to the registries it needs from the
                   # per-run credential ci commissions and the PUBLIC names ci composes from
                   # QITS_DOMAIN, so there is no qits-net host list left to spell.
-                  # NO HOST OR AUDIENCE PATTERN IS SPELLED HERE for registry, mirror, githost or the
-                  # editor below. The edge derives all four itself, in code, as
+                  # NO HOST OR AUDIENCE PATTERN IS SPELLED HERE for registry, mirror or githost.
+                  # The edge derives all three itself, in code, as
                   # `<env>-qits-<application>` — qits.edge.apps.<app>.host-pattern and
                   # .audience-pattern are gone from its configuration, because the pattern a platform
                   # service alias follows is a platform constant, not something a seed stack states.
-                  # A FOURTH NAME, AND IT IS AN APP LABEL LIKE THE THREE ABOVE. The web editor is
-                  # editor[.<env>].<project>.<domain> — one origin per PROJECT, per environment
-                  # where that project has them — and under the right-to-left grammar that is the
-                  # ordinary application shape rather than a depth of its own. `editor` is a
-                  # configured app at the leftmost position and the environment is read out of the
-                  # HOST rather than out of a default, so {env} resolves per request. Its upstream
-                  # host and the audience it admits are both derived by the edge itself from
-                  # QITS_DOMAIN the same way as the other three — `{env}-qits-workspaces` — so the
-                  # one machine credential qits-workspaces' own qits.auth.machine.audience would
-                  # admit anyway is the one this vhost admits, and no other; browsers are unaffected
-                  # either way, since they arrive with a session cookie and never reach the machine
-                  # gate.
                   #
                   # A PROJECT SLUG CAN NO LONGER COLLIDE WITH AN ENVIRONMENT NAME OR AN APP LABEL,
                   # because the reading is POSITIONAL: a label's meaning comes from where it sits,
@@ -1393,14 +1381,11 @@ public final class ComposeTemplate {
             # (qits-515) — a step logs in with its per-run commissioned credential now. Do not add
             # either key back.
             #
-            # NO HOST OR AUDIENCE PATTERN IS SPELLED HERE for registry, mirror or githost, and none
-            # for the editor vhost, editor[.<env>].<project>.<domain>, onto qits-workspaces either.
-            # The edge derives every one of the four itself, in code, as `<env>-qits-<application>`:
+            # NO HOST OR AUDIENCE PATTERN IS SPELLED HERE for registry, mirror or githost. The
+            # edge derives every one of the three itself, in code, as `<env>-qits-<application>`:
             # qits.edge.apps.<app>.host-pattern and .audience-pattern are gone from its
             # configuration, because the pattern a platform service alias follows is a platform
-            # constant, not something this file states. `editor` is an app label at the leftmost
-            # position like any other, and the environment it is served out of is the host's own
-            # label — read out of the name, not from a default.
+            # constant, not something this file states.
             # USER SESSIONS ARE ENFORCED on every application vhost; IdP routes remain the
             # protocol-required anonymous carve-out.
             #

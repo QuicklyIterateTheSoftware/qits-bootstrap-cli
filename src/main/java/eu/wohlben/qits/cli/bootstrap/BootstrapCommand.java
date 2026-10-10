@@ -130,14 +130,13 @@ public class BootstrapCommand implements Callable<Integer> {
     String acmeEmail;
 
     /**
-     * Names the certificate must carry beyond the wildcards the edge derives. Repeatable, because
-     * the list is one name per project and a person adds them one at a time; the values are joined
-     * with commas, which is the spelling {@code .env} uses for the same knob.
+     * Names the certificate must carry beyond the wildcards the edge derives. Repeatable; the
+     * values are joined with commas, which is the spelling {@code .env} uses for the same knob.
      */
     @CommandLine.Option(names = "--acme-extra-san", paramLabel = "<name>",
             description = "An extra name for the edge's certificate, whole or relative to the "
-                    + "domain (editor.acme). Repeatable. The derived wildcards cover one label, so "
-                    + "editor.<project>.<domain> needs one of these per project "
+                    + "domain (status.acme). Repeatable. Only for names outside the wildcards "
+                    + "the edge derives, which already cover every project "
                     + "(QITS_ACME_EXTRA_SANS).")
     String[] acmeExtraSans;
 

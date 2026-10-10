@@ -198,7 +198,7 @@ public interface BootstrapConfig {
      * certificate on its own. The knob is empty on an ordinary platform.
      * <p>
      * Generic on purpose. It says "put these names on the certificate" and knows nothing about
-     * editors or projects; {@link ExtraSans} is where the shape and the refusals live, and the
+     * projects; {@link ExtraSans} is where the shape and the refusals live, and the
      * closing report prints what a run resolved, against the 100-name cap.
      */
     Optional<String> acmeExtraSans();

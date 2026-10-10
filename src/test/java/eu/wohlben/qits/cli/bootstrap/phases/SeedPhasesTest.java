@@ -146,7 +146,7 @@ class SeedPhasesTest {
                 .anySatisfy(why -> assertThat(why).contains("<env>.<project>.qits-dev.eu"))
                 .anySatisfy(why -> assertThat(why)
                         .contains("<app>.<env>.<project>.qits-dev.eu")
-                        .contains("editor"));
+                        .contains("wire routes"));
     }
 
     /**

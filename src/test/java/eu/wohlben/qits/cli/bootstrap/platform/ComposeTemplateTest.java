@@ -498,26 +498,8 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>The web editor is a fourth app alias and nothing more.</b> {@code
-     * editor.<project>.<env>.<domain>} is one origin per project per environment, and the edge
-     * reads three labels: the project sits at position 1 and the environment the editor is served
-     * out of is the host's OWN label at position 2 — not a default and not a fallthrough. Its
-     * upstream host and the audience it admits are both the edge's own derived
-     * {@code <env>-qits-workspaces}, the same platform-constant rule the other three apps follow,
-     * and this program states neither any more.
-     */
-    @Test
-    void theEditorVhostFrontsWorkspacesOnTheWorkspacesAudienceInBothFiles() {
-        String edge = serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-edge");
-        String edgeExtras = extras("qits-edge");
-
-        assertThat(edge).doesNotContain("QITS_EDGE_APPS_");
-        assertThat(edgeExtras).doesNotContain("QITS_EDGE_APPS_");
-    }
-
-    /**
      * <b>A project slug sits where the edge reads a tier AND where it reads an app, so both are
-     * reserved.</b> Position 1 of {@code editor.<project>.<env>.<domain>} is the label
+     * reserved.</b> Position 1 of {@code <app>.<project>.<env>.<domain>} is the label
      * {@code <app>.<env>.<domain>} spells its environment at, and the edge asks "is this an
      * environment" before it asks "is this a project" — a project called after this platform's
      * environment would be read as that environment, over an apex that is not the apex. Position 0
@@ -535,7 +517,7 @@ class ComposeTemplateTest {
         String projects = serviceBlock(ComposeTemplate.compose(tokens()),
                 ENV + "-qits-projects");
 
-        assertThat(reserved).startsWith(ENV + ",").contains(",registry,").contains(",editor,");
+        assertThat(reserved).startsWith(ENV + ",").contains(",registry,").contains(",githost,");
         assertThat(projects).contains("QITS_PROJECTS_RESERVED_SLUGS: " + reserved);
         assertThat(extras("qits-projects"))
                 .contains("env.QITS_PROJECTS_RESERVED_SLUGS=" + reserved);
@@ -546,9 +528,8 @@ class ComposeTemplateTest {
      * apex, {@code *.<domain>}, {@code *.<project>.<domain>} per project and
      * {@code *.<env>.<project>.<domain>} per environment of a project that has them — every depth
      * the right-to-left grammar has — so this key is for a name at some OTHER shape. It used to
-     * carry the editor hosts, one per project; the per-project wildcards are a live read off
-     * qits-projects' events now, and the key says nothing about editors either way — it is a list
-     * of names.
+     * carry one host per project; the per-project wildcards are a live read off qits-projects'
+     * events now, and the key says nothing about projects either way — it is a list of names.
      */
     @Test
     void theExtraSansReachTheEdgeAsAdditionalCertificateNames() {

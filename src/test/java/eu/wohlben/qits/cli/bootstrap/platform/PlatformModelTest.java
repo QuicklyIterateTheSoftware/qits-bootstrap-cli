@@ -1262,15 +1262,14 @@ class PlatformModelTest {
      * bootstrap since. A derivation asserted against itself would pass while the platform and the
      * template disagreed.
      * <p>
-     * Twenty-one entries: the environment, the eighteen deployables' browser labels, and the two
-     * edge app labels no application name spells ({@code registry} is qits-artifacts,
-     * {@code editor} is qits-workspaces). {@code idp} and {@code edge} are in it twice over — from
+     * Twenty entries: the environment, the eighteen deployables' browser labels, and the one edge
+     * app label no application name spells ({@code registry} is qits-artifacts). {@code idp} and {@code edge} are in it twice over — from
      * {@link PlatformModel#DEPLOYABLES} and by name — and appear once.
      */
     @Test
     void theReservedSlugsAreTheEnvironmentAndEveryServiceLabel() {
         assertThat(PlatformModel.reservedSlugs("dev")).isEqualTo("dev,"
-                + "artifacts,ci,configuration,containers,deployments,docs,edge,editor,events,"
+                + "artifacts,ci,configuration,containers,deployments,docs,edge,events,"
                 + "githost,idp,maintenance,mirror,observability,orchestrator,projects,registry,"
                 + "stt,system,workspaces");
     }
@@ -1292,8 +1291,8 @@ class PlatformModelTest {
 
     /**
      * <b>An application this bootstrap gains reserves its own label, with nobody editing a list.</b>
-     * That is what makes the value derived rather than written: the four the edge configures are a
-     * list because two of them ({@code registry}, {@code editor}) are no application's name, and
+     * That is what makes the value derived rather than written: the three the edge configures are a
+     * list because one of them ({@code registry}) is no application's name, and
      * every other label comes off the deployables themselves.
      */
     @Test

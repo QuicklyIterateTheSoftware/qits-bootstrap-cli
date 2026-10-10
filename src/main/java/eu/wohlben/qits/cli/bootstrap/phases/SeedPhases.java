@@ -3147,7 +3147,7 @@ public class SeedPhases {
      *     supports environments, and {@code <app>.<project>.<domain>} — its applications — where it
      *     does not.
      * <li>{@code *.*.*} — every three-label name: {@code <app>.<env>.<project>.<domain>}, an
-     *     application of an env-supporting project, the web editor among them. A project is created
+     *     application of an env-supporting project. A project is created
      *     by a person on a running platform, so these are the depths where a record per name would
      *     mean a dns edit per project. The wildcards are what make creating a project a platform act
      *     with no operator step behind it.
@@ -3169,8 +3169,7 @@ public class SeedPhases {
                                 + domain + " host of a project with no environments"),
                 new ZoneRecord("*.*.*", publicIp,
                         "every <app>.<env>.<project>." + domain
-                                + " host — each service's UI and its wire routes, the editor "
-                                + "above all"));
+                                + " host — each service's UI and its wire routes"));
     }
 
     /**

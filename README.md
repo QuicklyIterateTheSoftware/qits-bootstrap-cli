@@ -209,7 +209,7 @@ environment** — not because either would misroute, but because neither name ca
 the other. The edge reads a host RIGHT TO LEFT, `<app>[.<env>].<project>.<domain>`, every label
 inside the one to its right: the domain holds projects, a project holds its environments, an
 environment holds its apps. The project label is mandatory, so the reading is positional and a
-label's meaning comes from where it sits — `editor.<env>.<slug>.<domain>` is that project's editor
+label's meaning comes from where it sits — `ci.<env>.<slug>.<domain>` is that project's ci
 and nothing else can take the name. What is left is a pair of names a person cannot read apart, and
 creating a new environment into that collision is refused here, on the create arm only, because an
 environment row that already stands is a platform already running under that name and refusing its
@@ -217,8 +217,8 @@ rerun would strand rather than repair it. The other direction is closed at the s
 qits-projects is handed `QITS_PROJECTS_RESERVED_SLUGS` and refuses every name on it.
 
 **That list is the environment name plus every label this platform publishes** — `registry`,
-`editor`, `idp`, `edge`, `ci`, `artifacts` and the rest, derived by `PlatformModel.reservedSlugs`
-from the deployables' own browser labels and the edge's four configured apps, environment first and
+`idp`, `edge`, `ci`, `artifacts` and the rest, derived by `PlatformModel.reservedSlugs`
+from the deployables' own browser labels and the edge's three configured apps, environment first and
 the labels sorted. The service labels are there for the same reason the environment name is: an app
 label and a project slug are read at different positions, so a project called `registry` routes
 perfectly well — it is simply a name people will read as the registry's. Nothing misroutes; the slug
@@ -237,8 +237,7 @@ domain is refused, and so is a domain without an address.
     *        every <project>.<domain> door
     *.*      every <env>.<project>.<domain> door, and the <app>.<project>.<domain> host of a
              project with no environments
-    *.*.*    every <app>.<env>.<project>.<domain> host — each service's UI and its wire routes,
-             the editor above all
+    *.*.*    every <app>.<env>.<project>.<domain> host — each service's UI and its wire routes
 
 A wildcard per depth rather than a record per name, which is what the edge's routing actually needs:
 the grammar is `<app>[.<env>].<project>.<domain>`, so every project door, every environment door and
@@ -281,8 +280,7 @@ of a project that has environments — every depth its Host reading has. The old
 **The per-project half is a LIVE read**: the edge learns the projects from qits-projects' own
 `ProjectCreated` events, so a project created after this boot reaches the certificate at the edge's
 next order — which its creation event triggers. There is no bootstrap step behind it, no restart,
-and no name to write down. The web editor at `editor.<env>.<project>.<domain>` is covered by
-construction.
+and no name to write down.
 
 **`QITS_ACME_EXTRA_SANS` is what covers names outside those shapes, and nothing else.**
 
@@ -297,7 +295,7 @@ no key at all — which is what an ordinary platform has.
 files are written before qits-projects has answered anything — the seed stack is what starts it — so
 a list derived here from the platform's own projects would have been empty on every cold boot and one
 boot stale on every warm one. The cost was a platform where a project created later was not on the
-certificate until somebody added its name and the edge re-ordered, and until then its editor host
+certificate until somebody added its name and the edge re-ordered, and until then its hosts
 answered on a certificate it was not named in. The edge reads the events instead, so nothing about a
 new project reaches this file.
 

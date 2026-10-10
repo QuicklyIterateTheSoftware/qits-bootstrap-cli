@@ -23,17 +23,16 @@ import java.util.regex.Pattern;
  * exists inside a project, so {@code dev.<domain>} is not a name and the certificate stops paying
  * for it.
  * <p>
- * <b>It is deliberately not editor machinery.</b> This knob says "put these names on the
- * certificate" and knows nothing about projects, editors or workspaces. It never did — the editor
- * was its reason and is not any more.
+ * <b>It is deliberately generic.</b> This knob says "put these names on the certificate" and knows
+ * nothing about projects or workspaces.
  * <p>
  * <b>THE PER-PROJECT DEBT THIS KNOB CARRIED IS RETIRED.</b> It used to hold one name per project,
- * {@code editor.<project>.<domain>}, because the edge derived no wildcard that could reach a
+ * {@code <app>.<project>.<domain>}, because the edge derived no wildcard that could reach a
  * project label and the two generated files are written before qits-projects has answered anything
  * — so a list read from the platform would have been empty on every cold boot and one boot stale on
  * every warm one. The cost was a platform where <b>a project created later was not on the
  * certificate until somebody added its name here and the edge re-ordered</b>, and until then its
- * editor host served TLS a browser refuses. That is over: the edge derives the per-project
+ * hosts served TLS a browser refuses. That is over: the edge derives the per-project
  * wildcards LIVE from qits-projects' ProjectCreated events, so a project reaches the certificate at
  * the edge's next order — which its own creation event triggers. No bootstrap step, no restart, and
  * nothing to write here. The knob remains for names outside the derived shapes, and it is empty on

@@ -252,10 +252,9 @@ public final class PlatformModel {
      * replay below, and nothing else.
      * <p>
      * <b>qits-workspace-editor-oci is the fourth, on 2026-09-06, and it is here for the same
-     * reason.</b> It publishes qits/workspace-editor, which qits-workspaces pins as the editor a
-     * workspace opens with — and a fresh registry that has never seen that image is a workspace
-     * whose editor cannot start. It runs as nobody's container either, so it is a repository, a
-     * history and a release replay and nothing more.
+     * reason.</b> It publishes qits/workspace-editor, which is kept built while its integration is
+     * rethought (qits-1150). It runs as nobody's container either, so it is a repository, a history
+     * and a release replay and nothing more.
      * <p>
      * <b>qits-registries joined on 2026-08-10</b>, and it is the byte plane's own library: one
      * Maven module per registry format, and since 2026-08-30 the content-addressed blob store as
@@ -941,23 +940,22 @@ public final class PlatformModel {
     }
 
     /**
-     * <b>The labels the EDGE publishes that no application name spells</b> — the four app names the
-     * edge itself derives its upstream host and audience patterns for, in code, keyed by the label
-     * rather than by the service behind it. This program renders none of those patterns any more
-     * ({@code qits.edge.apps.<app>.host-pattern} / {@code audience-pattern} are gone from the edge's
-     * configuration); it only needs the four labels for {@link #reservedSlugs}.
+     * <b>The labels the EDGE publishes that no application name spells</b> — the three app names
+     * the edge itself derives its upstream host and audience patterns for, in code, keyed by the
+     * label rather than by the service behind it. This program renders none of those patterns any
+     * more ({@code qits.edge.apps.<app>.host-pattern} / {@code audience-pattern} are gone from the
+     * edge's configuration); it only needs the three labels for {@link #reservedSlugs}.
      * <p>
-     * Two of them are derivable and two are not, which is the whole reason this list exists.
+     * Two of them are derivable and one is not, which is the whole reason this list exists.
      * {@code mirror} and {@code githost} are {@link #browserLabel}s of qits-platform-mirror and
-     * qits-githost; {@code registry} is qits-artifacts under a name a docker client understands, and
-     * {@code editor} is qits-workspaces under a name a person understands. Nothing derives those
-     * two from any application name, so they are written here once.
+     * qits-githost; {@code registry} is qits-artifacts under a name a docker client understands.
+     * Nothing derives that one from any application name, so it is written here once.
      * <p>
-     * All four are in {@link #reservedSlugs} for the same reason every other label is: a project may
+     * All three are in {@link #reservedSlugs} for the same reason every other label is: a project may
      * not take a name the edge already answers at.
      */
     public static final List<String> EDGE_APPS =
-            List.of("registry", "mirror", "githost", "editor");
+            List.of("registry", "mirror", "githost");
 
     /**
      * <b>The slugs no project may take</b> — {@code QITS_PROJECTS_RESERVED_SLUGS}, rendered into

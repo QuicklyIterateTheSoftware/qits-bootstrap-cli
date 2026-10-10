@@ -502,60 +502,33 @@ public class PipelinePhases {
         lines.add("           Names are relative to the apex — @ is the apex, and no wildcard "
                 + "matches it.");
         lines.add("           Every one carries " + publicIp + ", the address this run was given.");
-        lines.addAll(editorLines(domain, environment, projectSlugs, extraSans));
+        lines.addAll(projectLines(projectSlugs, extraSans));
         lines.addAll(tlsLines(domain, mode, email, certificate, environment));
         return lines;
     }
 
     /**
-     * <b>The project tier, beside the records: what serves it and what covers it.</b>
-     * <p>
-     * The two halves of a public name used to come apart here, and this block is what said so. They
-     * do not any more, which is the whole news. DNS was always fine by construction — the
-     * {@code *.*.*} record above answers {@code <app>.<project>.<env>.<domain>} for every project
-     * there will ever be — and the CERTIFICATE now is too: the edge derives
-     * {@code *.<project>.<domain>} and {@code *.<project>.<env>.<domain>} from qits-projects'
-     * ProjectCreated events, so a project's editor host is covered the moment the project exists.
-     * <b>A project created after this boot needs nothing done to it</b>: its own creation event
-     * triggers the edge's next order, and the name is on the certificate without a rerun of this
-     * program, a restart of the edge or a value written down anywhere.
-     * <p>
-     * <b>So the projects are printed as information and not as a checklist.</b> There is no covered
-     * / not-covered column left to print — the answer is "covered" for every row, by construction,
-     * and a table that always says one thing is a table that stops being read. What is worth an
-     * operator's eye is the count: the derived set grows with the projects and Let's Encrypt caps
-     * one certificate at 100 names, so the budget is stated here, where the projects are.
+     * <b>The project tier, beside the records: what covers it.</b> DNS is fine by construction —
+     * the {@code *.*.*} record above answers every project there will ever be — and so is the
+     * certificate: the edge derives {@code *.<project>.<domain>} and
+     * {@code *.<env>.<project>.<domain>} from qits-projects' ProjectCreated events. <b>A project
+     * created after this boot needs nothing done to it.</b> The projects are counted against the
+     * certificate's name budget rather than listed, because every one is covered.
      */
-    private static List<String> editorLines(String domain, String environment,
-            List<String> projectSlugs, List<String> extraSans) {
+    private static List<String> projectLines(List<String> projectSlugs, List<String> extraSans) {
         List<String> lines = new ArrayList<>();
-        lines.add("editor:    the web editor is one origin per project, editor.<env>.<project>."
-                + domain + " — an");
-        lines.add("           APPLICATION of that project like any other, and nothing about it is "
-                + "a bootstrap step.");
-        lines.add("           A project with no environments has it one label shorter, "
-                + "editor.<project>." + domain + ".");
-        lines.add("           The *.*.* record above answers the name, and the edge derives "
-                + "*.<project>." + domain);
-        lines.add("           and *.<env>.<project>." + domain);
-        lines.add("           as certificate names from qits-projects' own ProjectCreated events "
-                + "— so the editor host");
-        lines.add("           is covered by construction. A PROJECT CREATED LATER IS COVERED TOO: "
-                + "its creation event");
-        lines.add("           triggers the edge's next order, so the name reaches the certificate "
-                + "on its own — no");
-        lines.add("           rerun of this boot, no restart of the edge, and no name to write "
-                + "down.");
+        lines.add("projects:  the edge derives *.<project>.<domain> and *.<env>.<project>.<domain> "
+                + "as certificate");
+        lines.add("           names from qits-projects' own ProjectCreated events, so every "
+                + "project's hosts are");
+        lines.add("           covered by construction. A PROJECT CREATED LATER IS COVERED TOO: its "
+                + "creation event");
+        lines.add("           triggers the edge's next order — no rerun of this boot, no restart "
+                + "of the edge.");
         if (projectSlugs.isEmpty()) {
-            lines.add("           No project list was read, so this run cannot name them. Nothing "
+            lines.add("           No project list was read, so this run cannot count them. Nothing "
                     + "turns on that: the");
             lines.add("           certificate follows the events rather than this report.");
-        } else {
-            lines.add("           The projects this run saw, for information — each already has "
-                    + "its editor host:");
-            for (String slug : projectSlugs) {
-                lines.add("             editor." + environment + "." + slug + "." + domain);
-            }
         }
         lines.addAll(sanBudgetLines(projectSlugs, extraSans));
         return lines;
@@ -1512,18 +1485,18 @@ public class PipelinePhases {
      * <p>
      * An environment name and a project slug are read at the same place. The edge takes at most the
      * first three labels of a Host header, and it asks position 1 whether it is an ENVIRONMENT
-     * before it reads it as a PROJECT — so {@code editor.<project>.<env>.<domain>}, the web
-     * editor's origin, is decided at the same label {@code <app>.<env>.<domain>} spells its tier
-     * at. Bootstrapping an environment called after an existing project makes every one of that
+     * before it reads it as a PROJECT — so {@code <app>.<project>.<env>.<domain>}, an
+     * application of a project, is decided at the same label {@code <app>.<env>.<domain>} spells
+     * its tier at. Bootstrapping an environment called after an existing project makes every one of that
      * project's own names read as that tier's: the project label wins as an environment, the rest
-     * of the name is taken for an apex, and the editor is served out of the wrong tier at a domain
+     * of the name is taken for an apex, and its applications are served out of the wrong tier at a domain
      * that is not the domain.
      * <p>
      * <b>The other direction is closed at the source.</b> qits-projects is handed
      * {@code QITS_PROJECTS_RESERVED_SLUGS} and refuses every name on it, so a project cannot be
      * created into this collision. That list is wider than this phase's question: it carries the
-     * environment names AND every label the platform publishes ({@code registry}, {@code editor},
-     * {@code idp} and the rest — see {@link PlatformModel#reservedSlugs}), because a project slug
+     * environment names AND every label the platform publishes ({@code registry}, {@code idp}
+     * and the rest — see {@link PlatformModel#reservedSlugs}), because a project slug
      * shadows a SERVICE label at position 0 as readily as it collides with a tier at position 1.
      * This phase closes the one direction that service cannot see: an environment named after a
      * project that is already there. Nothing here reserves a service label, and nothing needs to —
@@ -1567,8 +1540,8 @@ public class PipelinePhases {
                         + "this boot asks for an environment of the same name. The edge reads a "
                         + "host positionally now — <app>[.<env>].<project>.<domain> — so neither "
                         + "name takes the other's place and nothing misroutes; what is left is a "
-                        + "pair of names no person can tell apart, editor." + name + "." + slug
-                        + ".<domain> being that project's own editor in an environment called "
+                        + "pair of names no person can tell apart, ci." + name + "." + slug
+                        + ".<domain> being that project's own ci in an environment called "
                         + "after it. This is the only moment either name can still be changed: "
                         + "bootstrap with --platform-env under another name, or rename the project "
                         + "first.");
@@ -2497,8 +2470,8 @@ public class PipelinePhases {
      *   qits/workspace         qits-projects    QITS_PROJECTS_REFINEMENT_IMAGE_VERSION
      *   qits/workspace-editor  qits-workspaces  QITS_EDITOR_IMAGE_VERSION
      * </pre>
-     * qits-workspaces pins {@code qits-workspace-daemon-protocol} and {@code
-     * qits-workspace-editor-image}; qits-projects pins the first for its refinement containers and
+     * qits-workspaces pins {@code qits-workspace-daemon-protocol} (its editor image pin went with
+     * its old editor integration, qits-1152); qits-projects pins the first for its refinement containers and
      * {@code qits-projects-daemon-protocol} for its agent containers. Each service reads a
      * {@code …_OVERRIDE} key now — a name nothing has ever written — and WARNs at boot if it finds
      * the old one set, so seeding these four gave a fresh platform four entries no consumer reads
@@ -3884,9 +3857,8 @@ public class PipelinePhases {
      * Every project slug the platform holds, or none.
      * <p>
      * <b>A courtesy read, and it must never end the run.</b> It exists so the closing report can
-     * name each project's editor host and say whether the certificate covers it; a report is not
-     * worth failing a boot for, so a listing that does not answer prints the shape instead of the
-     * table.
+     * count the projects against the certificate's name budget; a report is not worth failing a
+     * boot for, so a listing that does not answer prints the shape without the count.
      */
     private List<String> projectSlugs() {
         try {
@@ -3900,7 +3872,7 @@ public class PipelinePhases {
      * The slugs in a listing answer, in the order it gave them.
      * <p>
      * The SLUG and not the name: the slug is the public spelling of a project everywhere a name
-     * reaches DNS, and {@code editor.<slug>.<domain>} is one of those places. Kept static and pure
+     * reaches DNS, and {@code <app>.<slug>.<domain>} is one of those places. Kept static and pure
      * so the shape of qits-projects' listing is provable without one.
      */
     static List<String> projectSlugs(Http.Response listing) {
@@ -4193,8 +4165,8 @@ public class PipelinePhases {
             // and say which of them are actually in place.
             report.addAll(domainLines(apex, env, PublicIp.of(boot.config), Acme.mode(boot.config),
                     Acme.email(boot.config, apex), boot.state.certificate,
-                    // The editor hosts are per PROJECT, so the list comes from the platform. A
-                    // read that does not answer prints the shape instead of a table — the same
+                    // The name budget grows per PROJECT, so the list comes from the platform. A
+                    // read that does not answer prints the shape without the count — the same
                     // courtesy every optional read in this program keeps.
                     projectSlugs(),
                     ExtraSans.of(boot.config, apex)));

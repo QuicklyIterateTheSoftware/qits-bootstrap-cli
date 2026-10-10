@@ -541,7 +541,7 @@ class PipelinePhasesTest {
         assertThat(PipelinePhases.environmentNameRefusal("acme", List.of("qits", "acme")))
                 .get(org.assertj.core.api.InstanceOfAssertFactories.STRING)
                 .contains("acme")
-                .contains("editor.acme.acme.<domain>")
+                .contains("ci.acme.acme.<domain>")
                 .contains("--platform-env");
     }
 
@@ -565,25 +565,23 @@ class PipelinePhasesTest {
     // --- the project tier, beside the records ------------------------------------------------------
 
     /**
-     * <b>The editor is an application of its project, and both halves of its name are answered
-     * without an operator.</b> {@code editor.<env>.<project>.<domain>} is the {@code *.*.*} depth,
-     * so dns needs no step per project, and the edge derives the per-project wildcards from
-     * qits-projects' events, so the certificate needs none either.
+     * <b>Both halves of a project's names are answered without an operator.</b> The
+     * {@code *.*.*} record means dns needs no step per project, and the edge derives the
+     * per-project wildcards from qits-projects' events, so the certificate needs none either. The
+     * report says so, and no longer lists a host per project.
      */
     @Test
-    void everyProjectsEditorHostIsPrintedAtTheProjectTiersDepth() {
+    void theReportSaysProjectsAreCoveredByTheirEvents() {
         String report = domainReport(Acme.Mode.PRODUCTION, "production",
                 List.of("qits", "acme"), List.of());
 
-        assertThat(report).contains("editor.prod.qits.qits-dev.eu");
-        assertThat(report).contains("editor.prod.acme.qits-dev.eu");
-        assertThat(report).contains("ProjectCreated");
+        assertThat(report).contains("ProjectCreated").doesNotContain("editor");
     }
 
     /**
      * <b>The covered / NOT-covered column is gone, and its instruction with it.</b> Every project
      * is covered by construction now, so a per-project verdict would be a column that always says
-     * one thing — and the old advice, "add QITS_ACME_EXTRA_SANS=editor.<slug> and rerun", would
+     * one thing — and the old advice, "add QITS_ACME_EXTRA_SANS=<app>.<slug> and rerun", would
      * send a person to spend a SAN on a name the edge already derives.
      */
     @Test
@@ -593,7 +591,7 @@ class PipelinePhasesTest {
 
         assertThat(report).doesNotContain("NOT on the certificate")
                 .doesNotContain("on the certificate")
-                .doesNotContain("QITS_ACME_EXTRA_SANS=editor");
+                .doesNotContain("and rerun");
     }
 
     /**
@@ -621,8 +619,7 @@ class PipelinePhasesTest {
     void withNoProjectListTheReportSaysNothingTurnsOnIt() {
         String report = domainReport(Acme.Mode.PRODUCTION, "production");
 
-        assertThat(report).contains("editor.<env>.<project>.qits-dev.eu")
-                .contains("No project list was read")
+        assertThat(report).contains("No project list was read")
                 .contains("follows the events");
     }
 
