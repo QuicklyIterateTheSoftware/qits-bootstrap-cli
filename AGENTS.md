@@ -581,6 +581,13 @@ to a bus that answers this run unauthenticated, that the head-then-forward pair 
 way the query API's cursor is documented to, and that the column keeps up across the bus's own
 redeployment.
 
+**Every REST call to a qits service is a row in `src/test/.../contracts/BootstrapContract`**
+(qits-1149): the request, the provider state, the status and the JSON paths the code reads. A row
+whose provider's golden masters (a test-scoped pin in the pom) record its state is written into
+`pacts/qits-bootstrap-cli_<provider>.json`, which `release.yml`'s `contracts:` publishes; a row whose
+state is not recorded yet is skipped, naming the state it needs. A new call without its row ships
+unverified. `-Dgolden.update=true` rewrites the pact files after a deliberate change.
+
 The phases that shell docker are deliberately not unit-tested — a fake docker daemon would prove
 that the fake works. **A real bootstrap is their test**, and it is the gate a change to them has to
 pass. `unwrap` then `bootstrap` on a machine whose volumes stayed is the cheap form of it: the
