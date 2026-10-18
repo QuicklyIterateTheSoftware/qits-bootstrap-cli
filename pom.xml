@@ -55,11 +55,13 @@
         <!-- pact-jvm, test scope only. An external library, so it moves by hand; the same version
              as the providers' verifiers and every other consumer on the estate. -->
         <pact-jvm.version>4.6.21</pact-jvm.version>
-        <!-- Where the golden masters jars come from: the platform's hosted Maven. The default is
-             the public address; .qits-maven-settings.xml mirrors the `qits-maven` repository to
-             QITS_MAVEN_REPOSITORY_URL, which the QA step exports. NOT under `qits.`: the QA step
-             passes it as -D, surefire hands every -D to the test JVM, and Quarkus refuses a `qits.*`
-             key BootstrapConfig does not map (SRCFG00050) — every @QuarkusTest fails to start. -->
+        <!-- Where the golden masters jars come from: the platform's hosted Maven. The public
+             address by default; the profile `qits-maven-from-env` below takes
+             QITS_MAVEN_REPOSITORY_URL instead whenever it is set, which the cli archetype's QA step
+             does (and .qits-maven-settings.xml mirrors the `qits-maven` repository to it as well).
+             The name must never spell the archetype's dotted qits.* property: the step passes that
+             one as -D when a pom mentions it, surefire hands every -D to the test JVM, and Quarkus
+             refuses a qits.* key BootstrapConfig does not map (SRCFG00050). -->
         <qitsMavenRepositoryUrl>https://registry.qits.wohlben.eu/artifacts/maven/maven</qitsMavenRepositoryUrl>
 
         <compiler-plugin.version>3.15.0</compiler-plugin.version>
@@ -305,6 +307,18 @@
     </build>
 
     <profiles>
+        <profile>
+            <!-- The QA step's registry, from its environment rather than a -D. -->
+            <id>qits-maven-from-env</id>
+            <activation>
+                <property>
+                    <name>env.QITS_MAVEN_REPOSITORY_URL</name>
+                </property>
+            </activation>
+            <properties>
+                <qitsMavenRepositoryUrl>${env.QITS_MAVEN_REPOSITORY_URL}</qitsMavenRepositoryUrl>
+            </properties>
+        </profile>
         <profile>
             <!-- `./mvnw package -Dnative -DskipTests` builds the binary. Everything the native
                  build needs is here, so that command needs no flags of its own. It needs a
