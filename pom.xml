@@ -57,8 +57,10 @@
         <pact-jvm.version>4.6.21</pact-jvm.version>
         <!-- Where the golden masters jars come from: the platform's hosted Maven. The default is
              the public address; .qits-maven-settings.xml mirrors the `qits-maven` repository to
-             QITS_MAVEN_REPOSITORY_URL, which the QA step exports. -->
-        <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
+             QITS_MAVEN_REPOSITORY_URL, which the QA step exports. NOT under `qits.`: the QA step
+             passes it as -D, surefire hands every -D to the test JVM, and Quarkus refuses a `qits.*`
+             key BootstrapConfig does not map (SRCFG00050) — every @QuarkusTest fails to start. -->
+        <qitsMavenRepositoryUrl>https://registry.qits.wohlben.eu/artifacts/maven/maven</qitsMavenRepositoryUrl>
 
         <compiler-plugin.version>3.15.0</compiler-plugin.version>
         <surefire-plugin.version>3.5.4</surefire-plugin.version>
@@ -238,7 +240,7 @@
         <!-- The one repository beside Central: the platform's, for the golden masters jars. -->
         <repository>
             <id>qits-maven</id>
-            <url>${qits.maven.repository.url}</url>
+            <url>${qitsMavenRepositoryUrl}</url>
         </repository>
     </repositories>
 

@@ -53,7 +53,7 @@ release-request:
 
       env "JAVA_TOOL_OPTIONS=${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }${jacoco_options:+$jacoco_options }$pact_options" \
         ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
-        -Dqits.maven.repository.url="$QITS_MAVEN_REPOSITORY_URL"
+        -DqitsMavenRepositoryUrl="$QITS_MAVEN_REPOSITORY_URL"
 
 # A RELEASE SLOT, AND ONLY FOR THE PACTS. The archetype has none — this CLI ships no artifact — but
 # the platform publishes contract packages from the release slot's last step, so a repository with
