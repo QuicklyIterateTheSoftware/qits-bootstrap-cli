@@ -882,10 +882,8 @@ class ComposeTemplateTest {
                 // A push is a durable event now, not an HTTP call to two consumers.
                 .contains("QITS_EVENTS_URL: http://prod-qits-events:8080")
                 .doesNotContain("QITS_CI_INTAKE_URL")
-                // Without the resolver the name-addressed scheme 404s and every agent container
-                // starts with an empty workspace.
-                .contains("QITS_PROJECTS_NAME_RESOLVER_URL: "
-                        + "http://prod-qits-projects:8080/projects/api/projects")
+                // The git host keeps the name table itself now; no variable spells a resolver.
+                .doesNotContain("QITS_PROJECTS_")
                 .contains("QITS_REPOSITORIES_GIT_PUSH_TOKEN: \"local-dev\"")
                 .contains("QITS_REPOSITORIES_GIT_PROTECT_DEFAULT_BRANCH: \"true\"");
     }
@@ -1721,14 +1719,15 @@ class ComposeTemplateTest {
     }
 
     /**
-     * The two qits-projects dials were the GIT HOST's, and they left with it. The name resolver is
-     * what turns a name-addressed clone into a repo id; the backup intake is gone entirely, because
-     * a push is a durable event both consumers read off the bus.
+     * The two qits-projects dials that used to live on the GIT HOST are both gone. The name
+     * resolver used to turn a name-addressed clone into a repo id by asking qits-projects per
+     * request; the git host keeps that table itself now, filled by qits-projects' own pushes to
+     * {@code PUT /git/{repoId}/names}. The backup intake is gone entirely too, because a push is a
+     * durable event both consumers read off the bus.
      */
     @Test
-    void theGitHostDialsProjectsForNameResolutionAndNobodyPostsAPushAnyMore() {
-        assertThat(extras("qits-githost")).contains("env.QITS_PROJECTS_NAME_RESOLVER_URL="
-                + "http://prod-qits-projects:8080/projects/api/projects");
+    void theGitHostNoLongerDialsProjectsAndNobodyPostsAPushAnyMore() {
+        assertThat(extras("qits-githost")).doesNotContain("QITS_PROJECTS_");
         assertThat(extras("qits-artifacts")).doesNotContain("QITS_PROJECTS_");
         assertThat(extrasKeys()).allSatisfy(line -> assertThat(line)
                 .doesNotContain("QITS_PROJECTS_INTAKE_URL")
@@ -2265,16 +2264,16 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>The resolver is on BOTH sides</b>, unlike the guard: without it the name-addressed scheme
-     * 404s, and that is the address every clone url on this platform is. The value stops before
-     * {@code /{projectId}} — the path under it is qits-projects' own.
+     * <b>The resolver is gone from BOTH sides.</b> The git host keeps {@code (projectId, repoName)
+     * -> repository} in its own database now, filled by qits-projects' own pushes to
+     * {@code PUT /git/{repoId}/names} after every name change and a five-minute reconcile — neither
+     * the seed stack nor the deployment hands it a url to ask.
      */
     @Test
-    void theNameResolverIsWiredOnTheSeedAndOnTheDeployment() {
-        String url = "http://" + ENV + "-qits-projects:8080/projects/api/projects";
+    void theNameResolverIsGoneFromTheSeedAndFromTheDeployment() {
         assertThat(serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-githost"))
-                .contains("QITS_PROJECTS_NAME_RESOLVER_URL: " + url);
-        assertThat(extras("qits-githost")).contains("env.QITS_PROJECTS_NAME_RESOLVER_URL=" + url);
+                .doesNotContain("QITS_PROJECTS_");
+        assertThat(extras("qits-githost")).doesNotContain("QITS_PROJECTS_");
     }
 
     /**

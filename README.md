@@ -827,8 +827,11 @@ A repository on this platform has **two** identifiers and only one of them is pu
   holding a storage url is a defect, not a shortcut.
 - The **public identity** is `(projectId, repoName)`. `/git/<projectId>/<repo>.git` is the one clone
   and push url there is — for CI, the daemons, a deploy push and a person alike — and qits-projects'
-  alias table is its only authority. The git host resolves it per request through
-  `qits.projects.name-resolver-url` and remembers nothing. The first segment may be the project's
+  alias table is its only authority. The git host keeps its **own** `(projectId, repoName) ->
+  repository` index now rather than asking per request: qits-projects states each repository's
+  names there with `PUT /git/{repoId}/names` after every name change (create, adopt, rename, alias)
+  and reconciles the whole index every five minutes, so a clone url serves once qits-projects has
+  registered (adopted) the repository. The first segment may be the project's
   **slug**, which is the public spelling the closing report prints
   (`/git/qits/qits-ci-service.git`); the id is matched first and always works, so machine paths keep
   using it.

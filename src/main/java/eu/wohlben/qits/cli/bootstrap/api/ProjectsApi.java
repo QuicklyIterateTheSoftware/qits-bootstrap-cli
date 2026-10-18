@@ -79,9 +79,9 @@ public class ProjectsApi {
     }
 
     /**
-     * What a name resolves to, asked of the same route qits-githost asks on every name-addressed
-     * clone — so a 200 here is proof that the public url serves, rather than an inference from a
-     * row this run wrote.
+     * What a name resolves to, asked of this service's own alias table — the one qits-githost now
+     * keeps a copy of for itself, pushed by this service on every name change — so a 200 here is
+     * proof that the public url serves, rather than an inference from a row this run wrote.
      */
     public Http.Response repositoryByName(String projectId, String name, String bearer) {
         return http.get(base + "/projects/api/projects/" + projectId + "/repositories/by-name/"

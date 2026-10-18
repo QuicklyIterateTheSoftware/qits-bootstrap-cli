@@ -1057,9 +1057,10 @@ public class PipelinePhases {
     }
 
     /**
-     * <b>What this repository's name resolves to, or null.</b> Asked of the same route qits-githost
-     * asks on every name-addressed clone, so a value here is proof that the public url serves rather
-     * than an inference from a row this run wrote.
+     * <b>What this repository's name resolves to, or null.</b> Asked of qits-projects' own alias
+     * table — the one qits-githost now keeps a copy of for itself, pushed by qits-projects on every
+     * name change — so a value here is proof that the public url serves rather than an inference
+     * from a row this run wrote.
      * <p>
      * Every failure answers null — including a service that is not there. A name that cannot be
      * resolved is a name this run is about to register anyway.

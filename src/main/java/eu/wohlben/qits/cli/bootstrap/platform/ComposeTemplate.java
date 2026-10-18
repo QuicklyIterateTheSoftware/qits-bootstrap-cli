@@ -801,12 +801,14 @@ public final class ComposeTemplate {
                   # plane finally made a resolvable name: the value follows the wire alias, so the
                   # repository rename ahead of us moves this line with it.
                   QITS_EVENTS_URL: http://${DIAL_EVENTS}:8080
-                  # What turns /git/:projectId/:repoName into a repo id, and therefore what makes a
-                  # committed relative submodule url (../<name>.git) resolve natively. Unset, the
-                  # name-addressed scheme 404s and every project agent starts with an empty /workspace.
-                  # It answers from the seed on, because qits-projects is a seed service since
-                  # 2026-08-21 — which is what lets every push of this boot be name-addressed.
-                  QITS_PROJECTS_NAME_RESOLVER_URL: http://${ENV_NAME}-qits-projects:8080/projects/api/projects
+                  # WHAT TURNS /git/:projectId/:repoName INTO A REPOSITORY, AND NO VARIABLE SPELLS IT.
+                  # The git host keeps (projectId, repoName) -> repository in its own database now;
+                  # qits-projects states it there with PUT /git/{repoId}/names after every name
+                  # change (create, adopt, rename, alias) and reconciles the whole table every five
+                  # minutes, so there is nothing to configure on this side. The public url serves as
+                  # soon as qits-projects has registered (adopted) the repository — normally within
+                  # that same call — and qits-projects is a seed service since 2026-08-21, which is
+                  # what lets every push of this boot be name-addressed.
                   # NO qits.githost.storage-client HERE, AND THE ABSENCE IS THE STAGING.
                   # Set, that key closes /git/<repoId> to qits-projects' client and to nothing else —
                   # which is right for the platform this run leaves behind and impossible for the run
@@ -844,8 +846,10 @@ public final class ComposeTemplate {
                     delay: 5s
 
               # THE ALIAS TABLE'S OWNER, and the reason a repository on this platform has a name at
-              # all. /git/<projectId>/<repoName> is the one clone url there is, and qits-githost
-              # resolves it by asking this service — QITS_PROJECTS_NAME_RESOLVER_URL, one block up.
+              # all. /git/<projectId>/<repoName> is the one clone url there is, and qits-githost keeps
+              # that table in its own database now; this service is what STATES it there, with PUT
+              # /git/{repoId}/names after every name change and a five-minute reconcile behind it, so
+              # the public url serves once this service has registered (adopted) the repository.
               #
               # In the seed since 2026-08-21, and the ruling of that day is why. A storage id is an
               # opaque UUID now, so a name resolves through this service or nowhere: seeded, every
@@ -1500,9 +1504,11 @@ public final class ComposeTemplate {
             # run. At the bus's wire alias, which the plane move made the bare qits-events.
             qits.deployments.extras.qits-githost.env.QITS_EVENTS_URL=http://${DIAL_EVENTS}:8080
             #
-            # QITS_PROJECTS_NAME_RESOLVER_URL is what makes the public url serve at all: the git host
-            # resolves (projectId, repoName) to a storage id here, per request, and remembers none.
-            # The value stops before /{projectId} — the path under it is qits-projects' own.
+            # THE PUBLIC URL SERVES ONCE QITS-PROJECTS HAS REGISTERED (ADOPTED) THE REPOSITORY, and
+            # no key here makes it so any more: the git host keeps (projectId, repoName) ->
+            # repository in its own database, which qits-projects states with PUT
+            # /git/{repoId}/names after every name change (create, adopt, rename, alias) and
+            # reconciles whole every five minutes. Nothing is configured on this side for it.
             #
             # QITS_GITHOST_STORAGE_CLIENT IS THE GUARD, AND THIS IS WHERE IT ARRIVES.
             # It names the client whose SELF-ROLE (clients/<id>, minted by qits-idp into that
@@ -1520,7 +1526,6 @@ public final class ComposeTemplate {
             # (storage id, name) pair over and the run has been addressing
             # /git/<projectId>/<repo> since its first push. A rerun meets this guard at git-repos
             # and asks qits-projects instead of the store.
-            qits.deployments.extras.qits-githost.env.QITS_PROJECTS_NAME_RESOLVER_URL=http://${ENV_NAME}-qits-projects:8080/projects/api/projects
             qits.deployments.extras.qits-githost.env.QITS_GITHOST_STORAGE_CLIENT=${ENV_NAME}-qits-projects
             qits.deployments.extras.qits-githost.env.QITS_REPOSITORIES_GIT_PUSH_TOKEN=${PUSH_TOKEN}
             qits.deployments.extras.qits-githost.env.QITS_REPOSITORIES_GIT_PROTECT_DEFAULT_BRANCH=true
