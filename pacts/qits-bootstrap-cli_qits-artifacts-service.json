@@ -99,6 +99,218 @@
         "status": 201
       },
       "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-artifacts-service",
+            "operationId": "getImageManifest"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: images-publish",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: images-publish: getImageManifest",
+      "key": "704dfd9d",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "an image pushed under a tag",
+          "params": {
+            "name": "qits/contract-image",
+            "tag": "2100.1.0"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/v2/${name}/manifests/${tag}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/v2/qits/contract-image/manifests/2100.1.0"
+      },
+      "response": {
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-artifacts-service",
+            "operationId": "getImageManifest"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: release-<repository> (the packages held)",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: release-<repository> (the packages held): getImageManifest",
+      "key": "afd93071",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "an image pushed under a tag",
+          "params": {
+            "name": "qits/contract-image",
+            "tag": "2100.1.0"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/v2/${name}/manifests/${tag}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/v2/qits/contract-image/manifests/2100.1.0"
+      },
+      "response": {
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-artifacts-service",
+            "operationId": "headNpmTarball"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: release-<repository> (the packages held)",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: release-<repository> (the packages held): headNpmTarball",
+      "key": "7ec39262",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "an npm package published at a version",
+          "params": {
+            "package": "contract-package",
+            "tag": "main",
+            "tarball": "contract-package-2100.1.0.tgz",
+            "version": "2100.1.0"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/artifacts/npm/npm/${package}/-/${tarball}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "HEAD",
+        "path": "/artifacts/npm/npm/contract-package/-/contract-package-2100.1.0.tgz"
+      },
+      "response": {
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-artifacts-service",
+            "operationId": "getImageManifest"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: seed-images-publish",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: seed-images-publish: getImageManifest",
+      "key": "6bb1b388",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "no image with the given name",
+          "params": {
+            "name": "qits/contract-absent-image",
+            "tag": "2100.1.0"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/v2/${name}/manifests/${tag}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/v2/qits/contract-absent-image/manifests/2100.1.0"
+      },
+      "response": {
+        "status": 404
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-artifacts-service",
+            "operationId": "getImageManifest"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: workspaces-runner-localhost",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: workspaces-runner-localhost: getImageManifest",
+      "key": "e99fd62e",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "an image pushed under a tag",
+          "params": {
+            "name": "qits/contract-image",
+            "tag": "2100.1.0"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/v2/${name}/manifests/${tag}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/v2/qits/contract-image/manifests/2100.1.0"
+      },
+      "response": {
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
     }
   ],
   "metadata": {

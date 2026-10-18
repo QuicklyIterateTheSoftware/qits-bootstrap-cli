@@ -649,6 +649,95 @@
         "references": {
           "qits-call": {
             "app": "qits-ci-service",
+            "operationId": "createRunner"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: runner-localhost",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: runner-localhost: createRunner",
+      "key": "cefcb5c8",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "no runners"
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "name": "localhost",
+            "slots": 2
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "content-type": [
+            "application/json"
+          ]
+        },
+        "method": "POST",
+        "path": "/ci/api/runners"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "installScript": "curl -fsSL -H 'Authorization: Bearer qits_tok_stub-1' https://ci.qits.suite.example/ci/api/runners/install.sh | sudo env QITS_CI_RUNNER_URL='https://ci.qits.suite.example' QITS_CI_RUNNER_ID='00000000-0000-4000-8000-000000000001' QITS_CI_RUNNER_REGISTRATION_TOKEN='qits_tok_stub-1' QITS_CI_RUNNER_SLOTS='2' sh"
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                }
+              ]
+            },
+            "$.installScript": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 201
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-ci-service",
             "operationId": "listRunners"
           },
           "qits-trigger": {
