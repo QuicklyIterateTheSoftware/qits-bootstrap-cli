@@ -1,0 +1,113 @@
+{
+  "consumer": {
+    "name": "qits-bootstrap-cli"
+  },
+  "interactions": [
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-artifacts-service",
+            "operationId": "headDaemon"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: daemon-publish",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: daemon-publish: headDaemon",
+      "key": "6dbf7efd",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a daemon nothing has published",
+          "params": {
+            "daemon": "contract-daemon",
+            "repository": "daemons",
+            "version": "2026.3.0"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/artifacts/daemons/${daemon}/${version}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "HEAD",
+        "path": "/artifacts/daemons/contract-daemon/2026.3.0"
+      },
+      "response": {
+        "status": 404
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-artifacts-service",
+            "operationId": "putDaemon"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: daemon-publish",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: daemon-publish: putDaemon",
+      "key": "30b8eb32",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a daemon nothing has published",
+          "params": {
+            "daemon": "contract-daemon",
+            "repository": "daemons",
+            "version": "2026.3.0"
+          }
+        }
+      ],
+      "request": {
+        "body": {
+          "content": "Y29udHJhY3QtZGFlbW9uIDIwMjYuMy4wCg==",
+          "contentType": "application/octet-stream",
+          "contentTypeHint": "DEFAULT",
+          "encoded": "base64"
+        },
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/artifacts/daemons/${daemon}/${version}",
+            "type": "ProviderState"
+          }
+        },
+        "headers": {
+          "content-type": [
+            "application/octet-stream"
+          ]
+        },
+        "method": "PUT",
+        "path": "/artifacts/daemons/contract-daemon/2026.3.0"
+      },
+      "response": {
+        "status": 201
+      },
+      "type": "Synchronous/HTTP"
+    }
+  ],
+  "metadata": {
+    "pactSpecification": {
+      "version": "4.0"
+    },
+    "plugins": []
+  },
+  "provider": {
+    "name": "qits-artifacts-service"
+  }
+}

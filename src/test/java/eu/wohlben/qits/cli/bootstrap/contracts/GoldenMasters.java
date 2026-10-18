@@ -8,10 +8,12 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -90,8 +92,14 @@ public final class GoldenMasters {
         return indexUrl != null;
     }
 
-    /** One recorded (state, operation), as the index describes it. */
+    /**
+     * One recorded (state, operation), as the index describes it — the request the provider was
+     * sent as well as what it answered. {@code query} values and {@code body} may name a state
+     * param as {@code {name}}; {@code body} is null for a request without one, a JSON tree for a
+     * JSON request and a text node for any other.
+     */
     public record Operation(String state, String operationId, String method, String path,
+                            Map<String, List<String>> query, JsonNode body, String contentType,
                             int status, String file, Set<String> ids, Set<String> instants) {
     }
 
@@ -115,8 +123,12 @@ public final class GoldenMasters {
             for (JsonNode op : node.path("operations")) {
                 if (operationId.equals(op.path("operationId").asText())) {
                     JsonNode frozen = op.path("frozen");
+                    JsonNode body = op.get("body");
                     return Optional.of(new Operation(state, operationId,
                             op.path("method").asText(), op.path("path").asText(),
+                            query(op.path("query")),
+                            body == null || body.isNull() ? null : body,
+                            op.hasNonNull("contentType") ? op.get("contentType").asText() : null,
                             op.path("status").asInt(), op.path("file").asText(),
                             strings(frozen.path("ids")), strings(frozen.path("instants"))));
                 }
@@ -146,6 +158,21 @@ public final class GoldenMasters {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    /** A recorded query: each name with its values in order, a lone value as a list of one. */
+    private static Map<String, List<String>> query(JsonNode query) {
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        query.fields().forEachRemaining(e -> {
+            List<String> values = new ArrayList<>();
+            if (e.getValue().isArray()) {
+                e.getValue().forEach(v -> values.add(v.asText()));
+            } else {
+                values.add(e.getValue().asText());
+            }
+            out.put(e.getKey(), List.copyOf(values));
+        });
+        return out;
     }
 
     private static Set<String> strings(JsonNode array) {

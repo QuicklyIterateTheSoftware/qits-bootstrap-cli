@@ -18,15 +18,14 @@
         }
       },
       "description": "qits-bootstrap bootstrap: event feed, the head: listEvents",
-      "key": "64564c8c",
+      "key": "53a65398",
       "pending": false,
       "providerStates": [
         {
-          "name": "a few recent events",
+          "name": "the newest event",
           "params": {
-            "deploymentEventId": "00000000-0000-4000-8000-000000000001",
-            "requestEventId": "00000000-0000-4000-8000-000000000002",
-            "ticketEventId": "00000000-0000-4000-8000-000000000003"
+            "firstEventId": "00000000-0000-4000-8000-000000000001",
+            "secondEventId": "00000000-0000-4000-8000-000000000002"
           }
         }
       ],
@@ -47,7 +46,7 @@
           "content": {
             "events": [
               {
-                "id": "00000000-0000-4000-8000-000000000001",
+                "id": "00000000-0000-4000-8000-000000000002",
                 "occurredAt": "2026-01-01T00:00:00Z"
               }
             ]
@@ -86,139 +85,6 @@
                 {
                   "match": "regex",
                   "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
-                }
-              ]
-            }
-          },
-          "header": {
-            "Content-Type": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "application/json.*"
-                }
-              ]
-            }
-          }
-        },
-        "status": 200
-      },
-      "type": "Synchronous/HTTP"
-    },
-    {
-      "comments": {
-        "references": {
-          "qits-call": {
-            "app": "qits-events-service",
-            "operationId": "listEvents"
-          },
-          "qits-trigger": {
-            "app": "qits-bootstrap-cli",
-            "command": "qits-bootstrap bootstrap: event feed",
-            "kind": "command"
-          }
-        }
-      },
-      "description": "qits-bootstrap bootstrap: event feed: listEvents",
-      "key": "10c5ec0b",
-      "pending": false,
-      "providerStates": [
-        {
-          "name": "a few recent events",
-          "params": {
-            "deploymentEventId": "00000000-0000-4000-8000-000000000001",
-            "requestEventId": "00000000-0000-4000-8000-000000000002",
-            "ticketEventId": "00000000-0000-4000-8000-000000000003"
-          }
-        }
-      ],
-      "request": {
-        "method": "GET",
-        "path": "/events/api/events",
-        "query": {
-          "cursor": [
-            "2026-01-01T00:00:00Z,00000000-0000-4000-8000-000000000003"
-          ],
-          "limit": [
-            "50"
-          ],
-          "order": [
-            "asc"
-          ]
-        }
-      },
-      "response": {
-        "body": {
-          "content": {
-            "events": [
-              {
-                "description": "qits-projects is deployed",
-                "id": "00000000-0000-4000-8000-000000000001",
-                "name": "DeploymentActive",
-                "occurredAt": "2026-01-01T00:00:00Z",
-                "payload": "{\"application\":\"qits-projects\"}"
-              }
-            ]
-          },
-          "contentType": "application/json",
-          "encoded": false
-        },
-        "headers": {
-          "Content-Type": [
-            "application/json"
-          ]
-        },
-        "matchingRules": {
-          "body": {
-            "$.events": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type",
-                  "min": 1
-                }
-              ]
-            },
-            "$.events[*].description": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.events[*].id": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-                }
-              ]
-            },
-            "$.events[*].name": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
-                }
-              ]
-            },
-            "$.events[*].occurredAt": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "regex",
-                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
-                }
-              ]
-            },
-            "$.events[*].payload": {
-              "combine": "AND",
-              "matchers": [
-                {
-                  "match": "type"
                 }
               ]
             }

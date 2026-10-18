@@ -1,0 +1,494 @@
+{
+  "consumer": {
+    "name": "qits-bootstrap-cli"
+  },
+  "interactions": [
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-deployments-service",
+            "operationId": "listDeployments"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: deploy-<application>, seed-deploy-<application>",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: deploy-<application>, seed-deploy-<application>: listDeployments",
+      "key": "78d059fa",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "an application deployed in an environment",
+          "params": {
+            "applicationName": "contract-app-00000001",
+            "environmentId": "00000000-0000-4000-8000-000000000001",
+            "repoId": "contract-app-00000001",
+            "version": "2026.101.120000"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "query": {
+            "environmentId": {
+              "dataType": "RAW",
+              "expression": "${environmentId}",
+              "type": "ProviderState"
+            }
+          }
+        },
+        "method": "GET",
+        "path": "/deployments/api/deployments",
+        "query": {
+          "environmentId": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      },
+      "response": {
+        "body": {
+          "content": {
+            "deployments": [
+              {
+                "applicationName": "contract-app-00000001",
+                "containerName": "contract-00000001-contract-app-00000001",
+                "detail": null,
+                "id": "00000000-0000-4000-8000-000000000002",
+                "status": "ACTIVE",
+                "version": "2026.101.120000"
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.deployments": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.deployments[*].applicationName": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.deployments[*].containerName": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.deployments[*].id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                }
+              ]
+            },
+            "$.deployments[*].status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.deployments[*].version": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-deployments-service",
+            "operationId": "createEnvironment"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: environment",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: environment: createEnvironment",
+      "key": "dea3d46b",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "no environment of the name",
+          "params": {
+            "environmentName": "contract-00000001",
+            "network": "contract-00000001-net"
+          }
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "name": "contract-00000001",
+            "network": "contract-00000001-net",
+            "platform": true
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "content-type": [
+            "application/json"
+          ]
+        },
+        "method": "POST",
+        "path": "/deployments/api/environments"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "environment": {
+              "id": "00000000-0000-4000-8000-000000000001"
+            }
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.environment.id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 201
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-deployments-service",
+            "operationId": "listEnvironments"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: environment",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: environment: listEnvironments",
+      "key": "2f7044af",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "the platform environment exists",
+          "params": {
+            "environmentId": "00000000-0000-4000-8000-000000000001",
+            "environmentName": "contract-00000001"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/deployments/api/environments"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "environments": [
+              {
+                "id": "00000000-0000-4000-8000-000000000001",
+                "name": "contract-00000001",
+                "platform": true
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.environments": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.environments[*].id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                }
+              ]
+            },
+            "$.environments[*].name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.environments[*].platform": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-deployments-service",
+            "operationId": "updateEnvironment"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: environment",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: environment: updateEnvironment",
+      "key": "a6f7b575",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "the platform environment exists",
+          "params": {
+            "environmentId": "00000000-0000-4000-8000-000000000001",
+            "environmentName": "contract-00000001"
+          }
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "platform": true
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/deployments/api/environments/${environmentId}",
+            "type": "ProviderState"
+          }
+        },
+        "headers": {
+          "content-type": [
+            "application/json"
+          ]
+        },
+        "method": "PATCH",
+        "path": "/deployments/api/environments/00000000-0000-4000-8000-000000000001"
+      },
+      "response": {
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-deployments-service",
+            "operationId": "softwareReleased"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: seed-deploy-<application>",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: seed-deploy-<application>: softwareReleased",
+      "key": "998ef797",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a released version of a deployable repository",
+          "params": {
+            "application": "contract-app-00000001",
+            "projectId": "contract-project-00000001",
+            "repoId": "00000000-0000-4000-8000-000000000001",
+            "repoName": "contract-app-00000001",
+            "version": "2026.101.120000"
+          }
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "application": "contract-app-00000001",
+            "projectId": "contract-project-00000001",
+            "repoId": "00000000-0000-4000-8000-000000000001",
+            "repoName": "contract-app-00000001",
+            "version": "2026.101.120000"
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "content-type": [
+            "application/json"
+          ]
+        },
+        "method": "POST",
+        "path": "/deployments/api/events/software-released"
+      },
+      "response": {
+        "status": 202
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-deployments-service",
+            "operationId": "softwareReleased"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: seed-health",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: seed-health: softwareReleased",
+      "key": "bc9462da",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "the machine gate is on"
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {},
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Authorization": [
+            "Bearer qits-bootstrap-auth-plane-probe"
+          ],
+          "content-type": [
+            "application/json"
+          ]
+        },
+        "method": "POST",
+        "path": "/deployments/api/events/software-released"
+      },
+      "response": {
+        "status": 401
+      },
+      "type": "Synchronous/HTTP"
+    }
+  ],
+  "metadata": {
+    "pactSpecification": {
+      "version": "4.0"
+    },
+    "plugins": []
+  },
+  "provider": {
+    "name": "qits-deployments-service"
+  }
+}

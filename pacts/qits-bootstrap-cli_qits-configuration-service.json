@@ -1,0 +1,76 @@
+{
+  "consumer": {
+    "name": "qits-bootstrap-cli"
+  },
+  "interactions": [
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-configuration-service",
+            "operationId": "importProperties"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: configuration-import",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: configuration-import: importProperties",
+      "key": "ac42758f",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "an application with no configuration",
+          "params": {
+            "application": "golden-imported-app",
+            "env": "test"
+          }
+        }
+      ],
+      "request": {
+        "body": {
+          "content": "# golden-master import\nqits.platform.deployments.extras.golden-imported-app.env.QITS_GREETING=hello from the file\n",
+          "contentType": "text/plain",
+          "contentTypeHint": "DEFAULT",
+          "encoded": false
+        },
+        "generators": {
+          "query": {
+            "env": {
+              "dataType": "RAW",
+              "expression": "${env}",
+              "type": "ProviderState"
+            }
+          }
+        },
+        "headers": {
+          "content-type": [
+            "text/plain"
+          ]
+        },
+        "method": "POST",
+        "path": "/configuration/api/import",
+        "query": {
+          "env": [
+            "test"
+          ]
+        }
+      },
+      "response": {
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    }
+  ],
+  "metadata": {
+    "pactSpecification": {
+      "version": "4.0"
+    },
+    "plugins": []
+  },
+  "provider": {
+    "name": "qits-configuration-service"
+  }
+}

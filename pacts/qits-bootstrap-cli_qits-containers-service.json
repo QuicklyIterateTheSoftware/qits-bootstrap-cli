@@ -1,0 +1,62 @@
+{
+  "consumer": {
+    "name": "qits-bootstrap-cli"
+  },
+  "interactions": [
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-containers-service",
+            "operationId": "listOwnerContainers"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: seed-health",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: seed-health: listOwnerContainers",
+      "key": "2fafe6e6",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "the machine gate is on",
+          "params": {
+            "owner": "dev-qits-ci"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/containers/api/containers/${owner}",
+            "type": "ProviderState"
+          }
+        },
+        "headers": {
+          "Authorization": [
+            "Bearer qits-bootstrap-auth-plane-probe"
+          ]
+        },
+        "method": "GET",
+        "path": "/containers/api/containers/dev-qits-ci"
+      },
+      "response": {
+        "status": 401
+      },
+      "type": "Synchronous/HTTP"
+    }
+  ],
+  "metadata": {
+    "pactSpecification": {
+      "version": "4.0"
+    },
+    "plugins": []
+  },
+  "provider": {
+    "name": "qits-containers-service"
+  }
+}

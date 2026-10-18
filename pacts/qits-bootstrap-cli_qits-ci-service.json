@@ -1,0 +1,893 @@
+{
+  "consumer": {
+    "name": "qits-bootstrap-cli"
+  },
+  "interactions": [
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-ci-service",
+            "operationId": "getRun"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: release-<repository>, deploy-<application> (the log relay)",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: release-<repository>, deploy-<application> (the log relay): getRun",
+      "key": "427e067b",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a running run",
+          "params": {
+            "authorization": "Bearer qits_tok_contract-ci-run",
+            "repositoryId": "00000000-0000-4000-8000-000000000001",
+            "runId": "00000000-0000-4000-8000-000000000002"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/ci/api/runs/${runId}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/ci/api/runs/00000000-0000-4000-8000-000000000002"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "live": {
+              "output": "[INFO] Building contract-service\n",
+              "stepIndex": 1
+            },
+            "status": "RUNNING",
+            "steps": [
+              {
+                "output": "Cloning into 'contract-service'...\n",
+                "stepIndex": 0
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.live.output": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.live.stepIndex": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "number"
+                }
+              ]
+            },
+            "$.status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.steps": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.steps[*].output": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.steps[*].stepIndex": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "number"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-ci-service",
+            "operationId": "getRun"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: release-<repository>, deploy-<application> (the wait)",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: release-<repository>, deploy-<application> (the wait): getRun",
+      "key": "804ac5fb",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a failed run that retries another",
+          "params": {
+            "repositoryId": "00000000-0000-4000-8000-000000000001",
+            "retryOfRunId": "00000000-0000-4000-8000-000000000002",
+            "runId": "00000000-0000-4000-8000-000000000003"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/ci/api/runs/${runId}",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/ci/api/runs/00000000-0000-4000-8000-000000000003"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "status": "FAILED",
+            "steps": [
+              {
+                "output": "Cloning into 'contract-service'...\n",
+                "status": "SUCCESS",
+                "stepIndex": 0
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.steps": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.steps[*].output": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.steps[*].status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.steps[*].stepIndex": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "number"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-ci-service",
+            "operationId": "triggerEvent"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: release-<repository>, deploy-<application>",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: release-<repository>, deploy-<application>: triggerEvent",
+      "key": "ba33dfe8",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a repository whose release recipe selects SCMRelease",
+          "params": {
+            "commitSha": "6b93a3149f666c1bc4eaba652b4b264f46a80d8f",
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "repositoryId": "00000000-0000-4000-8000-000000000002",
+            "repositoryName": "contract-service",
+            "version": "2026.1001.1"
+          }
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "name": "SCMRelease",
+            "payload": {
+              "branch": "2026.1001.1",
+              "commitSha": "6b93a3149f666c1bc4eaba652b4b264f46a80d8f",
+              "projectId": "00000000-0000-4000-8000-000000000001",
+              "repository": "00000000-0000-4000-8000-000000000002",
+              "repositoryName": "contract-service",
+              "version": "2026.1001.1"
+            }
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "content-type": [
+            "application/json"
+          ]
+        },
+        "method": "POST",
+        "path": "/ci/api/events/trigger"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "runIds": [
+              "00000000-0000-4000-8000-000000000004"
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.runIds": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.runIds[*]": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-ci-service",
+            "operationId": "listRuns"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: release-<repository>",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: release-<repository>: listRuns",
+      "key": "91db981e",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a green release run",
+          "params": {
+            "commitSha": "0000000000000000000000000000000000000007",
+            "repositoryId": "00000000-0000-4000-8000-000000000001",
+            "runId": "00000000-0000-4000-8000-000000000002"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "query": {
+            "repositoryId": {
+              "dataType": "RAW",
+              "expression": "${repositoryId}",
+              "type": "ProviderState"
+            }
+          }
+        },
+        "method": "GET",
+        "path": "/ci/api/runs",
+        "query": {
+          "limit": [
+            "20"
+          ],
+          "repositoryId": [
+            "00000000-0000-4000-8000-000000000001"
+          ]
+        }
+      },
+      "response": {
+        "body": {
+          "content": {
+            "runs": [
+              {
+                "commitSha": "0000000000000000000000000000000000000007",
+                "configPath": ".config/qits/release.yml",
+                "status": "SUCCESS",
+                "triggerType": "EVENT"
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.runs": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.runs[*].commitSha": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.runs[*].configPath": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.runs[*].status": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.runs[*].triggerType": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-ci-service",
+            "operationId": "greenlightRunner"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: runner-connected",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: runner-connected: greenlightRunner",
+      "key": "d67fb2b0",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a quarantined runner",
+          "params": {
+            "runnerId": "00000000-0000-4000-8000-000000000001"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/ci/api/runners/${runnerId}/greenlight",
+            "type": "ProviderState"
+          }
+        },
+        "method": "POST",
+        "path": "/ci/api/runners/00000000-0000-4000-8000-000000000001/greenlight"
+      },
+      "response": {
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-ci-service",
+            "operationId": "listRunners"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: runner-connected",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: runner-connected: listRunners",
+      "key": "2c0b1345",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a connected runner",
+          "params": {
+            "runnerId": "00000000-0000-4000-8000-000000000001"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/ci/api/runners"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "runners": [
+              {
+                "connected": true,
+                "id": "00000000-0000-4000-8000-000000000001",
+                "name": "localhost",
+                "quarantineReason": null,
+                "quarantined": false,
+                "registered": true
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.runners": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.runners[*].connected": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.runners[*].id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                }
+              ]
+            },
+            "$.runners[*].name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.runners[*].quarantined": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.runners[*].registered": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-ci-service",
+            "operationId": "listRunners"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: runner-localhost",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: runner-localhost: listRunners",
+      "key": "70a28dc0",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "an unregistered runner",
+          "params": {
+            "authorization": "Bearer qits_tok_contract-registration",
+            "runnerId": "00000000-0000-4000-8000-000000000001"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/ci/api/runners"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "runners": [
+              {
+                "connected": false,
+                "id": "00000000-0000-4000-8000-000000000001",
+                "lastSeenAt": null,
+                "name": "localhost",
+                "registered": false
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.runners": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.runners[*].connected": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.runners[*].id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                }
+              ]
+            },
+            "$.runners[*].name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.runners[*].registered": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-ci-service",
+            "operationId": "rotateRegistrationToken"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: runner-localhost",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: runner-localhost: rotateRegistrationToken",
+      "key": "87a82060",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "an unregistered runner",
+          "params": {
+            "authorization": "Bearer qits_tok_contract-registration",
+            "runnerId": "00000000-0000-4000-8000-000000000001"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/ci/api/runners/${runnerId}/registration-token",
+            "type": "ProviderState"
+          }
+        },
+        "method": "POST",
+        "path": "/ci/api/runners/00000000-0000-4000-8000-000000000001/registration-token"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "installScript": "curl -fsSL -H 'Authorization: Bearer qits_tok_stub-1' https://ci.qits.suite.example/ci/api/runners/install.sh | sudo env QITS_CI_RUNNER_URL='https://ci.qits.suite.example' QITS_CI_RUNNER_ID='00000000-0000-4000-8000-000000000001' QITS_CI_RUNNER_REGISTRATION_TOKEN='qits_tok_stub-1' QITS_CI_RUNNER_SLOTS='1' sh"
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.installScript": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-ci-service",
+            "operationId": "triggerEvent"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: seed-health",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: seed-health: triggerEvent",
+      "key": "2f69bac8",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "the machine gate is on",
+          "params": {
+            "authorization": "Bearer not-a-token-any-idp-issued"
+          }
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {},
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Authorization": [
+            "Bearer qits-bootstrap-auth-plane-probe"
+          ],
+          "content-type": [
+            "application/json"
+          ]
+        },
+        "method": "POST",
+        "path": "/ci/api/events/trigger"
+      },
+      "response": {
+        "status": 401
+      },
+      "type": "Synchronous/HTTP"
+    }
+  ],
+  "metadata": {
+    "pactSpecification": {
+      "version": "4.0"
+    },
+    "plugins": []
+  },
+  "provider": {
+    "name": "qits-ci-service"
+  }
+}

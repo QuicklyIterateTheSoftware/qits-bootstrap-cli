@@ -45,7 +45,7 @@ public class PipelinePhases {
      * the idp can mint, which is a different question. This asks only whether the service can reach
      * its issuer well enough to REFUSE something — which is the step that initializes the tenant.
      */
-    private static final Map<String, String> PROBE_BEARER =
+    static final Map<String, String> PROBE_BEARER =
             Map.of("Authorization", "Bearer qits-bootstrap-auth-plane-probe");
 
     /**

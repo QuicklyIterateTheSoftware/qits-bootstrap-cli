@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -17,7 +18,16 @@ public final class PhaseReads {
     /** The name the runner phases give the runner they own. */
     public static final String LOCALHOST_RUNNER = PipelinePhases.LOCALHOST_RUNNER;
 
+    /** The bearer {@code seed-health}'s auth-plane probes present: one no idp issued. */
+    public static final Map<String, String> PROBE_BEARER = PipelinePhases.PROBE_BEARER;
+
     private PhaseReads() {
+    }
+
+    /** The release replays' and deploys' {@code SCMRelease}, as the phase composes it for ci. */
+    public static String releaseEvent(String projectId, String repositoryId, String repoName,
+                                      String version, String commitSha) {
+        return PipelinePhases.releaseEvent(projectId, repositoryId, repoName, version, commitSha);
     }
 
     /** {@code qits-project}: the {@code qits} project's id in a listing. */

@@ -91,6 +91,32 @@ class BootstrapPactFileTest {
         }
     }
 
+    /**
+     * {@code release.yml}'s {@code contracts.pacts} names exactly the providers with a pact file: a
+     * file it leaves out is never published, and a key with no file fails the release postlude.
+     */
+    @Test
+    void releaseYmlPublishesExactlyThePactFiles() throws IOException {
+        Set<String> declared = new TreeSet<>();
+        boolean inPacts = false;
+        for (String line : Files.readAllLines(repositoryRoot().resolve(".config/qits/release.yml"))) {
+            if (line.equals("  pacts:")) {
+                inPacts = true;
+            } else if (inPacts && line.startsWith("    ") && line.contains(":")) {
+                declared.add(line.strip().substring(0, line.strip().indexOf(':')));
+            } else if (inPacts && !line.isBlank()) {
+                inPacts = false;
+            }
+        }
+        Set<String> withRows = new TreeSet<>();
+        for (BootstrapContract.Provider provider : BootstrapContract.PROVIDERS) {
+            if (!BootstrapContract.recorded(provider).isEmpty()) {
+                withRows.add(provider.repository());
+            }
+        }
+        assertEquals(withRows, declared, "release.yml contracts.pacts");
+    }
+
     /** Both references on every interaction, as the platform reads them. */
     @Test
     void everyInteractionCarriesBothReferences() throws IOException {
@@ -122,15 +148,18 @@ class BootstrapPactFileTest {
         }
     }
 
-    /** Every row's description and state are unique, pending rows included. */
+    /**
+     * Every row's description and state are unique, pending rows included, and every row says what
+     * its provider must record — a live row goes pending the day its recording moves.
+     */
     @Test
     void everyRowIsDistinct() {
         Set<String> unique = new HashSet<>();
         for (BootstrapContract.Case row : BootstrapContract.CASES) {
             assertTrue(unique.add(row.provider().repository() + "\u0000" + row.description()
                     + "\u0000" + row.state()), "repeated row: " + row.description());
-            assertTrue(row.recorded() || (row.needs() != null && !row.needs().isBlank()),
-                    row.description() + ": a pending row says what its provider must record");
+            assertTrue(row.needs() != null && !row.needs().isBlank(),
+                    row.description() + ": a row says what its provider must record");
         }
     }
 

@@ -583,10 +583,14 @@ redeployment.
 
 **Every REST call to a qits service is a row in `src/test/.../contracts/BootstrapContract`**
 (qits-1149): the request, the provider state, the status and the JSON paths the code reads. A row
-whose provider's golden masters (a test-scoped pin in the pom) record its state is written into
-`pacts/qits-bootstrap-cli_<provider>.json`, which `release.yml`'s `contracts:` publishes; a row whose
-state is not recorded yet is skipped, naming the state it needs. A new call without its row ships
-unverified. `-Dgolden.update=true` rewrites the pact files after a deliberate change.
+whose provider's golden masters (a test-scoped pin in the pom) record its state WITH THE SAME
+REQUEST — method, path, query and body, a pact matches a body exactly — is written into
+`pacts/qits-bootstrap-cli_<provider>.json`, which `release.yml`'s `contracts:` publishes; any other
+row is skipped, naming the state it needs and how the recorded request differs. A new call without
+its row fails `BootstrapCallGuardTest`, which runs every public method of the API classes and
+`TokenClient` against a recording server and reads the phases for direct `http.*` calls; health
+probes and the rest are named exclusions there. `-Dgolden.update=true` rewrites the pact files
+after a deliberate change.
 
 The phases that shell docker are deliberately not unit-tested — a fake docker daemon would prove
 that the fake works. **A real bootstrap is their test**, and it is the gate a change to them has to

@@ -11,6 +11,14 @@ contracts:
   pacts:
     qits-projects-service: { packages: [maven] }
     qits-events-service: { packages: [maven] }
+    qits-ci-service: { packages: [maven] }
+    qits-deployments-service: { packages: [maven] }
+    qits-idp-service: { packages: [maven] }
+    qits-githost-service: { packages: [maven] }
+    qits-artifacts-service: { packages: [maven] }
+    qits-configuration-service: { packages: [maven] }
+    qits-workspaces-service: { packages: [maven] }
+    qits-containers-service: { packages: [maven] }
 
 # THE cli ARCHETYPE'S QA STEP, WITH THE PLATFORM REGISTRY ADDED. Declaring the slot replaces the
 # archetype's whole, so this is its step byte for byte plus one export: the pact tests read the
