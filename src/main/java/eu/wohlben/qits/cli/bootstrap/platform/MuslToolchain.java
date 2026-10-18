@@ -23,6 +23,12 @@ import java.util.regex.Pattern;
  * vhost, and no edge exists that early in a boot. Measured on 2026-09-05:
  * {@code dial tcp [::1]:8080: connection refused}.
  * <p>
+ * <b>The host in front of the coordinate is not read.</b> Since qits-1402 the defaults spell the
+ * public edge name, {@code https://registry.qits.${QITS_DOMAIN}/artifacts/maven/maven/…}, and the
+ * older {@code http://registry.dev.localhost:8080/…} is still met while the fleet releases; both
+ * are cut at {@link #MAVEN_ROOT}, so the scheme, the host and an unexpanded build-arg in it make
+ * no difference to the coordinate. The seed build overrides the ARG either way.
+ * <p>
  * <b>The pins are the consuming repository's, and they are read rather than copied.</b> The
  * Dockerfile records each tarball's size and sha256 beside its upstream address, because those
  * facts belong to the image that is built from them — a CLI holding its own copy would be a second

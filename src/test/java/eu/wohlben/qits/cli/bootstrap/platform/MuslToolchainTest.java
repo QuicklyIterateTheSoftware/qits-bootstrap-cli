@@ -63,6 +63,31 @@ class MuslToolchainTest {
     }
 
     /**
+     * <b>The qits-1402 spelling yields the same coordinates.</b> The defaults moved to the public
+     * edge name with the build-arg unexpanded, over https; the store path is cut at the maven root,
+     * so only the host changed and nothing this reads did. The old spelling is still met while the
+     * fleet releases, which is what {@link #DOCKERFILE} keeps covering.
+     */
+    @Test
+    void theEdgeNameSpellingYieldsTheSameCoordinates() {
+        String edge = DOCKERFILE
+                .replace("ARG MUSL_URL=", "ARG QITS_DOMAIN=wohlben.eu\nARG MUSL_URL=")
+                .replace("http://registry.dev.localhost:8080/", "https://registry.qits.${QITS_DOMAIN}/");
+        assertThat(edge).contains("ARG ZLIB_URL=https://registry.qits.${QITS_DOMAIN}/artifacts/maven/maven/");
+
+        List<MuslToolchain.Tarball> tarballs = MuslToolchain.read(edge);
+
+        assertThat(tarballs).extracting(MuslToolchain.Tarball::arg)
+                .containsExactly("MUSL_URL", "ZLIB_URL");
+        assertThat(tarballs).extracting(MuslToolchain.Tarball::storePath).containsExactlyElementsOf(
+                MuslToolchain.read(DOCKERFILE).stream().map(MuslToolchain.Tarball::storePath).toList());
+        assertThat(tarballs.get(0).storePath()).isEqualTo("eu/wohlben/qits/toolchain/"
+                + "x86_64-linux-musl-native/11.2.1/x86_64-linux-musl-native-11.2.1.tgz");
+        assertThat(tarballs.get(1).groupId()).isEqualTo("eu.wohlben.qits.toolchain");
+        assertThat(tarballs.get(1).extension()).isEqualTo("tar.gz");
+    }
+
+    /**
      * <b>The pins belong to the repository that consumes the bytes</b>, so they are read rather
      * than copied into this program. Verified once against three sources on 2026-09-05: the
      * Dockerfile's own record, the live platform's store, and a fresh download from upstream — all

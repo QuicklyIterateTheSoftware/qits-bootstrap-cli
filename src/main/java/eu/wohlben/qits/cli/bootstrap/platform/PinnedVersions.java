@@ -500,9 +500,11 @@ public final class PinnedVersions {
      * <b>Only CalVer counts.</b> {@code qits/workspace:latest}, {@code :native}, {@code :local},
      * {@code :<version>} and an unresolved {@code ${…}} are not versions this boot can replay, and
      * a pin whose ARG resolves to {@code latest} is a build that follows the newest tag by design.
-     * A registry host in front of the repository is stripped: {@code registry.dev.localhost:8080/}
-     * is where a running platform serves the same image, and this run's own address is a different
-     * string for the same coordinate.
+     * A registry host in front of the repository is stripped: {@code registry.qits.${QITS_DOMAIN}/}
+     * (and before qits-1402 {@code registry.dev.localhost:8080/}) is where a running platform
+     * serves the same image, and this run's own address is a different string for the same
+     * coordinate. The global {@code ARG QITS_DOMAIN} above it resolves like any other ARG, and an
+     * unresolved one still leaves a dotted first segment, so the host goes either way.
      */
     static Map<String, String> imagePinsIn(String dockerfile) {
         Map<String, String> pins = new LinkedHashMap<>();
