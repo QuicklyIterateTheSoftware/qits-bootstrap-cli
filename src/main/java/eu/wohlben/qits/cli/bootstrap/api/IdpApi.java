@@ -111,7 +111,7 @@ public class IdpApi {
      * else in the platform waits on a person registering.
      */
     public Http.Response mintRegisterToken(String clientId, String secret) {
-        return http.postJson(address + "/api/register-tokens", "{}",
+        return http.post(address + "/api/register-tokens",
                 Map.of("Authorization", Http.basic(clientId, secret)));
     }
 }

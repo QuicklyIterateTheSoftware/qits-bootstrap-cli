@@ -113,10 +113,27 @@ public class Http {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
+    /**
+     * A JSON POST; a {@code null} body is a POST with NO body and no {@code Content-Type}, which is
+     * {@link #post}. Kept as one method so the test doubles that answer {@code postJson} see both.
+     */
     public Response postJson(String url, String json, Map<String, String> headers) {
+        if (json == null) {
+            return send(request(url, headers).POST(HttpRequest.BodyPublishers.noBody()).build());
+        }
         return send(request(url, headers)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json)).build());
+    }
+
+    /**
+     * <b>A body-less POST</b>, the shape of every door that takes its whole input from the path: a
+     * runner's token rotation and greenlight, a register-token mint, a secret rotation. Each used to
+     * be sent {@code {}}, which none of them declares — the providers record these calls without a
+     * body (qits-1149), and a pact sends exactly what was recorded.
+     */
+    public Response post(String url, Map<String, String> headers) {
+        return postJson(url, null, headers);
     }
 
     /**

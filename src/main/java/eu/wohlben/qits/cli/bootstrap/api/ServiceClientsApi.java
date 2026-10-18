@@ -121,7 +121,7 @@ public class ServiceClientsApi {
         if (refusal != null) {
             return new Result(false, false, "", refusal);
         }
-        Http.Response response = http.postJson(base + "/" + clientId + "/secret", "{}",
+        Http.Response response = http.post(base + "/" + clientId + "/secret",
                 Map.of("Authorization", authorization));
         return read(response, "rotated");
     }

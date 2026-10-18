@@ -69,7 +69,7 @@ public class WorkspacesApi {
      * has not registered, in the create's shape. A registered runner is 409.
      */
     public Http.Response rotateRegistrationToken(String runnerId, String token) {
-        return http.postJson(base + "/api/runners/" + runnerId + "/registration-token", "{}",
+        return http.post(base + "/api/runners/" + runnerId + "/registration-token",
                 writer(token));
     }
 
@@ -79,7 +79,7 @@ public class WorkspacesApi {
      * {@link CiApi#greenlight} does. A runner already in service is answered as it is.
      */
     public Http.Response greenlight(String runnerId) {
-        return http.postJson(base + "/api/runners/" + runnerId + "/greenlight", "{}",
+        return http.post(base + "/api/runners/" + runnerId + "/greenlight",
                 SYSTEM_HEADERS);
     }
 

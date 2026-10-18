@@ -126,7 +126,7 @@ public class CiApi {
      * 409 — it has spent its registration and needs no token.
      */
     public Http.Response rotateRegistrationToken(String runnerId, String token) {
-        return http.postJson(base + "/api/runners/" + runnerId + "/registration-token", "{}",
+        return http.post(base + "/api/runners/" + runnerId + "/registration-token",
                 writer(token));
     }
 
@@ -137,7 +137,7 @@ public class CiApi {
      * states an outcome: a runner already in service is answered as it is.
      */
     public Http.Response greenlight(String runnerId) {
-        return http.postJson(base + "/api/runners/" + runnerId + "/greenlight", "{}",
+        return http.post(base + "/api/runners/" + runnerId + "/greenlight",
                 SYSTEM_HEADERS);
     }
 
