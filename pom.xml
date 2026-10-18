@@ -42,16 +42,16 @@
              (qits-1149). One pin per provider that publishes golden masters; qits-maintenance
              bumps them, and a changed answer the bootstrap cannot read goes red here before it
              ships. Do not hand-edit them to chase a release. -->
-        <qits.projects-golden-masters.version>2026.1016.112931</qits.projects-golden-masters.version>
+        <qits.projects-golden-masters.version>2026.1018.195756</qits.projects-golden-masters.version>
         <qits.events-golden-masters.version>2026.1010.121628</qits.events-golden-masters.version>
-        <qits.ci-golden-masters.version>2026.1010.174604</qits.ci-golden-masters.version>
+        <qits.ci-golden-masters.version>2026.1018.180637</qits.ci-golden-masters.version>
         <qits.deployments-golden-masters.version>2026.1010.145913</qits.deployments-golden-masters.version>
-        <qits.idp-golden-masters.version>2026.1018.142635</qits.idp-golden-masters.version>
-        <qits.githost-golden-masters.version>2026.1018.135253</qits.githost-golden-masters.version>
-        <qits.artifacts-golden-masters.version>2026.1018.73956</qits.artifacts-golden-masters.version>
+        <qits.idp-golden-masters.version>2026.1018.175524</qits.idp-golden-masters.version>
+        <qits.githost-golden-masters.version>2026.1018.174636</qits.githost-golden-masters.version>
+        <qits.artifacts-golden-masters.version>2026.1018.153037</qits.artifacts-golden-masters.version>
         <qits.configuration-golden-masters.version>2026.1011.84651</qits.configuration-golden-masters.version>
         <qits.workspaces-golden-masters.version>2026.1016.90656</qits.workspaces-golden-masters.version>
-        <qits.containers-golden-masters.version>2026.1010.134141</qits.containers-golden-masters.version>
+        <qits.containers-golden-masters.version>2026.1018.185227</qits.containers-golden-masters.version>
         <!-- pact-jvm, test scope only. An external library, so it moves by hand; the same version
              as the providers' verifiers and every other consumer on the estate. -->
         <pact-jvm.version>4.6.21</pact-jvm.version>
