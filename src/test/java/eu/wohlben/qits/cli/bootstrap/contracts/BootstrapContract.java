@@ -2,6 +2,8 @@ package eu.wohlben.qits.cli.bootstrap.contracts;
 
 import au.com.dius.pact.consumer.dsl.DslPart;
 import au.com.dius.pact.consumer.dsl.Matchers;
+import au.com.dius.pact.consumer.dsl.PactDslJsonArray;
+import au.com.dius.pact.consumer.dsl.PactDslJsonBody;
 import au.com.dius.pact.consumer.dsl.PactBuilder;
 import au.com.dius.pact.core.model.PactSpecVersion;
 import au.com.dius.pact.core.model.V4Pact;
@@ -995,6 +997,9 @@ final class BootstrapContract {
                 r.headers().forEach((k, v) -> request.header(k, value(v, params, c)));
                 if (r.recordedBody()) {
                     request.body(op.body().asText(), r.contentType());
+                } else if (r.body() != null && Request.JSON.equals(r.contentType())
+                        && PARAM.matcher(r.body()).find()) {
+                    request.body(jsonBody(r.body(), params, c));
                 } else if (r.body() != null) {
                     request.body(filled(r.body(), params, c), r.contentType());
                 }
@@ -1027,6 +1032,69 @@ final class BootstrapContract {
         }
         return Matchers.fromProviderState(template.replace("{", "${"),
                 filled(template, params, c));
+    }
+
+    /**
+     * A JSON request body whose {@code {param}} strings are provider-state expressions, the way a
+     * path is: a provider's state may mint its ids afresh on every run (qits-idp's {@code a
+     * database service client} does), and a body frozen at the recording's example then names a
+     * row the provider never made. Everything else is the template's literal value.
+     */
+    private static DslPart jsonBody(String template, Map<String, String> params, Case c) {
+        JsonNode body;
+        try {
+            body = MAPPER.readTree(template);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        if (!body.isObject()) {
+            throw new IllegalStateException(c.description() + ": only an object body takes params");
+        }
+        PactDslJsonBody root = new PactDslJsonBody();
+        jsonObject(root, body, params, c);
+        return root;
+    }
+
+    private static void jsonObject(PactDslJsonBody target, JsonNode body,
+                                   Map<String, String> params, Case c) {
+        body.fields().forEachRemaining(field -> {
+            String name = field.getKey();
+            JsonNode value = field.getValue();
+            if (value.isObject()) {
+                PactDslJsonBody nested = target.object(name);
+                jsonObject(nested, value, params, c);
+                nested.closeObject();
+            } else if (value.isArray()) {
+                PactDslJsonArray nested = target.array(name);
+                for (JsonNode element : value) {
+                    if (element.isTextual() && PARAM.matcher(element.asText()).find()) {
+                        nested.valueFromProviderState(element.asText().replace("{", "${"),
+                                filled(element.asText(), params, c));
+                    } else if (element.isTextual()) {
+                        nested.stringValue(element.asText());
+                    } else if (element.isNumber()) {
+                        nested.numberValue(element.numberValue());
+                    } else if (element.isBoolean()) {
+                        nested.booleanValue(element.asBoolean());
+                    } else {
+                        throw new IllegalStateException(c.description() + ": " + name
+                                + " holds an element a request body here never sends");
+                    }
+                }
+                nested.closeArray();
+            } else if (value.isNull()) {
+                target.nullValue(name);
+            } else if (value.isTextual() && PARAM.matcher(value.asText()).find()) {
+                target.valueFromProviderState(name, value.asText().replace("{", "${"),
+                        filled(value.asText(), params, c));
+            } else if (value.isTextual()) {
+                target.stringValue(name, value.asText());
+            } else if (value.isNumber()) {
+                target.numberValue(name, value.numberValue());
+            } else if (value.isBoolean()) {
+                target.booleanValue(name, value.asBoolean());
+            }
+        });
     }
 
     /** {@code template} with every {@code {param}} the state's frozen value; a missing one fails. */

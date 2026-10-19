@@ -142,6 +142,13 @@
           "encoded": false
         },
         "generators": {
+          "body": {
+            "$.clientId": {
+              "dataType": "STRING",
+              "expression": "${clientId}",
+              "type": "ProviderState"
+            }
+          },
           "header": {
             "Authorization": {
               "dataType": "RAW",
@@ -157,6 +164,18 @@
           "content-type": [
             "application/json"
           ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.clientId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
         },
         "method": "POST",
         "path": "/idp/api/service-clients"
@@ -202,6 +221,13 @@
           "encoded": false
         },
         "generators": {
+          "body": {
+            "$.clientId": {
+              "dataType": "STRING",
+              "expression": "${clientId}",
+              "type": "ProviderState"
+            }
+          },
           "header": {
             "Authorization": {
               "dataType": "RAW",
@@ -217,6 +243,18 @@
           "content-type": [
             "application/json"
           ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.clientId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
         },
         "method": "POST",
         "path": "/idp/api/service-clients"

@@ -295,10 +295,96 @@
           "contentType": "application/json",
           "encoded": false
         },
+        "generators": {
+          "body": {
+            "$.payload.branch": {
+              "dataType": "STRING",
+              "expression": "${version}",
+              "type": "ProviderState"
+            },
+            "$.payload.commitSha": {
+              "dataType": "STRING",
+              "expression": "${commitSha}",
+              "type": "ProviderState"
+            },
+            "$.payload.projectId": {
+              "dataType": "STRING",
+              "expression": "${projectId}",
+              "type": "ProviderState"
+            },
+            "$.payload.repository": {
+              "dataType": "STRING",
+              "expression": "${repositoryId}",
+              "type": "ProviderState"
+            },
+            "$.payload.repositoryName": {
+              "dataType": "STRING",
+              "expression": "${repositoryName}",
+              "type": "ProviderState"
+            },
+            "$.payload.version": {
+              "dataType": "STRING",
+              "expression": "${version}",
+              "type": "ProviderState"
+            }
+          }
+        },
         "headers": {
           "content-type": [
             "application/json"
           ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.payload.branch": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.payload.commitSha": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.payload.projectId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.payload.repository": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.payload.repositoryName": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.payload.version": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
         },
         "method": "POST",
         "path": "/ci/api/events/trigger"

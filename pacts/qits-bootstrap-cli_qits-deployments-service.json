@@ -176,10 +176,44 @@
           "contentType": "application/json",
           "encoded": false
         },
+        "generators": {
+          "body": {
+            "$.name": {
+              "dataType": "STRING",
+              "expression": "${environmentName}",
+              "type": "ProviderState"
+            },
+            "$.network": {
+              "dataType": "STRING",
+              "expression": "${network}",
+              "type": "ProviderState"
+            }
+          }
+        },
         "headers": {
           "content-type": [
             "application/json"
           ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.network": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
         },
         "method": "POST",
         "path": "/deployments/api/environments"
@@ -424,10 +458,83 @@
           "contentType": "application/json",
           "encoded": false
         },
+        "generators": {
+          "body": {
+            "$.application": {
+              "dataType": "STRING",
+              "expression": "${application}",
+              "type": "ProviderState"
+            },
+            "$.projectId": {
+              "dataType": "STRING",
+              "expression": "${projectId}",
+              "type": "ProviderState"
+            },
+            "$.repoId": {
+              "dataType": "STRING",
+              "expression": "${repoId}",
+              "type": "ProviderState"
+            },
+            "$.repoName": {
+              "dataType": "STRING",
+              "expression": "${repoName}",
+              "type": "ProviderState"
+            },
+            "$.version": {
+              "dataType": "STRING",
+              "expression": "${version}",
+              "type": "ProviderState"
+            }
+          }
+        },
         "headers": {
           "content-type": [
             "application/json"
           ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.application": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.projectId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.repoId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.repoName": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.version": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
         },
         "method": "POST",
         "path": "/deployments/api/events/software-released"
