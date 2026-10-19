@@ -2212,8 +2212,8 @@ public final class ComposeTemplate {
             # registry alone, because neither pulls anything of the mirror's.
             #
             # THE GLANCES IMAGE IS A REPO AND A VERSION, not one string, so a bump is one value.
-            # `hub/` is the mirror's docker.io upstream, the same prefix every committed Dockerfile
-            # uses. The tag is PINNED and it is the `-full` variant: that is the one carrying the
+            # The repo is qits-system's own default, mirror.qits.<domain>/hub/... (qits-1402):
+            # stating it here pinned the retired machine spelling over it. The tag is PINNED and it is the `-full` variant: that is the one carrying the
             # docker plugin, so glances lists the host's containers over the read-only socket it is
             # given. `latest` would be a console that changes under an operator without a deploy.
             #
@@ -2225,7 +2225,6 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-system.env.DOCKER_CONFIG=/work/config
             qits.deployments.extras.qits-system.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
             qits.deployments.extras.qits-system.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
-            qits.deployments.extras.qits-system.env.QITS_SYSTEM_GLANCES_IMAGE_REPO=mirror.${ENV_NAME}.localhost:${PORT}/hub/nicolargo/glances
             qits.deployments.extras.qits-system.env.QITS_SYSTEM_GLANCES_IMAGE_VERSION=4.5.6-full
             qits.deployments.extras.qits-system.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             # THE MCP SURFACE. A Quarkus service with quarkus-oidc for bearer validation ONLY — it
