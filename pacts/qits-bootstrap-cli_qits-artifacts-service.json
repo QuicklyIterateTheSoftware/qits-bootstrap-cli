@@ -199,12 +199,13 @@
         }
       },
       "description": "qits-bootstrap bootstrap: release-<repository> (the packages held): headNpmTarball",
-      "key": "7ec39262",
+      "key": "62b21e62",
       "pending": false,
       "providerStates": [
         {
           "name": "an npm package published at a version",
           "params": {
+            "name": "contract-package",
             "package": "contract-package",
             "tag": "main",
             "tarball": "contract-package-2100.1.0.tgz",
