@@ -59,9 +59,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  * what the provider's recording of that state was sent, every {@code {param}} filled from the
  * state's frozen params. A value the bootstrap takes as input (a runner's slots, a network name)
  * is passed the recorded one; a value it fixes itself (a field it always sends, a page size) has to
- * be what was recorded. Headers are not compared: they are bound only where the answer depends on
- * them — the auth-plane probes' junk bearer — and the identity a provider's own test runs as is the
- * provider's business.
+ * be what was recorded.
+ * <p>
+ * <b>The one header compared is {@code Authorization}, and only where the recording carries
+ * one.</b> A door that judges its caller (qits-idp's, all of them) is recorded with the state's
+ * caller credential as {@code {authorization}}; a row against it sends that header as a
+ * provider-state generator, so the provider's verification presents the credential its state
+ * honours, and the row's own call is configured with the pair the state's header encodes — what
+ * the bootstrap puts on the wire is then exactly what the state answers. A request sent without it
+ * is an honest 401, never the recorded answer, so a missing header is a difference like any other
+ * and keeps the row out of the pact. A literal is the bootstrap's own fixed value — the auth-plane
+ * probes' junk bearer — and is sent as itself. Where the recording carries none, the identity a
+ * provider's own test runs as is the provider's business.
  * <p>
  * <b>A row the provider has not recorded is PENDING</b>, not dropped — no such (state, operation)
  * yet, or one recorded with another request. Its request, state and reads are written down, it is
@@ -98,6 +107,12 @@ final class BootstrapContract {
 
     static final List<Provider> PROVIDERS = List.of(PROJECTS, EVENTS, CI, DEPLOYMENTS, IDP,
             GITHOST, ARTIFACTS, CONFIGURATION, WORKSPACES, CONTAINERS);
+
+    /**
+     * What a row against a door that judges its caller sends: the credential the provider's state
+     * names as its {@code authorization} param, as a provider-state generator.
+     */
+    static final Map<String, String> CALLER = Map.of("Authorization", "{authorization}");
 
     /** What the auth-plane probes in {@code seed-health} present: a bearer no idp issued. */
     static final Map<String, String> JUNK_BEARER = PhaseReads.PROBE_BEARER;
@@ -162,6 +177,18 @@ final class BootstrapContract {
 
         Request with(Map<String, String> headers) {
             return new Request(method, path, query, headers, body, contentType, recordedBody);
+        }
+
+        /** This request under the state's caller credential, {@code Authorization: {authorization}}. */
+        Request asCaller() {
+            return with(CALLER);
+        }
+
+        /** The {@code Authorization} this request sends, or null. */
+        String authorization() {
+            return headers.entrySet().stream()
+                    .filter(e -> "authorization".equalsIgnoreCase(e.getKey()))
+                    .map(Map.Entry::getValue).findFirst().orElse(null);
         }
 
         private static Map<String, String> pairs(String... keysAndValues) {
@@ -232,7 +259,31 @@ final class BootstrapContract {
             if (body != null) {
                 differences.add(body);
             }
+            String authorization = authorizationDifference(op);
+            if (authorization != null) {
+                differences.add(authorization);
+            }
             return differences.isEmpty() ? null : String.join("; ", differences);
+        }
+
+        /**
+         * Whether the row sends the {@code Authorization} the recording was sent: none where it was
+         * sent none, the same {@code {param}} where it names one, and any literal of the
+         * bootstrap's own (a probe's junk bearer) against a recorded one.
+         */
+        private String authorizationDifference(GoldenMasters.Operation op) {
+            String recorded = op.authorization();
+            String sent = request.authorization();
+            if (recorded == null) {
+                return sent == null ? null : "no Authorization header, not " + sent;
+            }
+            if (sent == null) {
+                return "header Authorization " + recorded + ", not none";
+            }
+            boolean templated = PARAM.matcher(recorded).find();
+            boolean sentTemplated = PARAM.matcher(sent).find();
+            return !sentTemplated || (templated && recorded.equals(sent)) ? null
+                    : "header Authorization " + recorded + ", not " + sent;
         }
 
         private String bodyDifference(GoldenMasters.Operation op, Map<String, String> params) {
@@ -548,49 +599,66 @@ final class BootstrapContract {
                     "a service client calling its peers", "issueToken",
                     Request.text("POST", "/idp/token",
                             "grant_type=client_credentials&audience={audience}",
-                            "application/x-www-form-urlencoded"),
+                            "application/x-www-form-urlencoded").asCaller(),
                     200, List.of("$.access_token", "$.expires_in"),
-                    (base, params, recorded, op) -> assertThat(new IdpApi(new Http(), base + "/idp")
-                            .minted("qits-bootstrap", "pact-secret", params.get("audience"))
-                            .value()).isNotBlank(),
-                    "a Basic client-credentials mint answering access_token and expires_in"),
+                    (base, params, recorded, op) -> {
+                        String[] pair = callerPair(params);
+                        assertThat(new IdpApi(new Http(), base + "/idp")
+                                .minted(pair[0], pair[1], params.get("audience")).value())
+                                .isNotBlank();
+                    },
+                    "the caller's Basic pair as param authorization; a client-credentials mint"
+                            + " answering access_token and expires_in"),
             new Case(IDP, Trigger.phase("register-token"), "a service client with the system role",
-                    "mintRegisterToken", Request.post("/idp/api/register-tokens"),
+                    "mintRegisterToken", Request.post("/idp/api/register-tokens").asCaller(),
                     201, List.of("$.token"),
-                    (base, params, recorded, op) -> assertThat(eu.wohlben.qits.cli.bootstrap.api.Json
-                            .text(eu.wohlben.qits.cli.bootstrap.api.Json.parse(
-                                    new IdpApi(new Http(), base + "/idp").mintRegisterToken(
-                                            params.get("callerClientId"), params.get("clientSecret"))
-                                            .body()), "token")).isNotBlank(),
-                    "the body-less mint answers 201 with {token}"),
+                    (base, params, recorded, op) -> {
+                        assertCallerIs(params, params.get("callerClientId"),
+                                params.get("clientSecret"));
+                        assertThat(eu.wohlben.qits.cli.bootstrap.api.Json.text(
+                                eu.wohlben.qits.cli.bootstrap.api.Json.parse(
+                                        new IdpApi(new Http(), base + "/idp").mintRegisterToken(
+                                                params.get("callerClientId"),
+                                                params.get("clientSecret")).body()), "token"))
+                                .isNotBlank();
+                    },
+                    "params callerClientId and clientSecret, their Basic pair as authorization;"
+                            + " the body-less mint answers 201 with {token}"),
             new Case(IDP, Trigger.phase("idp-clients"), "no service client with the given id",
                     "createServiceClient",
-                    Request.json("POST", "/idp/api/service-clients", "{\"clientId\":\"{clientId}\"}"),
+                    Request.json("POST", "/idp/api/service-clients", "{\"clientId\":\"{clientId}\"}")
+                            .asCaller(),
                     201, List.of("$.secret"),
-                    (base, params, recorded, op) -> assertThat(serviceClients(base)
+                    (base, params, recorded, op) -> assertThat(serviceClients(base, params)
                             .create(params.get("clientId")).ok()).isTrue(),
-                    "param clientId; the create answers 201 with {secret}"),
+                    "param clientId, the caller's Basic pair as authorization; the create answers"
+                            + " 201 with {secret}"),
             new Case(IDP, Trigger.phase("idp-clients"), "a database service client",
                     "createServiceClient",
-                    Request.json("POST", "/idp/api/service-clients", "{\"clientId\":\"{clientId}\"}"),
+                    Request.json("POST", "/idp/api/service-clients", "{\"clientId\":\"{clientId}\"}")
+                            .asCaller(),
                     409, List.of(),
-                    (base, params, recorded, op) -> assertThat(serviceClients(base)
+                    (base, params, recorded, op) -> assertThat(serviceClients(base, params)
                             .create(params.get("clientId")).conflict()).isTrue(),
-                    "param clientId of an existing row; the create answers 409"),
+                    "param clientId of an existing row, the caller's Basic pair as authorization;"
+                            + " the create answers 409"),
             new Case(IDP, Trigger.phase("idp-clients"), "a database service client",
                     "rotateServiceClientSecret",
-                    Request.post("/idp/api/service-clients/{clientId}/secret"),
+                    Request.post("/idp/api/service-clients/{clientId}/secret").asCaller(),
                     200, List.of("$.secret"),
-                    (base, params, recorded, op) -> assertThat(serviceClients(base)
+                    (base, params, recorded, op) -> assertThat(serviceClients(base, params)
                             .rotate(params.get("clientId")).ok()).isTrue(),
-                    "param clientId; the body-less rotation answers 200 with {secret}"),
+                    "param clientId, the caller's Basic pair as authorization; the body-less"
+                            + " rotation answers 200 with {secret}"),
             new Case(IDP, Trigger.phase("images-publish, daemon-publish (the publishing credential)"),
                     "a service client with the system role", "commissionClient",
                     Request.json("POST", "/idp/api/clients", "{\"contextKind\":\""
                             + BootstrapPublishCredential.CONTEXT_KIND
-                            + "\",\"contextId\":\"dev\",\"gitRefs\":[]}"),
+                            + "\",\"contextId\":\"dev\",\"gitRefs\":[]}").asCaller(),
                     201, List.of("$.clientId", "$.secret"),
                     (base, params, recorded, op) -> {
+                        assertCallerIs(params, params.get("callerClientId"),
+                                params.get("clientSecret"));
                         BootstrapPublishCredential credential = new BootstrapPublishCredential(
                                 new Http(), new IdpApi(new Http(), base + "/idp"), base + "/idp",
                                 params.get("callerClientId"), params.get("clientSecret"), "dev",
@@ -598,16 +666,26 @@ final class BootstrapContract {
                         assertThat(credential.pair().clientId()).isNotBlank();
                     },
                     "the commission recorded for the bootstrap's own kind — {contextKind:"
-                            + " bootstrap-publish, contextId: dev, gitRefs: []} — answering 201"
-                            + " with clientId and secret"),
-            new Case(IDP, Trigger.phase("publish-credential-release"), "a commissioned client",
-                    "decommissionClient", Request.delete("/idp/api/clients/{clientId}"),
+                            + " bootstrap-publish, contextId: dev, gitRefs: []} — under params"
+                            + " callerClientId and clientSecret, their Basic pair as authorization,"
+                            + " answering 201 with clientId and secret"),
+            // The DELETE is made as the commissioned credential ITSELF (BootstrapPublishCredential
+            // .delete), so the state's caller must be that client's own pair — not the system-role
+            // caller 'a commissioned client' is recorded under.
+            new Case(IDP, Trigger.phase("publish-credential-release"),
+                    "a commissioned client handing itself back", "decommissionClient",
+                    Request.delete("/idp/api/clients/{clientId}").asCaller(),
                     204, List.of(),
-                    (base, params, recorded, op) -> assertThat(new Http().delete(
-                            base + "/idp/api/clients/" + params.get("clientId"),
-                            Map.of("Authorization", Http.basic(params.get("clientId"),
-                                    params.get("clientSecret")))).ok()).isTrue(),
-                    "params clientId and clientSecret; the client hands itself back (204)"),
+                    (base, params, recorded, op) -> {
+                        assertCallerIs(params, params.get("clientId"), params.get("clientSecret"));
+                        assertThat(new Http().delete(
+                                base + "/idp/api/clients/" + params.get("clientId"),
+                                Map.of("Authorization", Http.basic(params.get("clientId"),
+                                        params.get("clientSecret")))).ok()).isTrue();
+                    },
+                    "params clientId and clientSecret of a commissioned client, and authorization"
+                            + " the Basic of THAT pair — the client's own, holding no platform role;"
+                            + " the DELETE answers 204"),
             new Case(IDP, new Trigger("qits-bootstrap login"),
                     "an authorization code issued to the git client", "issueToken",
                     Request.text("POST", "/idp/token",
@@ -708,7 +786,7 @@ final class BootstrapContract {
                     "params package and version, tarball <package>-<version>.tgz; the HEAD"
                             + " answers 200"),
             new Case(ARTIFACTS, Trigger.phase("release-<repository> (the packages held)"),
-                    "a maven artifact published at a version", "getMavenFile",
+                    "a maven jar published at a version", "getMavenFile",
                     Request.get(MAVEN_JAR), 200, List.of(),
                     (base, params, recorded, op) -> assertThat(artifacts(base).mavenPublished(
                             params.get("groupPath"), params.get("artifact"), params.get("version"),
@@ -716,7 +794,7 @@ final class BootstrapContract {
                     "the JAR at the version — the bootstrap asks for .jar, never .pom — answering"
                             + " 200"),
             new Case(ARTIFACTS, Trigger.phase("publish-<artifact>"),
-                    "no maven artifact published at the version", "getMavenFile",
+                    "no maven jar published at the version", "getMavenFile",
                     Request.get(MAVEN_JAR), 404, List.of(),
                     (base, params, recorded, op) -> assertThat(artifacts(base).mavenPublished(
                             params.get("groupPath"), params.get("artifact"), params.get("version"),
@@ -834,6 +912,28 @@ final class BootstrapContract {
         return new ServiceClientsApi(new Http(), base + "/idp", "qits-bootstrap", "pact-secret");
     }
 
+    /** The client, holding the pair the state's {@code authorization} encodes. */
+    static ServiceClientsApi serviceClients(String base, Map<String, String> params) {
+        String[] pair = callerPair(params);
+        return new ServiceClientsApi(new Http(), base + "/idp", pair[0], pair[1]);
+    }
+
+    /** The client id and secret the state's {@code Basic} {@code authorization} param encodes. */
+    static String[] callerPair(Map<String, String> params) {
+        String header = params.get("authorization");
+        assertThat(header).as("the state's authorization param").startsWith("Basic ");
+        String decoded = new String(java.util.Base64.getDecoder().decode(
+                header.substring("Basic ".length())), StandardCharsets.UTF_8);
+        return decoded.split(":", 2);
+    }
+
+    /** The state's caller is the pair the row's call presents, so the header sent is the one bound. */
+    private static void assertCallerIs(Map<String, String> params, String clientId,
+                                       String secret) {
+        assertThat(Http.basic(clientId, secret)).as("the pair the call presents")
+                .isEqualTo(params.get("authorization"));
+    }
+
     private BootstrapContract() {
     }
 
@@ -892,7 +992,7 @@ final class BootstrapContract {
                     request.path((String) path);
                 }
                 r.query().forEach((k, v) -> request.queryParameter(k, value(v, params, c)));
-                r.headers().forEach(request::header);
+                r.headers().forEach((k, v) -> request.header(k, value(v, params, c)));
                 if (r.recordedBody()) {
                     request.body(op.body().asText(), r.contentType());
                 } else if (r.body() != null) {

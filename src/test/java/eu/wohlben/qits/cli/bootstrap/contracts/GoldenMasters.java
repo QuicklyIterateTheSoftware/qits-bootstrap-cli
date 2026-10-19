@@ -96,11 +96,14 @@ public final class GoldenMasters {
      * One recorded (state, operation), as the index describes it — the request the provider was
      * sent as well as what it answered. {@code query} values and {@code body} may name a state
      * param as {@code {name}}; {@code body} is null for a request without one, a JSON tree for a
-     * JSON request and a text node for any other.
+     * JSON request and a text node for any other. {@code authorization} is the {@code
+     * Authorization} header the recording was sent — typically {@code {authorization}}, the
+     * state's caller credential — or null when it was sent none.
      */
     public record Operation(String state, String operationId, String method, String path,
                             Map<String, List<String>> query, JsonNode body, String contentType,
-                            int status, String file, Set<String> ids, Set<String> instants) {
+                            String authorization, int status, String file, Set<String> ids,
+                            Set<String> instants) {
     }
 
     /** Whether the index records this operation in this state. */
@@ -129,7 +132,8 @@ public final class GoldenMasters {
                             query(op.path("query")),
                             body == null || body.isNull() ? null : body,
                             op.hasNonNull("contentType") ? op.get("contentType").asText() : null,
-                            op.path("status").asInt(), op.path("file").asText(),
+                            authorization(op.path("headers")), op.path("status").asInt(),
+                            op.path("file").asText(),
                             strings(frozen.path("ids")), strings(frozen.path("instants"))));
                 }
             }
@@ -158,6 +162,22 @@ public final class GoldenMasters {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    /**
+     * The recorded {@code Authorization} header, matched without regard to case. Only that one is
+     * read: it is the one request header a door judges, and some providers' {@code headers} hold
+     * what they ANSWERED (a manifest's digest, a tarball's length) rather than what they were sent.
+     */
+    private static String authorization(JsonNode headers) {
+        var names = headers.fieldNames();
+        while (names.hasNext()) {
+            String name = names.next();
+            if ("authorization".equalsIgnoreCase(name)) {
+                return headers.get(name).asText();
+            }
+        }
+        return null;
     }
 
     /** A recorded query: each name with its values in order, a lone value as a list of one. */

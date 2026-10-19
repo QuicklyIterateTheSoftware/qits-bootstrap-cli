@@ -37,7 +37,19 @@
           "contentTypeHint": "DEFAULT",
           "encoded": false
         },
+        "generators": {
+          "header": {
+            "Authorization": {
+              "dataType": "RAW",
+              "expression": "${authorization}",
+              "type": "ProviderState"
+            }
+          }
+        },
         "headers": {
+          "Authorization": [
+            "Basic dGVzdC1icm9hZDp0ZXN0LWJyb2FkLXNlY3JldA=="
+          ],
           "content-type": [
             "application/x-www-form-urlencoded"
           ]
@@ -129,7 +141,19 @@
           "contentType": "application/json",
           "encoded": false
         },
+        "generators": {
+          "header": {
+            "Authorization": {
+              "dataType": "RAW",
+              "expression": "${authorization}",
+              "type": "ProviderState"
+            }
+          }
+        },
         "headers": {
+          "Authorization": [
+            "Basic dGVzdC1icm9hZDp0ZXN0LWJyb2FkLXNlY3JldA=="
+          ],
           "content-type": [
             "application/json"
           ]
@@ -177,7 +201,19 @@
           "contentType": "application/json",
           "encoded": false
         },
+        "generators": {
+          "header": {
+            "Authorization": {
+              "dataType": "RAW",
+              "expression": "${authorization}",
+              "type": "ProviderState"
+            }
+          }
+        },
         "headers": {
+          "Authorization": [
+            "Basic dGVzdC1icm9hZDp0ZXN0LWJyb2FkLXNlY3JldA=="
+          ],
           "content-type": [
             "application/json"
           ]
@@ -254,11 +290,23 @@
       ],
       "request": {
         "generators": {
+          "header": {
+            "Authorization": {
+              "dataType": "RAW",
+              "expression": "${authorization}",
+              "type": "ProviderState"
+            }
+          },
           "path": {
             "dataType": "RAW",
             "expression": "/idp/api/service-clients/${clientId}/secret",
             "type": "ProviderState"
           }
+        },
+        "headers": {
+          "Authorization": [
+            "Basic dGVzdC1icm9hZDp0ZXN0LWJyb2FkLXNlY3JldA=="
+          ]
         },
         "method": "POST",
         "path": "/idp/api/service-clients/contract-00000001/secret"
@@ -340,7 +388,19 @@
           "contentType": "application/json",
           "encoded": false
         },
+        "generators": {
+          "header": {
+            "Authorization": {
+              "dataType": "RAW",
+              "expression": "${authorization}",
+              "type": "ProviderState"
+            }
+          }
+        },
         "headers": {
+          "Authorization": [
+            "Basic dGVzdC1icm9hZDp0ZXN0LWJyb2FkLXNlY3JldA=="
+          ],
           "content-type": [
             "application/json"
           ]
@@ -402,52 +462,6 @@
         "references": {
           "qits-call": {
             "app": "qits-idp-service",
-            "operationId": "decommissionClient"
-          },
-          "qits-trigger": {
-            "app": "qits-bootstrap-cli",
-            "command": "qits-bootstrap bootstrap: publish-credential-release",
-            "kind": "command"
-          }
-        }
-      },
-      "description": "qits-bootstrap bootstrap: publish-credential-release: decommissionClient",
-      "key": "892a2f00",
-      "pending": false,
-      "providerStates": [
-        {
-          "name": "a commissioned client",
-          "params": {
-            "audience": "qits-platform",
-            "authorization": "Basic dGVzdC1icm9hZDp0ZXN0LWJyb2FkLXNlY3JldA==",
-            "callerClientId": "test-broad",
-            "clientId": "dyn-contract-run-1-0000000000000000000001",
-            "clientSecret": "0000000000000000000000000000000000000000002",
-            "secret": "0000000000000000000000000000000000000000002"
-          }
-        }
-      ],
-      "request": {
-        "generators": {
-          "path": {
-            "dataType": "RAW",
-            "expression": "/idp/api/clients/${clientId}",
-            "type": "ProviderState"
-          }
-        },
-        "method": "DELETE",
-        "path": "/idp/api/clients/dyn-contract-run-1-0000000000000000000001"
-      },
-      "response": {
-        "status": 204
-      },
-      "type": "Synchronous/HTTP"
-    },
-    {
-      "comments": {
-        "references": {
-          "qits-call": {
-            "app": "qits-idp-service",
             "operationId": "mintRegisterToken"
           },
           "qits-trigger": {
@@ -471,6 +485,20 @@
         }
       ],
       "request": {
+        "generators": {
+          "header": {
+            "Authorization": {
+              "dataType": "RAW",
+              "expression": "${authorization}",
+              "type": "ProviderState"
+            }
+          }
+        },
+        "headers": {
+          "Authorization": [
+            "Basic dGVzdC1icm9hZDp0ZXN0LWJyb2FkLXNlY3JldA=="
+          ]
+        },
         "method": "POST",
         "path": "/idp/api/register-tokens"
       },

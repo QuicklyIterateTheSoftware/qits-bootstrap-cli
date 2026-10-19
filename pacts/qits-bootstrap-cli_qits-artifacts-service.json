@@ -147,6 +147,51 @@
         "references": {
           "qits-call": {
             "app": "qits-artifacts-service",
+            "operationId": "getMavenFile"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: publish-<artifact>",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: publish-<artifact>: getMavenFile",
+      "key": "1360b40e",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "no maven jar published at the version",
+          "params": {
+            "artifact": "contract-absent",
+            "groupPath": "eu/wohlben/qits",
+            "name": "eu.wohlben.qits:contract-absent",
+            "type": "maven",
+            "version": "2100.1.0"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/artifacts/maven/maven/${groupPath}/${artifact}/${version}/${artifact}-${version}.jar",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/artifacts/maven/maven/eu/wohlben/qits/contract-absent/2100.1.0/contract-absent-2100.1.0.jar"
+      },
+      "response": {
+        "status": 404
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-artifacts-service",
             "operationId": "getImageManifest"
           },
           "qits-trigger": {
@@ -178,6 +223,51 @@
         },
         "method": "GET",
         "path": "/v2/qits/contract-image/manifests/2100.1.0"
+      },
+      "response": {
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-artifacts-service",
+            "operationId": "getMavenFile"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: release-<repository> (the packages held)",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: release-<repository> (the packages held): getMavenFile",
+      "key": "2925472a",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a maven jar published at a version",
+          "params": {
+            "artifact": "contract-maven",
+            "groupPath": "eu/wohlben/qits",
+            "name": "eu.wohlben.qits:contract-maven",
+            "type": "maven",
+            "version": "2100.1.0"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/artifacts/maven/maven/${groupPath}/${artifact}/${version}/${artifact}-${version}.jar",
+            "type": "ProviderState"
+          }
+        },
+        "method": "GET",
+        "path": "/artifacts/maven/maven/eu/wohlben/qits/contract-maven/2100.1.0/contract-maven-2100.1.0.jar"
       },
       "response": {
         "status": 200
