@@ -68,9 +68,12 @@ public class GitHostApi {
      * <b>The PUBLIC clone and push url</b> — {@code /git/<projectId>/<repoName>}, as reached from
      * qits-net. The one address CI, the daemons, a deploy push and a person ever hold.
      * <p>
-     * The git host resolves the name per request through qits-projects' alias table, so this url
-     * answers only once the pair is registered there. {@code projectId} is qits-projects' project
-     * id — a minted uuid — because that is what its by-name lookup is keyed by.
+     * The git host keeps {@code (projectId, repoName) -> repository} in its own database now:
+     * qits-projects states each repository's names there with {@code PUT /git/{repoId}/names}
+     * after every name change (create, adopt, rename, alias) and reconciles the whole table every
+     * five minutes, so this url answers once qits-projects has registered (adopted) the
+     * repository — normally within that same call. {@code projectId} is qits-projects' project
+     * id, a minted uuid.
      */
     public String gitUrl(String projectId, String repoName) {
         return base + "/" + projectId + "/" + repoName;
