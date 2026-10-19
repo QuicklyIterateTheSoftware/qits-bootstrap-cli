@@ -283,12 +283,13 @@
         }
       },
       "description": "qits-bootstrap bootstrap: workspaces-runner-localhost: listRunners",
-      "key": "b37812a1",
+      "key": "1cb17b66",
       "pending": false,
       "providerStates": [
         {
           "name": "an unregistered runner",
           "params": {
+            "authorization": "Bearer qits_tok_contract-registration",
             "runnerId": "00000000-0000-4000-8000-000000000020",
             "runnerName": "localhost"
           }
@@ -393,12 +394,13 @@
         }
       },
       "description": "qits-bootstrap bootstrap: workspaces-runner-localhost: rotateRunnerRegistrationToken",
-      "key": "46a6d0d1",
+      "key": "afe03996",
       "pending": false,
       "providerStates": [
         {
           "name": "an unregistered runner",
           "params": {
+            "authorization": "Bearer qits_tok_contract-registration",
             "runnerId": "00000000-0000-4000-8000-000000000020",
             "runnerName": "localhost"
           }
