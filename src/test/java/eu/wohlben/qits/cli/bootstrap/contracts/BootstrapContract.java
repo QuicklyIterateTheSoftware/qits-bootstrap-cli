@@ -336,12 +336,11 @@ final class BootstrapContract {
 
     // --- the rows ---------------------------------------------------------------------------------
 
-    /** The cursor qits-events recorded its catch-up page from; the feed's own is the last row's. */
-    private static final String EVENT_CURSOR =
-            "2100-01-01T00:00:00Z,00000000-0000-0000-0000-000000000000";
-
-    /** The org clone url the bootstrap hands qits-projects with every adopt. */
-    private static final String ORG_URL = "https://github.com/QuicklyIterateTheSoftware";
+    /**
+     * The org the bootstrap clones from ({@code BootstrapConfig#orgUrl}, the operator's input, so
+     * the row passes the recorded one): every adopt hands qits-projects {@code <org>/<name>.git}.
+     */
+    private static final String ORG_URL = "https://forge.example.test/contract";
 
     private static final String SCM_RELEASE = "{\"name\":\"SCMRelease\",\"payload\":{"
             + "\"branch\":\"{version}\",\"commitSha\":\"{commitSha}\",\"projectId\":\"{projectId}\","
@@ -410,14 +409,15 @@ final class BootstrapContract {
                                 .page(null, false, 1).orElseThrow();
                         assertThat(EventFeedReads.lastCursor(page)).contains(",");
                     }, "order=desc&limit=1 answering one event with id and occurredAt"),
-            new Case(EVENTS, Trigger.phase("event feed"), "events to catch up on", "listEvents",
+            new Case(EVENTS, Trigger.phase("event feed"), "events to catch up on, fifty at a time",
+                    "listEvents",
                     Request.get("/events/api/events", "order", "asc", "limit", "50",
-                            "cursor", EVENT_CURSOR),
+                            "cursor", "{cursor}"),
                     200, List.of("$.events[*].id", "$.events[*].occurredAt", "$.events[*].name",
                             "$.events[*].payload", "$.events[*].description"),
                     (base, params, recorded, op) -> {
                         JsonNode page = new EventsApi(new Http(), base + "/events")
-                                .page(EVENT_CURSOR, true, 50).orElseThrow();
+                                .page(params.get("cursor"), true, 50).orElseThrow();
                         assertThat(page.path("events")).isNotEmpty();
                         page.path("events").forEach(event ->
                                 assertThat(EventFeedReads.line(event))

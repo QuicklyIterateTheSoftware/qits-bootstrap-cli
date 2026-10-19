@@ -104,6 +104,149 @@
         "status": 200
       },
       "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-events-service",
+            "operationId": "listEvents"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: event feed",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: event feed: listEvents",
+      "key": "c1d4fbfc",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "events to catch up on, fifty at a time",
+          "params": {
+            "cursor": "2100-01-01T00:00:00Z,00000000-0000-4000-8000-000000000001",
+            "firstEventId": "00000000-0000-4000-8000-000000000002",
+            "secondEventId": "00000000-0000-4000-8000-000000000003",
+            "thirdEventId": "00000000-0000-4000-8000-000000000004"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "query": {
+            "cursor": {
+              "dataType": "RAW",
+              "expression": "${cursor}",
+              "type": "ProviderState"
+            }
+          }
+        },
+        "method": "GET",
+        "path": "/events/api/events",
+        "query": {
+          "cursor": [
+            "2100-01-01T00:00:00Z,00000000-0000-4000-8000-000000000001"
+          ],
+          "limit": [
+            "50"
+          ],
+          "order": [
+            "asc"
+          ]
+        }
+      },
+      "response": {
+        "body": {
+          "content": {
+            "events": [
+              {
+                "description": "qits-ci-service 2026.101.100000 is released",
+                "id": "00000000-0000-4000-8000-000000000002",
+                "name": "SCMRelease",
+                "occurredAt": "2026-01-01T00:00:00Z",
+                "payload": "{\"branch\":\"main\",\"commitSha\":\"0123456789abcdef0123456789abcdef01234567\",\"repository\":\"qits-ci-service\",\"repositoryName\":\"qits-ci-service\",\"version\":\"2026.101.100000\"}"
+              }
+            ]
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.events": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$.events[*].description": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.events[*].id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                }
+              ]
+            },
+            "$.events[*].name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.events[*].occurredAt": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
+                }
+              ]
+            },
+            "$.events[*].payload": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
     }
   ],
   "metadata": {

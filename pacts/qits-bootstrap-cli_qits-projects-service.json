@@ -92,6 +92,109 @@
         "references": {
           "qits-call": {
             "app": "qits-projects-service",
+            "operationId": "adoptRepository"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: git-repos",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: git-repos: adoptRepository",
+      "key": "b72ef0b9",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a project and an unadopted repository on the git host",
+          "params": {
+            "projectId": "00000000-0000-4000-8000-000000000001",
+            "repoName": "contract-events-service",
+            "repositoryId": "contract-00000001-events-service"
+          }
+        }
+      ],
+      "request": {
+        "body": {
+          "content": {
+            "archetype": "SERVICE",
+            "name": "contract-events-service",
+            "repositoryId": "contract-00000001-events-service",
+            "url": "https://forge.example.test/contract/contract-events-service.git"
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "generators": {
+          "body": {
+            "$.name": {
+              "dataType": "STRING",
+              "expression": "${repoName}",
+              "type": "ProviderState"
+            },
+            "$.repositoryId": {
+              "dataType": "STRING",
+              "expression": "${repositoryId}",
+              "type": "ProviderState"
+            },
+            "$.url": {
+              "dataType": "STRING",
+              "expression": "https://forge.example.test/contract/${repoName}.git",
+              "type": "ProviderState"
+            }
+          },
+          "path": {
+            "dataType": "RAW",
+            "expression": "/projects/api/projects/${projectId}/repositories/adopt",
+            "type": "ProviderState"
+          }
+        },
+        "headers": {
+          "content-type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.repositoryId": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.url": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          }
+        },
+        "method": "POST",
+        "path": "/projects/api/projects/00000000-0000-4000-8000-000000000001/repositories/adopt"
+      },
+      "response": {
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-projects-service",
             "operationId": "resolveRepositoryName"
           },
           "qits-trigger": {
