@@ -1747,8 +1747,8 @@ public class SeedPhases {
             Path repo = boot.state.repoDir("ci-daemon");
             String dockerfile = SeedDockerfile.read(repo.resolve("docker/Dockerfile.musl-builder"));
             // THE TARBALL URLS ARE THIS RUN'S, never the Dockerfile's default. That default names
-            // registry.dev.localhost, an edge vhost — the host's local spelling, and no edge
-            // exists this early in any boot. BuildKit resolves an ADD in the BUILDER's own network
+            // the edge — registry.qits.${QITS_DOMAIN} since qits-1402, registry.dev.localhost
+            // before it — and no edge exists this early in any boot. BuildKit resolves an ADD in the BUILDER's own network
             // context, and the bootstrap's qits-buildkitd runs on the host network, so the ingress
             // the seed builds already resolve maven through is exactly the address that works here
             // too.

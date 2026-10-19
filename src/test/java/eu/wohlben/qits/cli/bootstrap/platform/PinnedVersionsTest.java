@@ -308,6 +308,30 @@ class PinnedVersionsTest {
     }
 
     /**
+     * <b>The qits-1402 spelling: the registry's public edge name, through a global ARG.</b> The
+     * domain ARG resolves like any other, so the host is a dotted first segment and is stripped;
+     * the coordinate is the same one the old spelling named.
+     */
+    @Test
+    void anImagePinBehindTheDomainArgIsReadToo() {
+        assertThat(PinnedVersions.imagePinsIn("""
+                ARG QITS_DOMAIN=wohlben.eu
+                ARG WORKSPACE_BASE=registry.qits.${QITS_DOMAIN}/qits/workspace-base:2026.1016.123855
+                FROM ${WORKSPACE_BASE}
+                """))
+                .containsExactly(entry("qits/workspace-base", "2026.1016.123855"));
+        // A FROM line that names the host itself, and one whose domain ARG was never declared.
+        assertThat(PinnedVersions.imagePinsIn("""
+                ARG QITS_DOMAIN=wohlben.eu
+                FROM registry.qits.${QITS_DOMAIN}/qits/workspace:2026.1018.73250
+                """))
+                .containsExactly(entry("qits/workspace", "2026.1018.73250"));
+        assertThat(PinnedVersions.imagePinsIn(
+                "ARG BROWSER_BASE=registry.qits.${QITS_DOMAIN}/qits/build-images/node-browser-base:2026.1003.45515\n"))
+                .containsExactly(entry("qits/build-images/node-browser-base", "2026.1003.45515"));
+    }
+
+    /**
      * <b>An ARG that resolves to something this platform never minted is not a pin.</b>
      * {@code qits/projects-daemon:${DAEMON_VERSION}} with {@code DAEMON_VERSION=latest} is a build
      * that follows the newest tag by design, and a replay of "latest" is not a thing.
@@ -324,6 +348,7 @@ class PinnedVersionsTest {
                 FROM qits/projects-daemon:<version>
                 FROM ${NEVER_DECLARED}
                 FROM mirror.dev.localhost:8080/quay/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25
+                FROM mirror.qits.${QITS_DOMAIN}/quay/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25
                 """))
                 .isEmpty();
     }
