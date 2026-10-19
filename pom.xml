@@ -50,7 +50,7 @@
         <qits.githost-golden-masters.version>2026.1018.174636</qits.githost-golden-masters.version>
         <qits.artifacts-golden-masters.version>2026.1019.62657</qits.artifacts-golden-masters.version>
         <qits.configuration-golden-masters.version>2026.1011.84651</qits.configuration-golden-masters.version>
-        <qits.workspaces-golden-masters.version>2026.1016.90656</qits.workspaces-golden-masters.version>
+        <qits.workspaces-golden-masters.version>2026.1019.70413</qits.workspaces-golden-masters.version>
         <qits.containers-golden-masters.version>2026.1018.185227</qits.containers-golden-masters.version>
         <!-- pact-jvm, test scope only. An external library, so it moves by hand; the same version
              as the providers' verifiers and every other consumer on the estate. -->
