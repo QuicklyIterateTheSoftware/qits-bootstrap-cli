@@ -71,13 +71,15 @@
         }
       },
       "description": "qits-bootstrap bootstrap: git-repos: createRepository",
-      "key": "a26d1702",
+      "key": "44ff0139",
       "pending": false,
       "providerStates": [
         {
           "name": "no repository with the given id",
           "params": {
-            "repositoryId": "00000000-0000-4000-8000-000000000001"
+            "path": ".config/qits/release.yml",
+            "repositoryId": "00000000-0000-4000-8000-000000000001",
+            "rev": "main"
           }
         }
       ],
