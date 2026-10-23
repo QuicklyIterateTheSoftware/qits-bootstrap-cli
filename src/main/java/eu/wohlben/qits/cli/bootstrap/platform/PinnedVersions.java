@@ -104,6 +104,8 @@ public final class PinnedVersions {
             // image, both at the runner's release tag — and the release replay of that repository
             // is what publishes both, so a lagging pin is one more version to replay.
             Map.entry("workspaces-runner-protocol", "workspaces-runner-daemon"),
+            // qits-system pins the target's runner the same way (qits-1535).
+            Map.entry("system-runner-protocol", "system-runner-daemon"),
             Map.entry("userflows", "userflows"),
             // One property for the harness reactor's two jars, spelled two ways: qits-workspace-
             // daemon says <qits.coding-agents.version>, qits-projects-daemon

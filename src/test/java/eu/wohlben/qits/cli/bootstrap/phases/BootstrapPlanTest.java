@@ -57,8 +57,8 @@ class BootstrapPlanTest {
                 "recorded-state", "maven-seed");
         assertThat(ids(phases)).containsSubsequence(
                 "git-repos", "release-train-push", "preseed");
-        assertThat(ids(phases)).endsWith("deploy-deployments", "workspaces-runner-localhost",
-                "workspaces-runner-connected", "summary", "teardown-bootstrap-builder");
+        assertThat(ids(phases)).endsWith("deploy-deployments", "target-localhost",
+                "target-connected", "summary", "teardown-bootstrap-builder");
         assertThat(phases).allSatisfy(phase -> assertThat(phase.title()).isNotBlank());
     }
 
@@ -144,13 +144,14 @@ class BootstrapPlanTest {
     }
 
     /**
-     * <b>THIS HOST'S WORKSPACES RUNNER FOLLOWS THE TRAIN, in both arms.</b> qits-workspaces is not
-     * seed-deployed, so there is nothing to register with before its deployment — and the two
-     * phases sit after the LAST deployment and before the closing report, never beside the CI
-     * runner's pair.
+     * <b>THIS HOST'S TARGET FOLLOWS THE TRAIN, in both arms.</b> qits-system is not seed-deployed,
+     * so there is nothing to register with before its deployment — the one that brings its
+     * database — and the two phases sit after the LAST deployment and before the closing report,
+     * never beside the CI runner's pair. The runner image's replay comes before the train, and the
+     * workspaces runner's two phases are gone: the target replaced them.
      */
     @Test
-    void theWorkspacesRunnerIsStartedAfterTheTrainAndBeforeTheSummary() {
+    void theTargetIsStartedAfterTheTrainAndBeforeTheSummary() {
         for (Map<String, String> env : List.of(Map.<String, String>of(),
                 Map.of("QITS_SKIP_BUILD", "1"))) {
             List<String> ids = ids(plan(env));
@@ -162,12 +163,12 @@ class BootstrapPlanTest {
                 }
             }
             assertThat(ids.subList(lastDeploy + 1, lastDeploy + 4)).containsExactly(
-                    "workspaces-runner-localhost", "workspaces-runner-connected", "summary");
-            assertThat(ids).containsSubsequence("deploy-workspaces",
-                    "workspaces-runner-localhost");
-            assertThat(ids).containsSubsequence("release-workspaces-runner-daemon",
-                    "deploy-workspaces");
-            assertThat(ids.stream().filter(id -> id.startsWith("workspaces-runner-"))).hasSize(2);
+                    "target-localhost", "target-connected", "summary");
+            assertThat(ids).containsSubsequence("deploy-system", "target-localhost");
+            assertThat(ids).containsSubsequence("release-system-runner-daemon",
+                    "deploy-system");
+            assertThat(ids.stream().filter(id -> id.startsWith("target-"))).hasSize(2);
+            assertThat(ids).noneMatch(id -> id.startsWith("workspaces-runner-"));
         }
     }
 

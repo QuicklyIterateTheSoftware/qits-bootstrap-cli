@@ -891,7 +891,7 @@ class ComposeTemplateTest {
     /**
      * <b>The step container's limits are qits-ci's own, and nothing in either file sizes the
      * runner.</b> How many builds run at once is the {@code localhost} runner's slot count, which
-     * the {@code runner-localhost} phase takes from {@link CiConcurrency} when it declares the row
+     * the {@code runner-localhost} phase takes from {@link TargetSlots} when it declares the row
      * — a number that has to be right on this host cannot live in a template.
      */
     @Test

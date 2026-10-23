@@ -270,6 +270,8 @@ class PlatformModelTest {
         expected.put("ci-runner", "qits-ci-runner-daemon");
         // The workspaces runner: a release publisher, its name already the repository's.
         expected.put("workspaces-runner-daemon", "qits-workspaces-runner-daemon");
+        // The target's runner, the same shape (qits-1535).
+        expected.put("system-runner-daemon", "qits-system-runner-daemon");
         // The agent harness, born on 2026-09-08 under a name outside the grammar. The wrapper
         // declares it so, and the boot follows the wrapper.
         expected.put("coding-agents", "qits-coding-agents");
@@ -799,10 +801,10 @@ class PlatformModelTest {
 
     /**
      * <b>qits-workspaces-runner-daemon, added on 2026-10-05 (qits-626): a release publisher, never
-     * a deployable.</b> The workspaces runner phase starts {@code qits/qits-workspaces-runner} at the
-     * version qits-workspaces pins, and only this repository's release run puts it in the store —
-     * so it is replayed after qits-workspace-daemon, and the replay asks for the image AND the
-     * protocol jar qits-workspaces' own build resolves.
+     * a deployable.</b> The retired workspaces runner phase started {@code qits/qits-workspaces-runner}
+     * at the version qits-workspaces pinned, and a qits-workspaces release from before the target
+     * cutover still resolves the protocol jar — so it is replayed after qits-workspace-daemon until
+     * the retirement, and the replay asks for the image AND that jar.
      */
     @Test
     void theWorkspacesRunnerDaemonIsAReplayedImagePublisher() {
@@ -825,6 +827,33 @@ class PlatformModelTest {
         assertThat(PlatformModel.archetype("workspaces-runner-daemon",
                 "components/qits-workspaces/qits-workspaces-runner-daemon")).isEqualTo("DAEMON");
         assertThat(PlatformModel.carriesVersionIdentity("workspaces-runner-daemon")).isTrue();
+    }
+
+    /**
+     * <b>qits-system-runner-daemon, added on 2026-10-23 (qits-1535): a release publisher, never a
+     * deployable.</b> The target phase starts {@code qits/qits-system-runner} at the version
+     * qits-system pins, and only this repository's release run puts it in the store — so it is
+     * replayed before the train, and the replay asks for the image AND the protocol jar
+     * qits-system's own build resolves.
+     */
+    @Test
+    void theSystemRunnerDaemonIsAReplayedImagePublisher() {
+        assertThat(PlatformModel.SEEDED_REPOS).contains("system-runner-daemon");
+        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("system-runner-daemon");
+        assertThat(PlatformModel.RELEASE_PUBLISHERS)
+                .containsSubsequence("workspaces-runner-daemon", "system-runner-daemon");
+        assertThat(PlatformModel.releasePackages("system-runner-daemon")).containsExactly(
+                new PlatformModel.ReleasePackage(PlatformModel.ReleasePackage.Kind.OCI,
+                        "qits/qits-system-runner"),
+                new PlatformModel.ReleasePackage(PlatformModel.ReleasePackage.Kind.MAVEN,
+                        "qits-system-runner-protocol"));
+        assertThat(PlatformModel.repo("system-runner-daemon"))
+                .isEqualTo("qits-system-runner-daemon");
+        assertThat(PlatformModel.repoPath("system-runner-daemon"))
+                .isEqualTo("daemons/qits-system-runner-daemon");
+        assertThat(PlatformModel.archetype("system-runner-daemon",
+                "components/qits-system/qits-system-runner-daemon")).isEqualTo("DAEMON");
+        assertThat(PlatformModel.carriesVersionIdentity("system-runner-daemon")).isTrue();
     }
 
     /**

@@ -1,6 +1,6 @@
 package eu.wohlben.qits.cli.bootstrap.config;
 
-import eu.wohlben.qits.cli.bootstrap.platform.CiConcurrency;
+import eu.wohlben.qits.cli.bootstrap.platform.TargetSlots;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithDefault;
@@ -316,7 +316,7 @@ public interface BootstrapConfig {
     /**
      * <b>The operator's override for how many builds qits-ci runs at once.</b> Unset — the ordinary
      * case — the number is COMPUTED from this host's memory by
-     * {@link CiConcurrency#concurrentBuildsFor(long)}, which is where the reason lives.
+     * {@link TargetSlots#concurrentBuildsFor(long)}, which is where the reason lives.
      * <p>
      * Set, it is used as it stands, including a value the formula would never choose. That is the
      * point of it: the formula is a floor under a host that would otherwise be sized by a literal,
@@ -330,7 +330,7 @@ public interface BootstrapConfig {
      */
     default int ciConcurrentBuildsEffective() {
         return ciConcurrentBuilds()
-                .orElseGet(() -> CiConcurrency.concurrentBuildsFor(CiConcurrency.hostMemoryBytes()));
+                .orElseGet(() -> TargetSlots.concurrentBuildsFor(TargetSlots.hostMemoryBytes()));
     }
 
     /**
@@ -546,13 +546,13 @@ public interface BootstrapConfig {
     }
 
     /**
-     * qits-workspaces at its own alias, for the reason {@link #ciUrl()} gives and one more: the
-     * runner doors' reads and greenlight assert {@code X-Qits-User}/{@code X-Qits-Roles}, which
-     * the edge strips. It is not a seed service, so it answers only once the train has deployed it
-     * — which is why the {@code workspaces-runner-*} phases come after the train.
+     * qits-system at its own alias, for the reason {@link #ciUrl()} gives and one more: the
+     * targets doors' greenlight takes {@code qits:admin} alone, asserted as {@code X-Qits-User}/
+     * {@code X-Qits-Roles}, which the edge strips. It is not a seed service, so it answers only once
+     * the train has deployed it — which is why the {@code target-*} phases come after the train.
      */
-    default String workspacesUrl() {
-        return "http://" + PlatformModel.wireAlias("workspaces", envName()) + ":8080/workspaces";
+    default String systemUrl() {
+        return "http://" + PlatformModel.wireAlias("system", envName()) + ":8080/system";
     }
 
     /**

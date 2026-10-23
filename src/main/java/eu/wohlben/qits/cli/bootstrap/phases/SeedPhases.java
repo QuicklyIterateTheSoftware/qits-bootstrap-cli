@@ -11,7 +11,7 @@ import eu.wohlben.qits.cli.bootstrap.config.WrapperDir;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.platform.BootstrapState;
-import eu.wohlben.qits.cli.bootstrap.platform.CiConcurrency;
+import eu.wohlben.qits.cli.bootstrap.platform.TargetSlots;
 import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.DomainTokens;
@@ -206,7 +206,7 @@ public class SeedPhases {
             ctx.log("  qits-ci concurrent builds: " + boot.config.ciConcurrentBuildsEffective()
                     + " (" + (boot.config.ciConcurrentBuilds().isPresent()
                             ? "QITS_CI_CONCURRENT_BUILDS override, "
-                            : "") + CiConcurrency.describe(CiConcurrency.hostMemoryBytes()) + ")");
+                            : "") + TargetSlots.describe(TargetSlots.hostMemoryBytes()) + ")");
             boot.state.swarm = ensureSwarm(boot.docker, ctx::log);
             ctx.log("  swarm: " + boot.state.swarm);
             warnAboutInsecureRegistries(ctx);
@@ -1823,23 +1823,24 @@ public class SeedPhases {
                 RUNNER_PIN_PROPERTY);
     }
 
-    /** The workspaces runner's image repository, as its own release publishes it. */
-    static final String WORKSPACES_RUNNER_IMAGE = "qits/qits-workspaces-runner";
+    /** The qits-system-runner's image repository, as its own release publishes it. */
+    static final String SYSTEM_RUNNER_IMAGE = "qits/qits-system-runner";
 
-    /** The property in qits-workspaces' root pom that says which workspaces runner it expects. */
-    static final String WORKSPACES_RUNNER_PIN_PROPERTY = "qits.workspaces-runner-protocol.version";
+    /** The property in qits-system's root pom that says which runner every target is pinned to. */
+    static final String SYSTEM_RUNNER_PIN_PROPERTY = "qits.system-runner-protocol.version";
 
     /**
-     * <b>WHICH WORKSPACES RUNNER THIS BOOT STARTS: the one qits-workspaces pins</b>, for
-     * {@link #runnerVersion}'s reason — a runner of any other version is told to update to the pin
-     * at its first hello. Read from the workspaces checkout, which a restore stands at the release
-     * the train deploys, so the runner and the service it dials agree. Nothing builds it here: the
-     * release replay of qits-workspaces-runner-daemon is what puts that image in the store.
+     * <b>WHICH RUNNER THIS HOST'S TARGET STARTS: the one qits-system pins</b>, for
+     * {@link #runnerVersion}'s reason — a runner of any other version is told to upgrade to the pin
+     * at its first hello ({@code SystemRunnerBinary.VERSION} is what qits-system pins every target
+     * to). Read from the system checkout, which a restore stands at the release the train deploys,
+     * so the runner and the service it dials agree. Nothing builds it here: the release replay of
+     * qits-system-runner-daemon is what puts that image in the store.
      */
-    static String workspacesRunnerVersion(Boot boot) throws IOException {
-        String pom = Files.readString(boot.state.repoDir("workspaces")
+    static String systemRunnerVersion(Boot boot) throws IOException {
+        String pom = Files.readString(boot.state.repoDir("system")
                 .resolve(PinnedVersions.ROOT_POM), StandardCharsets.UTF_8);
-        return protocolPin(pom, WORKSPACES_RUNNER_PIN_PROPERTY, "qits-workspaces");
+        return protocolPin(pom, SYSTEM_RUNNER_PIN_PROPERTY, "qits-system");
     }
 
     /** The image as the host daemon holds it after the build: {@code qits/qits-ci-runner:<pin>}. */

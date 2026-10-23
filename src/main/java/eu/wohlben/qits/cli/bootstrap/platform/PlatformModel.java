@@ -319,7 +319,15 @@ public final class PlatformModel {
      * the version qits-workspaces pins, and nothing but that repository's own release run puts the
      * image in the store — so it is cloned, hosted and replayed like qits-workspace-daemon, and it
      * is never a deployable: the runner is a container the bootstrap starts and that rolls itself
-     * over, exactly as the CI runner is.
+     * over, exactly as the CI runner is. Since qits-1535 no phase starts that runner any more —
+     * the target replaced it — and the replay stays only while a qits-workspaces release that still
+     * compiles against {@code qits-workspaces-runner-protocol} can be the one the train restores; it
+     * goes with the submodule, in the retirement.
+     * <p>
+     * <b>qits-system-runner-daemon joined on 2026-10-23 (qits-1535), on the same terms.</b> The
+     * {@code target-localhost} phase starts this host's target from {@code qits/qits-system-runner}
+     * at the version qits-system pins, and only that repository's own release run puts the image —
+     * and the {@code qits-system-runner-protocol} jar qits-system's build resolves — in the store.
      */
     public static final List<String> SEEDED_REPOS = List.of(
             "oci", "oci-postgresql", "ci-daemon", "ci-runner", "eventstream", "containers-driver",
@@ -331,7 +339,7 @@ public final class PlatformModel {
             "spa-mirror", "spa-orchestrator", "spa-maintenance",
             "spa-system",
             "oci-workspace", "oci-workspace-editor", "workspace-daemon", "workspaces-runner-daemon",
-            "projects-daemon");
+            "system-runner-daemon", "projects-daemon");
 
     /**
      * The publishers whose released versions the platform pins, replayed on a fresh platform because
@@ -363,10 +371,15 @@ public final class PlatformModel {
      *       {@code .config/qits/workspace-base.version} and passes it as {@code --build-arg BASE}.
      *       It is independent of qits-workspace-daemon; only the base has to precede it.
      *   <li><b>qits-workspaces-runner-daemon after qits-workspace-daemon</b>, though nothing in its
-     *       build pulls the workspace image: it is the image the {@code workspaces-runner-localhost}
-     *       phase starts after the train, at the version qits-workspaces pins, and the jar beside it
-     *       ({@code qits-workspaces-runner-protocol}) is what qits-workspaces' own build in the train
-     *       resolves. Next to the workspace image because the two are one runtime's halves.
+     *       build pulls the workspace image: its jar ({@code qits-workspaces-runner-protocol}) is
+     *       what a qits-workspaces release from before the target cutover resolves in the train,
+     *       and its image is what the retired {@code workspaces-runner-localhost} phase started.
+     *       Next to the workspace image because the two were one runtime's halves.
+     *   <li><b>qits-system-runner-daemon after it</b>, and for the same reason: its image is the
+     *       one the {@code target-localhost} phase starts after the train, at the version
+     *       qits-system pins, and its jar ({@code qits-system-runner-protocol}) is what
+     *       qits-system's own build in the train resolves. It replaced the workspaces runner as
+     *       this host's agent runtime, so it sits beside it.
      * </ul>
      * <p>
      * <b>qits-registries is NOT here yet, deliberately.</b> A replay restores a pin, and nothing
@@ -379,7 +392,7 @@ public final class PlatformModel {
             List.of("spa-ui-components", "integrations-angular", "integrations-quarkus",
                     "eventstream", "containers-driver",
                     "oci-workspace", "workspace-daemon", "workspaces-runner-daemon",
-                    "oci-workspace-editor", "projects-daemon");
+                    "system-runner-daemon", "oci-workspace-editor", "projects-daemon");
 
     /**
      * <b>What a release publisher's green run leaves in a registry, addressed by the RELEASE
@@ -421,7 +434,7 @@ public final class PlatformModel {
                     List.of(new ReleasePackage(ReleasePackage.Kind.OCI, "qits/workspace"));
             case "oci-workspace-editor" ->
                     List.of(new ReleasePackage(ReleasePackage.Kind.OCI, "qits/workspace-editor"));
-            // The image is the one the workspaces runner phase starts, and refuses without. The
+            // The image is the one the retired workspaces runner phase started. The
             // pin-and-protocol jar rides the same run, after the image, and is asked for too:
             // qits-workspaces' own build in the train resolves it, so a run that died between the
             // two published half of what this replay owes.
@@ -429,6 +442,11 @@ public final class PlatformModel {
                     new ReleasePackage(ReleasePackage.Kind.OCI, "qits/qits-workspaces-runner"),
                     new ReleasePackage(ReleasePackage.Kind.MAVEN,
                             "qits-workspaces-runner-protocol"));
+            // The target's runner, the same pair: the image target-localhost starts, and the jar
+            // qits-system's build in the train resolves.
+            case "system-runner-daemon" -> List.of(
+                    new ReleasePackage(ReleasePackage.Kind.OCI, "qits/qits-system-runner"),
+                    new ReleasePackage(ReleasePackage.Kind.MAVEN, "qits-system-runner-protocol"));
             // Two images from one run, and a replay that found either one missing has to ask again.
             case "projects-daemon" -> List.of(
                     new ReleasePackage(ReleasePackage.Kind.OCI, "qits/projects-daemon"),
@@ -480,7 +498,7 @@ public final class PlatformModel {
     public static String repoPath(String name) {
         return switch (name) {
             case "ci-daemon", "ci-runner", "workspace-daemon", "workspaces-runner-daemon",
-                 "projects-daemon" ->
+                 "system-runner-daemon", "projects-daemon" ->
                     "daemons/" + repo(name);
             case "oci", "oci-postgresql", "oci-workspace", "oci-workspace-editor" ->
                     "images/" + repo(name);

@@ -2217,8 +2217,17 @@ public final class ComposeTemplate {
             # docker plugin, so glances lists the host's containers over the read-only socket it is
             # given. `latest` would be a console that changes under an operator without a deploy.
             #
-            # NO STORE AND NO PUBLISH: every answer is read live from the daemon, and the only
-            # state is an in-memory terminal registry a restart is allowed to drop.
+            # ONE STORE AND ONE PUBLISH, BOTH THE TARGETS MODULE'S (qits-1481). The docker reads stay
+            # live and the terminal registry stays in memory; what is stored is the execution
+            # targets and their leases. Both the database and the eventstream outbox are declared in
+            # qits-system's own deployments.yml (`postgresql:db`, `postgresql:eventstream`), so the
+            # deployer provisions them and injects both triples — no datasource env is here, for the
+            # reason every other block gives. QITS_EVENTS_URL is where the outbox publishes
+            # TargetLeaseChanged and TargetLoginChanged: the wire-name override every publisher
+            # states, because an address nobody states is an address nobody notices moving.
+            #
+            # The target's own runner holds a socket too, as a CONTAINER and never as a deployment
+            # (the `target-localhost` phase, after the train) — see the foot of this file.
             qits.deployments.extras.qits-system.mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock
             qits.deployments.extras.qits-system.mounts[1]=volume:qits-system-config:/work/config
             qits.deployments.extras.qits-system.groups[0]=${DOCKER_GID}
@@ -2227,6 +2236,7 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-system.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
             qits.deployments.extras.qits-system.env.QITS_SYSTEM_GLANCES_IMAGE_VERSION=4.5.6-full
             qits.deployments.extras.qits-system.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
+            qits.deployments.extras.qits-system.env.QITS_EVENTS_URL=http://${DIAL_EVENTS}:8080
             # THE MCP SURFACE. A Quarkus service with quarkus-oidc for bearer validation ONLY — it
             # has no oidc-client, dials no platform client of its own and mints nothing, so none of
             # the QUARKUS_OIDC_CLIENT_* or QITS_COMMISSIONED_CLIENT_* keys belong here. QITS_ENV
@@ -2242,9 +2252,10 @@ public final class ComposeTemplate {
             # block here would be configuration for a deployment nothing makes — and a standing
             # invitation to make one beside the running runner, two holders of one runner id.
             # Rows a platform imported from the block this replaced are orphans and harmless.
-            # NO qits-workspaces-runner BLOCK either, for the same reason: the platform host's
-            # workspaces runner is a plain `docker run` too (the `workspaces-runner-localhost` phase,
-            # after the train), on docker's default bridge like any runner, registering itself and
-            # rolling itself over. It is no application of the deployer and must not become one.
+            # NO qits-system-runner BLOCK either, for the same reason: the platform host's target is a
+            # plain `docker run` too (the `target-localhost` phase, after the train), on docker's
+            # default bridge like any runner, registering itself and rolling itself over. It is no
+            # application of the deployer and must not become one. It replaced the workspaces runner
+            # (qits-1535), which had no block for the same reason.
             """;
 }

@@ -107,15 +107,17 @@ public class BootstrapState {
     }
 
     /**
-     * <b>The id of the WORKSPACES runner this installation declared for its own host</b> — the
-     * same rule as {@link #CI_RUNNER_ID_KEY}, against qits-workspaces' {@code localhost} row: only
-     * the runner whose id is written here is started, restarted or re-registered by a rerun.
-     * Written the moment qits-workspaces answers the create, before the container exists.
+     * <b>The id of the TARGET this installation declared for its own host</b> — the same rule as
+     * {@link #CI_RUNNER_ID_KEY}, against qits-system's {@code localhost} target: only the target
+     * whose id is written here is started, restarted or re-registered by a rerun. Written the
+     * moment qits-system answers the create, before the container exists. It replaced
+     * {@code WORKSPACES_RUNNER_ID} when the target replaced this host's workspaces runner
+     * (qits-1535); a line of that name left in an older file is read by nothing.
      */
-    public static final String WORKSPACES_RUNNER_ID_KEY = "WORKSPACES_RUNNER_ID";
+    public static final String LOCALHOST_TARGET_ID_KEY = "LOCALHOST_TARGET_ID";
 
-    public Optional<String> workspacesRunnerId() {
-        return value(WORKSPACES_RUNNER_ID_KEY);
+    public Optional<String> localhostTargetId() {
+        return value(LOCALHOST_TARGET_ID_KEY);
     }
 
     /**

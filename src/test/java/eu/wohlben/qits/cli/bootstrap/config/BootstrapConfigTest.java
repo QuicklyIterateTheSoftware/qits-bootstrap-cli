@@ -23,7 +23,7 @@ class BootstrapConfigTest {
 
     /**
      * <b>The build concurrency is unset by default and COMPUTED, and an operator's value wins.</b>
-     * The formula is {@link eu.wohlben.qits.cli.bootstrap.platform.CiConcurrency}'s and is tested
+     * The formula is {@link eu.wohlben.qits.cli.bootstrap.platform.TargetSlots}'s and is tested
      * there; what is proved here is that {@code QITS_CI_CONCURRENT_BUILDS} reaches this knob at all
      * — the override exists because the number that has to be right is the one on the host.
      */

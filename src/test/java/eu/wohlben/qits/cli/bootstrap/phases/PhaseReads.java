@@ -50,8 +50,15 @@ public final class PhaseReads {
         return PipelinePhases.runnerConnection(listing, id).value();
     }
 
-    /** {@code workspaces-runner-connected}: the same for qits-workspaces' listing. */
-    public static JsonNode workspacesRunnerConnected(Http.Response listing, String id) {
-        return PipelinePhases.workspacesRunnerConnection(listing, id).value();
+    /** {@code target-connected}: the same for qits-system's target listing. */
+    public static JsonNode targetConnected(Http.Response listing, String id) {
+        return PipelinePhases.targetConnection(listing, id).value();
+    }
+
+    /** {@code target-localhost}: the decision a listing makes, on a cold host whose CI is ours. */
+    public static String targetClaim(Http.Response listing) {
+        return PipelinePhases.targetDecision(
+                eu.wohlben.qits.cli.bootstrap.api.SystemApi.targetsIn(listing), Optional.empty(),
+                PipelinePhases.RunnerClaim.DECLARE).claim().name();
     }
 }
