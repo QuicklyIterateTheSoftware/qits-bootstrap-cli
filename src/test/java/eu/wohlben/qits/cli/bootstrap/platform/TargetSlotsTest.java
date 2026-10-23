@@ -89,14 +89,15 @@ class TargetSlotsTest {
     }
 
     /**
-     * The total never falls under the minimums: one workspace and one desk on the smallest host,
-     * because a total under their sum is one qits-system ignores the minimums of.
+     * The total is the CI share plus the agent share, and the agent share never falls under the
+     * agent minimums: one build, one workspace and one desk on the smallest host.
      */
     @Test
-    void theTargetTotalIsNeverUnderItsMinimums() {
-        assertThat(TargetSlots.targetSlotsFor(gib(16), 1, 2)).isEqualTo(2);
-        assertThat(TargetSlots.targetSlotsFor(0, 1, 2)).isEqualTo(2);
-        assertThat(TargetSlots.targetSlotsFor(gib(32), 1, 2)).isEqualTo(4);
-        assertThat(TargetSlots.targetSlotsFor(gib(16), 1, 0)).isOne();
+    void theTargetTotalIsTheCiShareAndNeverUnderItsMinimums() {
+        assertThat(TargetSlots.targetSlotsFor(gib(16), 1, 2)).isEqualTo(3);
+        assertThat(TargetSlots.targetSlotsFor(0, 1, 2)).isEqualTo(3);
+        assertThat(TargetSlots.targetSlotsFor(gib(32), 1, 2)).isEqualTo(5);
+        assertThat(TargetSlots.targetSlotsFor(gib(32), 2, 2)).isEqualTo(4);
+        assertThat(TargetSlots.targetSlotsFor(gib(16), 0, 0)).isOne();
     }
 }

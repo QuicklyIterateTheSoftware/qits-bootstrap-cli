@@ -265,9 +265,6 @@ class PlatformModelTest {
         expected.put("ci-daemon", "qits-ci-daemon");
         expected.put("projects-daemon", "qits-projects-daemon");
         expected.put("workspace-daemon", "qits-workspace-daemon");
-        // The runner: its model name is the image's (qits/qits-ci-runner), and its repository is
-        // a daemon's.
-        expected.put("ci-runner", "qits-ci-runner-daemon");
         // The workspaces runner: a release publisher, its name already the repository's.
         expected.put("workspaces-runner-daemon", "qits-workspaces-runner-daemon");
         // The target's runner, the same shape (qits-1535).
@@ -542,9 +539,12 @@ class PlatformModelTest {
         // alias table, /git/<projectId>/<repoName> resolves through it and nowhere else, and every
         // repository of this platform is created minutes into the boot. Deployed sixth of
         // seventeen it answered nothing until half the boot was over.
+        // qits-system is in it since 2026-10-23 (qits-1547), because a run is a LEASE: every CI
+        // run is one on a qits-system target, so the first release replay of a cold boot needs the
+        // service the localhost target registers with — up, with its database and idp client.
         assertThat(PlatformModel.CORE).containsExactlyInAnyOrder(
                 "edge", "mirror", "artifacts", "githost", "projects", "ci",
-                "containers", "deployments", "idp", "events",
+                "containers", "deployments", "idp", "events", "system",
                 "oci-postgresql");
         // Every seed service is also deployed through the pipeline afterwards, with ONE exception:
         // postgres stays the seed service for good, because re-reading its spec from qits-githost
@@ -564,7 +564,7 @@ class PlatformModelTest {
     void theSeedDeployedAreTheCoreLessTheDeployerInTrainOrder() {
         assertThat(PlatformModel.SEED_DEPLOYED).containsExactly(
                 "idp", "projects", "events", "mirror", "artifacts", "githost", "containers", "ci",
-                "edge");
+                "system", "edge");
         assertThat(PlatformModel.SEED_DEPLOYED).doesNotContain("deployments", "oci-postgresql");
     }
 
@@ -692,35 +692,25 @@ class PlatformModelTest {
     }
 
     /**
-     * <b>THE RUNNER IS A SEEDED REPOSITORY AND NEVER A DEPLOYABLE.</b> A cold boot needs its
-     * checkout — qits-ci pins the protocol jar out of it and the runner image is built from the
-     * pinned tag — and the bootstrap starts the runner itself, as a plain container. A
-     * {@code DEPLOYABLES} entry would hand it to the deployer, which has no deployments.yml to read
-     * for it and would wait an hour on a deployment nobody makes.
+     * <b>THE CI RUNNER IS GONE (qits-1547).</b> Every CI run is a lease on a qits-system target, so
+     * nothing clones, builds or starts qits-ci-runner-daemon any more — its repository is no
+     * platform repository of this boot, and its name resolves to nothing.
      */
     @Test
-    void theRunnerIsSeededAndNeitherDeployedNorReplayed() {
-        assertThat(PlatformModel.SEEDED_REPOS).contains("ci-runner");
-        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("ci-runner");
-        assertThat(PlatformModel.RELEASE_PUBLISHERS).doesNotContain("ci-runner");
-        assertThat(PlatformModel.repo("ci-runner")).isEqualTo("qits-ci-runner-daemon");
-        assertThat(PlatformModel.nameOf("qits-ci-runner-daemon")).isEqualTo("ci-runner");
-        assertThat(PlatformModel.repoPath("ci-runner")).isEqualTo("daemons/qits-ci-runner-daemon");
-        // Built from the tag qits-ci pins, so the checkout itself stays on main.
-        assertThat(PlatformModel.carriesVersionIdentity("ci-runner")).isFalse();
+    void theCiRunnerIsNoRepositoryOfTheBootAnyMore() {
+        assertThat(PlatformModel.platformRepos()).doesNotContain("ci-runner");
+        assertThat(PlatformModel.nameOf("qits-ci-runner-daemon")).isNull();
+        assertThat(PlatformModel.mavenModule("ci-runner")).isEmpty();
     }
 
     /**
-     * <b>A model name that says nothing of its kind answers from its repository's grammar.</b>
-     * {@code ci-runner} ends in no role, its repository is {@code qits-ci-runner-daemon}, and
-     * qits-projects holds it as a DAEMON — the adoption would otherwise hand it the SERVICE
-     * default.
+     * <b>A model name that says nothing of its kind answers from its repository's grammar</b> —
+     * and the model names that say nothing answer as they always did.
      */
     @Test
-    void theRunnerIsADaemonByItsRepositorysName() {
-        assertThat(PlatformModel.archetype("ci-runner",
-                "components/qits-ci/qits-ci-runner-daemon")).isEqualTo("DAEMON");
-        // And the model names that say nothing answer as they always did.
+    void aRepositoryIsItsGrammarsArchetype() {
+        assertThat(PlatformModel.archetype("system-runner-daemon",
+                "components/qits-system/qits-system-runner-daemon")).isEqualTo("DAEMON");
         assertThat(PlatformModel.archetype("ci", "components/qits-ci/qits-ci-service"))
                 .isEqualTo("SERVICE");
         assertThat(PlatformModel.archetype("eventstream",
@@ -728,13 +718,15 @@ class PlatformModelTest {
     }
 
     /**
-     * The two wire contracts qits-ci compiles against, each one module of a daemon's reactor. The
-     * other module is a native binary, which the seed has no reason to build for a jar.
+     * The wire contracts qits-ci and qits-system compile against, each one module of a daemon's
+     * reactor. The other module is a native binary, which the seed has no reason to build for a
+     * jar.
      */
     @Test
     void theDaemonsAreSeededByTheirProtocolModule() {
         assertThat(PlatformModel.mavenModule("ci-daemon")).isEqualTo("ci-daemon-protocol");
-        assertThat(PlatformModel.mavenModule("ci-runner")).isEqualTo("ci-runner-protocol");
+        assertThat(PlatformModel.mavenModule("system-runner-daemon"))
+                .isEqualTo("system-runner-protocol");
     }
 
     @Test
@@ -1105,9 +1097,12 @@ class PlatformModelTest {
                 "system");
         assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
                 "system", "edge", "deployments");
-        // NOT A SEED SERVICE: nothing calls it, so nothing waits on it.
-        assertThat(PlatformModel.CORE).doesNotContain("system");
-        assertThat(PlatformModel.seedUiPath("system")).isEmpty();
+        // A SEED SERVICE since qits-1547, and not for its panels: the localhost target registers
+        // with its targets module before the first release replay. Its client is staged like
+        // every seed service's.
+        assertThat(PlatformModel.CORE).contains("system");
+        assertThat(PlatformModel.seedUiPath("system"))
+                .isEqualTo("service/src/main/webui/dist/qits-platform-spa-system/browser");
         // It carries version identity, so a restoring boot stands it at its newest release.
         assertThat(PlatformModel.carriesVersionIdentity("system")).isTrue();
         // A platform service: what it shows is a MACHINE, which has no per-tier half.
@@ -1145,10 +1140,11 @@ class PlatformModelTest {
      */
     @Test
     void theBaseSystemPanelsHoldAClientBecauseTheyPullGlancesThroughTheMirror() {
-        // The client is real and it is a DOCKER credential, but it arrives with the deployment:
-        // this console runs last of the platform tier and nothing waits on it, so it declares an
-        // idp:client resource like every other deployable rather than being seeded.
-        assertThat(PlatformModel.SEED_IDP_CLIENT_APPS).doesNotContain("system");
+        // The client is real, a DOCKER credential and — since the targets module — the one every
+        // target's credentials are commissioned with. qits-system is a seed service since
+        // qits-1547, so this bootstrap creates it against the running idp like the other seed
+        // services' rather than waiting for a deployment to.
+        assertThat(PlatformModel.SEED_IDP_CLIENT_APPS).contains("system");
         assertThat(PlatformModel.DEPLOYABLES).contains("system");
         // And the alias the templates spell for its gate, which is also that client's id.
         assertThat(PlatformModel.modelTokens("prod"))
@@ -1165,18 +1161,18 @@ class PlatformModelTest {
         assertThat(PlatformModel.SEED_IDP_CLIENT_APPS.stream()
                 .map(app -> PlatformModel.wireAlias(app, "prod")).toList())
                 .containsExactly("prod-qits-projects", "prod-qits-ci", "prod-qits-containers",
-                        "prod-qits-deployments", "prod-qits-edge");
+                        "prod-qits-deployments", "prod-qits-edge", "prod-qits-system");
         assertThat(PlatformModel.SEED_IDP_CLIENT_APPS.stream()
                 .map(app -> PlatformModel.wireAlias(app, "preprod")).toList())
                 .containsExactly("preprod-qits-projects", "preprod-qits-ci",
                         "preprod-qits-containers", "preprod-qits-deployments",
-                        "preprod-qits-edge");
+                        "preprod-qits-edge", "preprod-qits-system");
         // The registry row and the generated files are keyed by the APPLICATION instead, because a
         // placeholder cannot be spelled with an environment name the template does not know yet.
         assertThat(PlatformModel.SEED_IDP_CLIENT_APPS.stream()
                 .map(PlatformModel::application).toList())
                 .containsExactly("qits-projects", "qits-ci", "qits-containers", "qits-deployments",
-                        "qits-edge");
+                        "qits-edge", "qits-system");
         // The two other byte services hold no client at all: the mirror has no auth surface, and
         // the git host validates and mints nothing.
         assertThat(PlatformModel.SEED_IDP_CLIENT_APPS)

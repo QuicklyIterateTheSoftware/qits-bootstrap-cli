@@ -8,13 +8,14 @@ import java.util.Locale;
 
 /**
  * <b>How many slots this host's own target may run at once, computed from the memory of the
- * host it shares with the platform.</b> Two figures, and both used to live apart: the CI share
- * ({@link #concurrentBuildsFor}), which is the {@code slots} the {@code runner-localhost} phase
- * declares the CI runner with and the {@code QITS_CI_RUNNER_SLOTS} it starts that container with;
- * and the target's own total ({@link #targetSlotsFor}), the {@code QITS_SYSTEM_RUNNER_SLOTS} the
- * {@code target-localhost} phase starts the qits-system-runner with. The class was
- * {@code CiConcurrency} until the target replaced the workspaces runner (qits-1535), and the
- * workspaces runner's own formula ({@code WorkspaceSlots}) moved in here as the agent share.
+ * host it shares with the platform.</b> Two shares make it up: the CI share
+ * ({@link #concurrentBuildsFor}), which is the target's {@code min_ci}; and the agent share
+ * ({@link #agentSlotsFor}), what is left for workspaces and desks. Their sum, the agent share never
+ * under its minimums, is the target's total ({@link #targetSlotsFor}) — the
+ * {@code QITS_SYSTEM_RUNNER_SLOTS} the {@code target-localhost} phase starts the qits-system-runner
+ * with. The class was {@code CiConcurrency} until the target replaced the workspaces runner
+ * (qits-1535), whose own formula ({@code WorkspaceSlots}) moved in here as the agent share; the CI
+ * share sized this host's CI runner until that runner was replaced too (qits-1547).
  * <p>
  * The CI share sized qits-ci's own retired in-process executor (`QITS_CI_CONCURRENT_BUILDS`)
  * until qits-443 removed that executor; the formula and the reason for computing it carried over
@@ -48,9 +49,8 @@ import java.util.Locale;
  *     agentSlots = max(1, floor((totalMemoryGiB - 10 - 6 * ciSlots) / 4))
  * </pre>
  * — 1 on a 16 GB host running one build (wohlben.eu), 2 on 32 GB running two. The target's total
- * is that, and never less than the minimums it is declared with: a total under the sum of its
- * minimums is one qits-system ignores the minimums of and fails the {@code slots} health check
- * over, so the smallest host still holds one workspace and one desk.
+ * is the CI share plus that, the agent share never under the agent minimums, so the smallest host
+ * still holds one build, one workspace and one desk.
  */
 public final class TargetSlots {
 
@@ -86,7 +86,7 @@ public final class TargetSlots {
      * builds have theirs. No host is read here either.
      *
      * @param totalBytes the host's total physical memory, or 0 when it could not be read
-     * @param ciSlots    how many builds this host's CI runner runs at once
+     * @param ciSlots    how many builds this host's target runs at once
      */
     public static int agentSlotsFor(long totalBytes, int ciSlots) {
         long forAgents = totalBytes - RESERVED - PER_BUILD * Math.max(0, ciSlots);
@@ -97,13 +97,16 @@ public final class TargetSlots {
     }
 
     /**
-     * The target's total: the agent share, and never less than the sum of the minimums it is
-     * declared with.
+     * The target's total: the CI share plus the agent share, the agent share never less than the
+     * agent minimums the target is declared with — a total under the sum of its minimums is one
+     * qits-system ignores the minimums of and fails the {@code slots} health check over.
      *
-     * @param minimums the sum of the target's minimums, over every slot type
+     * @param ciSlots       the CI share, which is the target's {@code min_ci}
+     * @param agentMinimums the target's workspace and desk minimums, summed
      */
-    public static int targetSlotsFor(long totalBytes, int ciSlots, int minimums) {
-        return Math.max(Math.max(1, minimums), agentSlotsFor(totalBytes, ciSlots));
+    public static int targetSlotsFor(long totalBytes, int ciSlots, int agentMinimums) {
+        return Math.max(0, ciSlots)
+                + Math.max(Math.max(1, agentMinimums), agentSlotsFor(totalBytes, ciSlots));
     }
 
     /**

@@ -197,6 +197,11 @@ public final class ComposeTemplate {
               # length of the change.
               qits-containers-config:
                 name: qits-containers-config
+              # qits-system's docker config, on the orchestrator's terms: one config.json its glances
+              # pull through the mirror authenticates with, written by the bootstrap with this
+              # service's own idp client. The deployed successor mounts the same volume (its extras).
+              qits-system-config:
+                name: qits-system-config
               # The deployer's own config: config/application.properties AND the config.json its own
               # pulls authenticate with, both written by the bootstrap. A volume rather than env so a
               # self-update's successor inherits them — env cannot nest the extras, and the docker
@@ -973,8 +978,9 @@ public final class ComposeTemplate {
                 # ci held the host's docker socket to run every pipeline step, which is root on the
                 # host — and every step's script is repo-controlled code, so the one service most
                 # exposed to untrusted input was also the one holding the daemon. Since qits-443
-                # retired ci's in-process executor it starts no step itself at all — every run
-                # needs a connected qits-ci-runner — and it calls qits-containers for nothing. Do
+                # retired ci's in-process executor it starts no step itself at all — every run is
+                # a CI lease on a qits-system target since qits-1547 — and it calls qits-containers
+                # for nothing. Do
                 # not mount the socket back: nothing in the image reads it, and `docker` is not on
                 # this image's PATH.
                 environment:
@@ -1195,6 +1201,60 @@ public final class ComposeTemplate {
                   # And the one file the docker CLI authenticates a pull with, which is why this
                   # volume holds no state of the service's own.
                   - qits-containers-config:/work/config
+                networks: [qits-net]
+                deploy:
+                  replicas: 1
+                  restart_policy:
+                    condition: any
+                    delay: 5s
+
+              # THE TARGETS' OWNER, in the seed since 2026-10-23 (qits-1547) BECAUSE EVERY RUN IS A LEASE.
+              # A CI run is one lease on a qits-system target since the CI step of epic qits-1481, so
+              # the first release replay of a cold boot runs on this host's target or nowhere — and
+              # the target registers with this service. It is deployed again at its own place in the
+              # train, from its release run's image, like every seed service.
+              #
+              # The THIRD holder of the host's docker socket in this file, after the deployer and the
+              # orchestrator, on the same terms: the base system panels read the daemon (`docker
+              # info`, the swarm lists, this node's containers) and the admin console's terminals
+              # exec into it. See its extras block below for why that power stays here.
+              ${ENV_NAME}-qits-system:
+                image: qits/system:latest
+                # The socket group as the PRIMARY group, the orchestrator's spelling for the same
+                # reason: `group_add` is not a stack-file key. The successor gets --group-add.
+                user: "1001:${DOCKER_GID}"
+                environment:
+                  # TWO STORES, TWO TRIPLES — the targets module's rows (target, lease, work_volume)
+                  # and the eventstream outbox it publishes TargetLeaseChanged through. SPELLED HERE,
+                  # AND ONLY HERE: the seed stack starts this container before any deployer exists.
+                  # Every deployment after this one is handed the same six by qits-deployments, from
+                  # `resources: postgresql:db, postgresql:eventstream:qits_system_eventstream`.
+                  QITS_RESOURCE_DB_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_system
+                  QITS_RESOURCE_DB_USERNAME: qits_system
+                  QITS_RESOURCE_DB_PASSWORD: "${PG_SYSTEM_PASSWORD}"
+                  QITS_RESOURCE_EVENTSTREAM_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_system_eventstream
+                  QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_system_eventstream
+                  QITS_RESOURCE_EVENTSTREAM_PASSWORD: "${PG_SYSTEM_EVENTSTREAM_PASSWORD}"
+                  QITS_EVENTS_URL: http://${DIAL_EVENTS}:8080
+                  QITS_AUTH_MACHINE_REQUIRED: "${MACHINE_REQUIRED}"
+                  QUARKUS_OIDC_AUTH_SERVER_URL: ${IDP_DIAL}
+                  # ITS OWN IDP CLIENT, as the resource triple. The targets module commissions every
+                  # target's credentials with it (kinds target-runner and target-runner-registration),
+                  # so without it the localhost target's create answers 503 and nothing runs.
+                  QITS_RESOURCE_IDP_URL: ${IDP_DIAL}
+                  QITS_RESOURCE_IDP_CLIENT_ID: ${ALIAS_SYSTEM}
+                  QITS_RESOURCE_IDP_CLIENT_SECRET: "${IDP_CLIENT_SECRET_SYSTEM}"
+                  # Where the docker CLI looks for its credential: the file on the volume below, the
+                  # orchestrator's reason.
+                  DOCKER_CONFIG: /work/config
+                  QITS_SYSTEM_GLANCES_IMAGE_VERSION: 4.5.6-full
+                  # QITS_DOMAIN (the SEED_DOMAIN fragment) is what the targets module composes every
+                  # public address a target is told from — system.qits.<domain>, registry.qits.<domain>
+                  # — and QITS_ENVIRONMENT is what it names the idp clients it commissions under.
+                  QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}${TIER_ENV_SYSTEM}
+                volumes:
+                  - /var/run/docker.sock:/var/run/docker.sock
+                  - qits-system-config:/work/config
                 networks: [qits-net]
                 deploy:
                   replicas: 1
@@ -1562,7 +1622,8 @@ public final class ComposeTemplate {
             # used to start every ci successor with the host's docker socket and the socket's group:
             # root on the host, held by the one service that executes repo-controlled pipelines.
             # ci held it a step further by asking ${ENV_NAME}-qits-containers instead, and qits-443
-            # retired even that: ci starts no step anywhere now, a connected qits-ci-runner does, so
+            # retired even that: ci starts no step anywhere now — a CI lease on a qits-system target
+            # does (qits-1547) — so
             # the platform's most exposed service is the one with the least authority. Putting the
             # socket back grants root for nothing: the image has no docker CLI and reads no socket
             # path.
@@ -2227,7 +2288,8 @@ public final class ComposeTemplate {
             # states, because an address nobody states is an address nobody notices moving.
             #
             # The target's own runner holds a socket too, as a CONTAINER and never as a deployment
-            # (the `target-localhost` phase, after the train) — see the foot of this file.
+            # (the `target-localhost` phase, before the first release replay) — see the foot of
+            # this file. The seed stack runs this service before its first deployment (qits-1547).
             qits.deployments.extras.qits-system.mounts[0]=bind:/var/run/docker.sock:/var/run/docker.sock
             qits.deployments.extras.qits-system.mounts[1]=volume:qits-system-config:/work/config
             qits.deployments.extras.qits-system.groups[0]=${DOCKER_GID}
@@ -2245,17 +2307,14 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-platform-access-mcp-service.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
             qits.deployments.extras.qits-platform-access-mcp-service.env.QITS_OBSERVABILITY_URL=http://${ENV_NAME}-qits-observability:8080
             qits.deployments.extras.qits-platform-access-mcp-service.env.QITS_ENV=${ENV_NAME}
-            # NO qits-ci-runner BLOCK, AND ITS ABSENCE IS THE DECISION. The platform host's runner
-            # is a container the bootstrap starts with a plain `docker run` (the `runner-localhost`
-            # phase), exactly as the install line starts a runner on any other host: it registers
-            # itself, rolls itself over on an Upgrade, and is no application of the deployer. A
-            # block here would be configuration for a deployment nothing makes — and a standing
-            # invitation to make one beside the running runner, two holders of one runner id.
-            # Rows a platform imported from the block this replaced are orphans and harmless.
-            # NO qits-system-runner BLOCK either, for the same reason: the platform host's target is a
-            # plain `docker run` too (the `target-localhost` phase, after the train), on docker's
-            # default bridge like any runner, registering itself and rolling itself over. It is no
-            # application of the deployer and must not become one. It replaced the workspaces runner
-            # (qits-1535), which had no block for the same reason.
+            # NO qits-system-runner BLOCK, AND ITS ABSENCE IS THE DECISION. The platform host's target
+            # is a container the bootstrap starts with a plain `docker run` (the `target-localhost`
+            # phase), exactly as the install line starts a target's runner on any other host: it
+            # registers itself, rolls itself over on an Upgrade, and is no application of the
+            # deployer. A block here would be configuration for a deployment nothing makes — and a
+            # standing invitation to make one beside the running runner, two holders of one target
+            # id. It replaced the workspaces runner (qits-1535) and the CI runner (qits-1547), which
+            # had no block for the same reason; rows a platform imported from a block that once
+            # existed are orphans and harmless.
             """;
 }

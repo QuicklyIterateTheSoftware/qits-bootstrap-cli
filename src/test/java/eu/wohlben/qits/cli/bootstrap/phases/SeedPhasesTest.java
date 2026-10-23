@@ -425,26 +425,34 @@ class SeedPhasesTest {
         assertThat(script).startsWith("set -eu\n");
     }
 
-    // --- the two wire contracts qits-ci compiles against -----------------------------------------
+    // --- the wire contracts qits-ci and qits-system compile against ------------------------------
 
     private static final String CI_POM = """
             <project>
               <properties>
                 <qits.ci-daemon-protocol.version>2026.929.103640</qits.ci-daemon-protocol.version>
-                <qits.ci-runner-protocol.version>
-                    2026.930.132340
-                </qits.ci-runner-protocol.version>
                 <qits.eventstream.version>2026.929.142419</qits.eventstream.version>
               </properties>
             </project>
             """;
 
-    /** The pin is the ci checkout's own property, whitespace and all. */
+    /** qits-system's root pom, which pins the target's runner — whitespace and all. */
+    private static final String SYSTEM_POM = """
+            <project>
+              <properties>
+                <qits.system-runner-protocol.version>
+                    2026.930.132340
+                </qits.system-runner-protocol.version>
+              </properties>
+            </project>
+            """;
+
+    /** The pin is the consumer checkout's own property, whitespace and all. */
     @Test
     void theProtocolVersionIsTheOneTheCiCheckoutPins() {
         assertThat(SeedPhases.protocolPin(CI_POM, "qits.ci-daemon-protocol.version"))
                 .isEqualTo("2026.929.103640");
-        assertThat(SeedPhases.protocolPin(CI_POM, "qits.ci-runner-protocol.version"))
+        assertThat(SeedPhases.protocolPin(SYSTEM_POM, "qits.system-runner-protocol.version"))
                 .isEqualTo("2026.930.132340");
     }
 
@@ -456,15 +464,15 @@ class SeedPhasesTest {
     @Test
     void aPinThatIsNotAReleaseStopsTheBootWithItsName() {
         assertThatThrownBy(() -> SeedPhases.protocolPin(
-                "<qits.ci-runner-protocol.version>1.0.0-SNAPSHOT</qits.ci-runner-protocol.version>",
-                "qits.ci-runner-protocol.version"))
+                "<qits.system-runner-protocol.version>1.0.0-SNAPSHOT</qits.system-runner-protocol.version>",
+                "qits.system-runner-protocol.version"))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("qits.ci-runner-protocol.version")
+                .hasMessageContaining("qits.system-runner-protocol.version")
                 .hasMessageContaining("1.0.0-SNAPSHOT")
                 .hasMessageContaining("not a released version");
         assertThatThrownBy(() -> SeedPhases.protocolPin(
-                "<qits.ci-runner-protocol.version>${revision}</qits.ci-runner-protocol.version>",
-                "qits.ci-runner-protocol.version"))
+                "<qits.system-runner-protocol.version>${revision}</qits.system-runner-protocol.version>",
+                "qits.system-runner-protocol.version"))
                 .hasMessageContaining("not a released version");
         assertThatThrownBy(() -> SeedPhases.protocolPin("<project/>",
                 "qits.ci-daemon-protocol.version"))
@@ -482,18 +490,18 @@ class SeedPhasesTest {
         SeedPhases phases = new SeedPhases(
                 new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
 
-        String script = phases.protocolScript("ci-runner", "2026.930.132340", true, true,
+        String script = phases.protocolScript("system-runner-daemon", "2026.930.132340", true, true,
                 "Bearer publish-token");
 
         assertThat(script).startsWith("set -eu\n");
         assertThat(script.lines().filter(line -> line.startsWith("cd ")).toList())
                 .containsExactly(
                         "cd /src@2026.930.132340 && mvn -B -ntp -s /root/.m2/settings.xml deploy "
-                                + "-DskipTests -pl ci-runner-protocol -am"
+                                + "-DskipTests -pl system-runner-protocol -am"
                                 + " -Dmaven.repo.local=/cache/repository"
                                 + " -DaltDeploymentRepository=seed::default::file:///repo",
                         "cd /src@2026.930.132340 && mvn -B -ntp -s /root/.m2/settings.xml deploy "
-                                + "-DskipTests -pl ci-runner-protocol -am"
+                                + "-DskipTests -pl system-runner-protocol -am"
                                 + " -Dmaven.repo.local=/cache/repository"
                                 + " -DaltDeploymentRepository=qits::default::"
                                 + "http://prod-qits-artifacts:8080/artifacts/maven/maven");
@@ -509,27 +517,34 @@ class SeedPhasesTest {
                 .doesNotContain("seed::default::");
     }
 
-    private static final String RUNNER_PROTOCOL_JAR = "eu/wohlben/qits/qits-ci-runner-protocol/"
-            + "2026.930.132340/qits-ci-runner-protocol-2026.930.132340.jar";
+    private static final String RUNNER_PROTOCOL_JAR = "eu/wohlben/qits/qits-system-runner-protocol/"
+            + "2026.930.132340/qits-system-runner-protocol-2026.930.132340.jar";
 
     private static final String STORE_JAR =
             "GET http://prod-qits-artifacts:8080/artifacts/maven/maven/" + RUNNER_PROTOCOL_JAR;
 
-    /** A boot whose sources directory is this test's, holding a ci checkout that pins both jars. */
+    /**
+     * A boot whose sources directory is this test's, holding a ci checkout and a system checkout
+     * that pin the two contracts.
+     */
     private Boot protocolBoot(ScriptedRunner runner, CannedHttp http) throws IOException {
         Boot boot = new Boot(TestConfig.from(Map.of("QITS_MACHINE_AUTH", "0",
+                "QITS_DOMAIN", "qits-dev.eu",
                 "QITS_SRC", temp.resolve("src").toString())),
                 new RunLog(temp.resolve("run.log")), runner, http);
         boot.state.srcDir = temp.resolve("src");
         boot.state.wrapperDir = temp;
         Path ci = Files.createDirectories(boot.state.repoDir("ci"));
         Files.writeString(ci.resolve("pom.xml"), CI_POM, StandardCharsets.UTF_8);
+        Path system = Files.createDirectories(boot.state.repoDir("system"));
+        Files.writeString(system.resolve("pom.xml"), SYSTEM_POM, StandardCharsets.UTF_8);
         return boot;
     }
 
     private static void runProtocolPublish(Boot boot, PhaseContext ctx) throws Exception {
-        new SeedPhases(boot).protocolPublish("ci-runner", "qits-ci-runner-protocol",
-                "qits.ci-runner-protocol.version").action().run(ctx);
+        new SeedPhases(boot).protocolPublish("system", "system-runner-daemon",
+                "qits-system-runner-protocol", "qits.system-runner-protocol.version").action()
+                .run(ctx);
     }
 
     /**
@@ -545,8 +560,8 @@ class SeedPhasesTest {
 
         assertThatThrownBy(() -> runProtocolPublish(boot, new CiLogStreamTest.Recorder()))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("qits-ci-runner-protocol 2026.930.132340")
-                .hasMessageContaining("qits-ci-runner-daemon")
+                .hasMessageContaining("qits-system-runner-protocol 2026.930.132340")
+                .hasMessageContaining("qits-system-runner-daemon")
                 .hasMessageContaining("no such tag");
         // And nothing was started for a jar there is no source for.
         assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker create"));
@@ -612,16 +627,16 @@ class SeedPhasesTest {
             USER root
             WORKDIR /qits-build
             COPY . .
-            RUN ./mvnw -B -ntp -pl ci-runner -am package -Dnative -DskipTests
+            RUN ./mvnw -B -ntp -pl system-runner -am package -Dnative -DskipTests
 
             FROM scratch AS binary
-            COPY --from=build /qits-build/ci-runner/target/qits-ci-runner /qits-ci-runner
+            COPY --from=build /qits-build/system-runner/target/qits-system-runner /qits-system-runner
 
             # The image: the binary and a docker CLI on a small alpine base.
             FROM docker:29.8.1-cli AS image
-            COPY --from=build /qits-build/ci-runner/target/qits-ci-runner /usr/local/bin/qits-ci-runner
-            RUN mkdir -p /var/lib/qits-ci-runner && chmod 700 /var/lib/qits-ci-runner
-            ENTRYPOINT ["/usr/local/bin/qits-ci-runner"]
+            COPY --from=build /qits-build/system-runner/target/qits-system-runner /usr/local/bin/qits-system-runner
+            RUN mkdir -p /var/lib/qits-system-runner && chmod 700 /var/lib/qits-system-runner
+            ENTRYPOINT ["/usr/local/bin/qits-system-runner"]
             CMD []
             """;
 
@@ -633,14 +648,14 @@ class SeedPhasesTest {
      */
     @Test
     void theRunnerImageIsTheDockerfilesLastStageWithTheBinaryCopiedFromTheContext() {
-        String stage = SeedPhases.runnerImageStage(RUNNER_DOCKERFILE, "qits-ci-runner");
+        String stage = SeedPhases.runnerImageStage(RUNNER_DOCKERFILE, "qits-system-runner");
 
         assertThat(stage.lines().toList()).containsExactly(
                 "ARG BUILDER_IMAGE=qits/graalvmce-musl-builder:jdk-25",
                 "FROM docker:29.8.1-cli AS image",
-                "COPY qits-ci-runner /usr/local/bin/qits-ci-runner",
-                "RUN mkdir -p /var/lib/qits-ci-runner && chmod 700 /var/lib/qits-ci-runner",
-                "ENTRYPOINT [\"/usr/local/bin/qits-ci-runner\"]",
+                "COPY qits-system-runner /usr/local/bin/qits-system-runner",
+                "RUN mkdir -p /var/lib/qits-system-runner && chmod 700 /var/lib/qits-system-runner",
+                "ENTRYPOINT [\"/usr/local/bin/qits-system-runner\"]",
                 "CMD []");
         // No stage of it compiles anything: the other two are gone whole.
         assertThat(stage).doesNotContain("--from=build").doesNotContain("mvnw");
@@ -651,7 +666,7 @@ class SeedPhasesTest {
     void theRunnerImagesBaseLosesTheMirrorPrefixLikeEverySeedImage() {
         String stage = SeedPhases.runnerImageStage(RUNNER_DOCKERFILE.replace(
                 "FROM docker:29.8.1-cli", "FROM mirror.dev.localhost:8080/hub/library/docker:29.8.1-cli"),
-                "qits-ci-runner");
+                "qits-system-runner");
 
         assertThat(stage).contains("FROM docker.io/library/docker:29.8.1-cli AS image");
     }
@@ -660,24 +675,24 @@ class SeedPhasesTest {
     @Test
     void aRunnerDockerfileThisBootCannotReadStopsIt() {
         assertThatThrownBy(() -> SeedPhases.runnerImageStage(
-                "FROM alpine AS build\nRUN true\n", "qits-ci-runner"))
+                "FROM alpine AS build\nRUN true\n", "qits-system-runner"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("AS image");
         assertThatThrownBy(() -> SeedPhases.runnerImageStage(
-                "FROM alpine AS image\nRUN true\n", "qits-ci-runner"))
+                "FROM alpine AS image\nRUN true\n", "qits-system-runner"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("copies nothing from its build stage");
     }
 
     private static void runRunnerImage(Boot boot, PhaseContext ctx) throws Exception {
-        new SeedPhases(boot).runnerImage().action().run(ctx);
+        new SeedPhases(boot).systemRunnerImage().action().run(ctx);
     }
 
     /**
-     * <b>The whole build, command for command.</b> The tag qits-ci pins goes into the ci-daemon's
+     * <b>The whole build, command for command.</b> The tag qits-system pins goes into the ci-daemon's
      * builder container, the binary comes out into a directory under the sources directory —
      * because the image build mounts it, and the HOST's daemon resolves that mount — and the image
-     * is tagged under the bare name and under the registry host.
+     * is tagged under the bare name, under the registry host and under the public registry name.
      */
     @Test
     void theRunnerIsCompiledFromThePinnedTagAndTaggedUnderTheRegistryHost() throws Exception {
@@ -704,24 +719,26 @@ class SeedPhasesTest {
                 .containsSubsequence("-v", "qits-maven-cache:/cache",
                         "qits/graalvmce-musl-builder:jdk-25", "-c");
         assertThat(create.getLast()).isEqualTo("rm -rf /cache/repository/eu/wohlben/qits\n"
-                + "cd /qits-build && ./mvnw -B -ntp -pl ci-runner -am package -Dnative "
+                + "cd /qits-build && ./mvnw -B -ntp -pl system-runner -am package -Dnative "
                 + "-DskipTests -Dquarkus.native.container-build=false"
                 + " -Dmaven.repo.local=/cache/repository");
-        Path context = temp.resolve("src/.exports/qits-ci-runner-image");
+        Path context = temp.resolve("src/.exports/qits-system-runner-image");
         assertThat(runner.lines()).containsSubsequence(
                 "docker start -a cid-7",
-                "docker cp cid-7:/qits-build/ci-runner/target/qits-ci-runner "
-                        + context.resolve("qits-ci-runner"),
+                "docker cp cid-7:/qits-build/system-runner/target/qits-system-runner "
+                        + context.resolve("qits-system-runner"),
                 "docker rm -f cid-7",
-                "docker tag qits/qits-ci-runner:2026.930.132340 "
-                        + "registry.prod.localhost:8080/qits/qits-ci-runner:2026.930.132340");
+                "docker tag qits/qits-system-runner:2026.930.132340 "
+                        + "registry.prod.localhost:8080/qits/qits-system-runner:2026.930.132340",
+                "docker tag qits/qits-system-runner:2026.930.132340 "
+                        + "registry.qits.qits-dev.eu/qits/qits-system-runner:2026.930.132340");
         // The tag's tree is what was compiled, never the checkout.
         assertThat(runner.lines()).anyMatch(line -> line.startsWith("docker cp ")
                 && line.endsWith("cid-7:/qits-build")
-                && line.contains("qits-ci-runner-daemon@2026.930.132340"));
+                && line.contains("qits-system-runner-daemon@2026.930.132340"));
         // And the image build's context is that one directory, under the sources directory.
         assertThat(runner.lines()).anyMatch(line -> line.contains("-v " + context + ":/ctx:ro")
-                && line.contains("name=qits/qits-ci-runner:2026.930.132340"));
+                && line.contains("name=qits/qits-system-runner:2026.930.132340"));
         assertThat(context).doesNotExist();
     }
 
@@ -733,9 +750,11 @@ class SeedPhasesTest {
 
         assertThatThrownBy(() -> runRunnerImage(boot, new CiLogStreamTest.Recorder()))
                 .isInstanceOf(PhaseSkipped.class)
-                .hasMessageContaining("qits/qits-ci-runner:2026.930.132340 is already on this host");
-        assertThat(runner.lines()).contains("docker tag qits/qits-ci-runner:2026.930.132340 "
-                + "registry.prod.localhost:8080/qits/qits-ci-runner:2026.930.132340");
+                .hasMessageContaining("qits/qits-system-runner:2026.930.132340 is already on this host");
+        assertThat(runner.lines()).contains("docker tag qits/qits-system-runner:2026.930.132340 "
+                + "registry.prod.localhost:8080/qits/qits-system-runner:2026.930.132340",
+                "docker tag qits/qits-system-runner:2026.930.132340 "
+                + "registry.qits.qits-dev.eu/qits/qits-system-runner:2026.930.132340");
         assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker create"));
     }
 

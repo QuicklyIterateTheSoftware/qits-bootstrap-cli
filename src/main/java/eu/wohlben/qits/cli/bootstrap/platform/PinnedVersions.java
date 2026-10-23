@@ -78,9 +78,10 @@ public final class PinnedVersions {
      * says which modules, and this reader uses that answer to decide which of a tag's own pins are
      * really needed.
      * <p>
-     * <b>The two daemons are the same shape</b>: qits-ci pins {@code qits-ci-daemon-protocol} and
-     * {@code qits-ci-runner-protocol}, one module of each daemon's reactor. They are here so the
-     * closure says what is pinned rather than "no repository publishes it"; the publish itself is
+     * <b>The daemons are the same shape</b>: qits-ci pins {@code qits-ci-daemon-protocol} and
+     * qits-system {@code qits-system-runner-protocol}, one module of each daemon's reactor. They are
+     * here so the closure says what is pinned rather than "no repository publishes it"; the
+     * publish itself is
      * {@code SeedPhases.protocolPublish}, which builds the pinned tag and stops the boot where it
      * is missing.
      */
@@ -99,7 +100,6 @@ public final class PinnedVersions {
             Map.entry("containers-client", "containers"),
             Map.entry("containers-core", "containers"),
             Map.entry("ci-daemon-protocol", "ci-daemon"),
-            Map.entry("ci-runner-protocol", "ci-runner"),
             // qits-workspaces pins its runner the way qits-ci pins its own — one jar beside the
             // image, both at the runner's release tag — and the release replay of that repository
             // is what publishes both, so a lagging pin is one more version to replay.

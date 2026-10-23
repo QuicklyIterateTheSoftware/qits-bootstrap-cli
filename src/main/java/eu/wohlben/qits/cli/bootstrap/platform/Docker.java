@@ -522,7 +522,8 @@ public class Docker {
         try {
             dockerfileDir = Files.createTempDirectory(scratchRoot(), "dockerfile-");
             Files.writeString(dockerfileDir.resolve(DOCKERFILE), dockerfile, StandardCharsets.UTF_8);
-            return buildkitBuild(tag, dockerfileDir, DOCKERFILE, context, extraBuildArgs, out);
+            return buildkitBuild(tag, dockerfileDir, DOCKERFILE, context, extraBuildArgs, null,
+                    out);
         } catch (IOException e) {
             return failed("the Dockerfile for " + tag + " could not be written: " + e.getMessage());
         } finally {
@@ -540,8 +541,20 @@ public class Docker {
      */
     public ProcessResult buildWithFile(String tag, Path dockerfile, Path context,
                                        List<String> extraBuildArgs, Consumer<String> out) {
+        return buildWithFile(tag, dockerfile, context, extraBuildArgs, null, out);
+    }
+
+    /**
+     * The same, exporting one named STAGE rather than the file's last — {@code --opt target=}.
+     * The ci-slot image needs it: its last stage is the tool check, which nothing exports.
+     *
+     * @param target the stage to build, or null for the last one
+     */
+    public ProcessResult buildWithFile(String tag, Path dockerfile, Path context,
+                                       List<String> extraBuildArgs, String target,
+                                       Consumer<String> out) {
         return buildkitBuild(tag, dockerfile.getParent(), dockerfile.getFileName().toString(),
-                context, extraBuildArgs, out);
+                context, extraBuildArgs, target, out);
     }
 
     /**
@@ -560,7 +573,7 @@ public class Docker {
      * of this.
      */
     private ProcessResult buildkitBuild(String tag, Path dockerfileDir, String dockerfileName,
-                                        Path context, List<String> extraBuildArgs,
+                                        Path context, List<String> extraBuildArgs, String target,
                                         Consumer<String> out) {
         ProcessResult ready = ensureBuildkitd(out);
         if (!ready.ok()) {
@@ -583,6 +596,10 @@ public class Docker {
                     "--local", "context=/ctx",
                     "--local", "dockerfile=/dfdir",
                     "--opt", "filename=" + dockerfileName));
+            if (target != null) {
+                command.add("--opt");
+                command.add("target=" + target);
+            }
             for (String arg : buildArgs) {
                 command.add("--opt");
                 command.add("build-arg:" + arg);

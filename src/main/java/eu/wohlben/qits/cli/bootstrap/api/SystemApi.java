@@ -10,7 +10,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * qits-system: the four targets doors the {@code target-*} phases use, and nothing else
+ * qits-system: its readiness, and the four targets doors the {@code target-*} phases use
  * ({@code TargetController} in qits-system-service's {@code targets} module). It replaced
  * {@code WorkspacesApi}, whose runner doors were the same four, door for door, when this host's
  * target replaced its workspaces runner (qits-1535).
@@ -37,6 +37,10 @@ public class SystemApi {
     public SystemApi(Http http, String systemUrl) {
         this.http = http;
         this.base = systemUrl;
+    }
+
+    public Http.Response health() {
+        return http.get(base + "/q/health/ready", SYSTEM_HEADERS);
     }
 
     /**

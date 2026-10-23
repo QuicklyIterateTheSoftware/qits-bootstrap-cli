@@ -196,7 +196,7 @@ forced. Add to that list rather than deviating quietly.
   runs in steady state: `seed-images-publish` puts each `PlatformModel.SEED_DEPLOYED` application's
   seed build in the store as `qits/<application>:<real release tag>`, and `seed-deploy-*` hands the
   deployer that version at its manual door — the edge last, whose phase retires the ingress. (3)
-  `edge-ready`, then this host's runner. (4) Only then the first build: the release replays, then
+  `edge-ready`, then this host's target. (4) Only then the first build: the release replays, then
   the train, in which the seed-deployed applications are deployed AGAIN from their release run's
   image. Three things hold it together and none may be quietly undone. **The version is the real
   tag**, never a stand-in: the deployer reads `deployments.yml` and `configuration.yml` at it, and a
@@ -206,9 +206,11 @@ forced. Add to that list rather than deviating quietly.
   deployer is not seed-deployed**: its self-update stays last of the train, after the flip.
   Before the first seed deploy come `qits-project`, `git-repos` and `environment` — the spec is read
   name-addressed, and the manual door deploys nothing without a platform environment.
-- **The door the runner dials is proved before it dials it, and a domain boot needs a real
-  certificate.** `edge-ready` polls `https://{ci,idp,registry}.qits.<domain>` — qits-ci's own
-  `RunnerAddresses` names — until each answers over a certificate the JVM trusts, bounded by
+- **The door the target dials is proved before it dials it, and a domain boot needs a real
+  certificate.** `edge-ready` polls `https://{system,ci,idp,registry}.qits.<domain>` — the public
+  names the target's runner and the ci-daemon in each CI slot dial (qits-system's target install
+  script, qits-ci's readiness, the token endpoint, `/v2/`) — until each answers over a certificate
+  the JVM trusts, bounded by
   `QITS_EDGE_READY_TIMEOUT`. **A boot without a domain can never pass** — the platform is addressed
   by subdomain and CI reaches it only through its public names — and neither can `QITS_ACME_MODE`
   staging or off, so `BootstrapCommand` refuses both before anything runs
@@ -378,20 +380,23 @@ forced. Add to that list rather than deviating quietly.
   own: `SeedPhases.dockerConfig` writes one per holder, with the hosts that holder pulls from (the
   registry vhost for the first two, the registry AND the mirror for qits-platform-system, whose
   glances image is the mirror's).
-- **This host's CI runner holds the socket as a CONTAINER, and never as a deployment.** qits-ci
-  executes nothing itself, so `runner-localhost` starts the normal `qits/qits-ci-runner` image with
-  a plain `docker run` — the install line's container contract — and the runner rolls itself over
-  from then on. It stays as the platform's default runner; nothing decommissions it. **It is an EDGE
-  runner, the only plane qits-ci has** (qits-444 deleted INTERNAL), and the phase names none: the
-  install line's container exactly, no network, plus a builder state volume of its own.
-  `QITS_CI_RUNNER_URL` is what the create's install line names. Do not give it
-  an extras block, a `DEPLOYABLES` entry or a stack service: a deployer replacing the container
-  would race the runner's own rollover.
-  **Whose runner it is decides whether anything is started**: the phase acts only when qits-ci lists
-  no runner, or its `localhost` row carries the `CI_RUNNER_ID` this installation recorded in
-  `.qits-bootstrap.env` (plus the crash window: a lone `localhost` that never registered and was
-  never seen). Every other listing is somebody's runner and a skip — `PipelinePhases.runnerDecision`
-  is the one place that decides it, and its tests are the live platform's protection.
+- **This host's TARGET holds the socket as a CONTAINER, and never as a deployment.** Every CI run
+  is a lease on a qits-system target since qits-1547 (and every workspace one since qits-1535), so
+  `target-localhost` declares target `localhost` at `POST /system/api/targets` (minimums: ci from
+  `TargetSlots`, workspace 1, desk 1) and starts the normal `qits/qits-system-runner` image with a
+  plain `docker run` — the install line's container contract, plus the three shared volumes of this
+  host (`QITS_SYSTEM_RUNNER_CREDENTIAL_VOLUME=qits_shared_dot_claude`, `_M2_VOLUME`,
+  `_PNPM_VOLUME`) — and the runner rolls itself over from then on. It runs before the first release
+  replay, so qits-system is a seed service. It stays as the platform's own target; nothing
+  decommissions it. Do not give it an extras block, a `DEPLOYABLES` entry or a stack service: a
+  deployer replacing the container would race the runner's own rollover. It replaced the CI runner
+  (`runner-localhost`, `qits/qits-ci-runner`) and the workspaces runner.
+  **Whose target it is decides whether anything is started**: the phase acts only when qits-system
+  lists no target, or its `localhost` target carries the `LOCALHOST_TARGET_ID` this installation
+  recorded in `.qits-bootstrap.env` (plus the crash window: a lone `localhost` that never
+  registered and was never seen). Every other listing is somebody's and a skip —
+  `PipelinePhases.targetDecision` is the one place that decides it, and its tests are the live
+  platform's protection.
 - **THE ADDRESS AND THE IDENTITY ARE TWO THINGS NOW, and confusing them is a silent 401.**
   `PlatformModel.dialAlias` is what a peer DIALS and it carries the environment for every
   application, both planes: `<env>-qits-platform-idp`. `PlatformModel.wireAlias` is the seed stack's

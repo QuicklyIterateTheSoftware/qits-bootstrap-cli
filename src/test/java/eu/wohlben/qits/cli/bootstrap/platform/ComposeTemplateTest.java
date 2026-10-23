@@ -64,6 +64,8 @@ class ComposeTemplateTest {
         values.put("PG_PROJECTS_EVENTSTREAM_PASSWORD", "abcdabcdabcdabcd");
         values.put("PG_CONTAINERS_PASSWORD", "def0def0def0def0");
         values.put("PG_CONTAINERS_EVENTSTREAM_PASSWORD", "0f0f0f0f0f0f0f0f");
+        values.put("PG_SYSTEM_PASSWORD", "5a5a5a5a5a5a5a5a");
+        values.put("PG_SYSTEM_EVENTSTREAM_PASSWORD", "a5a5a5a5a5a5a5a5");
         // The idp derives its own issuer from QITS_DOMAIN now (qits-730); IDP_DIAL is still what
         // every consumer dials.
         values.put("IDP_DIAL", "http://" + ENV + "-qits-idp:8080/idp");
@@ -287,12 +289,15 @@ class ComposeTemplateTest {
         byService.put(ENV + "-qits-containers", ENV + "-qits-containers");
         byService.put(ENV + "-qits-deployments", ENV + "-qits-deployments");
         byService.put(ENV + "-qits-edge", ENV + "-qits-edge");
+        // qits-system joined on 2026-10-23 (qits-1547): its targets module commissions every
+        // target's credentials with this client.
+        byService.put(ENV + "-qits-system", ENV + "-qits-system");
         byService.forEach((service, client) -> assertThat(serviceBlock(compose, service))
                 .as("the idp client of %s", service)
                 .contains("QITS_RESOURCE_IDP_URL: " + issuer)
                 .contains("QITS_RESOURCE_IDP_CLIENT_ID: " + client)
                 .contains("QITS_RESOURCE_IDP_CLIENT_SECRET: \"secret-" + client + "\""));
-        // The five are the model's five, so a sixth seed client cannot be added without this list
+        // The six are the model's six, so a seventh seed client cannot be added without this list
         // being wrong about it.
         assertThat(PlatformModel.SEED_IDP_CLIENT_APPS.stream()
                 .map(app -> PlatformModel.wireAlias(app, ENV)).toList())

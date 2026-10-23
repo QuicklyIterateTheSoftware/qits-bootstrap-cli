@@ -86,10 +86,17 @@ public final class PlatformModel {
      * before the first push: the storage ids are minted UUIDs, each pairing is registered before its
      * bare is pushed to, and every push of the run is name-addressed. Three databases, the way the
      * git host takes two — see {@link #seedStorageId}.
+     * <p>
+     * <b>qits-system joined on 2026-10-23 (qits-1547), and it is in the seed because a run needs a
+     * TARGET.</b> Since the CI step of epic qits-1481 every CI run is a lease on a qits-system
+     * target, so the first release replay of a cold boot is the localhost target's or nobody's —
+     * and the target registers with qits-system, which therefore has to be up with its database,
+     * its eventstream outbox and its idp client before it. No deployer exists yet to provision any
+     * of the three, so this boot does, as it does for every seed service.
      */
     public static final List<String> CORE = List.of(
             "edge", "mirror", "artifacts", "githost", "projects", "ci",
-            "containers", "deployments", "idp", "events",
+            "containers", "deployments", "idp", "events", "system",
             "oci-postgresql");
 
     /**
@@ -296,14 +303,9 @@ public final class PlatformModel {
      * did not know it cloned nothing, published nothing, and the two daemon release replays died
      * resolving a coordinate the fresh store had never seen.
      * <p>
-     * <b>qits-ci-runner-daemon joined on 2026-09-30 (qits-588), beside ci-daemon and on its
-     * terms.</b> Since qits-506 qits-ci executes nothing itself, so a cold boot needs a runner
-     * before its first release replay — and the runner is a container this program starts with a
-     * plain {@code docker run}, never an application of the deployer: it has no deployments.yml and
-     * must not grow a {@link #DEPLOYABLES} entry. What the boot needs of the repository is a
-     * checkout: qits-ci pins {@code qits-ci-runner-protocol} out of it, and the runner image is
-     * built from the tag that pin names. The git-host repository and the main history are what let
-     * the platform release it afterwards.
+     * <b>qits-ci-runner-daemon was here from 2026-09-30 (qits-588) to 2026-10-23 (qits-1547).</b>
+     * The runner it built executed every run of a cold boot until CI runs became leases on a
+     * qits-system target; qits-ci pins nothing of it any more, so nothing clones it.
      * <p>
      * <b>qits-containers-javalib joined on 2026-10-04 (qits-796), a library on qits-eventstream's
      * terms.</b> It publishes {@code qits-containers-driver}, which qits-containers-service now
@@ -330,7 +332,7 @@ public final class PlatformModel {
      * and the {@code qits-system-runner-protocol} jar qits-system's build resolves — in the store.
      */
     public static final List<String> SEEDED_REPOS = List.of(
-            "oci", "oci-postgresql", "ci-daemon", "ci-runner", "eventstream", "containers-driver",
+            "oci", "oci-postgresql", "ci-daemon", "eventstream", "containers-driver",
             "registries", "spa-ui-components",
             "userflows", "coding-agents", "spa-docs", "spa-deployments",
             "integrations-angular", "integrations-quarkus", "spa-projects",
@@ -497,7 +499,7 @@ public final class PlatformModel {
      */
     public static String repoPath(String name) {
         return switch (name) {
-            case "ci-daemon", "ci-runner", "workspace-daemon", "workspaces-runner-daemon",
+            case "ci-daemon", "workspace-daemon", "workspaces-runner-daemon",
                  "system-runner-daemon", "projects-daemon" ->
                     "daemons/" + repo(name);
             case "oci", "oci-postgresql", "oci-workspace", "oci-workspace-editor" ->
@@ -605,8 +607,8 @@ public final class PlatformModel {
             return "LIBRARY";
         }
         // The REPOSITORY's grammar next, for a model name that says nothing of its kind while its
-        // repository does: ci-runner is qits-ci-runner-daemon, and the model name — the image's,
-        // qits/qits-ci-runner — ends in no role at all.
+        // repository does — as ci-runner (qits-ci-runner-daemon, retired) once did, whose model name
+        // was the image's, qits/qits-ci-runner, and ended in no role at all.
         String repository = repo(name);
         if (!repository.equals(name) && !repository.equals("qits-" + name)) {
             String kind = archetypeOfName(repository);
@@ -669,9 +671,11 @@ public final class PlatformModel {
      * qits-eventstream's terms rather than published by this method — see {@link #SEEDED_REPOS} and
      * {@link #RELEASE_PUBLISHERS}.
      * <p>
-     * <b>The two daemons are the same shape again, with the wire contract as the module.</b>
-     * qits-ci compiles against {@code qits-ci-daemon-protocol} and {@code qits-ci-runner-protocol}
-     * — plain jars — and the other module of each reactor is a native binary nobody resolves.
+     * <b>The daemons are the same shape again, with the wire contract as the module.</b>
+     * qits-ci compiles against {@code qits-ci-daemon-protocol} and qits-system against
+     * {@code qits-system-runner-protocol} — plain jars — and the other module of each reactor is a
+     * native binary nobody resolves. {@code qits-ci-runner-protocol} was the third until the CI
+     * runner retired (qits-1547).
      * <p>
      * {@code SeedPhases} turns this into {@code -pl <modules> -am}, and {@code -am} is not optional:
      * it carries the ROOT POM with the modules, and an artifact whose parent the registry does not
@@ -682,7 +686,7 @@ public final class PlatformModel {
             case "githost" -> "githost-events";
             case "containers" -> "client";
             case "ci-daemon" -> "ci-daemon-protocol";
-            case "ci-runner" -> "ci-runner-protocol";
+            case "system-runner-daemon" -> "system-runner-protocol";
             default -> "";
         };
     }
@@ -730,9 +734,6 @@ public final class PlatformModel {
             // The environment tier's services.
             Map.entry("artifacts", "qits-artifacts-service"),
             Map.entry("ci", "qits-ci-service"),
-            // The runner: the model name is the image's (qits/qits-ci-runner) and the repository
-            // is the daemon's.
-            Map.entry("ci-runner", "qits-ci-runner-daemon"),
             Map.entry("containers", "qits-containers-service"),
             Map.entry("docs", "qits-docs-service"),
             Map.entry("githost", "qits-githost-service"),
@@ -1071,6 +1072,9 @@ public final class PlatformModel {
             // before the native compile, because the bundle depends on @qits/ui-components and a
             // docker build reaches no registry that holds it.
             case "projects" -> "service/src/main/webui/dist/qits-spa-projects/browser";
+            // qits-system joined the seed on 2026-10-23 (qits-1547) with its client in the same
+            // shape; the Angular project inside it still carries the plane-era name.
+            case "system" -> "service/src/main/webui/dist/qits-platform-spa-system/browser";
             default -> "";
         };
     }
@@ -1094,7 +1098,7 @@ public final class PlatformModel {
      * of this model carries.
      */
     public static final List<String> SEED_IDP_CLIENT_APPS =
-            List.of("projects", "ci", "containers", "deployments", "edge");
+            List.of("projects", "ci", "containers", "deployments", "edge", "system");
 
     /**
      * <b>The one client whose secret this program still records itself</b>, and the reason it is

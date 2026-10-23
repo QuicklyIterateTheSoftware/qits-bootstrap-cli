@@ -477,56 +477,6 @@ final class BootstrapContract {
                     (base, params, recorded, op) -> assertThat(ci(base).run(params.get("runId")))
                             .isPresent(),
                     "param runId; a RUNNING run with one finished step and its live step's output"),
-            new Case(CI, Trigger.phase("runner-localhost"), "no runners", "createRunner",
-                    Request.json("POST", "/ci/api/runners",
-                            "{\"name\":\"" + PhaseReads.LOCALHOST_RUNNER + "\",\"slots\":2}"),
-                    201, List.of("$.id", "$.installScript"),
-                    (base, params, recorded, op) -> {
-                        Http.Response created = ci(base).createRunner(PhaseReads.LOCALHOST_RUNNER,
-                                2, null);
-                        JsonNode runner = eu.wohlben.qits.cli.bootstrap.api.Json.parse(created.body());
-                        assertThat(runner.path("id").asText()).isNotBlank();
-                        assertThat(CiApi.registrationToken(runner.path("installScript").asText()))
-                                .isPresent();
-                        assertThat(CiApi.runnerUrl(runner.path("installScript").asText())).isPresent();
-                    },
-                    "the create recorded as the bootstrap sends it, {name, slots} with no"
-                            + " description, answering 201 with id and an installScript carrying"
-                            + " QITS_CI_RUNNER_URL and QITS_CI_RUNNER_REGISTRATION_TOKEN"),
-            new Case(CI, Trigger.phase("runner-localhost"), "an unregistered runner", "listRunners",
-                    Request.get("/ci/api/runners"), 200,
-                    List.of("$.runners[*].id", "$.runners[*].name", "$.runners[*].registered",
-                            "$.runners[*].connected", "$.runners[*].lastSeenAt"),
-                    (base, params, recorded, op) -> assertThat(CiApi.runnerNamed(ci(base).runners(),
-                            PhaseReads.LOCALHOST_RUNNER)).isPresent(),
-                    "one runner named localhost, never registered or seen"),
-            new Case(CI, Trigger.phase("runner-localhost"), "an unregistered runner",
-                    "rotateRegistrationToken",
-                    Request.post("/ci/api/runners/{runnerId}/registration-token"),
-                    200, List.of("$.installScript"),
-                    (base, params, recorded, op) -> {
-                        Http.Response answer = ci(base).rotateRegistrationToken(
-                                params.get("runnerId"), null);
-                        String script = eu.wohlben.qits.cli.bootstrap.api.Json.text(
-                                eu.wohlben.qits.cli.bootstrap.api.Json.parse(answer.body()),
-                                "installScript");
-                        assertThat(CiApi.registrationToken(script)).isPresent();
-                    },
-                    "param runnerId; the body-less rotation answers 200 with a fresh installScript"),
-            new Case(CI, Trigger.phase("runner-connected"), "a connected runner", "listRunners",
-                    Request.get("/ci/api/runners"), 200,
-                    List.of("$.runners[*].id", "$.runners[*].name", "$.runners[*].registered",
-                            "$.runners[*].connected", "$.runners[*].quarantined",
-                            "$.runners[*].quarantineReason"),
-                    (base, params, recorded, op) -> assertThat(PhaseReads.ciRunnerConnected(
-                            ci(base).runners(), params.get("runnerId"))).isNotNull(),
-                    "param runnerId; runner localhost registered and connected, not quarantined"),
-            new Case(CI, Trigger.phase("runner-connected"), "a quarantined runner",
-                    "greenlightRunner", Request.post("/ci/api/runners/{runnerId}/greenlight"),
-                    200, List.of(),
-                    (base, params, recorded, op) -> assertThat(
-                            ci(base).greenlight(params.get("runnerId")).ok()).isTrue(),
-                    "param runnerId; a quarantined runner the body-less greenlight lifts (200)"),
 
             // qits-deployments ------------------------------------------------------------------
             new Case(DEPLOYMENTS, Trigger.phase("seed-health"), "the machine gate is on",
