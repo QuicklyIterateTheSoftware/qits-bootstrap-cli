@@ -54,7 +54,7 @@
              release predates the targets module, so every row against it is pending until a
              qits-maintenance bump brings its states. qits-workspaces has no pin any more: the
              bootstrap calls none of its doors since the target replaced its runner. -->
-        <qits.system-golden-masters.version>2026.1010.145705</qits.system-golden-masters.version>
+        <qits.system-golden-masters.version>2026.1023.213531</qits.system-golden-masters.version>
         <qits.containers-golden-masters.version>2026.1019.103940</qits.containers-golden-masters.version>
         <!-- pact-jvm, test scope only. An external library, so it moves by hand; the same version
              as the providers' verifiers and every other consumer on the estate. -->
