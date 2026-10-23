@@ -714,14 +714,20 @@ class SeedPhasesTest {
         List<String> create = runner.argv.stream()
                 .filter(command -> command.size() > 1 && command.get(1).equals("create"))
                 .findFirst().orElseThrow();
-        assertThat(create).containsSubsequence("--entrypoint", "bash")
+        assertThat(create).containsSubsequence("--network", "qits-net")
+                .containsSubsequence("--entrypoint", "bash")
                 .containsSubsequence("--memory", "6g")
                 .containsSubsequence("-v", "qits-maven-cache:/cache",
                         "qits/graalvmce-musl-builder:jdk-25", "-c");
-        assertThat(create.getLast()).isEqualTo("rm -rf /cache/repository/eu/wohlben/qits\n"
-                + "cd /qits-build && ./mvnw -B -ntp -pl system-runner -am package -Dnative "
-                + "-DskipTests -Dquarkus.native.container-build=false"
-                + " -Dmaven.repo.local=/cache/repository");
+        // On qits-net with the publishes' settings: the qits jars it resolves are the store's.
+        assertThat(create.getLast())
+                .contains("<mirrorOf>qits-maven</mirrorOf>")
+                .contains("<url>http://prod-qits-artifacts:8080/artifacts/maven/maven</url>")
+                .endsWith("rm -rf /cache/repository/eu/wohlben/qits\n"
+                        + "cd /qits-build && ./mvnw -B -ntp -s /root/.m2/settings.xml -pl"
+                        + " system-runner -am package -Dnative -DskipTests"
+                        + " -Dquarkus.native.container-build=false"
+                        + " -Dmaven.repo.local=/cache/repository");
         Path context = temp.resolve("src/.exports/qits-system-runner-image");
         assertThat(runner.lines()).containsSubsequence(
                 "docker start -a cid-7",
@@ -769,6 +775,115 @@ class SeedPhasesTest {
                 .hasMessageContaining("pins the runner at 2026.930.132340")
                 .hasMessageContaining("no such tag");
         assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker create"));
+    }
+
+    // --- the golden masters and the runner library (qits-1547) -----------------------------------
+
+    /** The pins are read off the root poms, each version once, and a non-release is passed by. */
+    @Test
+    void goldenMasterPinsAreEveryProvidersPinnedReleases() {
+        Map<String, java.util.Set<String>> pins = SeedPhases.goldenMasterPins(java.util.Arrays.asList(
+                "<qits.idp-golden-masters.version>2026.1022.183304</qits.idp-golden-masters.version>"
+                        + "<qits.observability-golden-masters.version>\n  2026.1018.155850\n"
+                        + "</qits.observability-golden-masters.version>",
+                null,
+                "<qits.idp-golden-masters.version>2026.1021.194347</qits.idp-golden-masters.version>"
+                        + "<qits.idp-golden-masters.version>2026.1022.183304</qits.idp-golden-masters.version>"
+                        + "<qits.ci-golden-masters.version>${revision}</qits.ci-golden-masters.version>"));
+
+        assertThat(pins).containsOnlyKeys("idp", "observability");
+        assertThat(pins.get("idp")).containsExactly("2026.1022.183304", "2026.1021.194347");
+        assertThat(pins.get("observability")).containsExactly("2026.1018.155850");
+    }
+
+    /**
+     * <b>One jar per pin, packed from the tag's own directory, into the registries it lacks</b> —
+     * the file registry and the store, the deploy plugin pinned, the coordinate the provider's
+     * release publishes.
+     */
+    @Test
+    void aGoldenMastersJarIsPackedFromTheTagAndDeployedWhereItIsMissing() {
+        SeedPhases phases = new SeedPhases(
+                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+
+        String script = phases.goldenMastersScript(List.of(
+                new String[] {"idp", "2026.1022.183304", "true", "true"},
+                new String[] {"observability", "2026.1018.155850", "false", "true"}),
+                "Bearer publish-token");
+
+        assertThat(script).startsWith("set -eu\n")
+                .contains("jar cf /tmp/qits-idp-golden-masters-2026.1022.183304.jar"
+                        + " -C /gm/idp@2026.1022.183304 golden-masters")
+                .contains("maven-deploy-plugin:3.1.2:deploy-file"
+                        + " -Dfile=/tmp/qits-idp-golden-masters-2026.1022.183304.jar"
+                        + " -DgroupId=eu.wohlben.qits -DartifactId=qits-idp-golden-masters"
+                        + " -Dversion=2026.1022.183304 -Dpackaging=jar"
+                        + " -Dmaven.repo.local=/cache/repository -DrepositoryId=seed"
+                        + " -Durl=file:///repo")
+                .contains("<value>Bearer publish-token</value>");
+        // The second pin is in the file registry already: only the store is written.
+        assertThat(script.lines().filter(line -> line.contains("qits-observability-golden-masters")
+                && line.contains("deploy-file")))
+                .singleElement().asString()
+                .contains("-Durl=http://prod-qits-artifacts:8080/artifacts/maven/maven");
+    }
+
+    /**
+     * The runner library from its tags, whole, its module poms' test scope stripped first — in
+     * the container's copy — and one deploy per registry each version still lacks.
+     */
+    @Test
+    void theRunnerLibraryIsBuiltFromItsTagsWithItsTestScopeStripped() {
+        SeedPhases phases = new SeedPhases(
+                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+
+        String script = phases.runnerScript(List.of("2026.1023.80958", "2026.1023.52004"),
+                List.of("2026.1023.80958"), List.of("2026.1023.80958", "2026.1023.52004"),
+                "Bearer publish-token");
+
+        assertThat(script).startsWith("set -eu\n");
+        assertThat(script.split("rm -rf /cache/repository", -1)).hasSize(2);
+        assertThat(script.lines().filter(line -> line.startsWith("cd ")).toList()).containsExactly(
+                "cd /src@2026.1023.80958 && mvn -B -ntp -s /root/.m2/settings.xml deploy"
+                        + " -DskipTests -Dmaven.repo.local=/cache/repository"
+                        + " -DaltDeploymentRepository=seed::default::file:///repo",
+                "cd /src@2026.1023.80958 && mvn -B -ntp -s /root/.m2/settings.xml deploy"
+                        + " -DskipTests -Dmaven.repo.local=/cache/repository"
+                        + " -DaltDeploymentRepository=qits::default::"
+                        + "http://prod-qits-artifacts:8080/artifacts/maven/maven",
+                "cd /src@2026.1023.52004 && mvn -B -ntp -s /root/.m2/settings.xml deploy"
+                        + " -DskipTests -Dmaven.repo.local=/cache/repository"
+                        + " -DaltDeploymentRepository=qits::default::"
+                        + "http://prod-qits-artifacts:8080/artifacts/maven/maven");
+        // The strip comes before each tree's first build, and never touches the root pom.
+        assertThat(script).containsSubsequence(SeedPhases.stripTestDependencies("/src@2026.1023.80958"),
+                "cd /src@2026.1023.80958");
+        assertThat(SeedPhases.stripTestDependencies("/src@v")).contains("-mindepth 2")
+                .contains("<scope>test</scope>");
+    }
+
+    /** The strip removes a test dependency and keeps the compile one beside it. */
+    @Test
+    void theTestScopeStripRemovesOnlyTestDependencies() throws Exception {
+        Path module = Files.createDirectories(temp.resolve("tree/runner-protocol"));
+        Files.writeString(temp.resolve("tree/pom.xml"), "<project><dependencyManagement>"
+                + "<dependency><artifactId>managed</artifactId><scope>test</scope></dependency>"
+                + "</dependencyManagement></project>", StandardCharsets.UTF_8);
+        Files.writeString(module.resolve("pom.xml"), "<project><dependencies>\n"
+                + "<dependency>\n<artifactId>keep</artifactId>\n</dependency>\n"
+                + "<dependency>\n<artifactId>qits-ci-runner-protocol</artifactId>\n"
+                + "<scope>test</scope>\n</dependency>\n"
+                + "<dependency>\n<artifactId>also-kept</artifactId>\n<scope>compile</scope>\n"
+                + "</dependency>\n</dependencies></project>", StandardCharsets.UTF_8);
+
+        Process strip = new ProcessBuilder("sh", "-c",
+                SeedPhases.stripTestDependencies(temp.resolve("tree").toString()))
+                .redirectErrorStream(true).start();
+        assertThat(strip.waitFor()).isZero();
+
+        assertThat(Files.readString(module.resolve("pom.xml"))).contains("keep", "also-kept")
+                .doesNotContain("qits-ci-runner-protocol");
+        assertThat(Files.readString(temp.resolve("tree/pom.xml"))).contains("managed");
     }
 
     // --- what a publish presents at the store ----------------------------------------------------

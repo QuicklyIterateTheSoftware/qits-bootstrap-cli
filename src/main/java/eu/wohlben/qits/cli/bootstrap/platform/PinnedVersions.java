@@ -96,6 +96,13 @@ public final class PinnedVersions {
             Map.entry("service-mock", "integrations-quarkus"),
             Map.entry("auth-core", "integrations-quarkus"),
             Map.entry("environment-core", "integrations-quarkus"),
+            // Two more of that reactor's jars, pinned by qits-system and qits-runner-javalib.
+            Map.entry("http-core", "integrations-quarkus"),
+            Map.entry("pact-consumer", "integrations-quarkus"),
+            // qits-runner-javalib, which qits-system and its runner pin as one property for its
+            // four jars (qits-1547). Its own pins — qits-containers-driver above all — are what
+            // this entry brings into the closure; SeedPhases.runnerPublish builds the versions.
+            Map.entry("runner", "runner"),
             Map.entry("githost-events", "githost"),
             Map.entry("containers-client", "containers"),
             Map.entry("containers-core", "containers"),

@@ -269,6 +269,8 @@ class PlatformModelTest {
         expected.put("workspaces-runner-daemon", "qits-workspaces-runner-daemon");
         // The target's runner, the same shape (qits-1535).
         expected.put("system-runner-daemon", "qits-system-runner-daemon");
+        // The runner library its consumers pin, seeded since qits-1547.
+        expected.put("runner", "qits-runner-javalib");
         // The agent harness, born on 2026-09-08 under a name outside the grammar. The wrapper
         // declares it so, and the boot follows the wrapper.
         expected.put("coding-agents", "qits-coding-agents");

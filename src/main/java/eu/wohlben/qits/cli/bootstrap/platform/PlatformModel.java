@@ -326,6 +326,12 @@ public final class PlatformModel {
      * compiles against {@code qits-workspaces-runner-protocol} can be the one the train restores; it
      * goes with the submodule, in the retirement.
      * <p>
+     * <b>qits-runner-javalib joined on 2026-10-23 (qits-1547), as a library no release replays.</b>
+     * qits-system and its runner compile against qits-runner-protocol and qits-runner-toolkit, and
+     * nothing on a cold platform publishes them — so the boot clones it, and
+     * {@code SeedPhases.runnerPublish} builds the versions the two pin from their tags. Model name
+     * {@code runner}, after the {@code qits.runner.version} property both pin it by.
+     * <p>
      * <b>qits-system-runner-daemon joined on 2026-10-23 (qits-1535), on the same terms.</b> The
      * {@code target-localhost} phase starts this host's target from {@code qits/qits-system-runner}
      * at the version qits-system pins, and only that repository's own release run puts the image —
@@ -341,7 +347,7 @@ public final class PlatformModel {
             "spa-mirror", "spa-orchestrator", "spa-maintenance",
             "spa-system",
             "oci-workspace", "oci-workspace-editor", "workspace-daemon", "workspaces-runner-daemon",
-            "system-runner-daemon", "projects-daemon");
+            "system-runner-daemon", "projects-daemon", "runner");
 
     /**
      * The publishers whose released versions the platform pins, replayed on a fresh platform because
@@ -508,6 +514,7 @@ public final class PlatformModel {
             // and so does the byte plane's own, a library by the same test: three services consume
             // it and it is not deployed.
             case "eventstream", "containers-driver", "registries", "spa-ui-components", "userflows",
+                 "runner",
                  "integrations-angular", "integrations-quarkus", "coding-agents" ->
                     "libs/" + repo(name);
             // Anything served at a URL is a frontend, and there is one spelling now. It was two
@@ -574,7 +581,8 @@ public final class PlatformModel {
      */
     private static final List<String> LIBRARY_NAMES =
             List.of("eventstream", "containers-driver", "registries", "spa-ui-components",
-                    "userflows", "integrations-angular", "integrations-quarkus", "coding-agents");
+                    "userflows", "integrations-angular", "integrations-quarkus", "coding-agents",
+                    "runner");
 
     /**
      * The names that are image builds today, and are none of them spelled so. Their renamed
@@ -725,6 +733,7 @@ public final class PlatformModel {
             Map.entry("oci-workspace-editor", "qits-workspace-editor-oci"),
             Map.entry("eventstream", "qits-eventstream-javalib"),
             Map.entry("containers-driver", "qits-containers-javalib"),
+            Map.entry("runner", "qits-runner-javalib"),
             Map.entry("registries", "qits-registries-javalib"),
             Map.entry("userflows", "qits-userflows-javalib"),
             Map.entry("integrations-angular", "qits-integrations-angular-jslib"),

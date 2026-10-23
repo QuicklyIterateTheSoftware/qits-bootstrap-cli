@@ -3314,6 +3314,13 @@ public class PipelinePhases {
      * identity — the greenlight takes the two admin roles and nothing a machine holds), and a
      * target already in service is not greenlit again.
      * <p>
+     * <b>Connected and greenlit is all it needs — never a sign-in.</b> A target's {@code login}
+     * (and {@code slots}) checks are reported and never quarantine it, and CI leases are not
+     * gated by sign-in at all; so a cold host nobody has signed in on yet passes here, runs every
+     * release replay, and holds its WORKSPACE and DESK leases QUEUED until someone runs
+     * {@code qits targets sign-in --target localhost} — or until the shared
+     * {@code qits_shared_dot_claude} volume already carries a login.
+     * <p>
      * <b>Skipped whenever {@code target-localhost} stood aside.</b>
      */
     public Phase localhostTargetConnected() {

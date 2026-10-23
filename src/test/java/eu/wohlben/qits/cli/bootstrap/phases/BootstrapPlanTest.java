@@ -86,6 +86,25 @@ class BootstrapPlanTest {
     }
 
     /**
+     * <b>The golden masters and the runner library land before every build that resolves them</b>
+     * (qits-1547): after the store and the last maven publish whose jars the runner build reads,
+     * before qits-system's protocol publish and seed image, and long before the runner's native
+     * build. Neither runs on a warm rerun, which builds nothing.
+     */
+    @Test
+    void theRunnerLibraryIsSeededBeforeQitsSystemAndItsRunnerAreBuilt() {
+        List<String> ids = ids(plan(Map.of()));
+
+        assertThat(ids).containsSubsequence("seed-artifacts", "publish-qits-containers-driver",
+                "publish-qits-containers-client", "seed-golden-masters", "publish-qits-runner",
+                "publish-qits-system-runner-protocol", "seed-image-system", "ci-daemon",
+                "system-runner-image");
+        assertThat(ids).containsSubsequence("seed-golden-masters", "seed-image-ci");
+        assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1"))))
+                .doesNotContain("seed-golden-masters", "publish-qits-runner");
+    }
+
+    /**
      * The target's runner image is built straight after the ci-daemon — it is compiled on the
      * toolchain image that phase makes — and before the seed stack, so it exists by the time it
      * is started. The ci-slot image every run executes in is a step image built before both.

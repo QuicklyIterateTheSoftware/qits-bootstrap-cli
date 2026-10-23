@@ -135,6 +135,16 @@ public final class BootstrapPlan {
             // host ~/.m2 anywhere in this run to fall back on.
             phases.add(seed.mavenPublish("containers", "qits-containers-client",
                     "publish the qits-containers client into seed artifacts"));
+            // THE GOLDEN MASTERS AND THE RUNNER LIBRARY, after every maven publish above and
+            // before the first image that resolves either (qits-1547). Each consumer pins its
+            // providers' golden masters TEST-scoped, and a -DskipTests build resolves test scope
+            // all the same, so the seed packs them from the providers' pinned tags; and
+            // qits-runner-javalib — the protocol and toolkit qits-system and its runner compile
+            // against — is no deployable and no release publisher, so nothing else would put it
+            // in a registry. The runner build resolves containers-driver, pact-consumer and the
+            // golden masters out of the store, which is why both come here and not earlier.
+            phases.add(seed.goldenMastersSeed());
+            phases.add(seed.runnerPublish());
             phases.add(seed.uiComponentsPublish());
             phases.add(seed.angularPublish());
             // THE WIRE CONTRACT qits-ci COMPILES AGAINST, immediately before its image and for no
