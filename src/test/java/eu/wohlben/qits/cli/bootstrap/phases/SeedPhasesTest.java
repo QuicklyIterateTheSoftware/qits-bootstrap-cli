@@ -859,7 +859,7 @@ class SeedPhasesTest {
         assertThat(script).containsSubsequence(SeedPhases.stripTestDependencies("/src@2026.1023.80958"),
                 "cd /src@2026.1023.80958");
         assertThat(SeedPhases.stripTestDependencies("/src@v")).contains("-mindepth 2")
-                .contains("<scope>test</scope>");
+                .contains("scope>test<");
     }
 
     /** The strip removes a test dependency and keeps the compile one beside it. */

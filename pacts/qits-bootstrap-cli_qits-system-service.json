@@ -1,0 +1,261 @@
+{
+  "consumer": {
+    "name": "qits-bootstrap-cli"
+  },
+  "interactions": [
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-system-service",
+            "operationId": "greenlightTarget"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: target-connected",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: target-connected: greenlightTarget",
+      "key": "ef9f2442",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a declared target",
+          "params": {
+            "targetId": "00000000-0000-4000-8000-000000000001"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/system/api/targets/${targetId}/greenlight",
+            "type": "ProviderState"
+          }
+        },
+        "method": "POST",
+        "path": "/system/api/targets/00000000-0000-4000-8000-000000000001/greenlight"
+      },
+      "response": {
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-system-service",
+            "operationId": "listTargets"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: target-localhost",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: target-localhost: listTargets",
+      "key": "fc525c2a",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "a declared target",
+          "params": {
+            "targetId": "00000000-0000-4000-8000-000000000001"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/system/api/targets"
+      },
+      "response": {
+        "body": {
+          "content": [
+            {
+              "connected": false,
+              "id": "00000000-0000-4000-8000-000000000001",
+              "lastSeenAt": "2026-01-01T00:00:00Z",
+              "name": "lab",
+              "registered": true
+            }
+          ],
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type",
+                  "min": 1
+                }
+              ]
+            },
+            "$[*].connected": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$[*].id": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+                }
+              ]
+            },
+            "$[*].lastSeenAt": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:?\\d{2})$"
+                }
+              ]
+            },
+            "$[*].name": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$[*].registered": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    },
+    {
+      "comments": {
+        "references": {
+          "qits-call": {
+            "app": "qits-system-service",
+            "operationId": "rotateTargetRegistrationToken"
+          },
+          "qits-trigger": {
+            "app": "qits-bootstrap-cli",
+            "command": "qits-bootstrap bootstrap: target-localhost",
+            "kind": "command"
+          }
+        }
+      },
+      "description": "qits-bootstrap bootstrap: target-localhost: rotateTargetRegistrationToken",
+      "key": "c7ae621a",
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "an unregistered runner",
+          "params": {
+            "authorization": "Bearer qits_tok_contract-registration",
+            "runnerId": "00000000-0000-4000-8000-000000000001"
+          }
+        }
+      ],
+      "request": {
+        "generators": {
+          "path": {
+            "dataType": "RAW",
+            "expression": "/system/api/targets/${runnerId}/registration-token",
+            "type": "ProviderState"
+          }
+        },
+        "method": "POST",
+        "path": "/system/api/targets/00000000-0000-4000-8000-000000000001/registration-token"
+      },
+      "response": {
+        "body": {
+          "content": {
+            "installLine": "curl -fsSL -H 'Authorization: Bearer qits_tok_suite-1' https://system.qits.wohlben.eu/system/api/targets/install.sh | sudo env QITS_SYSTEM_RUNNER_URL='https://system.qits.wohlben.eu' QITS_SYSTEM_RUNNER_ID='00000000-0000-4000-8000-000000000001' QITS_SYSTEM_RUNNER_REGISTRATION_TOKEN='qits_tok_suite-1' QITS_SYSTEM_RUNNER_SLOTS='1' sh",
+            "registrationToken": "qits_tok_suite-1"
+          },
+          "contentType": "application/json",
+          "encoded": false
+        },
+        "headers": {
+          "Content-Type": [
+            "application/json"
+          ]
+        },
+        "matchingRules": {
+          "body": {
+            "$.installLine": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.registrationToken": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            }
+          },
+          "header": {
+            "Content-Type": {
+              "combine": "AND",
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "application/json.*"
+                }
+              ]
+            }
+          }
+        },
+        "status": 200
+      },
+      "type": "Synchronous/HTTP"
+    }
+  ],
+  "metadata": {
+    "pactSpecification": {
+      "version": "4.0"
+    },
+    "plugins": []
+  },
+  "provider": {
+    "name": "qits-system-service"
+  }
+}

@@ -79,6 +79,11 @@ class StackFileTest {
     /**
      * The socket group is delivered as the PRIMARY group instead, and 1001 is the images' own user
      * — naming a group means naming the user too.
+     * <p>
+     * <b>Three holders since qits-1547</b>: the deployer, the container orchestrator and
+     * qits-system. qits-system always held the socket in steady state (its extras grant it, see
+     * qits-system-plan.md decision 1); what changed is that it is a seed service now, because every
+     * CI run is a lease on one of its targets, so its seed block carries the same grant.
      */
     @Test
     void theSocketHoldersGetTheirGroupThroughUser() {
@@ -86,9 +91,10 @@ class StackFileTest {
 
         assertThat(block(stack, alias("deployments"))).contains("user: \"1001:988\"");
         assertThat(block(stack, alias("containers"))).contains("user: \"1001:988\"");
+        assertThat(block(stack, alias("system"))).contains("user: \"1001:988\"");
         // And nobody else: a group this platform grants is a deliberate act, one service at a time.
         assertThat(stack.lines().filter(line -> line.contains("user: \"1001:")).count())
-                .isEqualTo(2);
+                .isEqualTo(3);
     }
 
     /** {@code restart:} is a compose word swarm ignores; the policy lives under deploy. */

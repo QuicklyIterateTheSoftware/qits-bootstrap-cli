@@ -2011,8 +2011,10 @@ public class SeedPhases {
 
     /**
      * Drops every TEST-scoped dependency from a tree's MODULE poms, in the container's copy only.
-     * (The perl substitution uses {@code #} as its delimiter: braces would be a second {@code {}}
-     * to find's {@code -exec … +}, which refuses it.) The seed builds jars with
+     * POSIX {@code awk} and nothing else, so it runs in any image: a {@code <dependency>} block is
+     * held until its {@code </dependency>} and dropped when it carries {@code <scope>test</scope>}.
+     * It was perl first, which the alpine CI image this repository's own suite runs in has not
+     * got. The seed builds jars with
      * {@code -DskipTests} and Maven resolves test scope regardless, so a
      * test-only dependency a cold platform cannot hold — qits-runner-protocol's suite reads the
      * retired {@code qits-ci-runner-protocol} — would fail a build whose jars never touch it. The
@@ -2020,9 +2022,13 @@ public class SeedPhases {
      * reads, and a test dependency a module declares only through it stays resolvable.
      */
     static String stripTestDependencies(String tree) {
-        return "find " + tree + " -mindepth 2 -name pom.xml -not -path '*/target/*' -exec perl -0pi"
-                + " -e 's#<dependency>(?:(?!</dependency>).)*?<scope>test</scope>"
-                + "(?:(?!</dependency>).)*?</dependency>##gs' {} +\n";
+        return "find " + tree + " -mindepth 2 -name pom.xml -not -path '*/target/*'"
+                + " | while read -r pom; do awk '"
+                + "inside { block = block \"\\n\" $0 } "
+                + "!inside && /<dependency>/ { inside = 1; block = $0 } "
+                + "!inside { print; next } "
+                + "/<\\/dependency>/ { inside = 0; if (block !~ /<scope>test<\\/scope>/) print block }"
+                + "' \"$pom\" > \"$pom.strip\" && mv \"$pom.strip\" \"$pom\"; done\n";
     }
 
     /**
