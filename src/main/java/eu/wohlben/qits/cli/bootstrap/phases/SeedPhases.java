@@ -11,7 +11,7 @@ import eu.wohlben.qits.cli.bootstrap.config.WrapperDir;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.platform.BootstrapState;
-import eu.wohlben.qits.cli.bootstrap.platform.CiConcurrency;
+import eu.wohlben.qits.cli.bootstrap.platform.TargetSlots;
 import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.DomainTokens;
@@ -206,7 +206,7 @@ public class SeedPhases {
             ctx.log("  qits-ci concurrent builds: " + boot.config.ciConcurrentBuildsEffective()
                     + " (" + (boot.config.ciConcurrentBuilds().isPresent()
                             ? "QITS_CI_CONCURRENT_BUILDS override, "
-                            : "") + CiConcurrency.describe(CiConcurrency.hostMemoryBytes()) + ")");
+                            : "") + TargetSlots.describe(TargetSlots.hostMemoryBytes()) + ")");
             boot.state.swarm = ensureSwarm(boot.docker, ctx::log);
             ctx.log("  swarm: " + boot.state.swarm);
             warnAboutInsecureRegistries(ctx);
@@ -875,9 +875,25 @@ public class SeedPhases {
         });
     }
 
-    /** The step images a cold boot builds, each {@code qits/build-images/<name>:latest}. */
+    /**
+     * The step images a cold boot builds, each {@code qits/build-images/<name>:latest}.
+     * <p>
+     * <b>ci-slot is the one a run really uses since the CI step (qits-1547).</b> Every step of a
+     * run executes in one {@code qits/build-images/ci-slot} container its CI lease starts, and
+     * qits-ci pins {@code ci-slot:latest} by digest at accept — so a store without it is a first
+     * release replay that never runs. The others are still built for the recipes that name them.
+     */
     static final List<String> STEP_IMAGES = List.of("ci-base", "maven-base", "userflows-base",
-            "node-base", "node-docker-base");
+            "node-base", "node-docker-base", "ci-slot");
+
+    /**
+     * The stage a step image is exported from, or null for its Dockerfile's last. ci-slot's last
+     * stage is {@code check}, the release's tool check, which nothing exports; the image is the
+     * {@code ci-slot} stage, as its own release builds it.
+     */
+    static String stepImageTarget(String name) {
+        return "ci-slot".equals(name) ? "ci-slot" : null;
+    }
 
     /**
      * The step images pipeline configs name. qits-oci is their single source of truth, but the
@@ -890,7 +906,8 @@ public class SeedPhases {
             // memory: no mirror prefix of a committed FROM has to change for a step image.
             ProcessResult result = boot.docker.buildWithFile(
                     "qits/build-images/" + name + ":latest",
-                    oci.resolve(name).resolve("Dockerfile"), oci, List.of(), ctx::log);
+                    oci.resolve(name).resolve("Dockerfile"), oci, List.of(),
+                    stepImageTarget(name), ctx::log);
             Boot.must(result, "build of qits/build-images/" + name + " failed");
             // qits-ci resolves an unqualified qits/* step image against the registry host, so a run
             // pulls registry.<env>.localhost/qits/build-images/<name>. The seed loads it into the
@@ -1262,7 +1279,7 @@ public class SeedPhases {
 
     /**
      * <b>The version of one protocol jar the ci checkout pins</b> — the value of a root-pom
-     * property such as {@code qits.ci-runner-protocol.version}.
+     * property such as {@code qits.ci-daemon-protocol.version}.
      * <p>
      * It stops the boot rather than answering null, and says which of the three things is wrong:
      * the property is gone, it names a snapshot, or it is a reference to something else. A cold
@@ -1323,12 +1340,13 @@ public class SeedPhases {
     }
 
     /**
-     * <b>A wire contract qits-ci compiles against, published at the version qits-ci PINS — before
-     * {@code seed-image-ci}, which cannot be built without it.</b>
+     * <b>A wire contract a seed service compiles against, published at the version that service
+     * PINS — before its seed image, which cannot be built without it.</b>
      * <p>
      * qits-ci's reactor dropped its own {@code ci-daemon-protocol} module for a dependency on the
-     * released jar, and took {@code qits-ci-runner-protocol} the same way: both are external
-     * coordinates now, and both belong to a daemon repository rather than to a library. No phase
+     * released jar, and took {@code qits-ci-runner-protocol} the same way until the CI runner
+     * retired (qits-1547): external coordinates, belonging to a daemon repository rather than to a
+     * library. No phase
      * published either, so a cold boot died in the ci image build on
      * {@code qits-ci-daemon-protocol:jar (absent)}. The live platform never saw it — its store
      * holds every version ever released.
@@ -1351,21 +1369,29 @@ public class SeedPhases {
      * build, later in this boot, resolves from there. Whatever a registry already holds is left
      * alone, one registry at a time.
      *
+     * <b>qits-system is the second consumer since qits-1547</b>: it compiles against
+     * {@code qits-system-runner-protocol} the same way, and its seed image is built after this
+     * publish for the reason qits-ci's is.
+     *
+     * @param consumer    the model name of the service whose root pom pins it — {@code ci},
+     *                    {@code system}
      * @param repoName    the model name of the daemon repository — {@code ci-daemon},
-     *                    {@code ci-runner}
+     *                    {@code system-runner-daemon}
      * @param artifactId  the jar, {@code qits-ci-daemon-protocol}
-     * @param pomProperty the property in qits-ci's root pom that pins it
+     * @param pomProperty the property in the consumer's root pom that pins it
      */
-    public Phase protocolPublish(String repoName, String artifactId, String pomProperty) {
+    public Phase protocolPublish(String consumer, String repoName, String artifactId,
+                                 String pomProperty) {
+        String owner = PlatformModel.application(consumer);
         return new Phase("publish-" + artifactId,
-                "publish " + artifactId + " at the version qits-ci pins", ctx -> {
+                "publish " + artifactId + " at the version " + owner + " pins", ctx -> {
             String version = protocolPin(Files.readString(
-                    boot.state.repoDir("ci").resolve(PinnedVersions.ROOT_POM),
-                    StandardCharsets.UTF_8), pomProperty);
+                    boot.state.repoDir(consumer).resolve(PinnedVersions.ROOT_POM),
+                    StandardCharsets.UTF_8), pomProperty, owner);
             String repo = PlatformModel.repo(repoName);
             if (boot.git.fileAt(boot.state.repoDir(repoName), version, PinnedVersions.ROOT_POM)
                     == null) {
-                throw new IllegalStateException("qits-ci pins " + artifactId + " " + version
+                throw new IllegalStateException(owner + " pins " + artifactId + " " + version
                         + " and the " + repo + " checkout has no such tag, so there is nothing to "
                         + "build the jar from. Fetch the tags of " + boot.state.repoDir(repoName)
                         + " (git fetch --tags) and rerun");
@@ -1802,58 +1828,331 @@ public class SeedPhases {
         });
     }
 
-    // --- the runner image -------------------------------------------------------------------------
+    // --- the runner library, and the golden masters the seed's builds resolve ---------------------
 
-    /** The runner's image repository, as its own release publishes it. */
-    static final String RUNNER_IMAGE = "qits/qits-ci-runner";
+    /** The property qits-system and qits-system-runner-daemon pin the runner library by. */
+    static final String RUNNER_PIN_PROPERTY = "qits.runner.version";
 
-    /** The property in qits-ci's root pom that says which runner qits-ci expects. */
-    static final String RUNNER_PIN_PROPERTY = "qits.ci-runner-protocol.version";
+    /** {@code <qits.<app>-golden-masters.version>}: a provider's recorded answers, test-scoped. */
+    private static final java.util.regex.Pattern GOLDEN_MASTERS_PIN = java.util.regex.Pattern
+            .compile("<qits\\.([a-z][a-z0-9-]*)-golden-masters\\.version>\\s*([^<\\s]+)\\s*</");
 
     /**
-     * <b>WHICH RUNNER THIS BOOT BUILDS AND STARTS: the one qits-ci pins.</b> qits-ci takes its
-     * runner version from the protocol jar it compiles against and tells every connected runner of
-     * another version to update to it — so a runner built at any other version would be told to
-     * pull an image no registry of a cold platform holds, and would drain forever. Read from the ci
-     * checkout on every ask, so the build arm and a warm rerun cannot disagree.
+     * <b>Every {@code qits.runner.version} the seed's two runner consumers pin</b> — qits-system's
+     * checkout and qits-system-runner-daemon at the tag qits-system pins — each once, in that order.
+     * The two lag independently, so either may name a version the other does not.
      */
-    static String runnerVersion(Boot boot) throws IOException {
-        return protocolPin(Files.readString(
-                boot.state.repoDir("ci").resolve(PinnedVersions.ROOT_POM), StandardCharsets.UTF_8),
-                RUNNER_PIN_PROPERTY);
+    List<String> runnerVersions() throws IOException {
+        java.util.LinkedHashSet<String> versions = new java.util.LinkedHashSet<>();
+        versions.add(protocolPin(Files.readString(boot.state.repoDir("system")
+                .resolve(PinnedVersions.ROOT_POM), StandardCharsets.UTF_8),
+                RUNNER_PIN_PROPERTY, "qits-system"));
+        String runnerPom = boot.git.fileAt(boot.state.repoDir("system-runner-daemon"),
+                systemRunnerVersion(boot), PinnedVersions.ROOT_POM);
+        if (runnerPom != null) {
+            versions.add(protocolPin(runnerPom, RUNNER_PIN_PROPERTY, "qits-system-runner-daemon"));
+        }
+        return List.copyOf(versions);
     }
 
-    /** The workspaces runner's image repository, as its own release publishes it. */
-    static final String WORKSPACES_RUNNER_IMAGE = "qits/qits-workspaces-runner";
-
-    /** The property in qits-workspaces' root pom that says which workspaces runner it expects. */
-    static final String WORKSPACES_RUNNER_PIN_PROPERTY = "qits.workspaces-runner-protocol.version";
+    /**
+     * The golden-master pins of some root poms, as {@code app -> versions} in reading order. A pin
+     * that is no released version — a snapshot, a reference — is passed by: nothing can build it.
+     */
+    static Map<String, java.util.Set<String>> goldenMasterPins(List<String> poms) {
+        Map<String, java.util.Set<String>> pins = new LinkedHashMap<>();
+        for (String pom : poms) {
+            if (pom == null) {
+                continue;
+            }
+            java.util.regex.Matcher pin = GOLDEN_MASTERS_PIN.matcher(pom);
+            while (pin.find()) {
+                String version = pin.group(2);
+                if (version.contains("$") || version.endsWith("-SNAPSHOT")) {
+                    continue;
+                }
+                pins.computeIfAbsent(pin.group(1), app -> new java.util.LinkedHashSet<>())
+                        .add(version);
+            }
+        }
+        return pins;
+    }
 
     /**
-     * <b>WHICH WORKSPACES RUNNER THIS BOOT STARTS: the one qits-workspaces pins</b>, for
-     * {@link #runnerVersion}'s reason — a runner of any other version is told to update to the pin
-     * at its first hello. Read from the workspaces checkout, which a restore stands at the release
-     * the train deploys, so the runner and the service it dials agree. Nothing builds it here: the
-     * release replay of qits-workspaces-runner-daemon is what puts that image in the store.
+     * The root poms whose golden-master pins the seed owes: qits-ci's and qits-system's checkouts
+     * (their seed images resolve test scope too), qits-system-runner-daemon at qits-system's pin
+     * (its native build), and qits-runner-javalib at every version {@link #runnerVersions} names
+     * (qits-runner-toolkit-contracts compiles against two providers' golden masters).
      */
-    static String workspacesRunnerVersion(Boot boot) throws IOException {
-        String pom = Files.readString(boot.state.repoDir("workspaces")
+    List<String> goldenMasterPoms() throws IOException {
+        List<String> poms = new ArrayList<>();
+        for (String consumer : List.of("ci", "system")) {
+            Path pom = boot.state.repoDir(consumer).resolve(PinnedVersions.ROOT_POM);
+            poms.add(Files.exists(pom) ? Files.readString(pom, StandardCharsets.UTF_8) : null);
+        }
+        poms.add(boot.git.fileAt(boot.state.repoDir("system-runner-daemon"),
+                systemRunnerVersion(boot), PinnedVersions.ROOT_POM));
+        for (String version : runnerVersions()) {
+            poms.add(boot.git.fileAt(boot.state.repoDir("runner"), version,
+                    PinnedVersions.ROOT_POM));
+        }
+        return poms;
+    }
+
+    /** {@code qits-<app>-golden-masters}: the coordinate a provider's release publishes. */
+    static String goldenMastersArtifact(String app) {
+        return "qits-" + app + "-golden-masters";
+    }
+
+    /**
+     * <b>THE GOLDEN MASTERS THE SEED'S BUILDS RESOLVE, at the versions they pin, into BOTH
+     * registries — the file registry first.</b>
+     * <p>
+     * A golden-masters jar is a provider's {@code golden-masters/} directory at its release tag,
+     * packed as a plain jar under {@code eu.wohlben.qits:qits-<app>-golden-masters} — what that
+     * provider's release publishes ({@code contracts: golden-masters:} in its release.yml). Every
+     * consumer pins them TEST-scoped, and {@code mvn package -DskipTests} resolves test scope all
+     * the same (measured: {@code -Dmaven.test.skip=true} does too), so a cold store without them
+     * is a seed-image-system, a system-runner-image and a runner publish that each die on
+     * {@code qits-idp-golden-masters:jar (absent)} — and qits-ci's seed image beside them. No
+     * release has run on a cold platform, so this phase does what each provider's release would
+     * have: it packs the directory from the pinned tag of the provider's own checkout.
+     * <p>
+     * <b>Pinned tag, never the working tree</b>, and the deploy plugin pinned too — the toolchain
+     * seed's rules ({@link #toolchainScript}). Whatever a registry already holds is left alone, one
+     * registry at a time: on a live platform the store holds every release's jar, and the bytes a
+     * release published are not this phase's to replace.
+     */
+    public Phase goldenMastersSeed() {
+        return new Phase("seed-golden-masters",
+                "publish the golden masters the seed builds resolve", ctx -> {
+            Map<String, java.util.Set<String>> pins = goldenMasterPins(goldenMasterPoms());
+            List<String[]> all = new ArrayList<>();
+            pins.forEach((app, versions) -> {
+                if (!PlatformModel.platformRepos().contains(app)) {
+                    // A provider this boot clones no checkout of has no tag to pack from.
+                    ctx.log("  " + goldenMastersArtifact(app) + " " + versions + " — "
+                            + PlatformModel.repo(app) + " is no repository of this boot, passed by");
+                    return;
+                }
+                versions.forEach(v -> all.add(new String[] {app, v}));
+            });
+            if (all.isEmpty()) {
+                ctx.skip("no seed build pins a golden master");
+            }
+            boot.docker.ensureVolume(SEED_REPO_VOLUME, ctx::log);
+            boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
+            List<String> held = fileRegistryHolds(all.stream()
+                    .map(p -> protocolStorePath(goldenMastersArtifact(p[0]), p[1])).toList());
+            List<String[]> wanted = new ArrayList<>();
+            for (String[] pin : all) {
+                String artifact = goldenMastersArtifact(pin[0]);
+                boolean seeded = held.contains(protocolStorePath(artifact, pin[1]));
+                boolean stored = boot.artifacts.mavenPublished(QITS_GROUP_PATH, artifact, pin[1],
+                        "jar");
+                ctx.log("  " + artifact + " " + pin[1] + " — file registry: "
+                        + (seeded ? "held" : "to seed") + ", store: "
+                        + (stored ? "held" : "to publish"));
+                if (!seeded || !stored) {
+                    wanted.add(new String[] {pin[0], pin[1], String.valueOf(!seeded),
+                            String.valueOf(!stored)});
+                }
+            }
+            if (wanted.isEmpty()) {
+                ctx.skip("both registries hold all " + all.size() + " golden masters");
+            }
+            boolean anyStore = wanted.stream().anyMatch(w -> Boolean.parseBoolean(w[3]));
+            String authorization = anyStore ? boot.publishAuthorization(ctx) : null;
+            String cid = create(ctx, List.of(
+                    "docker", "create", "--network", Boot.NETWORK, "--user", "root",
+                    "--entrypoint", "sh", "-v", SEED_REPO_VOLUME + ":/repo",
+                    "-v", MAVEN_CACHE_MOUNT, "maven:3.9-eclipse-temurin-25",
+                    "-c", goldenMastersScript(wanted, authorization)), authorization);
+            for (String[] want : wanted) {
+                copyTag(ctx, want[0], want[1], cid, goldenMastersTree(want[0], want[1]));
+            }
+            startAndReap(ctx, cid, "the golden masters publish failed");
+            ctx.note(wanted.size() + " of " + all.size());
+        });
+    }
+
+    /** Where one provider's tag sits in the golden-masters container. */
+    static String goldenMastersTree(String app, String version) {
+        return "/gm/" + app + "@" + version;
+    }
+
+    /**
+     * One jar per pin, packed from the tag's {@code golden-masters/} and deployed into the
+     * registries that pin still lacks — {@code {app, version, toFileRegistry, toStore}}.
+     */
+    String goldenMastersScript(List<String[]> wanted, String authorization) {
+        StringBuilder script = new StringBuilder("set -eu\n").append(mavenSettings(authorization));
+        for (String[] want : wanted) {
+            String artifact = goldenMastersArtifact(want[0]);
+            String jar = "/tmp/" + artifact + "-" + want[1] + ".jar";
+            script.append("test -d ").append(goldenMastersTree(want[0], want[1]))
+                    .append("/golden-masters\n")
+                    .append("jar cf ").append(jar).append(" -C ")
+                    .append(goldenMastersTree(want[0], want[1])).append(" golden-masters\n");
+            String deploy = "mvn -B -ntp -s /root/.m2/settings.xml"
+                    + " org.apache.maven.plugins:maven-deploy-plugin:3.1.2:deploy-file"
+                    + " -Dfile=" + jar + " -DgroupId=eu.wohlben.qits -DartifactId=" + artifact
+                    + " -Dversion=" + want[1] + " -Dpackaging=jar" + MAVEN_REPO_LOCAL;
+            if (Boolean.parseBoolean(want[2])) {
+                script.append(deploy).append(" -DrepositoryId=seed -Durl=file:///repo\n");
+            }
+            if (Boolean.parseBoolean(want[3])) {
+                script.append(deploy).append(" -DrepositoryId=qits -Durl=")
+                        .append(boot.config.artifactsUrl()).append("/maven/maven\n");
+            }
+        }
+        return script.toString();
+    }
+
+    /**
+     * Drops every TEST-scoped dependency from a tree's MODULE poms, in the container's copy only.
+     * (The perl substitution uses {@code #} as its delimiter: braces would be a second {@code {}}
+     * to find's {@code -exec … +}, which refuses it.) The seed builds jars with
+     * {@code -DskipTests} and Maven resolves test scope regardless, so a
+     * test-only dependency a cold platform cannot hold — qits-runner-protocol's suite reads the
+     * retired {@code qits-ci-runner-protocol} — would fail a build whose jars never touch it. The
+     * root pom is left alone: its dependency management is what a module's version-less entry
+     * reads, and a test dependency a module declares only through it stays resolvable.
+     */
+    static String stripTestDependencies(String tree) {
+        return "find " + tree + " -mindepth 2 -name pom.xml -not -path '*/target/*' -exec perl -0pi"
+                + " -e 's#<dependency>(?:(?!</dependency>).)*?<scope>test</scope>"
+                + "(?:(?!</dependency>).)*?</dependency>##gs' {} +\n";
+    }
+
+    /**
+     * <b>qits-runner-javalib — qits-runner-protocol, qits-runner-toolkit, the harness and
+     * qits-runner-toolkit-contracts — at every version the seed's runner consumers pin, into BOTH
+     * registries, the file registry first.</b> Built from the release TAG, the whole reactor, as
+     * {@link #protocolPublish} builds a daemon's contract.
+     * <p>
+     * qits-system's targets module compiles against the protocol and the toolkit, its runner's
+     * native build against both and the contracts module at test scope, and nothing else on a
+     * cold platform could put any of the four in a registry: the library is no deployable and no
+     * release publisher. Before qits-1547 the CI runner's build read the same jars from the
+     * PUBLIC registry by its pom default, which a cold host with no credential for it cannot.
+     * <p>
+     * <b>The test scope is stripped from the module poms first</b> ({@link
+     * #stripTestDependencies}): the reactor's suites read four providers' golden masters and the
+     * retired CI runner's contract, none of which a cold store holds or a jar needs. The
+     * golden masters the contracts module COMPILES against are seeded the phase before.
+     */
+    public Phase runnerPublish() {
+        return new Phase("publish-qits-runner",
+                "publish qits-runner-javalib at the versions its consumers pin", ctx -> {
+            List<String> versions = runnerVersions();
+            boot.docker.ensureVolume(SEED_REPO_VOLUME, ctx::log);
+            boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
+            List<String> toFile = new ArrayList<>();
+            List<String> toStore = new ArrayList<>();
+            List<String> held = fileRegistryHolds(versions.stream()
+                    .map(v -> protocolStorePath(RUNNER_PROBE_ARTIFACT, v)).toList());
+            for (String version : versions) {
+                if (boot.git.fileAt(boot.state.repoDir("runner"), version,
+                        PinnedVersions.ROOT_POM) == null) {
+                    throw new IllegalStateException("the seed's runner consumers pin "
+                            + RUNNER_PIN_PROPERTY + " " + version + " and the "
+                            + PlatformModel.repo("runner") + " checkout has no such tag. Fetch "
+                            + "the tags of " + boot.state.repoDir("runner") + " (git fetch "
+                            + "--tags) and rerun");
+                }
+                boolean seeded = held.contains(protocolStorePath(RUNNER_PROBE_ARTIFACT, version));
+                boolean stored = boot.artifacts.mavenPublished(QITS_GROUP_PATH,
+                        RUNNER_PROBE_ARTIFACT, version, "jar");
+                ctx.log("  qits-runner " + version + " — file registry: "
+                        + (seeded ? "held" : "to seed") + ", store: "
+                        + (stored ? "held" : "to publish"));
+                if (!seeded) {
+                    toFile.add(version);
+                }
+                if (!stored) {
+                    toStore.add(version);
+                }
+            }
+            if (toFile.isEmpty() && toStore.isEmpty()) {
+                ctx.skip("both registries hold qits-runner " + String.join(", ", versions));
+            }
+            String authorization = toStore.isEmpty() ? null : boot.publishAuthorization(ctx);
+            String cid = create(ctx, List.of(
+                    "docker", "create", "--network", Boot.NETWORK, "--user", "root",
+                    "--entrypoint", "sh", "-v", SEED_REPO_VOLUME + ":/repo",
+                    "-v", MAVEN_CACHE_MOUNT, "maven:3.9-eclipse-temurin-25",
+                    "-c", runnerScript(versions, toFile, toStore, authorization)), authorization);
+            for (String version : versions) {
+                if (toFile.contains(version) || toStore.contains(version)) {
+                    copyTag(ctx, "runner", version, cid, publishTree(version));
+                }
+            }
+            startAndReap(ctx, cid, "the qits-runner publish failed");
+            ctx.note(String.join(", ", versions));
+        });
+    }
+
+    /** The jar the runner publish probes a version by: the one every consumer compiles against. */
+    static final String RUNNER_PROBE_ARTIFACT = "qits-runner-toolkit";
+
+    /** The settings, the purge, then per version: the strip and one deploy per registry owed. */
+    String runnerScript(List<String> versions, List<String> toFile, List<String> toStore,
+                        String authorization) {
+        StringBuilder script = new StringBuilder("set -eu\n").append(mavenSettings(authorization))
+                .append(MAVEN_PURGE_QITS);
+        for (String version : versions) {
+            if (!toFile.contains(version) && !toStore.contains(version)) {
+                continue;
+            }
+            String tree = publishTree(version);
+            script.append(stripTestDependencies(tree));
+            String build = "cd " + tree + " && mvn -B -ntp -s /root/.m2/settings.xml deploy"
+                    + " -DskipTests" + MAVEN_REPO_LOCAL;
+            if (toFile.contains(version)) {
+                script.append(build).append(" -DaltDeploymentRepository=seed::default::file:///repo\n");
+            }
+            if (toStore.contains(version)) {
+                script.append(build).append(" -DaltDeploymentRepository=qits::default::")
+                        .append(boot.config.artifactsUrl()).append("/maven/maven\n");
+            }
+        }
+        return script.toString();
+    }
+
+    // --- the target's runner image ---------------------------------------------------------------
+
+    /** The qits-system-runner's image repository, as its own release publishes it. */
+    static final String SYSTEM_RUNNER_IMAGE = "qits/qits-system-runner";
+
+    /** The property in qits-system's root pom that says which runner every target is pinned to. */
+    static final String SYSTEM_RUNNER_PIN_PROPERTY = "qits.system-runner-protocol.version";
+
+    /**
+     * <b>WHICH RUNNER THIS BOOT BUILDS AND STARTS: the one qits-system pins.</b> qits-system takes
+     * its runner version from the protocol jar it compiles against
+     * ({@code SystemRunnerBinary.VERSION}) and tells every connected runner of another version to
+     * upgrade to it — so a runner built at any other version would be told to pull an image no
+     * registry of a cold platform holds. Read from the system checkout on every ask, so the build
+     * arm, a warm rerun and the protocol publish cannot disagree.
+     */
+    static String systemRunnerVersion(Boot boot) throws IOException {
+        String pom = Files.readString(boot.state.repoDir("system")
                 .resolve(PinnedVersions.ROOT_POM), StandardCharsets.UTF_8);
-        return protocolPin(pom, WORKSPACES_RUNNER_PIN_PROPERTY, "qits-workspaces");
+        return protocolPin(pom, SYSTEM_RUNNER_PIN_PROPERTY, "qits-system");
     }
 
-    /** The image as the host daemon holds it after the build: {@code qits/qits-ci-runner:<pin>}. */
-    static String runnerImage(String version) {
-        return RUNNER_IMAGE + ":" + version;
+    /** The image as the host daemon holds it after the build: {@code qits/qits-system-runner:<pin>}. */
+    static String systemRunnerImage(String version) {
+        return SYSTEM_RUNNER_IMAGE + ":" + version;
     }
 
     /**
-     * The same image under the registry host — the spelling it is pushed under and the one a later
-     * self-update pulls, so the runner this boot starts is already named the way its successor
-     * will be.
+     * The same image under the registry host — the spelling {@code images-publish} pushes it
+     * under.
      */
-    static String runnerRegistryImage(Boot boot, String version) {
-        return boot.config.registryVhost() + "/" + runnerImage(version);
+    static String systemRunnerRegistryImage(Boot boot, String version) {
+        return boot.config.registryVhost() + "/" + systemRunnerImage(version);
     }
 
     /**
@@ -1913,92 +2212,111 @@ public class SeedPhases {
         return SeedDockerfile.rewrite(stage.toString());
     }
 
-    /** The runner's native compile, in the builder container — the ci-daemon's line, one module on. */
-    static String runnerBuildScript() {
-        return MAVEN_PURGE_QITS
-                + "cd /qits-build && ./mvnw -B -ntp -pl ci-runner -am package -Dnative "
-                + "-DskipTests -Dquarkus.native.container-build=false" + MAVEN_REPO_LOCAL;
+    /**
+     * The runner's native compile, in the builder container — the ci-daemon's line, one module on,
+     * and ON qits-net with the publishes' settings: unlike the ci-daemon's reactor this one
+     * resolves qits jars (qits-runner-protocol, qits-runner-toolkit, and at test scope
+     * qits-runner-toolkit-contracts and a golden master), which the store holds by now and
+     * Maven Central never will.
+     */
+    String systemRunnerBuildScript() {
+        return mavenSettings(null) + MAVEN_PURGE_QITS
+                + "cd /qits-build && ./mvnw -B -ntp -s /root/.m2/settings.xml -pl system-runner -am"
+                + " package -Dnative -DskipTests -Dquarkus.native.container-build=false"
+                + MAVEN_REPO_LOCAL;
     }
 
     /**
-     * <b>{@code qits/qits-ci-runner:<pin>}, built from the release tag qits-ci pins.</b>
+     * <b>{@code qits/qits-system-runner:<pin>}, built from the release tag qits-system pins.</b>
      * <p>
-     * Since qits-506 qits-ci executes nothing itself: a run is a connected runner's or nobody's. A
-     * cold platform has no registry to pull the runner from and no CI to build it with, so this
-     * program builds the first one the way it builds the first ci-daemon — and for the same
-     * reason, straight after it, on the musl builder image that phase just made. The two
-     * repositories' builder Dockerfiles are byte copies of each other, so one toolchain image
-     * serves both.
+     * Since the CI step of epic qits-1481 (qits-1547) every CI run is a lease on a qits-system
+     * target, so the first release replay of a cold boot runs on this host's target or nowhere —
+     * and a cold platform has no registry to pull the target's runner from and no CI to build it
+     * with. So this program builds the first one the way it builds the first ci-daemon, straight
+     * after it and on the musl builder image that phase just made: the runner's builder Dockerfile
+     * is a byte copy of the ci-daemon's, so one toolchain image serves both. It replaced the
+     * qits-ci-runner image this phase built until the CI runner retired.
      * <p>
-     * <b>From the TAG, and the tag is qits-ci's pin</b> — see {@link #runnerVersion}. The checkout
-     * stands on main and is not what is built.
+     * <b>From the TAG, and the tag is qits-system's pin</b> — see {@link #systemRunnerVersion}.
+     * The checkout stands on main and is not what is built.
      * <p>
-     * <b>Tagged twice</b>, like the step images: under the bare name the build loads it as, and
-     * under the registry host, which is how the {@code images-publish} phase pushes it and how the
-     * runner container is started.
+     * <b>Tagged three times</b>: under the bare name the build loads it as; under the registry
+     * vhost, which is how the {@code images-publish} phase pushes it; and under the PUBLIC registry
+     * name {@code registry.qits.<domain>}, which is how {@code target-localhost} starts it and how
+     * qits-system names every runner's image — so the container this boot starts is already named
+     * the way its successor will be, and the host pulls nothing.
      * <p>
      * <b>An image this daemon already holds is not built again</b>: the tag carries the version,
      * and a version names one commit. That is every rerun, and it is what makes this phase cost a
      * native build once per pin rather than once per boot.
      */
-    public Phase runnerImage() {
-        return new Phase("runner-image", "build the qits-ci-runner image qits-ci pins", ctx -> {
-            String version = runnerVersion(boot);
-            String image = runnerImage(version);
-            String registryImage = runnerRegistryImage(boot, version);
+    public Phase systemRunnerImage() {
+        return new Phase("system-runner-image", "build the qits-system-runner image qits-system pins",
+                ctx -> {
+            String version = systemRunnerVersion(boot);
+            String image = systemRunnerImage(version);
+            List<String> tags = List.of(systemRunnerRegistryImage(boot, version),
+                    PipelinePhases.targetRunnerImage(boot.config.requiredDomain(), version));
             if (boot.docker.imageExists(image)) {
-                Boot.must(boot.docker.exec(ctx::log, "tag", image, registryImage),
-                        "tagging " + image + " under the registry host failed");
+                tag(ctx, image, tags);
                 ctx.skip(image + " is already on this host");
             }
-            Path repo = boot.state.repoDir("ci-runner");
+            Path repo = boot.state.repoDir("system-runner-daemon");
             String dockerfile = boot.git.fileAt(repo, version, PlatformModel.dockerfilePath(
-                    "ci-runner"));
+                    "system-runner-daemon"));
             if (dockerfile == null) {
-                throw new IllegalStateException("qits-ci pins the runner at " + version + " and "
-                        + "the " + PlatformModel.repo("ci-runner") + " checkout has no such tag, "
-                        + "so there is nothing to build " + image + " from. Fetch the tags of "
-                        + repo + " (git fetch --tags) and rerun");
+                throw new IllegalStateException("qits-system pins the runner at " + version
+                        + " and the " + PlatformModel.repo("system-runner-daemon") + " checkout "
+                        + "has no such tag, so there is nothing to build " + image + " from. "
+                        + "Fetch the tags of " + repo + " (git fetch --tags) and rerun");
             }
-            String stage = runnerImageStage(dockerfile, "qits-ci-runner");
+            String stage = runnerImageStage(dockerfile, "qits-system-runner");
 
             boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
-            // The ci-daemon's container, line for line: the builder image entrypoints to
-            // native-image itself, and the build is on no network of ours, so it reads Maven
-            // Central direct and the shared cache is what keeps that to once.
+            // The ci-daemon's container, but on qits-net: the builder image entrypoints to
+            // native-image itself, and this reactor resolves qits jars out of the store (the
+            // mirror for the rest), where the ci-daemon's resolves Maven Central alone.
             String cid = create(ctx, List.of(
-                    "docker", "create", "--user", "root", "--entrypoint", "bash",
+                    "docker", "create", "--network", Boot.NETWORK, "--user", "root",
+                    "--entrypoint", "bash",
                     "--memory", "6g", "--cpu-quota", "400000", "--cpuset-cpus", "0-3",
                     "-v", MAVEN_CACHE_MOUNT, "qits/graalvmce-musl-builder:jdk-25",
-                    "-c", runnerBuildScript()));
+                    "-c", systemRunnerBuildScript()));
             // The build directory sits under the sources directory because the image build below
             // mounts it as its context, and that mount is resolved by the HOST's daemon.
-            Path context = boot.state.srcDir.resolve(".exports").resolve("qits-ci-runner-image");
+            Path context = boot.state.srcDir.resolve(".exports").resolve("qits-system-runner-image");
             try {
-                copyTag(ctx, "ci-runner", version, cid, "/qits-build");
-                ctx.status("cold musl native build of the ci-runner");
+                copyTag(ctx, "system-runner-daemon", version, cid, "/qits-build");
+                ctx.status("cold musl native build of the system-runner");
                 ProcessResult run = boot.docker.exec(Docker.BUILD_TIMEOUT, ctx::log, "start", "-a",
                         cid);
                 if (!run.ok()) {
-                    throw new IllegalStateException("ci-runner build failed\n" + run.tailText(20));
+                    throw new IllegalStateException("system-runner build failed\n"
+                            + run.tailText(20));
                 }
                 Files.createDirectories(context);
                 Boot.must(boot.docker.exec(Duration.ofMinutes(30), ctx::log, "cp",
-                                cid + ":/qits-build/ci-runner/target/qits-ci-runner",
-                                context.resolve("qits-ci-runner").toString()),
+                                cid + ":/qits-build/system-runner/target/qits-system-runner",
+                                context.resolve("qits-system-runner").toString()),
                         "copying the runner binary out failed");
                 ctx.status("packaging " + image);
                 Boot.must(boot.docker.buildFromStdin(image, stage, context, List.of(), ctx::log),
                         "build of " + image + " failed");
             } finally {
                 boot.docker.removeContainer(cid, null);
-                Files.deleteIfExists(context.resolve("qits-ci-runner"));
+                Files.deleteIfExists(context.resolve("qits-system-runner"));
                 Files.deleteIfExists(context);
             }
-            Boot.must(boot.docker.exec(ctx::log, "tag", image, registryImage),
-                    "tagging " + image + " under the registry host failed");
+            tag(ctx, image, tags);
             ctx.note(version);
         });
+    }
+
+    private void tag(PhaseContext ctx, String image, List<String> tags) {
+        for (String tag : tags) {
+            Boot.must(boot.docker.exec(ctx::log, "tag", image, tag),
+                    "tagging " + image + " as " + tag + " failed");
+        }
     }
 
     // --- postgres ---------------------------------------------------------------------------------
@@ -2020,7 +2338,8 @@ public class SeedPhases {
             "qits_githost", "qits_githost_eventstream",
             "qits_projects", "qits_epics", "qits_projects_eventstream",
             "qits_containers", "qits_containers_eventstream",
-            "qits_platform_edge", "qits_platform_edge_eventstream");
+            "qits_platform_edge", "qits_platform_edge_eventstream",
+            "qits_system", "qits_system_eventstream");
 
     /**
      * The platform's postgres, running with a password of this bootstrap's choosing from its very
@@ -2097,6 +2416,10 @@ public class SeedPhases {
             String platformEdgeEventstream = pgPassword(ctx, state,
                     "PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD",
                     "qits.pg.platform-edge-eventstream-password");
+            String system = pgPassword(ctx, state, "PG_SYSTEM_PASSWORD",
+                    "qits.pg.system-password");
+            String systemEventstream = pgPassword(ctx, state, "PG_SYSTEM_EVENTSTREAM_PASSWORD",
+                    "qits.pg.system-eventstream-password");
             boot.state.pgSuperuserPassword = superuser;
             boot.state.pgDeploymentsPassword = deployments;
             boot.state.pgDeploymentsEventstreamPassword = deploymentsEventstream;
@@ -2115,6 +2438,8 @@ public class SeedPhases {
             boot.state.pgContainersEventstreamPassword = containersEventstream;
             boot.state.pgPlatformEdgePassword = platformEdge;
             boot.state.pgPlatformEdgeEventstreamPassword = platformEdgeEventstream;
+            boot.state.pgSystemPassword = system;
+            boot.state.pgSystemEventstreamPassword = systemEventstream;
 
             // RECORDED BEFORE THE SERVER IS STARTED, and the order is the whole point.
             // POSTGRES_PASSWORD applies at initdb only: once the data volume holds a cluster, the
@@ -2143,6 +2468,8 @@ public class SeedPhases {
             state.put("PG_CONTAINERS_EVENTSTREAM_PASSWORD", containersEventstream);
             state.put("PG_PLATFORM_EDGE_PASSWORD", platformEdge);
             state.put("PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD", platformEdgeEventstream);
+            state.put("PG_SYSTEM_PASSWORD", system);
+            state.put("PG_SYSTEM_EVENTSTREAM_PASSWORD", systemEventstream);
             state.write();
             ctx.log("  recorded in " + state.file() + " before the server starts");
 
@@ -2219,6 +2546,8 @@ public class SeedPhases {
             platformEdge = registry.getOrDefault("qits_platform_edge", platformEdge);
             platformEdgeEventstream =
                     registry.getOrDefault("qits_platform_edge_eventstream", platformEdgeEventstream);
+            system = registry.getOrDefault("qits_system", system);
+            systemEventstream = registry.getOrDefault("qits_system_eventstream", systemEventstream);
             if (!registry.isEmpty()) {
                 boot.state.pgCiPassword = ci;
                 boot.state.pgCiEventstreamPassword = ciEventstream;
@@ -2235,6 +2564,8 @@ public class SeedPhases {
                 boot.state.pgContainersEventstreamPassword = containersEventstream;
                 boot.state.pgPlatformEdgePassword = platformEdge;
                 boot.state.pgPlatformEdgeEventstreamPassword = platformEdgeEventstream;
+                boot.state.pgSystemPassword = system;
+                boot.state.pgSystemEventstreamPassword = systemEventstream;
                 state.put("PG_CI_PASSWORD", ci);
                 state.put("PG_CI_EVENTSTREAM_PASSWORD", ciEventstream);
                 state.put("PG_PLATFORM_IDP_PASSWORD", platformIdp);
@@ -2250,6 +2581,8 @@ public class SeedPhases {
                 state.put("PG_CONTAINERS_EVENTSTREAM_PASSWORD", containersEventstream);
                 state.put("PG_PLATFORM_EDGE_PASSWORD", platformEdge);
                 state.put("PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD", platformEdgeEventstream);
+                state.put("PG_SYSTEM_PASSWORD", system);
+                state.put("PG_SYSTEM_EVENTSTREAM_PASSWORD", systemEventstream);
                 state.write();
                 ctx.log("  " + registry.size() + " credentials read back from the deployer's "
                         + "registry — the seed uses what the rows say");
@@ -2334,6 +2667,14 @@ public class SeedPhases {
                 provision(ctx, admin, "qits_platform_edge", platformEdge, false);
                 provision(ctx, admin, "qits_platform_edge_eventstream", platformEdgeEventstream,
                         false);
+                // THE TARGETS' STORE AND ITS OUTBOX, in the seed since qits-1547: every CI run is
+                // a lease on a qits-system target now, so qits-system boots from the seed stack
+                // before the first release replay and refuses to boot without either. The names
+                // are the deployer's own derivation from `resources: postgresql:db,
+                // postgresql:eventstream:qits_system_eventstream`, so the rows it registers on the
+                // first pipeline deployment are the rows this creates.
+                provision(ctx, admin, "qits_system", system, false);
+                provision(ctx, admin, "qits_system_eventstream", systemEventstream, false);
             }
             ctx.note(SEED_DATABASES.size() + " databases ready on " + pg);
         });
@@ -2813,6 +3154,7 @@ public class SeedPhases {
         return new Phase("pd-extras", "write the deployer's extras config volume", ctx -> {
             boot.docker.ensureVolume("qits-deployments-config", ctx::log);
             boot.docker.ensureVolume("qits-containers-config", ctx::log);
+            boot.docker.ensureVolume("qits-system-config", ctx::log);
             String properties = ComposeTemplate.extras(tokens());
             // What the volume held BEFORE this write, as a DIGEST rather than as text: the file
             // carries the push token and every client secret, and reading it back would put both
@@ -2842,6 +3184,8 @@ public class SeedPhases {
                     .mask(orEmpty(boot.state.pgPlatformMirrorPassword))
                     .mask(orEmpty(boot.state.pgGithostPassword))
                     .mask(orEmpty(boot.state.pgGithostEventstreamPassword))
+                    .mask(orEmpty(boot.state.pgSystemPassword))
+                    .mask(orEmpty(boot.state.pgSystemEventstreamPassword))
                     // The Hetzner DNS token, which the deployed edge is handed as a VALUE: the
                     // deployer mounts no swarm secrets, so the file form the seed uses would name
                     // nothing on the successor. Same masking every other credential in this file
@@ -2870,7 +3214,10 @@ public class SeedPhases {
             // here. The registry is written beside it anyway: it costs one line and the day this
             // console pulls a qits/* image of its own is not the day to discover the file names
             // one host.
-            dockerConfig(ctx, "qits-platform-system-config", "system",
+            // The volume is qits-system-config, the name the seed stack and the deployed
+            // successor's extras both mount; it was written as qits-platform-system-config, a
+            // name nothing mounted, until qits-1547 put qits-system in the seed.
+            dockerConfig(ctx, "qits-system-config", "system",
                     boot.config.registryVhost(), boot.config.mirrorVhost());
             if (!sha256(properties).equals(before)) {
                 restartSeedDeployer(ctx);
@@ -3419,6 +3766,9 @@ public class SeedPhases {
         values.put("PG_PLATFORM_EDGE_PASSWORD", orEmpty(boot.state.pgPlatformEdgePassword));
         values.put("PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD",
                 orEmpty(boot.state.pgPlatformEdgeEventstreamPassword));
+        values.put("PG_SYSTEM_PASSWORD", orEmpty(boot.state.pgSystemPassword));
+        values.put("PG_SYSTEM_EVENTSTREAM_PASSWORD",
+                orEmpty(boot.state.pgSystemEventstreamPassword));
         // The idp derives its own issuer from QITS_DOMAIN now (qits-730) and reads no
         // environment variable for it, so this program writes nothing for it any more. IDP_DIAL
         // is the ADDRESS, environment-qualified like every other. See BootstrapConfig.idpDialUrl.

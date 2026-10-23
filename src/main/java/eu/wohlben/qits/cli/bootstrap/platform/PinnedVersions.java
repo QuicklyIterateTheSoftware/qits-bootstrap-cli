@@ -78,9 +78,10 @@ public final class PinnedVersions {
      * says which modules, and this reader uses that answer to decide which of a tag's own pins are
      * really needed.
      * <p>
-     * <b>The two daemons are the same shape</b>: qits-ci pins {@code qits-ci-daemon-protocol} and
-     * {@code qits-ci-runner-protocol}, one module of each daemon's reactor. They are here so the
-     * closure says what is pinned rather than "no repository publishes it"; the publish itself is
+     * <b>The daemons are the same shape</b>: qits-ci pins {@code qits-ci-daemon-protocol} and
+     * qits-system {@code qits-system-runner-protocol}, one module of each daemon's reactor. They are
+     * here so the closure says what is pinned rather than "no repository publishes it"; the
+     * publish itself is
      * {@code SeedPhases.protocolPublish}, which builds the pinned tag and stops the boot where it
      * is missing.
      */
@@ -95,15 +96,23 @@ public final class PinnedVersions {
             Map.entry("service-mock", "integrations-quarkus"),
             Map.entry("auth-core", "integrations-quarkus"),
             Map.entry("environment-core", "integrations-quarkus"),
+            // Two more of that reactor's jars, pinned by qits-system and qits-runner-javalib.
+            Map.entry("http-core", "integrations-quarkus"),
+            Map.entry("pact-consumer", "integrations-quarkus"),
+            // qits-runner-javalib, which qits-system and its runner pin as one property for its
+            // four jars (qits-1547). Its own pins — qits-containers-driver above all — are what
+            // this entry brings into the closure; SeedPhases.runnerPublish builds the versions.
+            Map.entry("runner", "runner"),
             Map.entry("githost-events", "githost"),
             Map.entry("containers-client", "containers"),
             Map.entry("containers-core", "containers"),
             Map.entry("ci-daemon-protocol", "ci-daemon"),
-            Map.entry("ci-runner-protocol", "ci-runner"),
             // qits-workspaces pins its runner the way qits-ci pins its own — one jar beside the
             // image, both at the runner's release tag — and the release replay of that repository
             // is what publishes both, so a lagging pin is one more version to replay.
             Map.entry("workspaces-runner-protocol", "workspaces-runner-daemon"),
+            // qits-system pins the target's runner the same way (qits-1535).
+            Map.entry("system-runner-protocol", "system-runner-daemon"),
             Map.entry("userflows", "userflows"),
             // One property for the harness reactor's two jars, spelled two ways: qits-workspace-
             // daemon says <qits.coding-agents.version>, qits-projects-daemon

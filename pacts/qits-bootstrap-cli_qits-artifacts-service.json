@@ -370,13 +370,13 @@
           },
           "qits-trigger": {
             "app": "qits-bootstrap-cli",
-            "command": "qits-bootstrap bootstrap: workspaces-runner-localhost",
+            "command": "qits-bootstrap bootstrap: target-localhost",
             "kind": "command"
           }
         }
       },
-      "description": "qits-bootstrap bootstrap: workspaces-runner-localhost: getImageManifest",
-      "key": "e99fd62e",
+      "description": "qits-bootstrap bootstrap: target-localhost: getImageManifest",
+      "key": "66dcae9c",
       "pending": false,
       "providerStates": [
         {

@@ -113,6 +113,9 @@ public class RunState {
     public String pgContainersEventstreamPassword;
     public String pgPlatformEdgePassword;
     public String pgPlatformEdgeEventstreamPassword;
+    /** qits-system's pair, in the seed since qits-1547: the targets store and its outbox. */
+    public String pgSystemPassword;
+    public String pgSystemEventstreamPassword;
     /**
      * <b>qits-projects' THREE, and three is what its own deployments.yml declares</b>: its domain
      * store, the epics store beside it, and the eventstream outbox. Three Flyway lineages, so three
@@ -160,28 +163,13 @@ public class RunState {
     public long bootstrapIngressExpiresAt;
     /** The closing report, printed after the display is handed back. */
     /**
-     * The platform host's own CI runner, when the {@code runner-localhost} phase started or found
-     * one that is this installation's — and null when it stood aside, which is what tells
-     * {@code runner-connected} there is nothing of ours to wait for.
+     * This host's target, when {@code target-localhost} started or found one that is this
+     * installation's — and null when it stood aside, which is what tells
+     * {@code target-connected} there is nothing of ours to wait for.
      */
-    public String ciRunnerId;
-    /** That runner's container, for the log a failed wait quotes. */
-    public String ciRunnerContainer;
-    /**
-     * <b>What {@code runner-localhost} decided about qits-ci's runners</b> — a
-     * {@code PipelinePhases.RunnerClaim} name, or null when it never got as far as deciding. The
-     * workspaces runner reads it: this host gets a workspaces runner of its own only on a platform
-     * whose CI runner is this installation's too.
-     */
-    public String ciRunnerClaim;
-    /**
-     * This host's workspaces runner, when {@code workspaces-runner-localhost} started or found one
-     * that is this installation's — and null when it stood aside, which is what tells
-     * {@code workspaces-runner-connected} there is nothing of ours to wait for.
-     */
-    public String workspacesRunnerId;
-    /** That runner's container, for the log a failed wait quotes and the closing report. */
-    public String workspacesRunnerContainer;
+    public String targetId;
+    /** That target's runner container, for the log a failed wait quotes and the closing report. */
+    public String targetContainer;
     public final List<String> summary = new ArrayList<>();
 
     public Path repoDir(String name) {

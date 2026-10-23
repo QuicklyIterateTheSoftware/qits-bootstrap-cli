@@ -94,28 +94,19 @@ public class BootstrapState {
     public static final String REGISTER_TOKEN_KEY = "IDP_REGISTER_TOKEN";
 
     /**
-     * <b>The id of the CI runner THIS installation declared for its own host.</b> It is what makes
-     * a {@code localhost} row in qits-ci ours: the bootstrap starts, restarts or re-registers only
-     * the runner whose id it wrote here, so a platform whose runner somebody else declared — an
-     * operator's, another host's — is never given a second one by a rerun. Written the moment
-     * qits-ci answers the create, before the container exists.
+     * <b>The id of the TARGET this installation declared for its own host.</b> It is what makes a
+     * {@code localhost} target in qits-system ours: the bootstrap starts, restarts or re-registers
+     * only the target whose id it wrote here, so a platform whose targets somebody else installed
+     * — an operator's, another host's — is never given a second one by a rerun. Written the moment
+     * qits-system answers the create, before the container exists. It replaced
+     * {@code WORKSPACES_RUNNER_ID} (qits-1535) and {@code CI_RUNNER_ID} (qits-1547) when the target
+     * replaced this host's two runners; a line of either name left in an older file is read by
+     * nothing.
      */
-    public static final String CI_RUNNER_ID_KEY = "CI_RUNNER_ID";
+    public static final String LOCALHOST_TARGET_ID_KEY = "LOCALHOST_TARGET_ID";
 
-    public Optional<String> ciRunnerId() {
-        return value(CI_RUNNER_ID_KEY);
-    }
-
-    /**
-     * <b>The id of the WORKSPACES runner this installation declared for its own host</b> — the
-     * same rule as {@link #CI_RUNNER_ID_KEY}, against qits-workspaces' {@code localhost} row: only
-     * the runner whose id is written here is started, restarted or re-registered by a rerun.
-     * Written the moment qits-workspaces answers the create, before the container exists.
-     */
-    public static final String WORKSPACES_RUNNER_ID_KEY = "WORKSPACES_RUNNER_ID";
-
-    public Optional<String> workspacesRunnerId() {
-        return value(WORKSPACES_RUNNER_ID_KEY);
+    public Optional<String> localhostTargetId() {
+        return value(LOCALHOST_TARGET_ID_KEY);
     }
 
     /**

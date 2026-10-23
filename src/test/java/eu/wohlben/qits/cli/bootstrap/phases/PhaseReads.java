@@ -15,7 +15,7 @@ import java.util.Optional;
  */
 public final class PhaseReads {
 
-    /** The name the runner phases give the runner they own. */
+    /** The name the target phases give the target they own. */
     public static final String LOCALHOST_RUNNER = PipelinePhases.LOCALHOST_RUNNER;
 
     /** The bearer {@code seed-health}'s auth-plane probes present: one no idp issued. */
@@ -45,13 +45,15 @@ public final class PhaseReads {
         return PipelinePhases.storageIdIn(answer);
     }
 
-    /** {@code runner-connected}: the row once runner {@code id} is connected, or null. */
-    public static JsonNode ciRunnerConnected(Http.Response listing, String id) {
-        return PipelinePhases.runnerConnection(listing, id).value();
+    /** {@code target-connected}: the same for qits-system's target listing. */
+    public static JsonNode targetConnected(Http.Response listing, String id) {
+        return PipelinePhases.targetConnection(listing, id).value();
     }
 
-    /** {@code workspaces-runner-connected}: the same for qits-workspaces' listing. */
-    public static JsonNode workspacesRunnerConnected(Http.Response listing, String id) {
-        return PipelinePhases.workspacesRunnerConnection(listing, id).value();
+    /** {@code target-localhost}: the decision a listing makes, with nothing recorded. */
+    public static String targetClaim(Http.Response listing) {
+        return PipelinePhases.targetDecision(
+                eu.wohlben.qits.cli.bootstrap.api.SystemApi.targetsIn(listing), Optional.empty())
+                .claim().name();
     }
 }

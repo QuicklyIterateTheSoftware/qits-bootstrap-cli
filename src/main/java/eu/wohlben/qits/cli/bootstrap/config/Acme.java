@@ -100,9 +100,10 @@ public final class Acme {
             return null;
         }
         return "QITS_ACME_MODE (--acme-mode) is '" + mode.word() + "', and a bootstrap needs "
-                + "'production'. This host's CI runner and every step it starts reach "
-                + "the platform through its public names — https://ci.qits.<domain>, "
-                + "idp.qits.<domain>, registry.qits.<domain> — and neither the runner nor docker "
+                + "'production'. This host's target and every CI slot it starts reach "
+                + "the platform through its public names — https://system.qits.<domain>, "
+                + "ci.qits.<domain>, idp.qits.<domain>, registry.qits.<domain> — and neither the "
+                + "runner nor docker "
                 + "accepts a certificate from " + (mode == Mode.OFF
                         ? "the self-signed placeholder that 'off' keeps"
                         : "the untrusted staging root")

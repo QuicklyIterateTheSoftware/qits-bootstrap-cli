@@ -1364,8 +1364,8 @@ class PipelinePhasesTest {
         assertThat(PlatformModel.RELEASE_PUBLISHERS)
                 .filteredOn(name -> !SeedPhases.SEED_LIBRARIES.contains(name))
                 .containsExactly("spa-ui-components", "integrations-angular", "oci-workspace",
-                        "workspace-daemon", "workspaces-runner-daemon", "oci-workspace-editor",
-                        "projects-daemon");
+                        "workspace-daemon", "workspaces-runner-daemon", "system-runner-daemon",
+                        "oci-workspace-editor", "projects-daemon");
     }
 
     // --- when a tag that already stands still needs its build ------------------------------------
@@ -1554,9 +1554,13 @@ class PipelinePhasesTest {
             "qits/build-images/userflows-base/manifests/latest",
             "qits/build-images/node-base/manifests/latest",
             "qits/build-images/node-docker-base/manifests/latest",
-            "qits/qits-ci-runner/manifests/" + PIN);
+            "qits/build-images/ci-slot/manifests/latest",
+            "qits/qits-system-runner/manifests/" + PIN);
 
-    /** A boot whose ci checkout pins the runner, with the process runner and the http in hand. */
+    /**
+     * A boot whose system checkout pins the target's runner, with the process runner and the http
+     * in hand. The ci checkout is there too, pinning nothing a phase here reads.
+     */
     private Boot runnerBoot(ScriptedRunner runner, CannedHttp http, Map<String, String> env)
             throws Exception {
         Map<String, String> config = new java.util.HashMap<>(env);
@@ -1567,8 +1571,12 @@ class PipelinePhasesTest {
         boot.state.wrapperDir = temp;
         Path ci = Files.createDirectories(boot.state.repoDir("ci"));
         Files.writeString(ci.resolve("pom.xml"), "<project><properties>"
-                + "<qits.ci-runner-protocol.version>" + PIN + "</qits.ci-runner-protocol.version>"
                 + "</properties></project>", StandardCharsets.UTF_8);
+        Path system = Files.createDirectories(boot.state.repoDir("system"));
+        Files.writeString(system.resolve("pom.xml"), "<project><properties>"
+                + "<qits.system-runner-protocol.version>" + PIN
+                + "</qits.system-runner-protocol.version></properties></project>",
+                StandardCharsets.UTF_8);
         return boot;
     }
 
@@ -1582,13 +1590,13 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>A cold store: all six are pushed, under the registry host, with the publishing pair in a
+     * <b>A cold store: all seven are pushed, under the registry host, with the publishing pair in a
      * config of the phase's own.</b> The credential is a file the command names — never an
      * argument — it is the pair docker's token dance needs, and the directory is gone when the
      * phase ends.
      */
     @Test
-    void aColdStoreIsPushedEveryStepImageAndTheRunnerImage() throws Exception {
+    void aColdStoreIsPushedEveryStepImageAndTheTargetsRunnerImage() throws Exception {
         List<String> configs = new ArrayList<>();
         ScriptedRunner runner = new ScriptedRunner(command -> {
             if (command.contains("push")) {
@@ -1615,7 +1623,7 @@ class PipelinePhasesTest {
 
         List<List<String>> pushes = runner.argv.stream()
                 .filter(command -> command.contains("push")).toList();
-        assertThat(pushes).hasSize(6).allSatisfy(command -> {
+        assertThat(pushes).hasSize(7).allSatisfy(command -> {
             assertThat(command).hasSize(5);
             assertThat(command.subList(0, 2)).containsExactly("docker", "--config");
             assertThat(command.get(3)).isEqualTo("push");
@@ -1626,11 +1634,12 @@ class PipelinePhasesTest {
                 "registry.prod.localhost:8080/qits/build-images/userflows-base:latest",
                 "registry.prod.localhost:8080/qits/build-images/node-base:latest",
                 "registry.prod.localhost:8080/qits/build-images/node-docker-base:latest",
-                "registry.prod.localhost:8080/qits/qits-ci-runner:" + PIN);
+                "registry.prod.localhost:8080/qits/build-images/ci-slot:latest",
+                "registry.prod.localhost:8080/qits/qits-system-runner:" + PIN);
         // The config names the registry host and carries the pair as docker login would.
         String auth = java.util.Base64.getEncoder().encodeToString(
                 "dyn-bootstrap-publish-1:s3cr3t-pair".getBytes(StandardCharsets.UTF_8));
-        assertThat(configs).hasSize(6).allSatisfy(config -> assertThat(config)
+        assertThat(configs).hasSize(7).allSatisfy(config -> assertThat(config)
                 .contains("\"registry.prod.localhost:8080\"").contains(auth));
         // Neither the secret nor its base64 is on a command line or in the log.
         assertThat(runner.lines()).noneMatch(line -> line.contains("s3cr3t-pair")
@@ -1654,7 +1663,7 @@ class PipelinePhasesTest {
         assertThatThrownBy(() -> new PipelinePhases(boot).imagesPublish().action()
                 .run(new CiLogStreamTest.Recorder()))
                 .isInstanceOf(PhaseSkipped.class)
-                .hasMessageContaining("the registry holds all 6 images");
+                .hasMessageContaining("the registry holds all 7 images");
         assertThat(runner.argv).isEmpty();
     }
 
@@ -1662,14 +1671,14 @@ class PipelinePhasesTest {
     @Test
     void onlyTheImagesTheStoreLacksArePushed() throws Exception {
         ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
-        Boot boot = runnerBoot(runner, store(STORE_IMAGES.subList(0, 5)),
+        Boot boot = runnerBoot(runner, store(STORE_IMAGES.subList(0, 6)),
                 Map.of("QITS_MACHINE_AUTH", "0"));
 
         new PipelinePhases(boot).imagesPublish().action().run(new CiLogStreamTest.Recorder());
 
         assertThat(runner.argv.stream().filter(command -> command.contains("push"))
                 .map(List::getLast))
-                .containsExactly("registry.prod.localhost:8080/qits/qits-ci-runner:" + PIN);
+                .containsExactly("registry.prod.localhost:8080/qits/qits-system-runner:" + PIN);
     }
 
     /** An image that is nowhere stops the boot and says which flag hid its build. */
@@ -1746,6 +1755,7 @@ class PipelinePhasesTest {
                 "registry.prod.localhost:8080/qits/qits-githost:" + RELEASE,
                 "registry.prod.localhost:8080/qits/qits-containers:" + RELEASE,
                 "registry.prod.localhost:8080/qits/qits-ci:" + RELEASE,
+                "registry.prod.localhost:8080/qits/qits-system:" + RELEASE,
                 "registry.prod.localhost:8080/qits/qits-edge:" + RELEASE);
         // The deployer's own image is not among them: its deployment stays last of the train.
         assertThat(runner.lines()).noneMatch(line -> line.contains("qits-deployments:"));
@@ -1776,7 +1786,7 @@ class PipelinePhasesTest {
         assertThatThrownBy(() -> new PipelinePhases(rerun).seedImagesPublish().action()
                 .run(new CiLogStreamTest.Recorder()))
                 .isInstanceOf(PhaseSkipped.class)
-                .hasMessageContaining("the registry holds all 9 seed-deployed images");
+                .hasMessageContaining("the registry holds all 10 seed-deployed images");
         assertThat(again.lines()).noneMatch(line -> line.startsWith("docker tag")
                 || line.contains(" push "));
     }
@@ -2085,13 +2095,14 @@ class PipelinePhasesTest {
                 .isFalse();
     }
 
-    // --- the edge the runner dials ---------------------------------------------------------------
+    // --- the edge the target dials ---------------------------------------------------------------
 
     private static final Map<String, String> DOMAIN = Map.of("QITS_DOMAIN", "qits-dev.eu",
             "QITS_PUBLIC_IP", "203.0.113.7", "QITS_ACME_MODE", "production");
 
     private static final List<String> PUBLIC_NAMES = List.of(
-            "GET https://ci.qits.qits-dev.eu/ci/api/runners/install.sh",
+            "GET https://system.qits.qits-dev.eu/system/api/targets/install.sh",
+            "GET https://ci.qits.qits-dev.eu/ci/q/health/ready",
             "GET https://idp.qits.qits-dev.eu/idp/token",
             "GET https://registry.qits.qits-dev.eu/v2/");
 
@@ -2106,18 +2117,19 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>With a domain: the three names qits-ci tells an EDGE runner, over a certificate the JVM
-     * trusts.</b> A failed handshake is no answer and the wait goes on; any answer of the service's
+     * <b>With a domain: the four public names the target and its CI slots dial, over a
+     * certificate the JVM trusts.</b> A failed handshake is no answer and the wait goes on; any answer of the service's
      * own — the 401 of a guarded door, the 405 of a POST-only one — ends it.
      */
     @Test
-    void withADomainTheGateWaitsForTheThreePublicNamesOverATrustedCertificate() throws Exception {
+    void withADomainTheGateWaitsForTheFourPublicNamesOverATrustedCertificate() throws Exception {
         int[] asked = {0};
         CannedHttp http = new CannedHttp();
         http.answer(PUBLIC_NAMES.get(0), () -> ++asked[0] < 3
                 ? new Http.Response(0, UNTRUSTED) : new Http.Response(401, ""));
-        http.answer(PUBLIC_NAMES.get(1), 405, "");
-        http.answer(PUBLIC_NAMES.get(2), 401, "");
+        http.answer(PUBLIC_NAMES.get(1), 200, "");
+        http.answer(PUBLIC_NAMES.get(2), 405, "");
+        http.answer(PUBLIC_NAMES.get(3), 401, "");
         CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
 
         new PipelinePhases(edgeBoot(http, DOMAIN)).edgeReady().action().run(ctx);
@@ -2131,13 +2143,14 @@ class PipelinePhasesTest {
     void anEdgeThatNeverServesATrustedCertificateStopsTheBoot() throws Exception {
         CannedHttp http = new CannedHttp()
                 .answer(PUBLIC_NAMES.get(0), 0, UNTRUSTED)
-                .answer(PUBLIC_NAMES.get(1), 405, "")
-                .answer(PUBLIC_NAMES.get(2), 404, "");
+                .answer(PUBLIC_NAMES.get(1), 200, "")
+                .answer(PUBLIC_NAMES.get(2), 405, "")
+                .answer(PUBLIC_NAMES.get(3), 404, "");
 
         assertThatThrownBy(() -> new PipelinePhases(edgeBoot(http, DOMAIN)).edgeReady().action()
                 .run(new CiLogStreamTest.Recorder()))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("https://ci.qits.qits-dev.eu/ci/api/runners/install.sh: "
+                .hasMessageContaining("https://system.qits.qits-dev.eu/system/api/targets/install.sh: "
                         + "no answer (" + UNTRUSTED)
                 // A 404 is a name the edge does not route yet.
                 .hasMessageContaining("https://registry.qits.qits-dev.eu/v2/: 404")
@@ -2186,11 +2199,12 @@ class PipelinePhasesTest {
         assertThat(PipelinePhases.edgeServes(new Http.Response(0, UNTRUSTED))).isFalse();
     }
 
-    // --- this host's runner -----------------------------------------------------------------------
+    // --- the target phases' shared fixtures -------------------------------------------------------
     //
-    // The two phases, driven through the two things they talk to: qits-ci over a canned http and
-    // docker over a scripted runner. What is asserted is what went over the wire and onto a command
-    // line, because that is what a live boot would have done.
+    // The two phases, driven through the two things they talk to: qits-system over a canned http
+    // and docker over a scripted runner. What is asserted is what went over the wire and onto a
+    // command line, because that is what a live boot would have done. The CI runner's phases were
+    // driven the same way until the target replaced them (qits-1547).
 
     private static final String RUNNER_ID = "7c1d2f0e-5a8b-4c3d-9e1f-0a2b3c4d5e6f";
 
@@ -2198,140 +2212,7 @@ class PipelinePhasesTest {
 
     private static final String TOKEN = "qits_tok_abc123DEF456";
 
-    private static final String RUNNERS = "http://prod-qits-ci:8080/ci/api/runners";
-
-    private static final String RUNNER_CONTAINER = "qits-ci-runner-7c1d2f0e-" + PIN;
-
-    private static final String RUNNER_IMAGE_REF =
-            "registry.prod.localhost:8080/qits/qits-ci-runner:" + PIN;
-
-    /** An install line shaped exactly as qits-ci's {@code RunnerInstallScript.line} renders it. */
-    private static String installLine(String token) {
-        return "curl -fsSL -H 'Authorization: Bearer " + token + "' https://ci.qits.qits-dev.eu"
-                + "/ci/api/runners/install.sh | sudo env QITS_CI_RUNNER_URL='https://ci.qits.qits-dev.eu'"
-                + " QITS_CI_RUNNER_ID='" + RUNNER_ID + "' QITS_CI_RUNNER_REGISTRATION_TOKEN='" + token
-                + "' QITS_CI_RUNNER_SLOTS='2' sh";
-    }
-
-    /** One row of the listing. {@code lastSeenAt} null is a runner nothing has ever run as. */
-    private static String row(String id, String name, String plane, boolean registered,
-                              boolean connected, String lastSeenAt, String more) {
-        return "{\"id\":\"" + id + "\",\"name\":\"" + name + "\",\"slots\":2,\"plane\":\"" + plane
-                + "\",\"registered\":" + registered + ",\"connected\":" + connected
-                + ",\"lastSeenAt\":" + (lastSeenAt == null ? "null" : "\"" + lastSeenAt + "\"")
-                + (more == null ? "" : "," + more) + "}";
-    }
-
-    private static String localhost(String id, boolean registered, boolean connected,
-                                    String lastSeenAt) {
-        return row(id, "localhost", "EDGE", registered, connected, lastSeenAt, null);
-    }
-
-    private static final String EXTERNAL = row(OTHER_ID, "qits-ci", "EDGE", true, true,
-            "2026-09-30T16:00:00Z", null);
-
-    private static String listing(String... runners) {
-        return "{\"runners\":[" + String.join(",", runners) + "]}";
-    }
-
-    private static List<com.fasterxml.jackson.databind.JsonNode> runners(String... rows) {
-        return CiApi.runnersIn(new Http.Response(200, listing(rows)));
-    }
-
-    private static PipelinePhases.RunnerClaim claim(java.util.Optional<String> recorded,
-                                                    String... rows) {
-        return PipelinePhases.runnerDecision(runners(rows), recorded).claim();
-    }
-
-    // --- whose runners are these ---------------------------------------------------------------
-
-    /** A cold platform lists no runner, and a platform with no runner executes nothing. */
-    @Test
-    void aPlatformWithNoRunnerGetsOneDeclared() {
-        assertThat(claim(java.util.Optional.empty()))
-                .isEqualTo(PipelinePhases.RunnerClaim.DECLARE);
-        // Whatever an earlier installation recorded: the platform it named is gone.
-        assertThat(claim(java.util.Optional.of(OTHER_ID)))
-                .isEqualTo(PipelinePhases.RunnerClaim.DECLARE);
-    }
-
-    /** The id this installation recorded is what makes a row ours — beside other runners too. */
-    @Test
-    void theLocalhostRowWithTheRecordedIdIsOurs() {
-        assertThat(claim(java.util.Optional.of(RUNNER_ID),
-                localhost(RUNNER_ID, true, true, "2026-09-30T16:00:00Z")))
-                .isEqualTo(PipelinePhases.RunnerClaim.OURS);
-        PipelinePhases.RunnerDecision beside = PipelinePhases.runnerDecision(
-                runners(EXTERNAL, localhost(RUNNER_ID, true, false, "2026-09-30T16:00:00Z")),
-                java.util.Optional.of(RUNNER_ID));
-        assertThat(beside.claim()).isEqualTo(PipelinePhases.RunnerClaim.OURS);
-        assertThat(beside.row().path("id").asText()).isEqualTo(RUNNER_ID);
-    }
-
-    /**
-     * <b>THE LIVE ESTATE: an external runner and no recorded id.</b> A re-bootstrap there starts
-     * nothing — the runner is somebody's, on another machine, and this host was never sized for
-     * one.
-     */
-    @Test
-    void aPlatformWhoseRunnersAreSomebodyElsesIsLeftAlone() {
-        PipelinePhases.RunnerDecision live = PipelinePhases.runnerDecision(runners(EXTERNAL),
-                java.util.Optional.empty());
-
-        assertThat(live.claim()).isEqualTo(PipelinePhases.RunnerClaim.NOT_OURS);
-        assertThat(live.row()).isNull();
-        assertThat(live.reason()).contains("1 runner").contains("no localhost")
-                .contains("recorded no runner of its own");
-        // A stale recorded id changes nothing: no localhost row carries it.
-        assertThat(claim(java.util.Optional.of(RUNNER_ID), EXTERNAL))
-                .isEqualTo(PipelinePhases.RunnerClaim.NOT_OURS);
-    }
-
-    /** A localhost somebody else declared — an operator, by hand — is theirs whatever its state. */
-    @Test
-    void aLocalhostThisInstallationDidNotRecordIsSomebodyElses() {
-        // Registered, or connected, or merely seen once: something runs as it.
-        assertThat(claim(java.util.Optional.empty(), localhost(RUNNER_ID, true, false, null)))
-                .isEqualTo(PipelinePhases.RunnerClaim.NOT_OURS);
-        assertThat(claim(java.util.Optional.empty(), localhost(RUNNER_ID, false, true, null)))
-                .isEqualTo(PipelinePhases.RunnerClaim.NOT_OURS);
-        assertThat(claim(java.util.Optional.empty(),
-                localhost(RUNNER_ID, false, false, "2026-09-30T16:00:00Z")))
-                .isEqualTo(PipelinePhases.RunnerClaim.NOT_OURS);
-        // Recorded, but another id: this installation's runner was replaced by somebody's.
-        PipelinePhases.RunnerDecision replaced = PipelinePhases.runnerDecision(
-                runners(localhost(RUNNER_ID, true, true, "2026-09-30T16:00:00Z")),
-                java.util.Optional.of(OTHER_ID));
-        assertThat(replaced.claim()).isEqualTo(PipelinePhases.RunnerClaim.NOT_OURS);
-        assertThat(replaced.reason()).contains(RUNNER_ID).contains("recorded " + OTHER_ID);
-        // Never used, but NOT alone: a platform with a runner is a platform somebody set up.
-        assertThat(claim(java.util.Optional.empty(), EXTERNAL,
-                localhost(RUNNER_ID, false, false, null)))
-                .isEqualTo(PipelinePhases.RunnerClaim.NOT_OURS);
-    }
-
-    /**
-     * <b>THE CRASH WINDOW.</b> A boot that died between qits-ci answering the create and the id
-     * reaching the state file leaves exactly this: the only runner, never registered, never seen.
-     * Nothing runs as it, so adopting it takes nobody's runner.
-     */
-    @Test
-    void aLoneLocalhostNothingEverRanAsIsAdopted() {
-        assertThat(claim(java.util.Optional.empty(), localhost(RUNNER_ID, false, false, null)))
-                .isEqualTo(PipelinePhases.RunnerClaim.OURS);
-        // Whatever an earlier installation recorded.
-        assertThat(claim(java.util.Optional.of(OTHER_ID),
-                localhost(RUNNER_ID, false, false, null)))
-                .isEqualTo(PipelinePhases.RunnerClaim.OURS);
-        // A listing that says nothing about lastSeenAt says it was never seen.
-        assertThat(claim(java.util.Optional.empty(), "{\"id\":\"" + RUNNER_ID
-                + "\",\"name\":\"localhost\",\"registered\":false,\"connected\":false}"))
-                .isEqualTo(PipelinePhases.RunnerClaim.OURS);
-    }
-
-    // --- the phase --------------------------------------------------------------------------------
-
-    /** Docker, as the runner phase asks it: which containers, images and volumes exist. */
+    /** Docker, as the target phase asks it: which containers, images and volumes exist. */
     private static ScriptedRunner docker(List<String> containers, boolean image, boolean volume) {
         return new ScriptedRunner(command -> {
             String line = String.join(" ", command);
@@ -2349,7 +2230,7 @@ class PipelinePhasesTest {
     }
 
     /**
-     * The boot a runner phase runs in: a bootstrap client, so a machine write has a token, and the
+     * The boot a target phase runs in: a bootstrap client, so a machine write has a token, and the
      * domain every boot has.
      */
     private Boot runnerPhaseBoot(ScriptedRunner runner, CannedHttp http, Map<String, String> env)
@@ -2365,706 +2246,196 @@ class PipelinePhasesTest {
         return boot;
     }
 
-    private void record(String id) throws Exception {
-        Files.writeString(temp.resolve(".qits-bootstrap.env"), "CI_RUNNER_ID=" + id + "\n",
-                StandardCharsets.UTF_8);
-    }
-
-    /** What was asked of qits-ci, leaving out the bootstrap's own token mint at the idp. */
-    private static List<String> ciCalls(CannedHttp http) {
-        return http.calls.stream().filter(call -> call.contains("-qits-ci:")).toList();
-    }
-
     private static List<String> runOf(ScriptedRunner runner) {
         return runner.argv.stream().filter(command -> command.size() > 2
                 && command.get(1).equals("run") && command.get(2).equals("-d")).findFirst()
                 .orElse(null);
     }
 
-    /**
-     * <b>A COLD PLATFORM, whole: the container is the install line's own.</b> The row is declared
-     * with this host's slot count and no plane — EDGE is qits-ci's only one — its id is recorded
-     * before anything else, the volume's stale client is cleared, and the container is started
-     * dialling the public address the line names. No network — docker's default bridge — and no
-     * registry lists, which qits-ci hands a runner on every Ack. The one addition is the builder's
-     * own state volume, which the line cannot pass and without which the runner's buildkitd
-     * collides with this host's qits-buildkitd.
-     */
-    @Test
-    void aColdPlatformGetsItsRunnerDeclaredRecordedAndStartedOnTheInstallLinesOwnContract()
-            throws Exception {
-        ScriptedRunner runner = docker(List.of(), true, false);
-        CannedHttp http = new CannedHttp()
-                .answer("GET " + RUNNERS, 200, listing())
-                .answer("POST " + RUNNERS, 201, row(RUNNER_ID, "localhost", "EDGE", false,
-                        false, null, "\"installScript\":"
-                                + eu.wohlben.qits.cli.bootstrap.api.Json.quote(installLine(TOKEN))));
-        Boot boot = runnerPhaseBoot(runner, http, Map.of());
-        CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
-
-        new PipelinePhases(boot).localhostRunner().action().run(ctx);
-
-        assertThat(http.bodies.get("POST " + RUNNERS))
-                .isEqualTo("{\"name\":\"localhost\",\"slots\":2}");
-        // The machine write presents this run's own token — qits:system, audience qits-platform.
-        assertThat(http.headers.get("POST " + RUNNERS))
-                .containsEntry("Authorization", "Bearer bootstrap-bearer");
-        assertThat(Files.readString(temp.resolve(".qits-bootstrap.env")))
-                .contains("CI_RUNNER_ID=" + RUNNER_ID + "\n");
-
-        assertThat(runOf(runner)).containsExactly(
-                "docker", "run", "-d",
-                "--name", RUNNER_CONTAINER,
-                "--restart", "unless-stopped",
-                "--label", "qits.ci.runner.process=" + RUNNER_ID,
-                "--label", "qits.ci.runner.version=" + PIN,
-                "-v", "/var/run/docker.sock:/var/run/docker.sock",
-                "-v", "qits-ci-runner-state-7c1d2f0e:/var/lib/qits-ci-runner",
-                "-e", "QITS_CI_RUNNER_URL=https://ci.qits.qits-dev.eu",
-                "-e", "QITS_CI_RUNNER_ID=" + RUNNER_ID,
-                "-e", "QITS_CI_RUNNER_SLOTS=2",
-                "-e", "QITS_CI_RUNNER_REGISTRATION_TOKEN",
-                "-e", "QITS_CI_RUNNER_BUILDKIT_STATE_VOLUME=qits-ci-runner-buildkitd-state",
-                RUNNER_IMAGE_REF);
-        // The stale client goes before the runner starts; the volume stays.
-        assertThat(runner.lines()).containsSubsequence(
-                "docker run --rm --entrypoint rm -v qits-ci-runner-state-7c1d2f0e:"
-                        + "/var/lib/qits-ci-runner " + RUNNER_IMAGE_REF
-                        + " -f /var/lib/qits-ci-runner/client.json",
-                String.join(" ", runOf(runner)));
-
-        // THE TOKEN: in the process's environment by name, masked, and nowhere a person reads.
-        Cmd run = runner.cmds.stream().filter(cmd -> cmd.command().equals(runOf(runner)))
-                .findFirst().orElseThrow();
-        assertThat(run.environment()).containsEntry("QITS_CI_RUNNER_REGISTRATION_TOKEN", TOKEN);
-        assertThat(run.maskText("refused " + TOKEN)).isEqualTo("refused ***");
-        assertThat(runner.lines()).noneMatch(line -> line.contains(TOKEN));
-        assertThat(ctx.logs).noneMatch(line -> line.contains(TOKEN));
-
-        assertThat(boot.state.ciRunnerId).isEqualTo(RUNNER_ID);
-        assertThat(boot.state.ciRunnerContainer).isEqualTo(RUNNER_CONTAINER);
-    }
-
-    /**
-     * A registered runner restarted on its volume gets no install line, so its address is composed
-     * as qits-ci composes it: {@code https://ci.qits.<domain>}.
-     */
-    @Test
-    void aRegisteredRunnerIsRestartedDiallingThePublicName() throws Exception {
-        record(RUNNER_ID);
-        ScriptedRunner runner = docker(List.of(), true, true);
-        CannedHttp http = new CannedHttp().answer("GET " + RUNNERS, 200, listing(row(RUNNER_ID,
-                "localhost", "EDGE", true, false, "2026-09-30T16:00:00Z", null)));
-        Boot boot = runnerPhaseBoot(runner, http, DOMAIN);
-
-        new PipelinePhases(boot).localhostRunner().action().run(new CiLogStreamTest.Recorder());
-
-        assertThat(runOf(runner)).contains("QITS_CI_RUNNER_URL=https://ci.qits.qits-dev.eu")
-                .doesNotContain("--network", "QITS_CI_RUNNER_REGISTRATION_TOKEN");
-    }
-
-    /**
-     * <b>THE HARD RULE: a listing that is not ours starts NOTHING.</b> Not a create, not a token,
-     * not one docker command — and the wait that follows skips with it, without asking qits-ci
-     * anything at all.
-     */
-    @Test
-    void aPlatformWhoseRunnersAreNotOursIsNeitherDeclaredNorStartedNorWaitedFor() throws Exception {
-        for (String rows : List.of(
-                listing(EXTERNAL),
-                listing(localhost(RUNNER_ID, true, true, "2026-09-30T16:00:00Z")),
-                listing(EXTERNAL, localhost(RUNNER_ID, false, false, null)))) {
-            ScriptedRunner runner = docker(List.of(RUNNER_CONTAINER + " exited"), true, true);
-            CannedHttp http = new CannedHttp().answer("GET " + RUNNERS, 200, rows);
-            Boot boot = runnerPhaseBoot(runner, http, Map.of());
-            boot.state.ciRunnerId = "left-by-an-earlier-phase";
-
-            assertThatThrownBy(() -> new PipelinePhases(boot).localhostRunner().action()
-                    .run(new CiLogStreamTest.Recorder()))
-                    .as(rows)
-                    .isInstanceOf(PhaseSkipped.class);
-
-            assertThat(http.calls).as(rows).containsExactly("GET " + RUNNERS);
-            assertThat(runner.argv).as(rows).isEmpty();
-            assertThat(boot.state.ciRunnerId).isNull();
-            assertThat(temp.resolve(".qits-bootstrap.env")).doesNotExist();
-
-            assertThatThrownBy(() -> new PipelinePhases(boot).localhostRunnerConnected().action()
-                    .run(new CiLogStreamTest.Recorder()))
-                    .isInstanceOf(PhaseSkipped.class)
-                    .hasMessageContaining("started no runner");
-            assertThat(http.calls).as(rows).containsExactly("GET " + RUNNERS);
-        }
-    }
-
-    /** Not knowing whose runners there are is not a reason to start one. */
-    @Test
-    void aListingThatDoesNotAnswerStartsNothing() throws Exception {
-        ScriptedRunner runner = docker(List.of(), true, false);
-        CannedHttp http = new CannedHttp().answer("GET " + RUNNERS, 503, "mid cutover");
-        Boot boot = runnerPhaseBoot(runner, http, Map.of());
-
-        assertThatThrownBy(() -> new PipelinePhases(boot).localhostRunner().action()
-                .run(new CiLogStreamTest.Recorder()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("did not list its runners");
-        assertThat(http.calls).containsExactly("GET " + RUNNERS);
-        assertThat(runner.argv).isEmpty();
-        assertThat(boot.state.ciRunnerId).isNull();
-    }
-
-    /** Our runner, stopped — a host that rebooted, a person who stopped it: it is started again. */
-    @Test
-    void ourRunnersStoppedContainerIsStartedAndNothingIsMinted() throws Exception {
-        record(RUNNER_ID);
-        ScriptedRunner runner = docker(List.of(RUNNER_CONTAINER + " exited"), true, true);
-        CannedHttp http = new CannedHttp().answer("GET " + RUNNERS, 200,
-                listing(EXTERNAL, localhost(RUNNER_ID, true, false, "2026-09-30T16:00:00Z")));
-        Boot boot = runnerPhaseBoot(runner, http, Map.of());
-
-        new PipelinePhases(boot).localhostRunner().action().run(new CiLogStreamTest.Recorder());
-
-        assertThat(runner.lines()).contains("docker ps -a --filter label=qits.ci.runner.process="
-                + RUNNER_ID + " --format {{.Names}} {{.State}}", "docker start " + RUNNER_CONTAINER);
-        assertThat(runOf(runner)).isNull();
-        assertThat(http.calls).containsExactly("GET " + RUNNERS);
-        assertThat(boot.state.ciRunnerId).isEqualTo(RUNNER_ID);
-        assertThat(boot.state.ciRunnerContainer).isEqualTo(RUNNER_CONTAINER);
-    }
-
-    /**
-     * Our runner, running — under whatever name: a runner that rolled itself over carries the next
-     * version in its name and the same label. It is left exactly as it is.
-     */
-    @Test
-    void ourRunnersRunningContainerIsLeftAlone() throws Exception {
-        record(RUNNER_ID);
-        String successor = "qits-ci-runner-7c1d2f0e-2026.1001.90000";
-        ScriptedRunner runner = docker(List.of(successor + " running",
-                RUNNER_CONTAINER + " exited"), true, true);
-        CannedHttp http = new CannedHttp().answer("GET " + RUNNERS, 200,
-                listing(localhost(RUNNER_ID, true, true, "2026-09-30T16:00:00Z")));
-        Boot boot = runnerPhaseBoot(runner, http, Map.of());
-
-        new PipelinePhases(boot).localhostRunner().action().run(new CiLogStreamTest.Recorder());
-
-        assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker start")
-                || line.startsWith("docker run"));
-        assertThat(boot.state.ciRunnerContainer).isEqualTo(successor);
-    }
-
-    /**
-     * Ours, never registered, and no container: the first token's value was answered once, to
-     * whichever run asked, so a fresh one is minted and the container started with it.
-     */
-    @Test
-    void ourUnregisteredRunnerWithNoContainerIsGivenAFreshTokenAndStarted() throws Exception {
-        record(RUNNER_ID);
-        ScriptedRunner runner = docker(List.of(), true, true);
-        String rotate = "POST " + RUNNERS + "/" + RUNNER_ID + "/registration-token";
-        CannedHttp http = new CannedHttp()
-                .answer("GET " + RUNNERS, 200, listing(localhost(RUNNER_ID, false, false, null)))
-                .answer(rotate, 200, row(RUNNER_ID, "localhost", "EDGE", false, false, null,
-                        "\"installScript\":" + eu.wohlben.qits.cli.bootstrap.api.Json.quote(
-                                installLine("qits_tok_rotated789"))));
-        Boot boot = runnerPhaseBoot(runner, http, Map.of());
-
-        new PipelinePhases(boot).localhostRunner().action().run(new CiLogStreamTest.Recorder());
-
-        assertThat(ciCalls(http)).containsExactly("GET " + RUNNERS, rotate);
-        assertThat(http.headers.get(rotate))
-                .containsEntry("Authorization", "Bearer bootstrap-bearer");
-        Cmd run = runner.cmds.stream().filter(cmd -> cmd.command().equals(runOf(runner)))
-                .findFirst().orElseThrow();
-        assertThat(run.environment())
-                .containsEntry("QITS_CI_RUNNER_REGISTRATION_TOKEN", "qits_tok_rotated789");
-        assertThat(runner.lines()).noneMatch(line -> line.contains("qits_tok_rotated789"));
-    }
-
-    /**
-     * <b>The crash window, carried through.</b> The lone, never-used row is adopted: its id is
-     * recorded now, and it goes down the same road as any unregistered runner of ours.
-     */
-    @Test
-    void aRowALostBootDeclaredIsAdoptedRecordedAndStarted() throws Exception {
-        ScriptedRunner runner = docker(List.of(), true, false);
-        String rotate = "POST " + RUNNERS + "/" + RUNNER_ID + "/registration-token";
-        CannedHttp http = new CannedHttp()
-                .answer("GET " + RUNNERS, 200, listing(localhost(RUNNER_ID, false, false, null)))
-                .answer(rotate, 200, row(RUNNER_ID, "localhost", "EDGE", false, false, null,
-                        "\"installScript\":" + eu.wohlben.qits.cli.bootstrap.api.Json.quote(
-                                installLine(TOKEN))));
-        Boot boot = runnerPhaseBoot(runner, http, Map.of());
-
-        new PipelinePhases(boot).localhostRunner().action().run(new CiLogStreamTest.Recorder());
-
-        assertThat(Files.readString(temp.resolve(".qits-bootstrap.env")))
-                .contains("CI_RUNNER_ID=" + RUNNER_ID);
-        assertThat(ciCalls(http)).containsExactly("GET " + RUNNERS, rotate);
-        assertThat(runOf(runner)).isNotNull();
-    }
-
-    /**
-     * Ours, registered, and its container is gone while its volume is not: it is started WITHOUT a
-     * token — the name is not on the line at all — and lives on the client the volume holds. The
-     * client is NOT cleared, because it is the only credential the runner has.
-     */
-    @Test
-    void ourRegisteredRunnerIsRestartedOnItsVolumeWithNoToken() throws Exception {
-        record(RUNNER_ID);
-        ScriptedRunner runner = docker(List.of(), true, true);
-        CannedHttp http = new CannedHttp().answer("GET " + RUNNERS, 200,
-                listing(localhost(RUNNER_ID, true, false, "2026-09-30T16:00:00Z")));
-        Boot boot = runnerPhaseBoot(runner, http, Map.of());
-
-        new PipelinePhases(boot).localhostRunner().action().run(new CiLogStreamTest.Recorder());
-
-        assertThat(http.calls).containsExactly("GET " + RUNNERS);
-        assertThat(runOf(runner)).isNotNull()
-                .doesNotContain("QITS_CI_RUNNER_REGISTRATION_TOKEN")
-                .contains("QITS_CI_RUNNER_ID=" + RUNNER_ID)
-                .endsWith(RUNNER_IMAGE_REF);
-        Cmd run = runner.cmds.stream().filter(cmd -> cmd.command().equals(runOf(runner)))
-                .findFirst().orElseThrow();
-        assertThat(run.environment()).isEmpty();
-        assertThat(runner.lines()).noneMatch(line -> line.contains("client.json"));
-    }
-
-    /**
-     * Ours, registered, and neither a container nor its volume: the credential is gone for good.
-     * Nothing a rerun does can mend that, so the boot stops and names the row.
-     */
-    @Test
-    void ourRegisteredRunnerWithNoVolumeStopsTheBootNamingTheRow() throws Exception {
-        record(RUNNER_ID);
-        ScriptedRunner runner = docker(List.of(), true, false);
-        CannedHttp http = new CannedHttp().answer("GET " + RUNNERS, 200,
-                listing(localhost(RUNNER_ID, true, false, "2026-09-30T16:00:00Z")));
-        Boot boot = runnerPhaseBoot(runner, http, Map.of());
-
-        assertThatThrownBy(() -> new PipelinePhases(boot).localhostRunner().action()
-                .run(new CiLogStreamTest.Recorder()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining(RUNNER_ID)
-                .hasMessageContaining("qits-ci-runner-state-7c1d2f0e")
-                .hasMessageContaining("delete the row");
-        assertThat(runOf(runner)).isNull();
-        assertThat(boot.state.ciRunnerId).isNull();
-    }
-
-    /**
-     * A rotation answered 409 is a runner that registered between the listing and the rotation:
-     * the registered arm, not a failure.
-     */
-    @Test
-    void aRunnerThatRegisteredMeanwhileIsStartedWithNoToken() throws Exception {
-        record(RUNNER_ID);
-        ScriptedRunner runner = docker(List.of(), true, true);
-        CannedHttp http = new CannedHttp()
-                .answer("GET " + RUNNERS, 200, listing(localhost(RUNNER_ID, false, false, null)))
-                .answer("POST " + RUNNERS + "/" + RUNNER_ID + "/registration-token", 409, "{}");
-        Boot boot = runnerPhaseBoot(runner, http, Map.of());
-
-        new PipelinePhases(boot).localhostRunner().action().run(new CiLogStreamTest.Recorder());
-
-        assertThat(runOf(runner)).isNotNull()
-                .doesNotContain("QITS_CI_RUNNER_REGISTRATION_TOKEN");
-    }
-
-    /** With the machine gate off a runner registers and can never connect: said, not waited out. */
-    @Test
-    void withTheMachineGateOffTheRunnerPhaseStopsTheBoot() throws Exception {
-        ScriptedRunner runner = docker(List.of(), true, false);
-        CannedHttp http = new CannedHttp().answer("GET " + RUNNERS, 200, listing());
-        Boot boot = runnerPhaseBoot(runner, http, Map.of("QITS_MACHINE_AUTH", "0"));
-
-        assertThatThrownBy(() -> new PipelinePhases(boot).localhostRunner().action()
-                .run(new CiLogStreamTest.Recorder()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("QITS_MACHINE_AUTH=0");
-        assertThat(http.calls).containsExactly("GET " + RUNNERS);
-        assertThat(runner.argv).isEmpty();
-    }
-
-    /**
-     * No image, no runner — and nothing is declared for a container that cannot be started: the
-     * row would otherwise be left for the next run to find.
-     */
-    @Test
-    void aMissingRunnerImageStopsTheBootBeforeAnythingIsDeclared() throws Exception {
-        ScriptedRunner runner = docker(List.of(), false, false);
-        CannedHttp http = new CannedHttp().answer("GET " + RUNNERS, 200, listing());
-        Boot boot = runnerPhaseBoot(runner, http, Map.of());
-
-        assertThatThrownBy(() -> new PipelinePhases(boot).localhostRunner().action()
-                .run(new CiLogStreamTest.Recorder()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("qits/qits-ci-runner:" + PIN)
-                .hasMessageContaining("rerun without QITS_SKIP_BUILD");
-        assertThat(http.calls).containsExactly("GET " + RUNNERS);
-        assertThat(runOf(runner)).isNull();
-    }
-
-    /**
-     * A qits-ci that refuses the create stops the boot in its own words — a 503 is a ci whose oidc
-     * client is off — and a create that answered no token stops it without printing the answer.
-     */
-    @Test
-    void aRefusedOrTokenlessCreateStopsTheBoot() throws Exception {
-        ScriptedRunner runner = docker(List.of(), true, false);
-        CannedHttp refused = new CannedHttp().answer("GET " + RUNNERS, 200, listing())
-                .answer("POST " + RUNNERS, 503, "This qits-ci commissions no credentials");
-        Boot boot = runnerPhaseBoot(runner, refused, Map.of());
-
-        assertThatThrownBy(() -> new PipelinePhases(boot).localhostRunner().action()
-                .run(new CiLogStreamTest.Recorder()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("503").hasMessageContaining("commissions no credentials");
-        assertThat(runOf(runner)).isNull();
-
-        CannedHttp tokenless = new CannedHttp().answer("GET " + RUNNERS, 200, listing())
-                .answer("POST " + RUNNERS, 201, row(RUNNER_ID, "localhost", "EDGE", false,
-                        false, null, "\"installScript\":\"curl | sh # secret-looking-body\""));
-        Boot second = runnerPhaseBoot(runner, tokenless, Map.of());
-
-        assertThatThrownBy(() -> new PipelinePhases(second).localhostRunner().action()
-                .run(new CiLogStreamTest.Recorder()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("no registration token")
-                .hasMessageNotContaining("secret-looking-body");
-        assertThat(runOf(runner)).isNull();
-    }
-
-    // --- connected, and in service ----------------------------------------------------------------
-
     private static final String QUARANTINED =
             "\"quarantined\":true,\"quarantineReason\":\"awaiting its first health check\"";
 
-    /**
-     * <b>Connected, then greenlit, then proven in service — in that order.</b> A freshly registered
-     * runner is quarantined awaiting a health check qits-ci cannot queue yet, so the bootstrap
-     * lifts it through the operator's door: the forwarded admin identity, because no machine role
-     * opens it.
-     */
-    @Test
-    void aConnectedQuarantinedRunnerIsGreenlitAndThenProvenInService() throws Exception {
-        List<String> listings = new ArrayList<>(List.of(
-                listing(row(RUNNER_ID, "localhost", "EDGE", true, true,
-                        "2026-09-30T16:00:00Z", QUARANTINED)),
-                listing(row(RUNNER_ID, "localhost", "EDGE", true, true,
-                        "2026-09-30T16:00:00Z", "\"quarantined\":false"))));
-        String greenlight = "POST " + RUNNERS + "/" + RUNNER_ID + "/greenlight";
-        CannedHttp http = new CannedHttp()
-                .answer("GET " + RUNNERS, () -> new Http.Response(200, listings.size() > 1
-                        ? listings.removeFirst() : listings.getFirst()))
-                .answer(greenlight, 200, "{}");
-        Boot boot = runnerPhaseBoot(docker(List.of(), true, true), http, Map.of());
-        boot.state.ciRunnerId = RUNNER_ID;
-
-        new PipelinePhases(boot).localhostRunnerConnected().action()
-                .run(new CiLogStreamTest.Recorder());
-
-        assertThat(http.calls).containsExactly("GET " + RUNNERS, greenlight, "GET " + RUNNERS);
-        assertThat(http.headers.get(greenlight))
-                .containsEntry("X-Qits-Roles", "qits:admin")
-                .doesNotContainKey("Authorization");
-    }
-
-    /** A runner already in service is not greenlit again: its failure streak is qits-ci's. */
-    @Test
-    void aRunnerAlreadyInServiceIsNotGreenlitAgain() throws Exception {
-        CannedHttp http = new CannedHttp().answer("GET " + RUNNERS, 200,
-                listing(row(RUNNER_ID, "localhost", "EDGE", true, true,
-                        "2026-09-30T16:00:00Z", "\"quarantined\":false")));
-        Boot boot = runnerPhaseBoot(docker(List.of(), true, true), http, Map.of());
-        boot.state.ciRunnerId = RUNNER_ID;
-
-        new PipelinePhases(boot).localhostRunnerConnected().action()
-                .run(new CiLogStreamTest.Recorder());
-
-        assertThat(http.calls).containsExactly("GET " + RUNNERS);
-    }
-
-    /** A greenlight that did not take stops the boot, with qits-ci's own reason. */
-    @Test
-    void aRunnerStillQuarantinedAfterTheGreenlightStopsTheBoot() throws Exception {
-        CannedHttp http = new CannedHttp()
-                .answer("GET " + RUNNERS, 200, listing(row(RUNNER_ID, "localhost", "EDGE",
-                        true, true, "2026-09-30T16:00:00Z", QUARANTINED)))
-                .answer("POST " + RUNNERS + "/" + RUNNER_ID + "/greenlight", 200, "{}");
-        Boot boot = runnerPhaseBoot(docker(List.of(), true, true), http, Map.of());
-        boot.state.ciRunnerId = RUNNER_ID;
-
-        assertThatThrownBy(() -> new PipelinePhases(boot).localhostRunnerConnected().action()
-                .run(new CiLogStreamTest.Recorder()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("still quarantined")
-                .hasMessageContaining("awaiting its first health check");
-
-        CannedHttp refused = new CannedHttp()
-                .answer("GET " + RUNNERS, 200, listing(row(RUNNER_ID, "localhost", "EDGE",
-                        true, true, "2026-09-30T16:00:00Z", QUARANTINED)))
-                .answer("POST " + RUNNERS + "/" + RUNNER_ID + "/greenlight", 403, "admin only");
-        Boot second = runnerPhaseBoot(docker(List.of(), true, true), refused, Map.of());
-        second.state.ciRunnerId = RUNNER_ID;
-
-        assertThatThrownBy(() -> new PipelinePhases(second).localhostRunnerConnected().action()
-                .run(new CiLogStreamTest.Recorder()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("403");
-    }
-
-    /**
-     * A runner that never connects fails the phase with what a person needs: what qits-ci says of
-     * the row, and the container's own last words.
-     */
-    @Test
-    void aRunnerThatNeverConnectsFailsWithItsLogAndItsRow() throws Exception {
-        ScriptedRunner runner = new ScriptedRunner(command -> command.contains("logs")
-                ? ScriptedRunner.ok("ci-runner registration refused: 401")
-                : ScriptedRunner.ok());
-        CannedHttp http = new CannedHttp().answer("GET " + RUNNERS, 200,
-                listing(localhost(RUNNER_ID, false, false, null)));
-        Boot boot = runnerPhaseBoot(runner, http, Map.of("QITS_HEALTH_TIMEOUT", "0"));
-        boot.state.ciRunnerId = RUNNER_ID;
-        boot.state.ciRunnerContainer = RUNNER_CONTAINER;
-
-        assertThatThrownBy(() -> new PipelinePhases(boot).localhostRunnerConnected().action()
-                .run(new CiLogStreamTest.Recorder()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("not registered yet")
-                .hasMessageContaining("registered=false, connected=false")
-                .hasMessageContaining("docker logs --tail 20 " + RUNNER_CONTAINER)
-                .hasMessageContaining("ci-runner registration refused: 401");
-        assertThat(runner.lines()).contains("docker logs --tail 20 " + RUNNER_CONTAINER);
-        assertThat(http.calls).noneMatch(call -> call.contains("greenlight"));
-    }
-
-    /** The wait ends on OUR runner being connected, and on nothing weaker. */
-    @Test
-    void theConnectionWaitEndsOnOurRunnerConnectedAndOnlyThen() {
-        assertThat(PipelinePhases.runnerConnection(new Http.Response(200,
-                listing(localhost(RUNNER_ID, true, true, "2026-09-30T16:00:00Z"))), RUNNER_ID)
-                .value().path("id").asText()).isEqualTo(RUNNER_ID);
-
-        Waiter.Poll<com.fasterxml.jackson.databind.JsonNode> registered =
-                PipelinePhases.runnerConnection(new Http.Response(200,
-                        listing(localhost(RUNNER_ID, true, false, null))), RUNNER_ID);
-        assertThat(registered.value()).isNull();
-        assertThat(registered.observed()).isEqualTo("registered, not connected");
-
-        assertThat(PipelinePhases.runnerConnection(new Http.Response(200,
-                listing(localhost(RUNNER_ID, false, false, null))), RUNNER_ID).observed())
-                .isEqualTo("not registered yet");
-        assertThat(PipelinePhases.runnerConnection(new Http.Response(200, listing(EXTERNAL)),
-                RUNNER_ID).observed()).isEqualTo("qits-ci lists no runner localhost");
-        // A connected localhost of another id is somebody else's runner, not the one waited for.
-        Waiter.Poll<com.fasterxml.jackson.databind.JsonNode> other =
-                PipelinePhases.runnerConnection(new Http.Response(200,
-                        listing(localhost(OTHER_ID, true, true, "2026-09-30T16:00:00Z"))),
-                        RUNNER_ID);
-        assertThat(other.value()).isNull();
-        assertThat(other.observed()).contains(OTHER_ID);
-        assertThat(PipelinePhases.runnerConnection(new Http.Response(503, "down"), RUNNER_ID)
-                .value()).isNull();
-    }
-
-    // --- this host's workspaces runner ------------------------------------------------------------
+    // --- this host's target -------------------------------------------------------------------------
     //
-    // The CI runner's twin, after the train. Its decision carries the CI runner's claim, and the
-    // container is the qits-runner-toolkit install line's as qits-workspaces renders it.
+    // What replaced both of this host's runners: the workspaces runner (qits-1535) and the CI
+    // runner (qits-1547). The container is the qits-runner-toolkit install line's as qits-system
+    // renders it, the Targets page's three shared volumes included.
 
-    private static final String WS_RUNNERS = "http://prod-qits-workspaces:8080/workspaces/api/runners";
+    private static final String TARGETS = "http://prod-qits-system:8080/system/api/targets";
 
-    private static final String WS_PIN = "2026.1005.155952";
+    private static final String TG_PIN = "2026.1023.112622";
 
-    private static final String WS_CONTAINER = "qits-workspaces-runner-7c1d2f0e-" + WS_PIN;
+    private static final String TG_CONTAINER = "qits-system-runner-7c1d2f0e-" + TG_PIN;
 
-    private static final String WS_IMAGE_REF =
-            "registry.qits.qits-dev.eu/qits/qits-workspaces-runner:" + WS_PIN;
+    private static final String TG_IMAGE_REF =
+            "registry.qits.qits-dev.eu/qits/qits-system-runner:" + TG_PIN;
 
-    private static final String WS_MANIFEST = "GET http://prod-qits-artifacts:8080/v2/"
-            + "qits/qits-workspaces-runner/manifests/" + WS_PIN;
+    private static final String TG_MANIFEST = "GET http://prod-qits-artifacts:8080/v2/"
+            + "qits/qits-system-runner/manifests/" + TG_PIN;
 
-    /** One row of qits-workspaces' listing — a bare array of these. */
-    private static String wsRow(String id, String name, boolean registered, boolean connected,
+    private static final List<String> TG_SHARED = List.of(
+            "-e", "QITS_SYSTEM_RUNNER_CREDENTIAL_VOLUME=qits_shared_dot_claude",
+            "-e", "QITS_SYSTEM_RUNNER_M2_VOLUME=qits_shared_m2",
+            "-e", "QITS_SYSTEM_RUNNER_PNPM_VOLUME=qits_shared_pnpm");
+
+    /** One target of qits-system's listing — a bare array of these. */
+    private static String tgRow(String id, String name, boolean registered, boolean connected,
                                 String lastSeenAt, String more) {
-        return "{\"id\":\"" + id + "\",\"name\":\"" + name + "\",\"slots\":1,\"registered\":"
+        return "{\"id\":\"" + id + "\",\"name\":\"" + name + "\",\"slotsTotal\":0,"
+                + "\"minimums\":{\"ci\":0,\"workspace\":1,\"desk\":1},\"registered\":"
                 + registered + ",\"connected\":" + connected + ",\"lastSeenAt\":"
                 + (lastSeenAt == null ? "null" : "\"" + lastSeenAt + "\"")
                 + (more == null ? "" : "," + more) + "}";
     }
 
-    private static String wsListing(String... rows) {
+    private static String tgListing(String... rows) {
         return "[" + String.join(",", rows) + "]";
     }
 
-    private static List<com.fasterxml.jackson.databind.JsonNode> wsRunners(String... rows) {
-        return eu.wohlben.qits.cli.bootstrap.api.WorkspacesApi.runnersIn(
-                new Http.Response(200, wsListing(rows)));
+    private static List<com.fasterxml.jackson.databind.JsonNode> tgTargets(String... rows) {
+        return eu.wohlben.qits.cli.bootstrap.api.SystemApi.targetsIn(
+                new Http.Response(200, tgListing(rows)));
     }
 
-    /** What qits-workspaces' create and rotation answer: the runner, the token, the line. */
-    private static String wsRegistration(String id, String token) {
-        return "{\"runner\":" + wsRow(id, "localhost", false, false, null, null)
+    /** What qits-system's create and rotation answer: the target, the token, the line. */
+    private static String tgRegistration(String id, String token) {
+        return "{\"target\":" + tgRow(id, "localhost", false, false, null, null)
                 + ",\"registrationToken\":\"" + token + "\",\"installLine\":"
                 + eu.wohlben.qits.cli.bootstrap.api.Json.quote("curl -fsSL -H 'Authorization: "
-                + "Bearer " + token + "' https://workspaces.qits.qits-dev.eu/workspaces/api/"
-                + "runners/install.sh | sudo env QITS_WORKSPACES_RUNNER_URL='https://workspaces."
-                + "qits.qits-dev.eu' QITS_WORKSPACES_RUNNER_ID='" + id + "' "
-                + "QITS_WORKSPACES_RUNNER_REGISTRATION_TOKEN='" + token + "' "
-                + "QITS_WORKSPACES_RUNNER_SLOTS='1' sh") + "}";
+                + "Bearer " + token + "' https://system.qits.qits-dev.eu/system/api/targets/"
+                + "install.sh | sudo env QITS_SYSTEM_RUNNER_URL='https://system.qits.qits-dev.eu'"
+                + " QITS_SYSTEM_RUNNER_ID='" + id + "' "
+                + "QITS_SYSTEM_RUNNER_REGISTRATION_TOKEN='" + token + "' "
+                + "QITS_SYSTEM_RUNNER_SLOTS='2' sh") + "}";
     }
 
-    private static final String WS_EXTERNAL = wsRow(OTHER_ID, "node-2", true, true,
-            "2026-10-05T10:00:00Z", null);
+    private static final String TG_EXTERNAL = tgRow(OTHER_ID, "node-2", true, true,
+            "2026-10-23T10:00:00Z", null);
 
-    private static PipelinePhases.RunnerClaim wsClaim(java.util.Optional<String> recorded,
-                                                      PipelinePhases.RunnerClaim ci,
+    private static PipelinePhases.RunnerClaim tgClaim(java.util.Optional<String> recorded,
                                                       String... rows) {
-        return PipelinePhases.workspacesRunnerDecision(wsRunners(rows), recorded, ci).claim();
+        return PipelinePhases.targetDecision(tgTargets(rows), recorded).claim();
     }
 
-    /** A cold platform, on a host whose CI runner this boot declared or owns: declare one. */
+    /** A cold platform: qits-system lists no target, so this installation declares its own. */
     @Test
-    void anEmptyWorkspacesListingIsDeclaredWhenTheCiRunnerIsOurs() {
-        assertThat(wsClaim(java.util.Optional.empty(), PipelinePhases.RunnerClaim.DECLARE))
+    void anEmptyTargetListingIsDeclared() {
+        assertThat(tgClaim(java.util.Optional.empty()))
                 .isEqualTo(PipelinePhases.RunnerClaim.DECLARE);
-        assertThat(wsClaim(java.util.Optional.empty(), PipelinePhases.RunnerClaim.OURS))
+        assertThat(tgClaim(java.util.Optional.of(RUNNER_ID)))
                 .isEqualTo(PipelinePhases.RunnerClaim.DECLARE);
+    }
+
+    /** The recorded id is proof on its own, beside somebody else's targets too. */
+    @Test
+    void theLocalhostTargetWithTheRecordedIdIsOurs() {
+        assertThat(tgClaim(java.util.Optional.of(RUNNER_ID), TG_EXTERNAL,
+                tgRow(RUNNER_ID, "localhost", true, true, "2026-10-23T10:00:00Z", null)))
+                .isEqualTo(PipelinePhases.RunnerClaim.OURS);
     }
 
     /**
-     * <b>THE LIVE ESTATE: its CI runner is an external machine's, and nothing was recorded.</b> An
-     * empty workspaces listing there is still not a reason to start a runner on this host.
+     * <b>The crash window</b> — the only target, never registered, never seen — is adopted: a boot
+     * that died between the create and the record left it, and nothing ever ran as it.
      */
     @Test
-    void anEmptyWorkspacesListingOnAHostWhoseCiRunnerIsNotOursIsLeftAlone() {
-        PipelinePhases.RunnerDecision live = PipelinePhases.workspacesRunnerDecision(
-                wsRunners(), java.util.Optional.empty(), PipelinePhases.RunnerClaim.NOT_OURS);
-        assertThat(live.claim()).isEqualTo(PipelinePhases.RunnerClaim.NOT_OURS);
-        assertThat(live.reason()).contains("lists no runner")
-                .contains("not this installation's");
-        // A CI phase that never decided is not a yes either.
-        assertThat(wsClaim(java.util.Optional.empty(), null))
-                .isEqualTo(PipelinePhases.RunnerClaim.NOT_OURS);
-    }
-
-    /** The recorded id is proof on its own — whatever the CI runner's claim. */
-    @Test
-    void theWorkspacesLocalhostWithTheRecordedIdIsOurs() {
-        for (PipelinePhases.RunnerClaim ci : java.util.Arrays.asList(
-                PipelinePhases.RunnerClaim.DECLARE, PipelinePhases.RunnerClaim.OURS,
-                PipelinePhases.RunnerClaim.NOT_OURS, null)) {
-            assertThat(wsClaim(java.util.Optional.of(RUNNER_ID), ci, WS_EXTERNAL,
-                    wsRow(RUNNER_ID, "localhost", true, true, "2026-10-05T10:00:00Z", null)))
-                    .as(String.valueOf(ci)).isEqualTo(PipelinePhases.RunnerClaim.OURS);
-        }
+    void aLoneNeverUsedLocalhostTargetIsAdopted() {
+        PipelinePhases.RunnerDecision lone = PipelinePhases.targetDecision(
+                tgTargets(tgRow(RUNNER_ID, "localhost", false, false, null, null)),
+                java.util.Optional.empty());
+        assertThat(lone.claim()).isEqualTo(PipelinePhases.RunnerClaim.OURS);
+        assertThat(lone.row().path("id").asText()).isEqualTo(RUNNER_ID);
     }
 
     /**
-     * <b>The crash window</b> — the only row, never registered, never seen — is adopted only on a
-     * host whose CI runner is this installation's: on the live estate it is a guess this program
-     * does not make.
+     * <b>THE LIVE ESTATE</b>: targets a person installed and no localhost, a localhost with another
+     * id than the recorded one, or one that was used — all somebody else's.
      */
     @Test
-    void aLoneNeverUsedWorkspacesLocalhostIsAdoptedOnlyWhenTheCiRunnerIsOurs() {
-        String lone = wsRow(RUNNER_ID, "localhost", false, false, null, null);
-        assertThat(wsClaim(java.util.Optional.empty(), PipelinePhases.RunnerClaim.OURS, lone))
-                .isEqualTo(PipelinePhases.RunnerClaim.OURS);
-        assertThat(wsClaim(java.util.Optional.empty(), PipelinePhases.RunnerClaim.DECLARE, lone))
-                .isEqualTo(PipelinePhases.RunnerClaim.OURS);
-        assertThat(wsClaim(java.util.Optional.empty(), PipelinePhases.RunnerClaim.NOT_OURS, lone))
-                .isEqualTo(PipelinePhases.RunnerClaim.NOT_OURS);
-    }
-
-    /** A localhost somebody else declared, and a listing of other runners, are left alone. */
-    @Test
-    void aForeignWorkspacesLocalhostOrOtherRunnersAreSomebodyElses() {
-        // A localhost with another id than the one recorded, and one that has been used.
-        PipelinePhases.RunnerDecision foreign = PipelinePhases.workspacesRunnerDecision(
-                wsRunners(wsRow(RUNNER_ID, "localhost", true, true, "2026-10-05T10:00:00Z",
-                        null)), java.util.Optional.of(OTHER_ID), PipelinePhases.RunnerClaim.OURS);
+    void aForeignLocalhostTargetOrOtherTargetsAreSomebodyElses() {
+        PipelinePhases.RunnerDecision foreign = PipelinePhases.targetDecision(
+                tgTargets(tgRow(RUNNER_ID, "localhost", true, true, "2026-10-23T10:00:00Z",
+                        null)), java.util.Optional.of(OTHER_ID));
         assertThat(foreign.claim()).isEqualTo(PipelinePhases.RunnerClaim.NOT_OURS);
         assertThat(foreign.reason()).contains(RUNNER_ID).contains("recorded " + OTHER_ID);
-        assertThat(wsClaim(java.util.Optional.empty(), PipelinePhases.RunnerClaim.OURS,
-                wsRow(RUNNER_ID, "localhost", true, false, null, null)))
+        assertThat(tgClaim(java.util.Optional.empty(),
+                tgRow(RUNNER_ID, "localhost", true, false, null, null)))
                 .isEqualTo(PipelinePhases.RunnerClaim.NOT_OURS);
-        // Other runners and no localhost.
-        PipelinePhases.RunnerDecision others = PipelinePhases.workspacesRunnerDecision(
-                wsRunners(WS_EXTERNAL), java.util.Optional.empty(),
-                PipelinePhases.RunnerClaim.DECLARE);
+        PipelinePhases.RunnerDecision others = PipelinePhases.targetDecision(
+                tgTargets(TG_EXTERNAL), java.util.Optional.empty());
         assertThat(others.claim()).isEqualTo(PipelinePhases.RunnerClaim.NOT_OURS);
-        assertThat(others.reason()).contains("1 runner").contains("no localhost");
-        // Never used, but not alone.
-        assertThat(wsClaim(java.util.Optional.empty(), PipelinePhases.RunnerClaim.OURS,
-                WS_EXTERNAL, wsRow(RUNNER_ID, "localhost", false, false, null, null)))
+        assertThat(others.reason()).contains("1 target").contains("no localhost");
+        assertThat(tgClaim(java.util.Optional.empty(), TG_EXTERNAL,
+                tgRow(RUNNER_ID, "localhost", false, false, null, null)))
                 .isEqualTo(PipelinePhases.RunnerClaim.NOT_OURS);
     }
 
     /**
      * <b>THE CONTAINER IS THE INSTALL LINE'S, element for element</b> — the toolkit template's
-     * {@code docker run} as qits-workspaces renders it: the three values sorted by name and the
-     * token last, by NAME. No network, no builder: nothing the line does not set.
+     * {@code docker run} as qits-system renders it: the three values in the template's order, the
+     * token by NAME, then the Targets page's three shared volumes. No network, no builder: nothing
+     * the line does not set.
      */
     @Test
-    void theWorkspacesRunnerContainerIsTheInstallLinesOwn() throws Exception {
+    void theTargetRunnerContainerIsTheInstallLinesOwn() throws Exception {
         Boot boot = runnerPhaseBoot(docker(List.of(), true, true), new CannedHttp(), Map.of());
-        Cmd run = new PipelinePhases(boot).workspacesRunnerRunCommand(RUNNER_ID, WS_PIN,
-                WS_IMAGE_REF, 3, TOKEN, "https://workspaces.qits.qits-dev.eu");
+        Cmd run = new PipelinePhases(boot).targetRunCommand(RUNNER_ID, TG_PIN,
+                TG_IMAGE_REF, 3, TOKEN, "https://system.qits.qits-dev.eu");
 
-        assertThat(run.command()).containsExactly(
+        List<String> expected = new ArrayList<>(List.of(
                 "docker", "run", "-d",
-                "--name", WS_CONTAINER,
+                "--name", TG_CONTAINER,
                 "--restart", "unless-stopped",
-                "--label", "qits.workspaces.runner.process=" + RUNNER_ID,
-                "--label", "qits.workspaces.runner.version=" + WS_PIN,
+                "--label", "qits.system.runner.process=" + RUNNER_ID,
+                "--label", "qits.system.runner.version=" + TG_PIN,
                 "-v", "/var/run/docker.sock:/var/run/docker.sock",
-                "-v", "qits-workspaces-runner-state-7c1d2f0e:/var/lib/qits-workspaces-runner",
-                "-e", "QITS_WORKSPACES_RUNNER_ID=" + RUNNER_ID,
-                "-e", "QITS_WORKSPACES_RUNNER_SLOTS=3",
-                "-e", "QITS_WORKSPACES_RUNNER_URL=https://workspaces.qits.qits-dev.eu",
-                "-e", "QITS_WORKSPACES_RUNNER_REGISTRATION_TOKEN",
-                WS_IMAGE_REF);
+                "-v", "qits-system-runner-state-7c1d2f0e:/var/lib/qits-system-runner",
+                "-e", "QITS_SYSTEM_RUNNER_ID=" + RUNNER_ID,
+                "-e", "QITS_SYSTEM_RUNNER_SLOTS=3",
+                "-e", "QITS_SYSTEM_RUNNER_URL=https://system.qits.qits-dev.eu",
+                "-e", "QITS_SYSTEM_RUNNER_REGISTRATION_TOKEN"));
+        expected.addAll(TG_SHARED);
+        expected.add(TG_IMAGE_REF);
+        assertThat(run.command()).containsExactlyElementsOf(expected);
         assertThat(run.command()).doesNotContain("--network")
                 .noneMatch(argument -> argument.contains("BUILDKIT"))
                 .noneMatch(argument -> argument.contains(TOKEN));
         assertThat(run.environment())
-                .containsEntry("QITS_WORKSPACES_RUNNER_REGISTRATION_TOKEN", TOKEN);
+                .containsEntry("QITS_SYSTEM_RUNNER_REGISTRATION_TOKEN", TOKEN);
         assertThat(run.maskText("refused " + TOKEN)).isEqualTo("refused ***");
 
-        Cmd registered = new PipelinePhases(boot).workspacesRunnerRunCommand(RUNNER_ID, WS_PIN,
-                WS_IMAGE_REF, 3, null, "https://workspaces.qits.qits-dev.eu");
+        Cmd registered = new PipelinePhases(boot).targetRunCommand(RUNNER_ID, TG_PIN,
+                TG_IMAGE_REF, 3, null, "https://system.qits.qits-dev.eu");
         assertThat(registered.command())
-                .doesNotContain("QITS_WORKSPACES_RUNNER_REGISTRATION_TOKEN");
+                .doesNotContain("QITS_SYSTEM_RUNNER_REGISTRATION_TOKEN")
+                .containsSubsequence(TG_SHARED);
         assertThat(registered.environment()).isEmpty();
     }
 
-    /** The boot a workspaces runner phase runs in: the CI runner's, with the workspaces pin. */
-    private Boot wsPhaseBoot(ScriptedRunner runner, CannedHttp http, String ciClaim)
-            throws Exception {
+    /** The boot a target phase runs in, with qits-system's runner pin. */
+    private Boot tgPhaseBoot(ScriptedRunner runner, CannedHttp http) throws Exception {
         Boot boot = runnerPhaseBoot(runner, http, Map.of());
-        Path workspaces = Files.createDirectories(boot.state.repoDir("workspaces"));
-        Files.writeString(workspaces.resolve("pom.xml"), "<project><properties>"
-                + "<qits.workspaces-runner-protocol.version>" + WS_PIN
-                + "</qits.workspaces-runner-protocol.version></properties></project>",
+        Path system = Files.createDirectories(boot.state.repoDir("system"));
+        Files.writeString(system.resolve("pom.xml"), "<project><properties>"
+                + "<qits.system-runner-protocol.version>" + TG_PIN
+                + "</qits.system-runner-protocol.version></properties></project>",
                 StandardCharsets.UTF_8);
-        boot.state.ciRunnerClaim = ciClaim;
         return boot;
     }
 
-    private static List<String> wsCalls(CannedHttp http) {
-        return http.calls.stream().filter(call -> call.contains("-qits-workspaces:")).toList();
+    private static List<String> tgCalls(CannedHttp http) {
+        return http.calls.stream().filter(call -> call.contains("-qits-system:")).toList();
     }
 
     /**
      * <b>A COLD PLATFORM, whole.</b> The store answers for the pinned image, the host pulls it with
-     * this run's own client, the row is declared with this host's computed slots and recorded
-     * before anything else, the stale client goes, and the container starts on the line's contract
-     * with the token from the answer's own field.
+     * this run's own client, the three shared volumes are made sure of, the target is declared with
+     * its minimums and recorded before anything else, the stale client goes, and the container
+     * starts on the line's contract with this host's computed slots and the token from the
+     * answer's own field.
      */
     @Test
-    void aColdPlatformGetsItsWorkspacesRunnerDeclaredRecordedAndStarted() throws Exception {
+    void aColdPlatformGetsItsTargetDeclaredRecordedAndStarted() throws Exception {
         List<String> configs = new ArrayList<>();
         ScriptedRunner runner = new ScriptedRunner(command -> {
             String line = String.join(" ", command);
@@ -3083,185 +2454,403 @@ class PipelinePhasesTest {
             return ScriptedRunner.ok();
         });
         CannedHttp http = new CannedHttp()
-                .answer("GET " + WS_RUNNERS, 200, wsListing())
-                .answer(WS_MANIFEST, 200, "")
-                .answer("POST " + WS_RUNNERS, 201, wsRegistration(RUNNER_ID, TOKEN));
-        Boot boot = wsPhaseBoot(runner, http, "DECLARE");
+                .answer("GET " + TARGETS, 200, tgListing())
+                .answer(TG_MANIFEST, 200, "")
+                .answer("POST " + TARGETS, 201, tgRegistration(RUNNER_ID, TOKEN));
+        Boot boot = tgPhaseBoot(runner, http);
         CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
 
-        new PipelinePhases(boot).workspacesLocalhostRunner().action().run(ctx);
+        new PipelinePhases(boot).localhostTarget().action().run(ctx);
 
-        int slots = eu.wohlben.qits.cli.bootstrap.platform.WorkspaceSlots.localSlotsFor(
-                eu.wohlben.qits.cli.bootstrap.platform.CiConcurrency.hostMemoryBytes(), 2);
-        assertThat(http.bodies.get("POST " + WS_RUNNERS))
-                .isEqualTo("{\"name\":\"localhost\",\"slots\":" + slots + "}");
-        assertThat(http.headers.get("POST " + WS_RUNNERS))
+        int slots = eu.wohlben.qits.cli.bootstrap.platform.TargetSlots.targetSlotsFor(
+                eu.wohlben.qits.cli.bootstrap.platform.TargetSlots.hostMemoryBytes(), 2, 2);
+        // min_ci is this host's concurrent builds (QITS_CI_CONCURRENT_BUILDS=2 in this boot).
+        assertThat(http.bodies.get("POST " + TARGETS))
+                .isEqualTo("{\"name\":\"localhost\",\"description\":\"this platform's own host,"
+                        + " declared by qits-bootstrap\",\"minimums\":{\"ci\":2,\"workspace\":1,"
+                        + "\"desk\":1}}");
+        assertThat(http.headers.get("POST " + TARGETS))
                 .containsEntry("Authorization", "Bearer bootstrap-bearer");
         assertThat(Files.readString(temp.resolve(".qits-bootstrap.env")))
-                .contains("WORKSPACES_RUNNER_ID=" + RUNNER_ID + "\n");
+                .contains("LOCALHOST_TARGET_ID=" + RUNNER_ID + "\n");
 
         // The pull: by the host's daemon, over the public registry name, with a config of its own.
         assertThat(runner.lines()).anyMatch(line -> line.startsWith("docker --config ")
-                && line.endsWith(" pull " + WS_IMAGE_REF));
+                && line.endsWith(" pull " + TG_IMAGE_REF));
         assertThat(configs).singleElement().asString().contains("registry.qits.qits-dev.eu");
-
-        assertThat(runOf(runner)).containsExactly(
-                "docker", "run", "-d",
-                "--name", WS_CONTAINER,
-                "--restart", "unless-stopped",
-                "--label", "qits.workspaces.runner.process=" + RUNNER_ID,
-                "--label", "qits.workspaces.runner.version=" + WS_PIN,
-                "-v", "/var/run/docker.sock:/var/run/docker.sock",
-                "-v", "qits-workspaces-runner-state-7c1d2f0e:/var/lib/qits-workspaces-runner",
-                "-e", "QITS_WORKSPACES_RUNNER_ID=" + RUNNER_ID,
-                "-e", "QITS_WORKSPACES_RUNNER_SLOTS=" + slots,
-                "-e", "QITS_WORKSPACES_RUNNER_URL=https://workspaces.qits.qits-dev.eu",
-                "-e", "QITS_WORKSPACES_RUNNER_REGISTRATION_TOKEN",
-                WS_IMAGE_REF);
+        // The external volumes exist before the runner that may only mount them starts.
         assertThat(runner.lines()).containsSubsequence(
-                "docker run --rm --entrypoint rm -v qits-workspaces-runner-state-7c1d2f0e:"
-                        + "/var/lib/qits-workspaces-runner " + WS_IMAGE_REF
-                        + " -f /var/lib/qits-workspaces-runner/client.json",
+                "docker volume create qits_shared_dot_claude",
+                "docker volume create qits_shared_m2",
+                "docker volume create qits_shared_pnpm",
+                String.join(" ", runOf(runner)));
+
+        List<String> expected = new ArrayList<>(List.of(
+                "docker", "run", "-d",
+                "--name", TG_CONTAINER,
+                "--restart", "unless-stopped",
+                "--label", "qits.system.runner.process=" + RUNNER_ID,
+                "--label", "qits.system.runner.version=" + TG_PIN,
+                "-v", "/var/run/docker.sock:/var/run/docker.sock",
+                "-v", "qits-system-runner-state-7c1d2f0e:/var/lib/qits-system-runner",
+                "-e", "QITS_SYSTEM_RUNNER_ID=" + RUNNER_ID,
+                "-e", "QITS_SYSTEM_RUNNER_SLOTS=" + slots,
+                "-e", "QITS_SYSTEM_RUNNER_URL=https://system.qits.qits-dev.eu",
+                "-e", "QITS_SYSTEM_RUNNER_REGISTRATION_TOKEN"));
+        expected.addAll(TG_SHARED);
+        expected.add(TG_IMAGE_REF);
+        assertThat(runOf(runner)).containsExactlyElementsOf(expected);
+        assertThat(runner.lines()).containsSubsequence(
+                "docker run --rm --entrypoint rm -v qits-system-runner-state-7c1d2f0e:"
+                        + "/var/lib/qits-system-runner " + TG_IMAGE_REF
+                        + " -f /var/lib/qits-system-runner/client.json",
                 String.join(" ", runOf(runner)));
         Cmd run = runner.cmds.stream().filter(cmd -> cmd.command().equals(runOf(runner)))
                 .findFirst().orElseThrow();
         assertThat(run.environment())
-                .containsEntry("QITS_WORKSPACES_RUNNER_REGISTRATION_TOKEN", TOKEN);
+                .containsEntry("QITS_SYSTEM_RUNNER_REGISTRATION_TOKEN", TOKEN);
         assertThat(runner.lines()).noneMatch(line -> line.contains(TOKEN));
         assertThat(ctx.logs).noneMatch(line -> line.contains(TOKEN));
 
-        assertThat(boot.state.workspacesRunnerId).isEqualTo(RUNNER_ID);
-        assertThat(boot.state.workspacesRunnerContainer).isEqualTo(WS_CONTAINER);
+        assertThat(boot.state.targetId).isEqualTo(RUNNER_ID);
+        assertThat(boot.state.targetContainer).isEqualTo(TG_CONTAINER);
     }
 
     /**
-     * <b>THE HARD RULE, on the live estate</b>: its CI runner is not ours, so an empty listing
-     * starts nothing — no store read, no create, no docker — and the wait skips with it.
+     * <b>THE HARD RULE, on the live estate</b>: its targets are somebody's, so nothing is started
+     * — no store read, no create, no docker — and the wait skips with it.
      */
     @Test
-    void aHostWhoseCiRunnerIsNotOursGetsNoWorkspacesRunner() throws Exception {
+    void aPlatformWhoseTargetsAreSomebodyElsesGetsNoTarget() throws Exception {
         ScriptedRunner runner = docker(List.of(), true, true);
-        CannedHttp http = new CannedHttp().answer("GET " + WS_RUNNERS, 200, wsListing());
-        Boot boot = wsPhaseBoot(runner, http, "NOT_OURS");
-        boot.state.workspacesRunnerId = "left-by-an-earlier-phase";
+        CannedHttp http = new CannedHttp().answer("GET " + TARGETS, 200, tgListing(TG_EXTERNAL));
+        Boot boot = tgPhaseBoot(runner, http);
+        boot.state.targetId = "left-by-an-earlier-phase";
 
-        assertThatThrownBy(() -> new PipelinePhases(boot).workspacesLocalhostRunner().action()
+        assertThatThrownBy(() -> new PipelinePhases(boot).localhostTarget().action()
                 .run(new CiLogStreamTest.Recorder()))
                 .isInstanceOf(PhaseSkipped.class)
-                .hasMessageContaining("not this installation's");
-        assertThat(http.calls).containsExactly("GET " + WS_RUNNERS);
+                .hasMessageContaining("somebody's");
+        assertThat(http.calls).containsExactly("GET " + TARGETS);
         assertThat(runner.argv).isEmpty();
-        assertThat(boot.state.workspacesRunnerId).isNull();
+        assertThat(boot.state.targetId).isNull();
         assertThat(temp.resolve(".qits-bootstrap.env")).doesNotExist();
 
-        assertThatThrownBy(() -> new PipelinePhases(boot).workspacesLocalhostRunnerConnected()
+        assertThatThrownBy(() -> new PipelinePhases(boot).localhostTargetConnected()
                 .action().run(new CiLogStreamTest.Recorder()))
                 .isInstanceOf(PhaseSkipped.class)
                 .hasMessageContaining("started no runner");
-        assertThat(http.calls).containsExactly("GET " + WS_RUNNERS);
+        assertThat(http.calls).containsExactly("GET " + TARGETS);
     }
 
-    /** No image in the store, no runner — and nothing declared for a container that cannot start. */
+    /** A listing that does not answer starts nothing: not knowing whose targets there are. */
     @Test
-    void aWorkspacesRunnerImageTheStoreDoesNotHoldStopsThePhaseNamingIt() throws Exception {
-        ScriptedRunner runner = docker(List.of(), false, false);
-        CannedHttp http = new CannedHttp()
-                .answer("GET " + WS_RUNNERS, 200, wsListing())
-                .answer(WS_MANIFEST, 404, "");
-        Boot boot = wsPhaseBoot(runner, http, "DECLARE");
+    void aListingThatDoesNotAnswerStartsNothing() throws Exception {
+        ScriptedRunner runner = docker(List.of(), true, true);
+        CannedHttp http = new CannedHttp().answer("GET " + TARGETS, 503, "down");
+        Boot boot = tgPhaseBoot(runner, http);
 
-        assertThatThrownBy(() -> new PipelinePhases(boot).workspacesLocalhostRunner().action()
+        assertThatThrownBy(() -> new PipelinePhases(boot).localhostTarget().action()
                 .run(new CiLogStreamTest.Recorder()))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("qits/qits-workspaces-runner:" + WS_PIN)
-                .hasMessageContaining("qits-workspaces-runner-daemon");
-        assertThat(wsCalls(http)).containsExactly("GET " + WS_RUNNERS);
+                .hasMessageContaining("did not list its targets");
+        assertThat(runner.argv).isEmpty();
+    }
+
+    /** The seed's own build, under its bare name, is tagged under the public name and started. */
+    @Test
+    void theSeedBuiltRunnerImageIsTaggedRatherThanPulled() throws Exception {
+        java.util.concurrent.atomic.AtomicBoolean tagged =
+                new java.util.concurrent.atomic.AtomicBoolean();
+        ScriptedRunner runner = new ScriptedRunner(command -> {
+            String line = String.join(" ", command);
+            if (line.startsWith("docker tag ")) {
+                tagged.set(true);
+            }
+            if (line.startsWith("docker image inspect")) {
+                boolean held = line.contains(TG_IMAGE_REF) ? tagged.get()
+                        : line.contains("qits/qits-system-runner:" + TG_PIN);
+                return held ? ScriptedRunner.ok("sha256:abc") : ScriptedRunner.failed("absent");
+            }
+            if (line.startsWith("docker volume inspect")) {
+                return ScriptedRunner.failed("absent");
+            }
+            return ScriptedRunner.ok();
+        });
+        CannedHttp http = new CannedHttp()
+                .answer("GET " + TARGETS, 200, tgListing())
+                .answer("POST " + TARGETS, 201, tgRegistration(RUNNER_ID, TOKEN));
+        Boot boot = tgPhaseBoot(runner, http);
+
+        new PipelinePhases(boot).localhostTarget().action().run(new CiLogStreamTest.Recorder());
+
+        assertThat(runner.lines()).contains("docker tag qits/qits-system-runner:" + TG_PIN + " "
+                + TG_IMAGE_REF);
+        assertThat(runner.lines()).noneMatch(line -> line.contains(" pull "));
+        assertThat(http.calls).noneMatch(call -> call.contains("/manifests/"));
+        assertThat(runOf(runner)).endsWith(TG_IMAGE_REF);
+    }
+
+    /** Our target's runner, stopped: it is started again, and nothing is minted. */
+    @Test
+    void ourTargetsStoppedContainerIsStartedAndNothingIsMinted() throws Exception {
+        Files.writeString(temp.resolve(".qits-bootstrap.env"),
+                "LOCALHOST_TARGET_ID=" + RUNNER_ID + "\n", StandardCharsets.UTF_8);
+        ScriptedRunner runner = docker(List.of(TG_CONTAINER + " exited"), true, true);
+        CannedHttp http = new CannedHttp().answer("GET " + TARGETS, 200, tgListing(TG_EXTERNAL,
+                tgRow(RUNNER_ID, "localhost", true, false, "2026-10-23T10:00:00Z", null)));
+        Boot boot = tgPhaseBoot(runner, http);
+
+        new PipelinePhases(boot).localhostTarget().action().run(new CiLogStreamTest.Recorder());
+
+        assertThat(runner.lines()).contains("docker ps -a --filter label=qits.system.runner.process="
+                + RUNNER_ID + " --format {{.Names}} {{.State}}", "docker start " + TG_CONTAINER);
+        assertThat(runOf(runner)).isNull();
+        assertThat(tgCalls(http)).containsExactly("GET " + TARGETS);
+        assertThat(boot.state.targetContainer).isEqualTo(TG_CONTAINER);
+    }
+
+    /** Our target's runner, running under a successor's name: left exactly as it is. */
+    @Test
+    void ourTargetsRunningContainerIsLeftAlone() throws Exception {
+        Files.writeString(temp.resolve(".qits-bootstrap.env"),
+                "LOCALHOST_TARGET_ID=" + RUNNER_ID + "\n", StandardCharsets.UTF_8);
+        String successor = "qits-system-runner-7c1d2f0e-2026.1101.90000";
+        ScriptedRunner runner = docker(List.of(successor + " running", TG_CONTAINER + " exited"),
+                true, true);
+        CannedHttp http = new CannedHttp().answer("GET " + TARGETS, 200, tgListing(
+                tgRow(RUNNER_ID, "localhost", true, true, "2026-10-23T10:00:00Z", null)));
+        Boot boot = tgPhaseBoot(runner, http);
+
+        new PipelinePhases(boot).localhostTarget().action().run(new CiLogStreamTest.Recorder());
+
+        assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker start")
+                || line.startsWith("docker run -d"));
+        assertThat(boot.state.targetContainer).isEqualTo(successor);
+    }
+
+    /**
+     * Ours, registered, its container gone and its volume kept: started WITHOUT a token, on the
+     * client the volume holds — which is not cleared, being the only credential it has.
+     */
+    @Test
+    void ourRegisteredTargetIsRestartedOnItsVolumeWithNoToken() throws Exception {
+        Files.writeString(temp.resolve(".qits-bootstrap.env"),
+                "LOCALHOST_TARGET_ID=" + RUNNER_ID + "\n", StandardCharsets.UTF_8);
+        ScriptedRunner runner = docker(List.of(), true, true);
+        CannedHttp http = new CannedHttp().answer("GET " + TARGETS, 200, tgListing(
+                tgRow(RUNNER_ID, "localhost", true, false, "2026-10-23T10:00:00Z", null)));
+        Boot boot = tgPhaseBoot(runner, http);
+
+        new PipelinePhases(boot).localhostTarget().action().run(new CiLogStreamTest.Recorder());
+
+        assertThat(tgCalls(http)).containsExactly("GET " + TARGETS);
+        assertThat(runOf(runner)).isNotNull()
+                .doesNotContain("QITS_SYSTEM_RUNNER_REGISTRATION_TOKEN")
+                .contains("QITS_SYSTEM_RUNNER_ID=" + RUNNER_ID)
+                .endsWith(TG_IMAGE_REF);
+        assertThat(runner.lines()).noneMatch(line -> line.contains("client.json"));
+    }
+
+    /** A rotation answered 409 registered meanwhile: the registered arm, not a failure. */
+    @Test
+    void aTargetThatRegisteredMeanwhileIsStartedWithNoToken() throws Exception {
+        Files.writeString(temp.resolve(".qits-bootstrap.env"),
+                "LOCALHOST_TARGET_ID=" + RUNNER_ID + "\n", StandardCharsets.UTF_8);
+        ScriptedRunner runner = docker(List.of(), true, true);
+        CannedHttp http = new CannedHttp()
+                .answer("GET " + TARGETS, 200, tgListing(
+                        tgRow(RUNNER_ID, "localhost", false, false, null, null)))
+                .answer("POST " + TARGETS + "/" + RUNNER_ID + "/registration-token", 409, "{}");
+        Boot boot = tgPhaseBoot(runner, http);
+
+        new PipelinePhases(boot).localhostTarget().action().run(new CiLogStreamTest.Recorder());
+
+        assertThat(runOf(runner)).isNotNull()
+                .doesNotContain("QITS_SYSTEM_RUNNER_REGISTRATION_TOKEN");
+    }
+
+    /** With the machine gate off a runner registers and can never connect: said, not waited out. */
+    @Test
+    void withTheMachineGateOffTheTargetPhaseStopsTheBoot() throws Exception {
+        ScriptedRunner runner = docker(List.of(), true, false);
+        CannedHttp http = new CannedHttp().answer("GET " + TARGETS, 200, tgListing());
+        Boot boot = runnerPhaseBoot(runner, http, Map.of("QITS_MACHINE_AUTH", "0"));
+
+        assertThatThrownBy(() -> new PipelinePhases(boot).localhostTarget().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("QITS_MACHINE_AUTH=0");
+        assertThat(tgCalls(http)).containsExactly("GET " + TARGETS);
+        assertThat(runner.argv).isEmpty();
+    }
+
+    /**
+     * A refused create stops the boot in qits-system's own words, and a create that answered no
+     * token stops it without printing the answer.
+     */
+    @Test
+    void aRefusedOrTokenlessCreateStopsTheBoot() throws Exception {
+        ScriptedRunner runner = docker(List.of(), true, false);
+        CannedHttp refused = new CannedHttp().answer("GET " + TARGETS, 200, tgListing())
+                .answer("POST " + TARGETS, 503, "This qits-system commissions no credentials");
+        Boot boot = tgPhaseBoot(runner, refused);
+
+        assertThatThrownBy(() -> new PipelinePhases(boot).localhostTarget().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("503").hasMessageContaining("commissions no credentials");
+        assertThat(runOf(runner)).isNull();
+
+        CannedHttp tokenless = new CannedHttp().answer("GET " + TARGETS, 200, tgListing())
+                .answer("POST " + TARGETS, 201, "{\"target\":" + tgRow(RUNNER_ID, "localhost",
+                        false, false, null, null) + ",\"installLine\":\"secret-looking-body\"}");
+        Boot second = tgPhaseBoot(runner, tokenless);
+
+        assertThatThrownBy(() -> new PipelinePhases(second).localhostTarget().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("no registration token")
+                .hasMessageNotContaining("secret-looking-body");
+        assertThat(runOf(runner)).isNull();
+    }
+
+    /** No image in the store, no target — and nothing declared for a runner that cannot start. */
+    @Test
+    void aTargetRunnerImageTheStoreDoesNotHoldStopsThePhaseNamingIt() throws Exception {
+        ScriptedRunner runner = docker(List.of(), false, false);
+        CannedHttp http = new CannedHttp()
+                .answer("GET " + TARGETS, 200, tgListing())
+                .answer(TG_MANIFEST, 404, "");
+        Boot boot = tgPhaseBoot(runner, http);
+
+        assertThatThrownBy(() -> new PipelinePhases(boot).localhostTarget().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("qits/qits-system-runner:" + TG_PIN)
+                .hasMessageContaining("rerun without QITS_SKIP_BUILD");
+        assertThat(tgCalls(http)).containsExactly("GET " + TARGETS);
         assertThat(runOf(runner)).isNull();
     }
 
     /**
      * Ours by the recorded id, registered, with no container and a gone volume: the CI runner's arm,
-     * naming qits-workspaces' row and its door.
+     * naming qits-system's target and its door.
      */
     @Test
-    void ourRegisteredWorkspacesRunnerWithNoVolumeStopsTheBootNamingTheRow() throws Exception {
+    void ourRegisteredTargetWithNoVolumeStopsTheBootNamingTheTarget() throws Exception {
         Files.writeString(temp.resolve(".qits-bootstrap.env"),
-                "WORKSPACES_RUNNER_ID=" + RUNNER_ID + "\n", StandardCharsets.UTF_8);
+                "LOCALHOST_TARGET_ID=" + RUNNER_ID + "\n", StandardCharsets.UTF_8);
         ScriptedRunner runner = docker(List.of(), true, false);
-        CannedHttp http = new CannedHttp().answer("GET " + WS_RUNNERS, 200, wsListing(
-                wsRow(RUNNER_ID, "localhost", true, false, "2026-10-05T10:00:00Z", null)));
-        Boot boot = wsPhaseBoot(runner, http, "NOT_OURS");
+        CannedHttp http = new CannedHttp().answer("GET " + TARGETS, 200, tgListing(
+                tgRow(RUNNER_ID, "localhost", true, false, "2026-10-23T10:00:00Z", null)));
+        Boot boot = tgPhaseBoot(runner, http);
 
-        assertThatThrownBy(() -> new PipelinePhases(boot).workspacesLocalhostRunner().action()
+        assertThatThrownBy(() -> new PipelinePhases(boot).localhostTarget().action()
                 .run(new CiLogStreamTest.Recorder()))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("workspaces runner localhost (" + RUNNER_ID)
-                .hasMessageContaining("qits-workspaces-runner-state-7c1d2f0e")
-                .hasMessageContaining("DELETE /workspaces/api/runners/" + RUNNER_ID);
+                .hasMessageContaining("target localhost (" + RUNNER_ID)
+                .hasMessageContaining("qits-system-runner-state-7c1d2f0e")
+                .hasMessageContaining("DELETE /system/api/targets/" + RUNNER_ID);
         assertThat(runOf(runner)).isNull();
     }
 
     /** Ours, unregistered, no container: a fresh token from the rotation's own field. */
     @Test
-    void ourUnregisteredWorkspacesRunnerIsGivenAFreshTokenAndStarted() throws Exception {
+    void ourUnregisteredTargetIsGivenAFreshTokenAndStarted() throws Exception {
         Files.writeString(temp.resolve(".qits-bootstrap.env"),
-                "WORKSPACES_RUNNER_ID=" + RUNNER_ID + "\n", StandardCharsets.UTF_8);
+                "LOCALHOST_TARGET_ID=" + RUNNER_ID + "\n", StandardCharsets.UTF_8);
         ScriptedRunner runner = docker(List.of(), true, true);
-        String rotate = "POST " + WS_RUNNERS + "/" + RUNNER_ID + "/registration-token";
+        String rotate = "POST " + TARGETS + "/" + RUNNER_ID + "/registration-token";
         CannedHttp http = new CannedHttp()
-                .answer("GET " + WS_RUNNERS, 200, wsListing(
-                        wsRow(RUNNER_ID, "localhost", false, false, null, null)))
-                .answer(rotate, 200, wsRegistration(RUNNER_ID, "qits_tok_rotated789"));
-        Boot boot = wsPhaseBoot(runner, http, "OURS");
+                .answer("GET " + TARGETS, 200, tgListing(
+                        tgRow(RUNNER_ID, "localhost", false, false, null, null)))
+                .answer(rotate, 200, tgRegistration(RUNNER_ID, "qits_tok_rotated789"));
+        Boot boot = tgPhaseBoot(runner, http);
 
-        new PipelinePhases(boot).workspacesLocalhostRunner().action()
+        new PipelinePhases(boot).localhostTarget().action()
                 .run(new CiLogStreamTest.Recorder());
 
-        assertThat(wsCalls(http)).containsExactly("GET " + WS_RUNNERS, rotate);
+        assertThat(tgCalls(http)).containsExactly("GET " + TARGETS, rotate);
         assertThat(http.headers.get(rotate))
                 .containsEntry("Authorization", "Bearer bootstrap-bearer");
         Cmd run = runner.cmds.stream().filter(cmd -> cmd.command().equals(runOf(runner)))
                 .findFirst().orElseThrow();
         assertThat(run.environment())
-                .containsEntry("QITS_WORKSPACES_RUNNER_REGISTRATION_TOKEN", "qits_tok_rotated789");
+                .containsEntry("QITS_SYSTEM_RUNNER_REGISTRATION_TOKEN", "qits_tok_rotated789");
         assertThat(runner.lines()).noneMatch(line -> line.contains("qits_tok_rotated789"));
     }
 
     /** Connected, quarantined, greenlit as the forwarded admin, then proven in service. */
     @Test
-    void aConnectedQuarantinedWorkspacesRunnerIsGreenlit() throws Exception {
+    void aConnectedQuarantinedTargetIsGreenlit() throws Exception {
         List<String> listings = new ArrayList<>(List.of(
-                wsListing(wsRow(RUNNER_ID, "localhost", true, true, "2026-10-05T10:00:00Z",
+                tgListing(tgRow(RUNNER_ID, "localhost", true, true, "2026-10-23T10:00:00Z",
                         QUARANTINED)),
-                wsListing(wsRow(RUNNER_ID, "localhost", true, true, "2026-10-05T10:00:00Z",
+                tgListing(tgRow(RUNNER_ID, "localhost", true, true, "2026-10-23T10:00:00Z",
                         "\"quarantined\":false"))));
-        String greenlight = "POST " + WS_RUNNERS + "/" + RUNNER_ID + "/greenlight";
+        String greenlight = "POST " + TARGETS + "/" + RUNNER_ID + "/greenlight";
         CannedHttp http = new CannedHttp()
-                .answer("GET " + WS_RUNNERS, () -> new Http.Response(200, listings.size() > 1
+                .answer("GET " + TARGETS, () -> new Http.Response(200, listings.size() > 1
                         ? listings.removeFirst() : listings.getFirst()))
                 .answer(greenlight, 200, "{}");
-        Boot boot = wsPhaseBoot(docker(List.of(), true, true), http, "OURS");
-        boot.state.workspacesRunnerId = RUNNER_ID;
+        Boot boot = tgPhaseBoot(docker(List.of(), true, true), http);
+        boot.state.targetId = RUNNER_ID;
 
-        new PipelinePhases(boot).workspacesLocalhostRunnerConnected().action()
+        new PipelinePhases(boot).localhostTargetConnected().action()
                 .run(new CiLogStreamTest.Recorder());
 
-        assertThat(http.calls).containsExactly("GET " + WS_RUNNERS, greenlight,
-                "GET " + WS_RUNNERS);
+        assertThat(http.calls).containsExactly("GET " + TARGETS, greenlight, "GET " + TARGETS);
         assertThat(http.headers.get(greenlight))
                 .containsEntry("X-Qits-Roles", "qits:admin")
                 .doesNotContainKey("Authorization");
     }
 
-    /** The CI runner phase leaves its claim behind for the workspaces runner to read. */
+    /** A target already in service is not greenlit again: its health is qits-system's to keep. */
     @Test
-    void theCiRunnerPhaseRecordsItsClaimEvenWhenItStandsAside() throws Exception {
-        CannedHttp http = new CannedHttp().answer("GET " + RUNNERS, 200, listing(EXTERNAL));
-        Boot boot = runnerPhaseBoot(docker(List.of(), true, true), http, Map.of());
+    void aTargetAlreadyInServiceIsNotGreenlitAgain() throws Exception {
+        CannedHttp http = new CannedHttp().answer("GET " + TARGETS, 200, tgListing(tgRow(RUNNER_ID,
+                "localhost", true, true, "2026-10-23T10:00:00Z", "\"quarantined\":false")));
+        Boot boot = tgPhaseBoot(docker(List.of(), true, true), http);
+        boot.state.targetId = RUNNER_ID;
 
-        assertThatThrownBy(() -> new PipelinePhases(boot).localhostRunner().action()
+        new PipelinePhases(boot).localhostTargetConnected().action()
+                .run(new CiLogStreamTest.Recorder());
+
+        assertThat(http.calls).containsExactly("GET " + TARGETS);
+    }
+
+    /** Still quarantined after the greenlight: the boot stops, naming the target's own reason. */
+    @Test
+    void aTargetStillQuarantinedAfterTheGreenlightStopsTheBoot() throws Exception {
+        String greenlight = "POST " + TARGETS + "/" + RUNNER_ID + "/greenlight";
+        CannedHttp http = new CannedHttp()
+                .answer("GET " + TARGETS, 200, tgListing(tgRow(RUNNER_ID, "localhost", true, true,
+                        "2026-10-23T10:00:00Z", QUARANTINED)))
+                .answer(greenlight, 200, "{}");
+        Boot boot = tgPhaseBoot(docker(List.of(), true, true), http);
+        boot.state.targetId = RUNNER_ID;
+
+        assertThatThrownBy(() -> new PipelinePhases(boot).localhostTargetConnected().action()
                 .run(new CiLogStreamTest.Recorder()))
-                .isInstanceOf(PhaseSkipped.class);
-        assertThat(boot.state.ciRunnerClaim).isEqualTo("NOT_OURS");
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("still quarantined")
+                .hasMessageContaining("awaiting its first health check");
+    }
+
+    /** One poll: only OUR target, and only once connected. */
+    @Test
+    void theTargetConnectionPollWaitsForOurConnectedTarget() {
+        assertThat(PipelinePhases.targetConnection(new Http.Response(200, tgListing()),
+                RUNNER_ID).observed()).isEqualTo("qits-system lists no target localhost");
+        assertThat(PipelinePhases.targetConnection(new Http.Response(200, tgListing(
+                tgRow(OTHER_ID, "localhost", true, true, null, null))), RUNNER_ID).observed())
+                .contains(OTHER_ID);
+        assertThat(PipelinePhases.targetConnection(new Http.Response(200, tgListing(
+                tgRow(RUNNER_ID, "localhost", true, false, null, null))), RUNNER_ID).observed())
+                .isEqualTo("registered, not connected");
+        assertThat(PipelinePhases.targetConnection(new Http.Response(200, tgListing(
+                tgRow(RUNNER_ID, "localhost", true, true, null, null))), RUNNER_ID).value())
+                .isNotNull();
     }
 }

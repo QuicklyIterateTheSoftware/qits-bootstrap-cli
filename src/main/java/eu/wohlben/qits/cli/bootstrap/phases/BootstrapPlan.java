@@ -135,18 +135,26 @@ public final class BootstrapPlan {
             // host ~/.m2 anywhere in this run to fall back on.
             phases.add(seed.mavenPublish("containers", "qits-containers-client",
                     "publish the qits-containers client into seed artifacts"));
+            // THE GOLDEN MASTERS AND THE RUNNER LIBRARY, after every maven publish above and
+            // before the first image that resolves either (qits-1547). Each consumer pins its
+            // providers' golden masters TEST-scoped, and a -DskipTests build resolves test scope
+            // all the same, so the seed packs them from the providers' pinned tags; and
+            // qits-runner-javalib — the protocol and toolkit qits-system and its runner compile
+            // against — is no deployable and no release publisher, so nothing else would put it
+            // in a registry. The runner build resolves containers-driver, pact-consumer and the
+            // golden masters out of the store, which is why both come here and not earlier.
+            phases.add(seed.goldenMastersSeed());
+            phases.add(seed.runnerPublish());
             phases.add(seed.uiComponentsPublish());
             phases.add(seed.angularPublish());
-            // THE TWO WIRE CONTRACTS qits-ci COMPILES AGAINST, immediately before its image and
-            // for no other consumer. They are not libraries of the list above: each is one module
-            // of a daemon's reactor, published at the version the ci checkout PINS and built from
-            // that release tag, so neither is a checkout publish and neither has an order among
-            // the others — both resolve Maven Central alone. The runner's follows the daemon's
-            // because that is the order qits-ci's own pom names them in.
-            phases.add(seed.protocolPublish("ci-daemon", "qits-ci-daemon-protocol",
+            // THE WIRE CONTRACT qits-ci COMPILES AGAINST, immediately before its image and for no
+            // other consumer. It is not a library of the list above: it is one module of a daemon's
+            // reactor, published at the version the ci checkout PINS and built from that release
+            // tag, so it is no checkout publish and has no order among the others — it resolves
+            // Maven Central alone. qits-ci-runner-protocol was its twin until the CI runner retired
+            // (qits-1547); qits-ci pins it no more.
+            phases.add(seed.protocolPublish("ci", "ci-daemon", "qits-ci-daemon-protocol",
                     "qits.ci-daemon-protocol.version"));
-            phases.add(seed.protocolPublish("ci-runner", "qits-ci-runner-protocol",
-                    "qits.ci-runner-protocol.version"));
             phases.add(seed.seedImage("ci"));
             phases.add(seed.seedImage("deployments"));
             phases.add(seed.seedImage("idp"));
@@ -160,6 +168,15 @@ public final class BootstrapPlan {
             // client, so the seed places a placeholder bundle where its Dockerfile's `test -f`
             // looks — see PlatformModel.seedUiPath.
             phases.add(seed.seedImage("projects"));
+            // THE TARGETS' OWNER, a seed service since qits-1547 because every CI run is a lease on
+            // one of its targets. Its reactor resolves qits-eventstream, qits-db-core and
+            // qits-auth-core out of the store the publishes above filled, and the runner's wire
+            // contract, which the phase before it publishes on qits-ci's daemon contract's terms —
+            // at the version qits-system pins, built from that tag. It has a client, so the seed
+            // places a placeholder bundle where its Dockerfile's `test -f` looks.
+            phases.add(seed.protocolPublish("system", "system-runner-daemon",
+                    "qits-system-runner-protocol", "qits.system-runner-protocol.version"));
+            phases.add(seed.seedImage("system"));
             for (String image : SeedPhases.STEP_IMAGES) {
                 phases.add(seed.stepImage(image));
             }
@@ -168,10 +185,10 @@ public final class BootstrapPlan {
             phases.add(seed.toolchainSeed());
             phases.add(seed.ciDaemon());
             // STRAIGHT AFTER IT, because it is built on the toolchain image that phase just made.
-            // The runner is what executes every run of this boot from the first release replay
-            // on, so its image has to exist before the seed stack is up — and only a build arm
-            // can make it: a warm rerun starts the runner from the image the last one left.
-            phases.add(seed.runnerImage());
+            // The target's runner is what executes every run of this boot from the first release
+            // replay on, so its image has to exist before the seed stack is up — and only a build
+            // arm can make it: a warm rerun starts the runner from the image the last one left.
+            phases.add(seed.systemRunnerImage());
         }
 
         // seed-postgres is inside BOTH arms above rather than here, and the byte-plane split is why:
@@ -245,21 +262,25 @@ public final class BootstrapPlan {
         for (String name : PlatformModel.SEED_DEPLOYED) {
             phases.add(pipeline.seedDeploy(name));
         }
-        // THE DOOR THE RUNNER DIALS, proved before it dials: the runner reaches qits-ci, the idp
-        // and the registry through the platform's own edge over a certificate it has to trust.
+        // THE DOOR THE TARGET DIALS, proved before it dials: the target's runner reaches
+        // qits-system, the idp and the registry through the platform's own edge over a
+        // certificate it has to trust, and so does the ci-daemon in every CI slot it starts.
         phases.add(pipeline.edgeReady());
-        // STEP THREE: THE RUNNER, AND IT HAS TO BE CONNECTED BEFORE THE FIRST RUN IS ASKED FOR.
-        // qits-ci executes nothing itself (qits-506), so every release replay below is this
-        // runner's or nobody's — a replay with no runner is a run that queues until its wait gives
-        // up, an hour later and once per publisher. Two phases because they fail differently: the
-        // first starts a container, the second waits for qits-ci to say it is connected and lifts
-        // the quarantine a freshly registered runner starts in. After the seed deploys, because
-        // the runner registers with the qits-ci the platform runs in steady state — and it stays as
-        // the platform's default runner: nothing below decommissions it. In both arms, because a
-        // warm rerun finds the container stopped as often as it finds it running. A platform whose
-        // runners are somebody else's is passed by — see PipelinePhases.runnerDecision.
-        phases.add(pipeline.localhostRunner());
-        phases.add(pipeline.localhostRunnerConnected());
+        // STEP THREE: THE TARGET, AND IT HAS TO BE CONNECTED BEFORE THE FIRST RUN IS ASKED FOR.
+        // Every CI run is a lease on a qits-system target since qits-1547, so every release
+        // replay below is this host's target's or nobody's — a replay with no target is a lease
+        // that stays QUEUED until its wait gives up, an hour later and once per publisher. Two
+        // phases because they fail differently: the first starts a container, the second waits
+        // for qits-system to say the target is connected and lifts the quarantine a new target
+        // starts in. After the seed deploys, because the target registers with the qits-system
+        // the platform runs in steady state — qits-system is a seed service for exactly this —
+        // and it stays as the platform's own target: nothing below decommissions it. In both
+        // arms, because a warm rerun finds the container stopped as often as it finds it running.
+        // A platform whose targets are somebody else's is passed by — see
+        // PipelinePhases.targetDecision. It replaced this host's CI runner here and its
+        // workspaces runner after the train.
+        phases.add(pipeline.localhostTarget());
+        phases.add(pipeline.localhostTargetConnected());
         // STEP FOUR: THE FIRST BUILD. Every deployable's gitlinks must be advertised before CI
         // clones it. In particular, qits-ci points at qits-spa-ci; pushing that SPA after the
         // deployment train makes the githost correctly refuse CI's request for an unadvertised
@@ -293,17 +314,6 @@ public final class BootstrapPlan {
             // most to the addresses: qits-githost, six below it, closes the id-addressed scheme,
             // and by then this run has been name-addressing every push since its first.
         }
-        // THIS HOST'S WORKSPACES RUNNER, the CI runner's twin, and AFTER THE TRAIN rather than
-        // beside it: qits-workspaces is not seed-deployed (PlatformModel.CORE lacks it), so until
-        // its deployment above there is no runner listing to ask and no row to declare. Its image
-        // is no seed build either — the release replay of qits-workspaces-runner-daemon published
-        // it, at the version qits-workspaces pins. Two phases for the CI pair's reason: the first
-        // starts a container, the second waits for qits-workspaces to say it is connected and
-        // lifts the quarantine. A platform whose CI runner is somebody else's — the live estate,
-        // whose runner is an external machine's and which recorded no id — is NOT_OURS here too,
-        // so a rebootstrap there never starts one. See PipelinePhases.workspacesRunnerDecision.
-        phases.add(pipeline.workspacesLocalhostRunner());
-        phases.add(pipeline.workspacesLocalhostRunnerConnected());
         phases.add(pipeline.summary());
         // LAST, AND AFTER THE SUMMARY ON PURPOSE. The summary phase only BUILDS the account —
         // BootstrapCommand prints it once the engine has run everything — so a phase below it still

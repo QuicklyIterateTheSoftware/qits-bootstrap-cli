@@ -57,42 +57,68 @@ class BootstrapPlanTest {
                 "recorded-state", "maven-seed");
         assertThat(ids(phases)).containsSubsequence(
                 "git-repos", "release-train-push", "preseed");
-        assertThat(ids(phases)).endsWith("deploy-deployments", "workspaces-runner-localhost",
-                "workspaces-runner-connected", "summary", "teardown-bootstrap-builder");
+        assertThat(ids(phases)).endsWith("deploy-deployments", "summary",
+                "teardown-bootstrap-builder");
         assertThat(phases).allSatisfy(phase -> assertThat(phase.title()).isNotBlank());
     }
 
     /**
-     * <b>The two protocol jars land immediately before the ci image, and nowhere on a warm
-     * rerun.</b> qits-ci pins both as released coordinates, so its image build resolves nothing
-     * until they are published; a run that builds no image publishes neither.
+     * <b>Each protocol jar lands immediately before the image that compiles against it, and
+     * nowhere on a warm rerun.</b> qits-ci pins the daemon's contract and qits-system the target
+     * runner's, both as released coordinates, so neither image build resolves until its jar is
+     * published; a run that builds no image publishes neither. The CI runner's contract is gone
+     * with the CI runner (qits-1547).
      */
     @Test
-    void theProtocolJarsArePublishedImmediatelyBeforeTheCiImage() {
+    void theProtocolJarsArePublishedImmediatelyBeforeTheImagesThatCompileAgainstThem() {
         List<String> ids = ids(plan(Map.of()));
 
         int ci = ids.indexOf("seed-image-ci");
-        assertThat(ids.subList(ci - 2, ci)).containsExactly(
-                "publish-qits-ci-daemon-protocol", "publish-qits-ci-runner-protocol");
+        assertThat(ids.get(ci - 1)).isEqualTo("publish-qits-ci-daemon-protocol");
+        int system = ids.indexOf("seed-image-system");
+        assertThat(ids.get(system - 1)).isEqualTo("publish-qits-system-runner-protocol");
         // After the store answers: half of each publish lands there.
         assertThat(ids).containsSubsequence("seed-artifacts", "publish-qits-ci-daemon-protocol");
+        assertThat(ids).doesNotContain("publish-qits-ci-runner-protocol");
 
         assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1")))).doesNotContain(
-                "publish-qits-ci-daemon-protocol", "publish-qits-ci-runner-protocol");
+                "publish-qits-ci-daemon-protocol", "publish-qits-system-runner-protocol");
     }
 
     /**
-     * The runner image is built straight after the ci-daemon — it is compiled on the toolchain
-     * image that phase makes — and before the seed stack, so it exists by the time it is started.
+     * <b>The golden masters and the runner library land before every build that resolves them</b>
+     * (qits-1547): after the store and the last maven publish whose jars the runner build reads,
+     * before qits-system's protocol publish and seed image, and long before the runner's native
+     * build. Neither runs on a warm rerun, which builds nothing.
+     */
+    @Test
+    void theRunnerLibraryIsSeededBeforeQitsSystemAndItsRunnerAreBuilt() {
+        List<String> ids = ids(plan(Map.of()));
+
+        assertThat(ids).containsSubsequence("seed-artifacts", "publish-qits-containers-driver",
+                "publish-qits-containers-client", "seed-golden-masters", "publish-qits-runner",
+                "publish-qits-system-runner-protocol", "seed-image-system", "ci-daemon",
+                "system-runner-image");
+        assertThat(ids).containsSubsequence("seed-golden-masters", "seed-image-ci");
+        assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1"))))
+                .doesNotContain("seed-golden-masters", "publish-qits-runner");
+    }
+
+    /**
+     * The target's runner image is built straight after the ci-daemon — it is compiled on the
+     * toolchain image that phase makes — and before the seed stack, so it exists by the time it
+     * is started. The ci-slot image every run executes in is a step image built before both.
      */
     @Test
     void theRunnerImageIsBuiltOnTheDaemonsToolchainBeforeTheStack() {
         List<String> ids = ids(plan(Map.of()));
 
-        assertThat(ids.get(ids.indexOf("ci-daemon") + 1)).isEqualTo("runner-image");
-        assertThat(ids).containsSubsequence("seed-toolchain", "ci-daemon", "runner-image",
-                "seed-stack");
-        assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1")))).doesNotContain("runner-image");
+        assertThat(ids.get(ids.indexOf("ci-daemon") + 1)).isEqualTo("system-runner-image");
+        assertThat(ids).containsSubsequence("step-image-ci-slot", "seed-toolchain", "ci-daemon",
+                "system-runner-image", "seed-stack");
+        assertThat(ids).doesNotContain("runner-image");
+        assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1"))))
+                .doesNotContain("system-runner-image", "step-image-ci-slot");
     }
 
     /**
@@ -116,58 +142,33 @@ class BootstrapPlanTest {
     }
 
     /**
-     * <b>THE RUNNER IS STARTED AND CONNECTED BEFORE THE FIRST RUN IS ASKED FOR — in both arms.</b>
-     * qits-ci executes nothing itself, so a release replay with no runner queues until its wait
-     * gives up. After the seed deploys, because the runner registers with the qits-ci the platform
-     * runs in steady state; and it is a container, never a deployment, so nothing in the plan
-     * deploys one — or takes it down again: it stays as the platform's default runner.
+     * <b>THE TARGET IS STARTED AND CONNECTED BEFORE THE FIRST RUN IS ASKED FOR — in both arms.</b>
+     * Every CI run is a lease on a qits-system target (qits-1547), so a release replay with no
+     * target queues until its wait gives up. After the seed deploys, qits-system's among them,
+     * because the target registers with the qits-system the platform runs in steady state; and it
+     * is a container, never a deployment, so nothing in the plan deploys one — or takes it down
+     * again. The CI runner's pair and the workspaces runner's are both gone.
      */
     @Test
-    void theRunnerIsStartedAndConnectedBeforeTheFirstRun() {
+    void theTargetIsStartedAndConnectedBeforeTheFirstRun() {
         for (Map<String, String> env : List.of(Map.<String, String>of(),
                 Map.of("QITS_SKIP_BUILD", "1"))) {
             List<String> ids = ids(plan(env));
 
             assertThat(ids).containsSubsequence("seed-health", "images-publish",
                     "publish-credential-release", "qits-project", "git-repos",
-                    "seed-deploy-edge", "edge-ready", "runner-localhost", "runner-connected",
-                    "release-train-push");
-            // The platform's own edge is proved to serve what the runner dials, right before it
+                    "seed-deploy-system", "seed-deploy-edge", "edge-ready", "target-localhost",
+                    "target-connected", "release-train-push");
+            // The platform's own edge is proved to serve what the target dials, right before it
             // dials it.
-            int runner = ids.indexOf("runner-localhost");
-            assertThat(ids.subList(runner - 2, runner + 3)).containsExactly(
-                    "seed-deploy-edge", "edge-ready", "runner-localhost", "runner-connected",
+            int target = ids.indexOf("target-localhost");
+            assertThat(ids.subList(target - 2, target + 3)).containsExactly(
+                    "seed-deploy-edge", "edge-ready", "target-localhost", "target-connected",
                     "release-train-push");
-            assertThat(ids).doesNotContain("deploy-ci-runner");
+            assertThat(ids.stream().filter(id -> id.startsWith("target-"))).hasSize(2);
+            assertThat(ids).doesNotContain("runner-localhost", "runner-connected",
+                    "workspaces-runner-localhost", "workspaces-runner-connected");
             assertThat(ids).noneMatch(id -> id.contains("decommission"));
-        }
-    }
-
-    /**
-     * <b>THIS HOST'S WORKSPACES RUNNER FOLLOWS THE TRAIN, in both arms.</b> qits-workspaces is not
-     * seed-deployed, so there is nothing to register with before its deployment — and the two
-     * phases sit after the LAST deployment and before the closing report, never beside the CI
-     * runner's pair.
-     */
-    @Test
-    void theWorkspacesRunnerIsStartedAfterTheTrainAndBeforeTheSummary() {
-        for (Map<String, String> env : List.of(Map.<String, String>of(),
-                Map.of("QITS_SKIP_BUILD", "1"))) {
-            List<String> ids = ids(plan(env));
-
-            int lastDeploy = -1;
-            for (int i = 0; i < ids.size(); i++) {
-                if (ids.get(i).startsWith("deploy-")) {
-                    lastDeploy = i;
-                }
-            }
-            assertThat(ids.subList(lastDeploy + 1, lastDeploy + 4)).containsExactly(
-                    "workspaces-runner-localhost", "workspaces-runner-connected", "summary");
-            assertThat(ids).containsSubsequence("deploy-workspaces",
-                    "workspaces-runner-localhost");
-            assertThat(ids).containsSubsequence("release-workspaces-runner-daemon",
-                    "deploy-workspaces");
-            assertThat(ids.stream().filter(id -> id.startsWith("workspaces-runner-"))).hasSize(2);
         }
     }
 
@@ -175,7 +176,7 @@ class BootstrapPlanTest {
      * <b>THE OWNER'S FOUR STEPS, in both arms.</b> Everything the platform needs is built locally
      * first; then the platform comes up as it runs in steady state — the seed images put live by
      * the deployer at their release tag, the edge last of them, which retires the bootstrap
-     * ingress; then this host's runner; and only then the first build, the release replays and
+     * ingress; then this host's target; and only then the first build, the release replays and
      * the train.
      * <ul>
      *   <li>The project, the repositories and the platform environment are all before the first
@@ -187,7 +188,7 @@ class BootstrapPlanTest {
      * </ul>
      */
     @Test
-    void theSeedImagesAreDeployedAfterTheRepositoriesAndBeforeTheRunnerAndTheFirstBuild() {
+    void theSeedImagesAreDeployedAfterTheRepositoriesAndBeforeTheTargetAndTheFirstBuild() {
         for (Map<String, String> env : List.of(Map.<String, String>of(),
                 Map.of("QITS_SKIP_BUILD", "1"))) {
             List<String> ids = ids(plan(env));
@@ -197,7 +198,7 @@ class BootstrapPlanTest {
             assertThat(seedDeploys).containsExactly("seed-deploy-idp", "seed-deploy-projects",
                     "seed-deploy-events", "seed-deploy-mirror", "seed-deploy-artifacts",
                     "seed-deploy-githost", "seed-deploy-containers", "seed-deploy-ci",
-                    "seed-deploy-edge");
+                    "seed-deploy-system", "seed-deploy-edge");
             // Contiguous: nothing builds, publishes or pushes in the middle of step two.
             int first = ids.indexOf("seed-deploy-idp");
             assertThat(ids.subList(first, first + seedDeploys.size())).isEqualTo(seedDeploys);
@@ -205,8 +206,8 @@ class BootstrapPlanTest {
                     "publish-credential-release", "qits-project", "git-repos", "environment",
                     "seed-deploy-idp");
             assertThat(ids.get(first - 1)).isEqualTo("environment");
-            assertThat(ids).containsSubsequence("seed-deploy-edge", "edge-ready", "runner-localhost",
-                    "runner-connected", "release-train-push", "preseed",
+            assertThat(ids).containsSubsequence("seed-deploy-edge", "edge-ready", "target-localhost",
+                    "target-connected", "release-train-push", "preseed",
                     "release-spa-ui-components", "deploy-observability", "deploy-idp",
                     "deploy-edge", "deploy-deployments", "summary");
             assertThat(ids).doesNotContain("seed-deploy-deployments",

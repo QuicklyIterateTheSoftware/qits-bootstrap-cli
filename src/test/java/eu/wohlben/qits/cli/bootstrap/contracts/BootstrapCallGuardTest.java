@@ -145,8 +145,8 @@ class BootstrapCallGuardTest {
         factories.put(ProjectsApi.class, () -> new ProjectsApi(new Http(), base));
         factories.put(eu.wohlben.qits.cli.bootstrap.api.ServiceClientsApi.class,
                 () -> BootstrapContract.serviceClients(base));
-        factories.put(eu.wohlben.qits.cli.bootstrap.api.WorkspacesApi.class,
-                () -> BootstrapContract.workspaces(base));
+        factories.put(eu.wohlben.qits.cli.bootstrap.api.SystemApi.class,
+                () -> BootstrapContract.system(base));
         factories.put(BootstrapPublishCredential.class, () -> new BootstrapPublishCredential(
                 new Http(), new IdpApi(new Http(), base + "/idp"), base + "/idp", "qits-bootstrap",
                 "secret", "dev", "qits-platform"));

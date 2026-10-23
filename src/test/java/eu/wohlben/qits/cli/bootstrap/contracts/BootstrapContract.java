@@ -21,7 +21,7 @@ import eu.wohlben.qits.cli.bootstrap.api.IdpApi;
 import eu.wohlben.qits.cli.bootstrap.api.PdApi;
 import eu.wohlben.qits.cli.bootstrap.api.ProjectsApi;
 import eu.wohlben.qits.cli.bootstrap.api.ServiceClientsApi;
-import eu.wohlben.qits.cli.bootstrap.api.WorkspacesApi;
+import eu.wohlben.qits.cli.bootstrap.api.SystemApi;
 import eu.wohlben.qits.cli.bootstrap.phases.PhaseReads;
 import eu.wohlben.qits.cli.bootstrap.ui.EventFeedReads;
 import eu.wohlben.qits.cli.bootstrap.workstation.TokenClient;
@@ -104,11 +104,11 @@ final class BootstrapContract {
     static final Provider ARTIFACTS = new Provider("qits-artifacts-service", "qits-artifacts");
     static final Provider CONFIGURATION =
             new Provider("qits-configuration-service", "qits-configuration");
-    static final Provider WORKSPACES = new Provider("qits-workspaces-service", "qits-workspaces");
+    static final Provider SYSTEM = new Provider("qits-system-service", "qits-system");
     static final Provider CONTAINERS = new Provider("qits-containers-service", "qits-containers");
 
     static final List<Provider> PROVIDERS = List.of(PROJECTS, EVENTS, CI, DEPLOYMENTS, IDP,
-            GITHOST, ARTIFACTS, CONFIGURATION, WORKSPACES, CONTAINERS);
+            GITHOST, ARTIFACTS, CONFIGURATION, SYSTEM, CONTAINERS);
 
     /**
      * What a row against a door that judges its caller sends: the credential the provider's state
@@ -477,56 +477,6 @@ final class BootstrapContract {
                     (base, params, recorded, op) -> assertThat(ci(base).run(params.get("runId")))
                             .isPresent(),
                     "param runId; a RUNNING run with one finished step and its live step's output"),
-            new Case(CI, Trigger.phase("runner-localhost"), "no runners", "createRunner",
-                    Request.json("POST", "/ci/api/runners",
-                            "{\"name\":\"" + PhaseReads.LOCALHOST_RUNNER + "\",\"slots\":2}"),
-                    201, List.of("$.id", "$.installScript"),
-                    (base, params, recorded, op) -> {
-                        Http.Response created = ci(base).createRunner(PhaseReads.LOCALHOST_RUNNER,
-                                2, null);
-                        JsonNode runner = eu.wohlben.qits.cli.bootstrap.api.Json.parse(created.body());
-                        assertThat(runner.path("id").asText()).isNotBlank();
-                        assertThat(CiApi.registrationToken(runner.path("installScript").asText()))
-                                .isPresent();
-                        assertThat(CiApi.runnerUrl(runner.path("installScript").asText())).isPresent();
-                    },
-                    "the create recorded as the bootstrap sends it, {name, slots} with no"
-                            + " description, answering 201 with id and an installScript carrying"
-                            + " QITS_CI_RUNNER_URL and QITS_CI_RUNNER_REGISTRATION_TOKEN"),
-            new Case(CI, Trigger.phase("runner-localhost"), "an unregistered runner", "listRunners",
-                    Request.get("/ci/api/runners"), 200,
-                    List.of("$.runners[*].id", "$.runners[*].name", "$.runners[*].registered",
-                            "$.runners[*].connected", "$.runners[*].lastSeenAt"),
-                    (base, params, recorded, op) -> assertThat(CiApi.runnerNamed(ci(base).runners(),
-                            PhaseReads.LOCALHOST_RUNNER)).isPresent(),
-                    "one runner named localhost, never registered or seen"),
-            new Case(CI, Trigger.phase("runner-localhost"), "an unregistered runner",
-                    "rotateRegistrationToken",
-                    Request.post("/ci/api/runners/{runnerId}/registration-token"),
-                    200, List.of("$.installScript"),
-                    (base, params, recorded, op) -> {
-                        Http.Response answer = ci(base).rotateRegistrationToken(
-                                params.get("runnerId"), null);
-                        String script = eu.wohlben.qits.cli.bootstrap.api.Json.text(
-                                eu.wohlben.qits.cli.bootstrap.api.Json.parse(answer.body()),
-                                "installScript");
-                        assertThat(CiApi.registrationToken(script)).isPresent();
-                    },
-                    "param runnerId; the body-less rotation answers 200 with a fresh installScript"),
-            new Case(CI, Trigger.phase("runner-connected"), "a connected runner", "listRunners",
-                    Request.get("/ci/api/runners"), 200,
-                    List.of("$.runners[*].id", "$.runners[*].name", "$.runners[*].registered",
-                            "$.runners[*].connected", "$.runners[*].quarantined",
-                            "$.runners[*].quarantineReason"),
-                    (base, params, recorded, op) -> assertThat(PhaseReads.ciRunnerConnected(
-                            ci(base).runners(), params.get("runnerId"))).isNotNull(),
-                    "param runnerId; runner localhost registered and connected, not quarantined"),
-            new Case(CI, Trigger.phase("runner-connected"), "a quarantined runner",
-                    "greenlightRunner", Request.post("/ci/api/runners/{runnerId}/greenlight"),
-                    200, List.of(),
-                    (base, params, recorded, op) -> assertThat(
-                            ci(base).greenlight(params.get("runnerId")).ok()).isTrue(),
-                    "param runnerId; a quarantined runner the body-less greenlight lifts (200)"),
 
             // qits-deployments ------------------------------------------------------------------
             new Case(DEPLOYMENTS, Trigger.phase("seed-health"), "the machine gate is on",
@@ -766,7 +716,7 @@ final class BootstrapContract {
                             params.get("name"), params.get("tag")).status()).isEqualTo(404),
                     "params name and tag of an image the store does not hold; the manifest GET"
                             + " answers 404 and nothing else"),
-            new Case(ARTIFACTS, Trigger.phase("workspaces-runner-localhost"),
+            new Case(ARTIFACTS, Trigger.phase("target-localhost"),
                     "an image pushed under a tag", "getImageManifest", Request.get(MANIFEST), 200,
                     List.of(),
                     (base, params, recorded, op) -> assertThat(artifacts(base).imagePublished(
@@ -813,57 +763,70 @@ final class BootstrapContract {
                             params.get("env")).importProperties(op.body().asText()).ok()).isTrue(),
                     "param env; the import of a properties file answers 200"),
 
-            // qits-workspaces -------------------------------------------------------------------
-            new Case(WORKSPACES, Trigger.phase("workspaces-runner-localhost"), "no runners",
-                    "createRunner",
-                    Request.json("POST", "/workspaces/api/runners",
-                            "{\"name\":\"{runnerName}\",\"slots\":1}"),
-                    201, List.of("$.runner.id", "$.registrationToken", "$.installLine"),
+            // qits-system ---------------------------------------------------------------------
+            // The targets doors (qits-1535), which replaced qits-workspaces' runner doors. Every row
+            // is PENDING until qits-system's golden masters with the targets module are released
+            // and the test-scoped pin moves onto them; the create stays pending after that until
+            // qits-system records a state with the bootstrap's own body.
+            new Case(SYSTEM, Trigger.phase("target-localhost"), "no target", "createTarget",
+                    Request.json("POST", "/system/api/targets",
+                            "{\"name\":\"localhost\",\"description\":\"this platform's own host,"
+                                    + " declared by qits-bootstrap\",\"minimums\":{\"ci\":0,"
+                                    + "\"workspace\":1,\"desk\":1}}"),
+                    201, List.of("$.target.id", "$.registrationToken", "$.installLine"),
                     (base, params, recorded, op) -> {
-                        assertThat(params.get("runnerName")).isEqualTo(PhaseReads.LOCALHOST_RUNNER);
                         JsonNode answer = eu.wohlben.qits.cli.bootstrap.api.Json.parse(
-                                workspaces(base).createRunner(PhaseReads.LOCALHOST_RUNNER, 1, null)
-                                        .body());
-                        assertThat(WorkspacesApi.runnerOf(answer).path("id").asText()).isNotBlank();
-                        assertThat(WorkspacesApi.registrationToken(answer)).isPresent();
-                        assertThat(WorkspacesApi.runnerUrl(answer.path("installLine").asText()))
+                                system(base).createTarget(PhaseReads.LOCALHOST_RUNNER,
+                                        "this platform's own host, declared by qits-bootstrap",
+                                        0, 1, 1, null).body());
+                        assertThat(SystemApi.targetOf(answer).path("id").asText()).isNotBlank();
+                        assertThat(SystemApi.registrationToken(answer)).isPresent();
+                        assertThat(SystemApi.runnerUrl(answer.path("installLine").asText()))
                                 .isPresent();
                     },
-                    "runnerName localhost; the create answers 201 with {runner: {id},"
-                            + " registrationToken, installLine} and the line names"
-                            + " QITS_WORKSPACES_RUNNER_URL"),
-            new Case(WORKSPACES, Trigger.phase("workspaces-runner-localhost"),
-                    "an unregistered runner", "listRunners", Request.get("/workspaces/api/runners"),
-                    200,
+                    "a create recorded with the bootstrap's body — name localhost, its"
+                            + " description, minimums {ci 0, workspace 1, desk 1} — answering 201"
+                            + " with {target: {id}, registrationToken, installLine} and the line"
+                            + " names QITS_SYSTEM_RUNNER_URL"),
+            new Case(SYSTEM, Trigger.phase("target-localhost"), "a declared target",
+                    "listTargets", Request.get("/system/api/targets"), 200,
                     List.of("$[*].id", "$[*].name", "$[*].registered", "$[*].connected",
                             "$[*].lastSeenAt"),
-                    (base, params, recorded, op) -> assertThat(WorkspacesApi.runnerNamed(
-                            workspaces(base).runners(), PhaseReads.LOCALHOST_RUNNER)).isPresent(),
-                    "one runner named localhost, never registered or seen"),
-            new Case(WORKSPACES, Trigger.phase("workspaces-runner-localhost"),
-                    "an unregistered runner", "rotateRunnerRegistrationToken",
-                    Request.post("/workspaces/api/runners/{runnerId}/registration-token"),
+                    (base, params, recorded, op) -> {
+                        Http.Response listing = system(base).targets();
+                        List<String> ids = new ArrayList<>();
+                        SystemApi.targetsIn(listing).forEach(t -> ids.add(t.path("id").asText()));
+                        List<String> expected = new ArrayList<>();
+                        recorded.forEach(t -> expected.add(t.path("id").asText()));
+                        assertThat(ids).containsExactlyElementsOf(expected);
+                        assertThat(PhaseReads.targetClaim(listing)).isNotBlank();
+                    },
+                    "a bare array of targets with id, name, registered, connected and"
+                            + " lastSeenAt"),
+            new Case(SYSTEM, Trigger.phase("target-localhost"), "an unregistered runner",
+                    "rotateTargetRegistrationToken",
+                    Request.post("/system/api/targets/{runnerId}/registration-token"),
                     200, List.of("$.registrationToken", "$.installLine"),
-                    (base, params, recorded, op) -> assertThat(WorkspacesApi.registrationToken(
-                            eu.wohlben.qits.cli.bootstrap.api.Json.parse(workspaces(base)
+                    (base, params, recorded, op) -> assertThat(SystemApi.registrationToken(
+                            eu.wohlben.qits.cli.bootstrap.api.Json.parse(system(base)
                                     .rotateRegistrationToken(params.get("runnerId"), null).body())))
                             .isPresent(),
                     "param runnerId; the body-less rotation answers 200 with registrationToken"
                             + " and installLine"),
-            new Case(WORKSPACES, Trigger.phase("workspaces-runner-connected"), "a connected runner",
-                    "listRunners", Request.get("/workspaces/api/runners"), 200,
+            new Case(SYSTEM, Trigger.phase("target-connected"), "a connected target",
+                    "listTargets", Request.get("/system/api/targets"), 200,
                     List.of("$[*].id", "$[*].name", "$[*].registered", "$[*].connected",
                             "$[*].quarantined", "$[*].quarantineReason"),
-                    (base, params, recorded, op) -> assertThat(PhaseReads.workspacesRunnerConnected(
-                            workspaces(base).runners(), params.get("runnerId"))).isNotNull(),
-                    "param runnerId; runner localhost registered and connected, not quarantined"),
-            new Case(WORKSPACES, Trigger.phase("workspaces-runner-connected"),
-                    "a quarantined runner", "greenlightRunner",
-                    Request.post("/workspaces/api/runners/{runnerId}/greenlight"),
+                    (base, params, recorded, op) -> assertThat(PhaseReads.targetConnected(
+                            system(base).targets(), params.get("targetId"))).isNotNull(),
+                    "param targetId; target localhost registered and connected"),
+            new Case(SYSTEM, Trigger.phase("target-connected"), "a declared target",
+                    "greenlightTarget",
+                    Request.post("/system/api/targets/{targetId}/greenlight"),
                     200, List.of(),
                     (base, params, recorded, op) -> assertThat(
-                            workspaces(base).greenlight(params.get("runnerId")).ok()).isTrue(),
-                    "param runnerId; a quarantined runner the body-less greenlight lifts (200)"),
+                            system(base).greenlight(params.get("targetId")).ok()).isTrue(),
+                    "param targetId; the body-less greenlight answers 200"),
 
             // qits-containers -------------------------------------------------------------------
             new Case(CONTAINERS, Trigger.phase("seed-health"), "the machine gate is on",
@@ -906,8 +869,8 @@ final class BootstrapContract {
         return new ArtifactsApi(new Http(), base + "/artifacts", () -> "Bearer pact");
     }
 
-    static WorkspacesApi workspaces(String base) {
-        return new WorkspacesApi(new Http(), base + "/workspaces");
+    static SystemApi system(String base) {
+        return new SystemApi(new Http(), base + "/system");
     }
 
     static ServiceClientsApi serviceClients(String base) {
