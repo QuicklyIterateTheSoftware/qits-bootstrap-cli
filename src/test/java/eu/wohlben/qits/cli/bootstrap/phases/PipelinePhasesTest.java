@@ -2282,7 +2282,7 @@ class PipelinePhasesTest {
     private static String tgRow(String id, String name, boolean registered, boolean connected,
                                 String lastSeenAt, String more) {
         return "{\"id\":\"" + id + "\",\"name\":\"" + name + "\",\"slotsTotal\":0,"
-                + "\"minimums\":{\"ci\":0,\"workspace\":1,\"desk\":1},\"registered\":"
+                + "\"reservations\":{\"ci\":0,\"workspace\":1,\"desk\":1},\"registered\":"
                 + registered + ",\"connected\":" + connected + ",\"lastSeenAt\":"
                 + (lastSeenAt == null ? "null" : "\"" + lastSeenAt + "\"")
                 + (more == null ? "" : "," + more) + "}";
@@ -2430,7 +2430,7 @@ class PipelinePhasesTest {
     /**
      * <b>A COLD PLATFORM, whole.</b> The store answers for the pinned image, the host pulls it with
      * this run's own client, the three shared volumes are made sure of, the target is declared with
-     * its minimums and recorded before anything else, the stale client goes, and the container
+     * its reservations and recorded before anything else, the stale client goes, and the container
      * starts on the line's contract with this host's computed slots and the token from the
      * answer's own field.
      */
@@ -2467,7 +2467,7 @@ class PipelinePhasesTest {
         // min_ci is this host's concurrent builds (QITS_CI_CONCURRENT_BUILDS=2 in this boot).
         assertThat(http.bodies.get("POST " + TARGETS))
                 .isEqualTo("{\"name\":\"localhost\",\"description\":\"this platform's own host,"
-                        + " declared by qits-bootstrap\",\"minimums\":{\"ci\":2,\"workspace\":1,"
+                        + " declared by qits-bootstrap\",\"reservations\":{\"ci\":2,\"workspace\":1,"
                         + "\"desk\":1}}");
         assertThat(http.headers.get("POST " + TARGETS))
                 .containsEntry("Authorization", "Bearer bootstrap-bearer");

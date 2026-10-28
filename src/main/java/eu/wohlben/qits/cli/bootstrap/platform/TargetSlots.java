@@ -11,7 +11,7 @@ import java.util.Locale;
  * host it shares with the platform.</b> Two shares make it up: the CI share
  * ({@link #concurrentBuildsFor}), which is the target's {@code min_ci}; and the agent share
  * ({@link #agentSlotsFor}), what is left for workspaces and desks. Their sum, the agent share never
- * under its minimums, is the target's total ({@link #targetSlotsFor}) — the
+ * under its reservations, is the target's total ({@link #targetSlotsFor}) — the
  * {@code QITS_SYSTEM_RUNNER_SLOTS} the {@code target-localhost} phase starts the qits-system-runner
  * with. The class was {@code CiConcurrency} until the target replaced the workspaces runner
  * (qits-1535), whose own formula ({@code WorkspaceSlots}) moved in here as the agent share; the CI
@@ -49,7 +49,7 @@ import java.util.Locale;
  *     agentSlots = max(1, floor((totalMemoryGiB - 10 - 6 * ciSlots) / 4))
  * </pre>
  * — 1 on a 16 GB host running one build (wohlben.eu), 2 on 32 GB running two. The target's total
- * is the CI share plus that, the agent share never under the agent minimums, so the smallest host
+ * is the CI share plus that, the agent share never under the agent reservations, so the smallest host
  * still holds one build, one workspace and one desk.
  */
 public final class TargetSlots {
@@ -98,15 +98,15 @@ public final class TargetSlots {
 
     /**
      * The target's total: the CI share plus the agent share, the agent share never less than the
-     * agent minimums the target is declared with — a total under the sum of its minimums is one
-     * qits-system ignores the minimums of and fails the {@code slots} health check over.
+     * agent reservations the target is declared with — a total under the sum of its reservations is
+     * one qits-system ignores the reservations of and fails the {@code slots} health check over.
      *
-     * @param ciSlots       the CI share, which is the target's {@code min_ci}
-     * @param agentMinimums the target's workspace and desk minimums, summed
+     * @param ciSlots           the CI share, which is the target's {@code min_ci}
+     * @param agentReservations the target's workspace and desk reservations, summed
      */
-    public static int targetSlotsFor(long totalBytes, int ciSlots, int agentMinimums) {
+    public static int targetSlotsFor(long totalBytes, int ciSlots, int agentReservations) {
         return Math.max(0, ciSlots)
-                + Math.max(Math.max(1, agentMinimums), agentSlotsFor(totalBytes, ciSlots));
+                + Math.max(Math.max(1, agentReservations), agentSlotsFor(totalBytes, ciSlots));
     }
 
     /**

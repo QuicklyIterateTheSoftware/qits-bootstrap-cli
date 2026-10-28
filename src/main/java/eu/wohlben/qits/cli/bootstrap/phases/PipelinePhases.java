@@ -3234,7 +3234,7 @@ public class PipelinePhases {
                 // this target is ours, whatever happens to this process.
                 recordTarget(recorded, id);
                 issued = targetIssued(answer, "the create");
-                ctx.log("  declared target " + LOCALHOST_RUNNER + " (" + id + "): minimums "
+                ctx.log("  declared target " + LOCALHOST_RUNNER + " (" + id + "): reservations "
                         + "workspace " + TARGET_MIN_WORKSPACE + ", desk " + TARGET_MIN_DESK
                         + ", ci " + minCi + "; " + slots + " slots — recorded in "
                         + recorded.file());

@@ -7,7 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * The formulas, at the sizes that made them: a 16 GB VPS runs ONE build, because two native ones
  * livelocked exactly that host, and its target holds one workspace and one desk beside it — the
- * smallest answer is never zero and never under the minimums.
+ * smallest answer is never zero and never under the reservations.
  */
 class TargetSlotsTest {
 
@@ -90,10 +90,10 @@ class TargetSlotsTest {
 
     /**
      * The total is the CI share plus the agent share, and the agent share never falls under the
-     * agent minimums: one build, one workspace and one desk on the smallest host.
+     * agent reservations: one build, one workspace and one desk on the smallest host.
      */
     @Test
-    void theTargetTotalIsTheCiShareAndNeverUnderItsMinimums() {
+    void theTargetTotalIsTheCiShareAndNeverUnderItsReservations() {
         assertThat(TargetSlots.targetSlotsFor(gib(16), 1, 2)).isEqualTo(3);
         assertThat(TargetSlots.targetSlotsFor(0, 1, 2)).isEqualTo(3);
         assertThat(TargetSlots.targetSlotsFor(gib(32), 1, 2)).isEqualTo(5);

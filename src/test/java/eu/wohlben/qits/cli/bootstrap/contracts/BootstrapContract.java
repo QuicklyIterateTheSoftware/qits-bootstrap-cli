@@ -771,7 +771,7 @@ final class BootstrapContract {
             new Case(SYSTEM, Trigger.phase("target-localhost"), "no target", "createTarget",
                     Request.json("POST", "/system/api/targets",
                             "{\"name\":\"localhost\",\"description\":\"this platform's own host,"
-                                    + " declared by qits-bootstrap\",\"minimums\":{\"ci\":0,"
+                                    + " declared by qits-bootstrap\",\"reservations\":{\"ci\":0,"
                                     + "\"workspace\":1,\"desk\":1}}"),
                     201, List.of("$.target.id", "$.registrationToken", "$.installLine"),
                     (base, params, recorded, op) -> {
@@ -785,9 +785,9 @@ final class BootstrapContract {
                                 .isPresent();
                     },
                     "a create recorded with the bootstrap's body — name localhost, its"
-                            + " description, minimums {ci 0, workspace 1, desk 1} — answering 201"
-                            + " with {target: {id}, registrationToken, installLine} and the line"
-                            + " names QITS_SYSTEM_RUNNER_URL"),
+                            + " description, reservations {ci 0, workspace 1, desk 1} — answering"
+                            + " 201 with {target: {id}, registrationToken, installLine} and the"
+                            + " line names QITS_SYSTEM_RUNNER_URL"),
             new Case(SYSTEM, Trigger.phase("target-localhost"), "a declared target",
                     "listTargets", Request.get("/system/api/targets"), 200,
                     List.of("$[*].id", "$[*].name", "$[*].registered", "$[*].connected",

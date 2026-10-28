@@ -56,11 +56,11 @@ public class SystemApi {
      */
     public Http.Response createTarget(String name, String description, int ci, int workspace,
                                       int desk, String token) {
-        String minimums = "{\"ci\":" + ci + ",\"workspace\":" + workspace + ",\"desk\":" + desk
+        String reservations = "{\"ci\":" + ci + ",\"workspace\":" + workspace + ",\"desk\":" + desk
                 + "}";
         return http.postJson(base + "/api/targets",
                 Json.object("name", name, "description", description,
-                        "minimums", Json.verbatim(minimums)),
+                        "reservations", Json.verbatim(reservations)),
                 writer(token));
     }
 

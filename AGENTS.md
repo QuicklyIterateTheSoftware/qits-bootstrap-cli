@@ -382,7 +382,7 @@ forced. Add to that list rather than deviating quietly.
   glances image is the mirror's).
 - **This host's TARGET holds the socket as a CONTAINER, and never as a deployment.** Every CI run
   is a lease on a qits-system target since qits-1547 (and every workspace one since qits-1535), so
-  `target-localhost` declares target `localhost` at `POST /system/api/targets` (minimums: ci from
+  `target-localhost` declares target `localhost` at `POST /system/api/targets` (reservations: ci from
   `TargetSlots`, workspace 1, desk 1) and starts the normal `qits/qits-system-runner` image with a
   plain `docker run` — the install line's container contract, plus the three shared volumes of this
   host (`QITS_SYSTEM_RUNNER_CREDENTIAL_VOLUME=qits_shared_dot_claude`, `_M2_VOLUME`,
