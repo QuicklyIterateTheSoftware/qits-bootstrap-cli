@@ -342,4 +342,76 @@ class DockerBuildTest {
         assertThat(runner.argv).containsExactly(List.of("docker", "build",
                 "-f", "/src/cli/docker/Dockerfile", "-t", "qits-bootstrap:abc", "/src/cli"));
     }
+
+    // --- platform-built bases (qits-889) -------------------------------------------------------
+
+    /**
+     * <b>A platform-built base is read from the run's OCI layout volume and from no registry</b>:
+     * the client mounts {@code qits-oci-seed}, hands each layout over as {@code --oci-layout}, and
+     * names it for the FROM it replaces by digest. An image a later build starts from is exported
+     * there too, beside the docker output — after its directory is emptied, since a layout is a
+     * content store that would otherwise be merged into.
+     */
+    @Test
+    void aLocalBaseIsANamedOciLayoutContextAndAnExportedImageAnotherLayout() {
+        ScriptedRunner runner = coldHost();
+        String digest = "sha256:" + "a".repeat(64);
+
+        docker(runner).buildSeedImage("qits/workspace-base:1", "FROM ${BROWSER_BASE}\n",
+                Path.of("/src/oci"), List.of("QITS_CLI_VERSION=2"), Map.of(),
+                List.of(new Docker.LocalBase("qits/build-images/node-browser-base:3",
+                        "node-browser-base@3", digest)),
+                "workspace-base@1", null, null);
+
+        assertThat(runner.argv).contains(List.of("docker", "run", "--rm", "-v",
+                "qits-oci-seed:/layouts", "--entrypoint", "rm", IMAGE, "-rf",
+                "/layouts/workspace-base@1"));
+        assertThat(buildArgv(runner)).containsSubsequence(
+                "-v", "qits-oci-seed:/layouts",
+                "--entrypoint", "buildctl", IMAGE)
+                .containsSubsequence("--oci-layout", "base0=/layouts/node-browser-base@3",
+                        "--opt", "context:qits/build-images/node-browser-base:3=oci-layout://base0@"
+                                + digest)
+                .containsSubsequence("--opt", "build-arg:QITS_CLI_VERSION=2")
+                .containsSubsequence(
+                        "--output", "type=docker,name=qits/workspace-base:1,dest=/out/image.tar",
+                        "--output", "type=oci,name=qits/workspace-base:1,tar=false,"
+                                + "dest=/layouts/workspace-base@1");
+    }
+
+    /** A build that only READS a layout mounts the volume read-only and exports nothing to it. */
+    @Test
+    void aBuildThatOnlyReadsALayoutMountsItReadOnly() {
+        ScriptedRunner runner = coldHost();
+        String digest = "sha256:" + "b".repeat(64);
+
+        docker(runner).buildSeedImage("qits/workspace:1", "FROM ${WORKSPACE_BASE}\n",
+                Path.of("/src/wd"), List.of(), Map.of("qits-m2", "qits-maven-seed"),
+                List.of(new Docker.LocalBase("qits/workspace-base:1", "workspace-base@1", digest)),
+                null, null, null);
+
+        assertThat(buildArgv(runner)).contains("qits-oci-seed:/layouts:ro")
+                .noneMatch(arg -> arg.startsWith("type=oci"));
+        assertThat(runner.argv).noneMatch(command -> command.contains("-rf"));
+    }
+
+    /** The digest a dependent build names is the first manifest of the layout's index. */
+    @Test
+    void theLayoutDigestIsTheIndexsFirstManifest() {
+        String digest = "sha256:" + "c".repeat(64);
+        assertThat(Docker.indexDigest("{\"schemaVersion\":2,\"manifests\":[{\"mediaType\":"
+                + "\"application/vnd.oci.image.manifest.v1+json\",\"digest\": \"" + digest
+                + "\",\"size\":1}]}")).isEqualTo(digest);
+        assertThat(Docker.indexDigest("")).isNull();
+        assertThat(Docker.indexDigest(null)).isNull();
+
+        ScriptedRunner held = new ScriptedRunner(command ->
+                ScriptedRunner.ok("{\"manifests\":[{\"digest\":\"" + digest + "\"}]}"));
+        assertThat(new Docker(held).layoutDigest("workspace-base@1")).isEqualTo(digest);
+        assertThat(held.argv.getFirst()).containsExactly("docker", "run", "--rm", "-v",
+                "qits-oci-seed:/layouts:ro", "--entrypoint", "cat", IMAGE,
+                "/layouts/workspace-base@1/index.json");
+        ScriptedRunner missing = new ScriptedRunner(command -> ScriptedRunner.failed("no such file"));
+        assertThat(new Docker(missing).layoutDigest("workspace-base@1")).isNull();
+    }
 }

@@ -1761,7 +1761,9 @@ class PipelinePhasesTest {
         assertThat(runner.argv.stream().filter(command -> command.contains("push"))
                 .map(List::getLast)).containsExactly(
                 "registry.prod.localhost:8080/qits/qits-idp:" + RELEASE,
+                "registry.prod.localhost:8080/qits/qits-configuration:" + RELEASE,
                 "registry.prod.localhost:8080/qits/qits-projects:" + RELEASE,
+                "registry.prod.localhost:8080/qits/qits-workspaces:" + RELEASE,
                 "registry.prod.localhost:8080/qits/qits-events:" + RELEASE,
                 "registry.prod.localhost:8080/qits/qits-mirror:" + RELEASE,
                 "registry.prod.localhost:8080/qits/qits-artifacts:" + RELEASE,
@@ -1799,7 +1801,7 @@ class PipelinePhasesTest {
         assertThatThrownBy(() -> new PipelinePhases(rerun).seedImagesPublish().action()
                 .run(new CiLogStreamTest.Recorder()))
                 .isInstanceOf(PhaseSkipped.class)
-                .hasMessageContaining("the registry holds all 10 seed-deployed images");
+                .hasMessageContaining("the registry holds all 12 seed-deployed images");
         assertThat(again.lines()).noneMatch(line -> line.startsWith("docker tag")
                 || line.contains(" push "));
     }
@@ -2865,5 +2867,39 @@ class PipelinePhasesTest {
         assertThat(PipelinePhases.targetConnection(new Http.Response(200, tgListing(
                 tgRow(RUNNER_ID, "localhost", true, true, null, null))), RUNNER_ID).value())
                 .isNotNull();
+    }
+
+    // --- the workspace-side images and the deferred list (qits-889) -------------------------------
+
+    /** The workspace-side images are pushed after the step and runner images, in the order given. */
+    @Test
+    void theWorkspaceImagesArePushedAfterTheStepAndRunnerImages() {
+        List<PipelinePhases.StoreImage> images = PipelinePhases.storeImages("7", List.of(
+                new PipelinePhases.StoreImage("qits/workspace-base", "1"),
+                new PipelinePhases.StoreImage("qits/workspace", "10")));
+
+        assertThat(images.stream().map(image -> image.repository() + ":" + image.tag()))
+                .endsWith("qits/qits-system-runner:7", "qits/workspace-base:1", "qits/workspace:10");
+        assertThat(PipelinePhases.storeImages("7")).hasSize(SeedPhases.STEP_IMAGES.size() + 1);
+    }
+
+    /**
+     * The summary states what phase 1 did not build, every entry with its reason — the deferred
+     * six under their own heading, the three retired or unused entries under theirs.
+     */
+    @Test
+    void theSummaryNamesWhatPhaseOneDeferred() {
+        List<String> lines = PipelinePhases.deferredLines();
+
+        assertThat(lines.getFirst()).startsWith("deferred:");
+        assertThat(lines).hasSize(
+                PlatformModel.DEFERRED_TO_PHASE_4.size() + PlatformModel.NOT_BUILT.size() + 2);
+        assertThat(lines).anyMatch(line -> line.startsWith("not built:"));
+        assertThat(lines).anyMatch(line -> line.contains("qits-stt-service — speech-to-text"))
+                .anyMatch(line -> line.contains("qits-landing-app — "))
+                .anyMatch(line -> line.contains("qits-orchestrator-service — "))
+                .anyMatch(line -> line.contains("qits-workspace-editor-oci — "))
+                .anyMatch(line -> line.contains("qits-workspaces-runner-daemon — "))
+                .anyMatch(line -> line.contains("qits-workspaces-frontend — "));
     }
 }

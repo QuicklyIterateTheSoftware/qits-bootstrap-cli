@@ -1814,6 +1814,22 @@ public class SeedPhases {
             poms.add(boot.git.fileAt(boot.state.repoDir("runner"), version,
                     PinnedVersions.ROOT_POM));
         }
+        // THE WORKSPACE-SIDE NATIVE BUILDS (qits-889): the qits binary, the workspace daemon and
+        // the projects daemon, each at the tags workspaceImages names. Their suites' pacts and
+        // golden masters are pinned in their root poms like everyone else's.
+        WorkspaceImages workspace = workspaceImages();
+        for (String version : workspace.cli()) {
+            poms.add(boot.git.fileAt(boot.state.repoDir("platform-access-cli"), version,
+                    PinnedVersions.ROOT_POM));
+        }
+        for (String version : workspace.workspaces().keySet()) {
+            poms.add(boot.git.fileAt(boot.state.repoDir("workspace-daemon"), version,
+                    PinnedVersions.ROOT_POM));
+        }
+        for (String version : workspace.agents().keySet()) {
+            poms.add(boot.git.fileAt(boot.state.repoDir("projects-daemon"), version,
+                    PinnedVersions.ROOT_POM));
+        }
         return poms;
     }
 
@@ -2459,6 +2475,590 @@ public class SeedPhases {
         }
     }
 
+    // --- what phase 1 builds, by repository (qits-889) ---------------------------------------------
+
+    /**
+     * <b>Every repository phase 1 builds something from, and what</b> — derived from the same
+     * constants the plan's phases are built from, so a repository a phase stops building drops out
+     * of here with it. Together with {@link PlatformModel#DEFERRED_TO_PHASE_4} and
+     * {@link PlatformModel#NOT_BUILT} it must cover every repository the model clones; a test holds
+     * the three against {@link PlatformModel#sourceRepos}.
+     */
+    static java.util.SortedMap<String, String> phaseOneBuilds() {
+        java.util.SortedMap<String, String> built = new java.util.TreeMap<>();
+        for (String name : PlatformModel.CORE) {
+            built.put(name, "seed image qits/" + name + ":latest");
+        }
+        for (String name : PlatformModel.seedClients()) {
+            built.put("spa-" + name, "the client inside qits/" + name);
+        }
+        for (String library : SEED_LIBRARIES) {
+            built.merge(library, "libraries into " + SEED_REPO_VOLUME, (a, b) -> a + "; " + b);
+        }
+        NpmSeed.jslibs().forEach(pkg ->
+                built.put(NpmSeed.producer(pkg), "@qits packages into " + NpmSeed.VOLUME));
+        built.put("oci", "the step images and qits/build-images/node-browser-base");
+        built.put("ci-daemon", "the ci-daemon binary and qits-ci-daemon-protocol");
+        built.put("system-runner-daemon", "qits/qits-system-runner and its protocol");
+        built.put("runner", "qits-runner-javalib into " + SEED_REPO_VOLUME);
+        built.put("projects-daemon", "qits/projects-daemon, qits/project-agent and its protocol");
+        built.put("workspace-daemon", "qits/workspace and qits-workspace-daemon-protocol");
+        built.put("oci-workspace", "qits/workspace-base");
+        built.put("platform-access-cli", "the qits binary, qits-platform-access-cli-binary, pacts");
+        // Contract sources only: their pacts at the pinned releases.
+        for (String readOnly : PlatformModel.READ_ONLY_REPOS) {
+            built.putIfAbsent(readOnly, "pacts into " + SEED_REPO_VOLUME);
+        }
+        return built;
+    }
+
+    // --- the images the platform starts workspaces and agents from (qits-889) -------------------
+
+    /** The pin every workspace-image consumer names {@code qits/workspace} by: the jar IS the tag. */
+    static final String WORKSPACE_IMAGE_PIN = "qits.workspace-daemon-protocol.version";
+
+    /** The pin qits-projects names {@code qits/project-agent} by, on the same terms. */
+    static final String AGENT_IMAGE_PIN = "qits.projects-daemon-protocol.version";
+
+    /** The pin qits-workspace-oci names the {@code qits} binary it bakes in by. */
+    static final String CLI_PIN = "qits.platform-access-cli-binary.version";
+
+    /**
+     * The services that start a container from {@code qits/workspace} at the version their root pom
+     * pins: qits-workspaces its workspaces, qits-projects its refinement rooms, qits-system the
+     * login probe of a target's workspace slot. Each lags independently.
+     */
+    static final List<String> WORKSPACE_IMAGE_CONSUMERS = List.of("workspaces", "projects", "system");
+
+    /** Where qits-workspace-daemon keeps the Dockerfile of {@code qits/workspace}. */
+    static final String WORKSPACE_DOCKERFILE = "docker/Dockerfile";
+
+    /** Where qits-projects-daemon keeps the Dockerfile of {@code qits/project-agent}. */
+    static final String AGENT_DOCKERFILE = "docker/Dockerfile.projects";
+
+    /** Where qits-build-images-oci keeps the browser base qits/workspace-base starts from. */
+    static final String BROWSER_BASE_DOCKERFILE = "node-browser-base/Dockerfile";
+
+    static final String BROWSER_BASE_IMAGE = "qits/build-images/node-browser-base";
+    static final String WORKSPACE_BASE_IMAGE = "qits/workspace-base";
+    static final String WORKSPACE_IMAGE = "qits/workspace";
+    static final String PROJECTS_DAEMON_IMAGE = "qits/projects-daemon";
+    static final String AGENT_IMAGE = "qits/project-agent";
+
+    /**
+     * <b>EVERY VERSION OF EVERY WORKSPACE-SIDE IMAGE THE PLATFORM NEEDS, closed over their bases</b>
+     * (qits-889) — read from the checkouts, never guessed:
+     * <ul>
+     *   <li>{@code qits/workspace} at every {@link #WORKSPACE_IMAGE_PIN} a consumer pins, and
+     *       {@code qits/project-agent} (with the {@code qits/projects-daemon} it copies its binary
+     *       from) at every {@link #AGENT_IMAGE_PIN} — the images the platform STARTS, under
+     *       {@code registry.qits.<domain>/qits/<image>:<pin>};
+     *   <li>{@code qits/workspace-base} at every version those images' Dockerfiles name at their
+     *       tags ({@code ARG WORKSPACE_BASE}, {@code ARG BASE});
+     *   <li>{@code qits/build-images/node-browser-base} and the {@code qits} binary at what each
+     *       base's tag names ({@code ARG BROWSER_BASE}, the {@link #CLI_PIN} of its pom).
+     * </ul>
+     * Lists keep first-seen order and hold each version once.
+     *
+     * @param bases      workspace-base version → the browser-base version it starts from
+     * @param workspaces workspace version → the workspace-base version it starts from
+     * @param agents     project-agent version → the workspace-base version it starts from
+     */
+    record WorkspaceImages(List<String> cli, List<String> browserBases,
+                           Map<String, String> bases, Map<String, String> workspaces,
+                           Map<String, String> agents) {
+    }
+
+    /** The checkout reads {@link #workspaceImages} needs, as a seam a test can answer. */
+    interface ReleaseFiles {
+        /** One file of a repository at a release tag, or null when the tag or the file is not. */
+        String at(String repository, String version, String path);
+    }
+
+    /**
+     * {@link WorkspaceImages} from the consumers' root poms and the release files they lead to.
+     * A tag that is not in a checkout, or a Dockerfile that names no base, stops the boot by name:
+     * an image built at anything else is not the image the platform asks for.
+     */
+    static WorkspaceImages workspaceImages(Map<String, String> consumerPoms, ReleaseFiles files) {
+        java.util.LinkedHashMap<String, String> workspaces = new java.util.LinkedHashMap<>();
+        java.util.LinkedHashMap<String, String> agents = new java.util.LinkedHashMap<>();
+        for (String consumer : WORKSPACE_IMAGE_CONSUMERS) {
+            String pom = consumerPoms.get(consumer);
+            // A consumer that pins no workspace image starts none, and is owed none.
+            if (pom == null || !pom.contains("<" + WORKSPACE_IMAGE_PIN + ">")) {
+                continue;
+            }
+            String version = protocolPin(pom, WORKSPACE_IMAGE_PIN, PlatformModel.application(consumer));
+            workspaces.computeIfAbsent(version, v -> baseOf(files, "workspace-daemon", v,
+                    WORKSPACE_DOCKERFILE, "WORKSPACE_BASE"));
+        }
+        String projects = consumerPoms.get("projects");
+        if (projects != null && projects.contains("<" + AGENT_IMAGE_PIN + ">")) {
+            String version = protocolPin(projects, AGENT_IMAGE_PIN, PlatformModel.application("projects"));
+            agents.computeIfAbsent(version, v -> baseOf(files, "projects-daemon", v,
+                    AGENT_DOCKERFILE, "BASE"));
+        }
+        java.util.LinkedHashMap<String, String> bases = new java.util.LinkedHashMap<>();
+        java.util.LinkedHashSet<String> cli = new java.util.LinkedHashSet<>();
+        Stream.concat(workspaces.values().stream(), agents.values().stream()).forEach(base -> {
+            if (bases.containsKey(base)) {
+                return;
+            }
+            bases.put(base, baseOf(files, "oci-workspace", base, "Dockerfile", "BROWSER_BASE"));
+            String pom = files.at("oci-workspace", base, PinnedVersions.ROOT_POM);
+            if (pom == null) {
+                throw new IllegalStateException(PlatformModel.repo("oci-workspace") + " has no "
+                        + "pom.xml at " + base + ", so this boot cannot tell which qits binary "
+                        + WORKSPACE_BASE_IMAGE + ":" + base + " carries");
+            }
+            cli.add(protocolPin(pom, CLI_PIN, PlatformModel.repo("oci-workspace") + "@" + base));
+        });
+        return new WorkspaceImages(List.copyOf(cli),
+                bases.values().stream().distinct().toList(), Map.copyOf(bases),
+                Map.copyOf(workspaces), Map.copyOf(agents));
+    }
+
+    /** The tag of the platform-built base a release's Dockerfile names in {@code ARG <arg>}. */
+    private static String baseOf(ReleaseFiles files, String repository, String version,
+                                 String dockerfile, String arg) {
+        String text = files.at(repository, version, dockerfile);
+        if (text == null) {
+            throw new IllegalStateException("the platform pins " + PlatformModel.repo(repository)
+                    + " " + version + " and the checkout has no " + dockerfile + " at that tag, so "
+                    + "there is nothing to build the image from. Fetch the tags of "
+                    + PlatformModel.repo(repository) + " (git fetch --tags) and rerun");
+        }
+        String tag = SeedDockerfile.tagOf(SeedDockerfile.argDefault(text, arg));
+        if (tag == null || tag.isBlank() || tag.contains("$")) {
+            throw new IllegalStateException(PlatformModel.repo(repository) + " " + version + "'s "
+                    + dockerfile + " names no versioned base in `ARG " + arg + "=…:<version>`, so "
+                    + "this boot cannot tell which one to build it on");
+        }
+        return tag;
+    }
+
+    /** The closure for THIS boot's checkouts. */
+    WorkspaceImages workspaceImages() throws IOException {
+        Map<String, String> poms = new LinkedHashMap<>();
+        for (String consumer : WORKSPACE_IMAGE_CONSUMERS) {
+            Path pom = boot.state.repoDir(consumer).resolve(PinnedVersions.ROOT_POM);
+            if (Files.isRegularFile(pom)) {
+                poms.put(consumer, Files.readString(pom, StandardCharsets.UTF_8));
+            }
+        }
+        return workspaceImages(poms,
+                (repository, version, path) -> boot.git.fileAt(boot.state.repoDir(repository),
+                        version, path));
+    }
+
+    /** {@code <image>:<version>}, the local tag a seed build is loaded under. */
+    static String image(String repository, String version) {
+        return repository + ":" + version;
+    }
+
+    /** The layout a base is exported to in {@link Docker#OCI_SEED_VOLUME}. */
+    static String layout(String repository, String version) {
+        return repository.substring(repository.lastIndexOf('/') + 1) + "@" + version;
+    }
+
+    /** Where the {@code qits} binary of one version is kept between its build and its uses. */
+    Path cliBinary(String version) {
+        return boot.state.wrapperDir.resolve(".qits-bootstrap").resolve("qits-cli").resolve(version)
+                .resolve("qits");
+    }
+
+    /**
+     * <b>Every image the workspace-side phases build, as the store is asked for it</b> — the
+     * browser bases, the workspace bases, the workspace images, the projects daemons and the
+     * agents, each at its version. {@code images-publish} pushes them beside the step images: a
+     * release build in phase 4 starts {@code FROM} the bases through the registry, and a target
+     * pulls the started images from it.
+     */
+    List<PipelinePhases.StoreImage> workspaceStoreImages() throws IOException {
+        WorkspaceImages closure = workspaceImages();
+        List<PipelinePhases.StoreImage> images = new ArrayList<>();
+        closure.browserBases().forEach(v -> images.add(new PipelinePhases.StoreImage(BROWSER_BASE_IMAGE, v)));
+        closure.bases().keySet().stream().sorted()
+                .forEach(v -> images.add(new PipelinePhases.StoreImage(WORKSPACE_BASE_IMAGE, v)));
+        closure.workspaces().keySet().stream().sorted()
+                .forEach(v -> images.add(new PipelinePhases.StoreImage(WORKSPACE_IMAGE, v)));
+        closure.agents().keySet().stream().sorted().forEach(v -> {
+            images.add(new PipelinePhases.StoreImage(PROJECTS_DAEMON_IMAGE, v));
+            images.add(new PipelinePhases.StoreImage(AGENT_IMAGE, v));
+        });
+        return images;
+    }
+
+    /**
+     * <b>One release of a repository as a build CONTEXT</b>: a detached worktree under the sources
+     * directory — which the daemon resolves at its own path — removed by the caller's {@code finally}
+     * through {@link #removeTree}. {@link #copyTag}'s export, kept on disk for a build to read.
+     */
+    private Path exportTree(PhaseContext ctx, String name, String version) {
+        Path repo = boot.state.repoDir(name);
+        Path tree = boot.state.srcDir.resolve(".exports").resolve(PlatformModel.repo(name) + "@"
+                + version);
+        boot.git.worktreeRemove(repo, tree, null);
+        boot.git.worktreePrune(repo, null);
+        Boot.must(boot.git.worktreeAdd(repo, version, tree, ctx::log),
+                PlatformModel.repo(name) + " has no " + version + " to build from — fetch its tags "
+                        + "(git fetch --tags) and rerun");
+        return tree;
+    }
+
+    private void removeTree(String name, Path tree) {
+        boot.git.worktreeRemove(boot.state.repoDir(name), tree, null);
+    }
+
+    /** A base this run exported, or the phase stops naming the phase that should have. */
+    private Docker.LocalBase localBase(String repository, String version, String producer) {
+        String layout = layout(repository, version);
+        String digest = boot.docker.layoutDigest(layout);
+        if (digest == null) {
+            throw new IllegalStateException(image(repository, version) + " is not in the "
+                    + Docker.OCI_SEED_VOLUME + " volume, and a seed build takes a platform-built "
+                    + "base from there and from no registry. " + producer + " builds it — it did "
+                    + "not run, or did not finish");
+        }
+        return new Docker.LocalBase(image(repository, version), layout, digest);
+    }
+
+    /** Whether a base is on this host AND in the layout volume, so neither has to be built again. */
+    private boolean baseHeld(String repository, String version) {
+        return boot.docker.imageExists(image(repository, version))
+                && boot.docker.layoutDigest(layout(repository, version)) != null;
+    }
+
+    /** The registry-vhost spelling, which {@code images-publish} pushes. */
+    private String vhost(String repository, String version) {
+        return boot.config.registryVhost() + "/" + image(repository, version);
+    }
+
+    /** The public spelling a consumer starts the image under, so a target pulls nothing. */
+    private String publicName(String repository, String version) {
+        return PipelinePhases.publicRegistryHost(boot.config.requiredDomain()) + "/"
+                + image(repository, version);
+    }
+
+    /**
+     * <b>The {@code qits} binary at every version a workspace base bakes in, built from its release
+     * tag</b> — qits-platform-access-cli's own {@code docker/Dockerfile}, stage {@code binary}: the
+     * musl toolchain on GraalVM CE and a static native compile, the qits-ci-daemon's shape.
+     * <p>
+     * The base's release downloads it from {@code registry.qits.<domain>/artifacts/daemons/
+     * qits-platform-access-cli/<version>}; a cold boot has no such store, so it is built here, from
+     * the {@code qits-maven-seed} volume and upstream only. The two toolchain tarballs are the ones
+     * {@code seed-toolchain} downloaded and verified against qits-ci-daemon's pins — the same two
+     * coordinates, which this phase checks rather than assumes. {@code daemon-publish} puts each
+     * binary in the store after the idp, for phase 4's release builds of the bases.
+     */
+    public Phase qitsCliSeed() {
+        return new Phase("seed-qits-cli", "build the qits binary the workspace bases carry", ctx -> {
+            WorkspaceImages closure = workspaceImages();
+            List<String> built = new ArrayList<>();
+            for (String version : closure.cli()) {
+                Path out = cliBinary(version);
+                if (Files.isRegularFile(out)) {
+                    ctx.log("  qits " + version + " — " + out + ": held");
+                    continue;
+                }
+                String origin = PlatformModel.repo("platform-access-cli") + "@" + version
+                        + "/docker/Dockerfile";
+                String committed = boot.git.fileAt(boot.state.repoDir("platform-access-cli"),
+                        version, "docker/Dockerfile");
+                if (committed == null) {
+                    throw new IllegalStateException("a workspace base pins the qits binary at "
+                            + version + " and the " + PlatformModel.repo("platform-access-cli")
+                            + " checkout has no docker/Dockerfile at that tag. Fetch its tags "
+                            + "(git fetch --tags) and rerun");
+                }
+                List<MuslToolchain.Tarball> tarballs = MuslToolchain.references(committed);
+                List<String> held = fileRegistryProbe(tarballs.stream()
+                        .map(MuslToolchain.Tarball::storePath).toList());
+                List<String> missing = tarballs.stream().map(MuslToolchain.Tarball::storePath)
+                        .filter(path -> !held.contains(path)).toList();
+                if (!missing.isEmpty()) {
+                    throw new IllegalStateException(origin + " ADDs " + String.join(", ", missing)
+                            + ", which the " + SEED_REPO_VOLUME + " volume does not hold. "
+                            + "seed-toolchain seeds what qits-ci-daemon's builder pins; the two "
+                            + "repositories name different toolchains now — teach seed-toolchain "
+                            + "the second pin");
+                }
+                String dockerfile = SeedDockerfile.refusePlatformBases(SeedDockerfile.localToolchain(
+                        SeedDockerfile.localMaven(SeedDockerfile.rewrite(committed), origin), origin,
+                        tarballs), origin);
+                Path tree = exportTree(ctx, "platform-access-cli", version);
+                String tag = image("qits-seed/qits-cli", version);
+                try {
+                    mavenPreflight(ctx, "platform-access-cli@" + version, tree);
+                    ctx.status("cold musl native build of the qits binary " + version);
+                    Boot.must(boot.docker.buildSeedImage(tag, dockerfile, tree, List.of(),
+                                    Map.of(SeedDockerfile.SEED_M2_CONTEXT, SEED_REPO_VOLUME),
+                                    List.of(), null, "binary", ctx::log),
+                            "the build of the qits binary " + version + " failed");
+                } finally {
+                    removeTree("platform-access-cli", tree);
+                }
+                // The binary stage is FROM scratch with the one file in it: a container of it is
+                // created, never started, and the file copied out.
+                ProcessResult created = boot.docker.exec(ctx::log, "create", tag, "/qits");
+                Boot.must(created, "creating a container of " + tag + " failed");
+                String cid = created.captured().getLast().strip();
+                try {
+                    Files.createDirectories(out.getParent());
+                    Boot.must(boot.docker.exec(Duration.ofMinutes(5), ctx::log, "cp",
+                            cid + ":/qits", out.toString()), "copying the qits binary out failed");
+                } finally {
+                    boot.docker.removeContainer(cid, null);
+                }
+                built.add(version);
+            }
+            if (built.isEmpty()) {
+                ctx.skip("every qits binary a workspace base pins is on this host ("
+                        + String.join(", ", closure.cli()) + ")");
+            }
+            ctx.note(String.join(", ", built));
+        });
+    }
+
+    /**
+     * <b>{@code qits/build-images/node-browser-base} at every version a workspace base starts
+     * from</b>, built from qits-build-images-oci's TAG — the step images build its main, but this
+     * one is pinned by version — and exported to {@link Docker#OCI_SEED_VOLUME} for the base's
+     * build to start from. Upstream bases and public package mirrors only.
+     */
+    public Phase browserBaseSeed() {
+        return new Phase("seed-node-browser-base",
+                "build the browser base the workspace bases start from", ctx -> {
+            WorkspaceImages closure = workspaceImages();
+            List<String> built = new ArrayList<>();
+            for (String version : closure.browserBases()) {
+                if (baseHeld(BROWSER_BASE_IMAGE, version)) {
+                    tag(ctx, image(BROWSER_BASE_IMAGE, version), List.of(vhost(BROWSER_BASE_IMAGE, version)));
+                    ctx.log("  " + image(BROWSER_BASE_IMAGE, version) + ": held");
+                    continue;
+                }
+                String origin = PlatformModel.repo("oci") + "@" + version + "/"
+                        + BROWSER_BASE_DOCKERFILE;
+                String committed = boot.git.fileAt(boot.state.repoDir("oci"), version,
+                        BROWSER_BASE_DOCKERFILE);
+                if (committed == null) {
+                    throw new IllegalStateException("a workspace base starts from "
+                            + image(BROWSER_BASE_IMAGE, version) + " and the "
+                            + PlatformModel.repo("oci") + " checkout has no "
+                            + BROWSER_BASE_DOCKERFILE + " at that tag. Fetch its tags and rerun");
+                }
+                String dockerfile = SeedDockerfile.refusePlatformBases(SeedDockerfile.refuseServers(
+                        SeedDockerfile.rewrite(committed), origin), origin);
+                Path tree = exportTree(ctx, "oci", version);
+                try {
+                    ctx.status("building " + image(BROWSER_BASE_IMAGE, version));
+                    Boot.must(boot.docker.buildSeedImage(image(BROWSER_BASE_IMAGE, version),
+                                    dockerfile, tree, List.of(), Map.of(), List.of(),
+                                    layout(BROWSER_BASE_IMAGE, version), null, ctx::log),
+                            "the build of " + image(BROWSER_BASE_IMAGE, version) + " failed");
+                } finally {
+                    removeTree("oci", tree);
+                }
+                tag(ctx, image(BROWSER_BASE_IMAGE, version), List.of(vhost(BROWSER_BASE_IMAGE, version)));
+                built.add(version);
+            }
+            if (built.isEmpty()) {
+                ctx.skip("held: " + String.join(", ", closure.browserBases()));
+            }
+            ctx.note(String.join(", ", built));
+        });
+    }
+
+    /**
+     * <b>{@code qits/workspace-base} at every version an image the platform starts is built on</b>,
+     * from qits-workspace-oci's tag: {@code FROM} the browser base this run exported, and the
+     * {@code qits} binary {@link #qitsCliSeed} built put in the context, where the release's own
+     * recipe puts the one it downloads. Exported to {@link Docker#OCI_SEED_VOLUME} too, for the
+     * workspace and agent images.
+     */
+    public Phase workspaceBaseSeed() {
+        return new Phase("seed-workspace-base",
+                "build the workspace bases the workspace and agent images start from", ctx -> {
+            WorkspaceImages closure = workspaceImages();
+            List<String> built = new ArrayList<>();
+            for (Map.Entry<String, String> entry : new java.util.TreeMap<>(closure.bases())
+                    .entrySet()) {
+                String version = entry.getKey();
+                if (baseHeld(WORKSPACE_BASE_IMAGE, version)) {
+                    tag(ctx, image(WORKSPACE_BASE_IMAGE, version),
+                            List.of(vhost(WORKSPACE_BASE_IMAGE, version)));
+                    ctx.log("  " + image(WORKSPACE_BASE_IMAGE, version) + ": held");
+                    continue;
+                }
+                String origin = PlatformModel.repo("oci-workspace") + "@" + version + "/Dockerfile";
+                String committed = boot.git.fileAt(boot.state.repoDir("oci-workspace"), version,
+                        "Dockerfile");
+                String cliVersion = protocolPin(boot.git.fileAt(boot.state.repoDir("oci-workspace"),
+                        version, PinnedVersions.ROOT_POM), CLI_PIN, origin);
+                Path cli = cliBinary(cliVersion);
+                if (!Files.isRegularFile(cli)) {
+                    throw new IllegalStateException(origin + " carries the qits binary "
+                            + cliVersion + ", which is not at " + cli + ". seed-qits-cli builds "
+                            + "it — it did not run, or did not finish");
+                }
+                Docker.LocalBase base = localBase(BROWSER_BASE_IMAGE, entry.getValue(),
+                        "seed-node-browser-base");
+                String dockerfile = SeedDockerfile.refusePlatformBases(SeedDockerfile.refuseServers(
+                        SeedDockerfile.localBase(SeedDockerfile.rewrite(committed), origin,
+                                "BROWSER_BASE", base.reference()), origin), origin);
+                Path tree = exportTree(ctx, "oci-workspace", version);
+                try {
+                    // Where the release's recipe puts the binary it downloads: `COPY qits …`.
+                    Path into = tree.resolve("qits");
+                    Files.copy(cli, into, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    into.toFile().setExecutable(true, false);
+                    ctx.status("building " + image(WORKSPACE_BASE_IMAGE, version) + " (qits "
+                            + cliVersion + ")");
+                    Boot.must(boot.docker.buildSeedImage(image(WORKSPACE_BASE_IMAGE, version),
+                                    dockerfile, tree, List.of("QITS_CLI_VERSION=" + cliVersion),
+                                    Map.of(), List.of(base), layout(WORKSPACE_BASE_IMAGE, version),
+                                    null, ctx::log),
+                            "the build of " + image(WORKSPACE_BASE_IMAGE, version) + " failed");
+                } finally {
+                    removeTree("oci-workspace", tree);
+                }
+                tag(ctx, image(WORKSPACE_BASE_IMAGE, version),
+                        List.of(vhost(WORKSPACE_BASE_IMAGE, version)));
+                built.add(version);
+            }
+            if (built.isEmpty()) {
+                ctx.skip("held: " + String.join(", ", new java.util.TreeSet<>(closure.bases().keySet())));
+            }
+            ctx.note(String.join(", ", built));
+        });
+    }
+
+    /**
+     * <b>{@code qits/workspace} at every version a consumer pins, from qits-workspace-daemon's
+     * tag</b>: the daemon's native compile out of the {@code qits-maven-seed} volume, on the
+     * workspace base this run exported. Tagged under the public registry name the consumers start
+     * it by, so a target finds it on this host and pulls nothing, and under the registry vhost for
+     * {@code images-publish}.
+     */
+    public Phase workspaceImageSeed() {
+        return new Phase("seed-workspace", "build the workspace images the platform starts", ctx -> {
+            WorkspaceImages closure = workspaceImages();
+            List<String> built = new ArrayList<>();
+            for (Map.Entry<String, String> entry : new java.util.TreeMap<>(closure.workspaces())
+                    .entrySet()) {
+                String version = entry.getKey();
+                String image = image(WORKSPACE_IMAGE, version);
+                List<String> tags = List.of(vhost(WORKSPACE_IMAGE, version),
+                        publicName(WORKSPACE_IMAGE, version));
+                if (boot.docker.imageExists(image)) {
+                    tag(ctx, image, tags);
+                    ctx.log("  " + image + ": held");
+                    continue;
+                }
+                String origin = PlatformModel.repo("workspace-daemon") + "@" + version + "/"
+                        + WORKSPACE_DOCKERFILE;
+                Docker.LocalBase base = localBase(WORKSPACE_BASE_IMAGE, entry.getValue(),
+                        "seed-workspace-base");
+                String dockerfile = SeedDockerfile.refusePlatformBases(SeedDockerfile.localBase(
+                        SeedDockerfile.localMaven(SeedDockerfile.rewrite(boot.git.fileAt(
+                                boot.state.repoDir("workspace-daemon"), version,
+                                WORKSPACE_DOCKERFILE)), origin),
+                        origin, "WORKSPACE_BASE", base.reference()), origin);
+                Path tree = exportTree(ctx, "workspace-daemon", version);
+                try {
+                    mavenPreflight(ctx, "workspace-daemon@" + version, tree);
+                    ctx.status("cold GraalVM native build of " + image + " — ~4 GB RAM");
+                    Boot.must(boot.docker.buildSeedImage(image, dockerfile, tree, List.of(),
+                                    Map.of(SeedDockerfile.SEED_M2_CONTEXT, SEED_REPO_VOLUME),
+                                    List.of(base), null, null, ctx::log),
+                            "the build of " + image + " failed");
+                } finally {
+                    removeTree("workspace-daemon", tree);
+                }
+                tag(ctx, image, tags);
+                built.add(version);
+            }
+            if (built.isEmpty()) {
+                ctx.skip("held: " + String.join(", ", new java.util.TreeSet<>(closure.workspaces().keySet())));
+            }
+            ctx.note(String.join(", ", built));
+        });
+    }
+
+    /**
+     * <b>{@code qits/project-agent} at the version qits-projects pins, and the
+     * {@code qits/projects-daemon} it is layered from</b>, from qits-projects-daemon's tag — the
+     * release's own two builds: the daemon's native image first (exported for the second), then
+     * {@code docker/Dockerfile.projects}, which copies its binary onto the workspace base.
+     */
+    public Phase projectAgentSeed() {
+        return new Phase("seed-project-agent", "build the project agent images the platform starts",
+                ctx -> {
+            WorkspaceImages closure = workspaceImages();
+            List<String> built = new ArrayList<>();
+            for (Map.Entry<String, String> entry : new java.util.TreeMap<>(closure.agents())
+                    .entrySet()) {
+                String version = entry.getKey();
+                String agent = image(AGENT_IMAGE, version);
+                List<String> agentTags = List.of(vhost(AGENT_IMAGE, version),
+                        publicName(AGENT_IMAGE, version));
+                if (baseHeld(PROJECTS_DAEMON_IMAGE, version) && boot.docker.imageExists(agent)) {
+                    tag(ctx, image(PROJECTS_DAEMON_IMAGE, version),
+                            List.of(vhost(PROJECTS_DAEMON_IMAGE, version)));
+                    tag(ctx, agent, agentTags);
+                    ctx.log("  " + agent + ": held");
+                    continue;
+                }
+                Path repo = boot.state.repoDir("projects-daemon");
+                String daemonOrigin = PlatformModel.repo("projects-daemon") + "@" + version
+                        + "/docker/Dockerfile";
+                String agentOrigin = PlatformModel.repo("projects-daemon") + "@" + version + "/"
+                        + AGENT_DOCKERFILE;
+                Docker.LocalBase base = localBase(WORKSPACE_BASE_IMAGE, entry.getValue(),
+                        "seed-workspace-base");
+                String daemonFile = SeedDockerfile.refusePlatformBases(SeedDockerfile.localMaven(
+                        SeedDockerfile.rewrite(boot.git.fileAt(repo, version, "docker/Dockerfile")),
+                        daemonOrigin), daemonOrigin);
+                String daemon = image(PROJECTS_DAEMON_IMAGE, version);
+                Path tree = exportTree(ctx, "projects-daemon", version);
+                try {
+                    if (!baseHeld(PROJECTS_DAEMON_IMAGE, version)) {
+                        mavenPreflight(ctx, "projects-daemon@" + version, tree);
+                        ctx.status("cold GraalVM native build of " + daemon + " — ~4 GB RAM");
+                        Boot.must(boot.docker.buildSeedImage(daemon, daemonFile, tree, List.of(),
+                                        Map.of(SeedDockerfile.SEED_M2_CONTEXT, SEED_REPO_VOLUME),
+                                        List.of(), layout(PROJECTS_DAEMON_IMAGE, version), null,
+                                        ctx::log),
+                                "the build of " + daemon + " failed");
+                    }
+                    Docker.LocalBase daemonBase = localBase(PROJECTS_DAEMON_IMAGE, version,
+                            "this phase's daemon build");
+                    String agentFile = SeedDockerfile.refusePlatformBases(SeedDockerfile
+                            .refuseServers(SeedDockerfile.localBase(SeedDockerfile.localBase(
+                                    SeedDockerfile.rewrite(boot.git.fileAt(repo, version,
+                                            AGENT_DOCKERFILE)), agentOrigin, "BASE",
+                                    base.reference()), agentOrigin, "DAEMON_IMAGE",
+                                    daemonBase.reference()), agentOrigin), agentOrigin);
+                    ctx.status("building " + agent);
+                    Boot.must(boot.docker.buildSeedImage(agent, agentFile, tree, List.of(),
+                                    Map.of(), List.of(base, daemonBase), null, null, ctx::log),
+                            "the build of " + agent + " failed");
+                } finally {
+                    removeTree("projects-daemon", tree);
+                }
+                tag(ctx, daemon, List.of(vhost(PROJECTS_DAEMON_IMAGE, version)));
+                tag(ctx, agent, agentTags);
+                built.add(version);
+            }
+            if (built.isEmpty()) {
+                ctx.skip("held: " + String.join(", ", new java.util.TreeSet<>(closure.agents().keySet())));
+            }
+            ctx.note(String.join(", ", built));
+        });
+    }
+
     // --- the store, filled once the idp exists (qits-889) ---------------------------------------
 
     /** What {@link #storeSeed} uploads: this platform's own group, the whole subtree of it. */
@@ -2602,7 +3202,9 @@ public class SeedPhases {
             "qits_projects", "qits_epics", "qits_projects_eventstream",
             "qits_containers", "qits_containers_eventstream",
             "qits_platform_edge", "qits_platform_edge_eventstream",
-            "qits_system", "qits_system_eventstream");
+            "qits_system", "qits_system_eventstream",
+            "qits_configuration", "qits_configuration_eventstream",
+            "qits_workspaces", "qits_workspaces_eventstream");
 
     /**
      * The platform's postgres, running with a password of this bootstrap's choosing from its very
@@ -2630,7 +3232,8 @@ public class SeedPhases {
      * the orchestrator are the newest publishers on it.
      * Every one of them runs Flyway at boot against a database that has to exist
      * already, and at that point in a cold boot no deployer exists to make one.
-     * Everything else — workspaces, observability, configuration — is
+     * qits-configuration and qits-workspaces joined on 2026-10-30 (qits-889) with a pair each, on
+     * the same terms. Everything else — observability, stt, docs and the rest — is
      * pipeline-deployed only, so the deployer creates their roles and databases during their own
      * deployments from the {@code resources:} line in each repository's deployments.yml. Adding
      * them here would put a second authority on a credential that has exactly one.
@@ -2682,6 +3285,16 @@ public class SeedPhases {
                     "qits.pg.system-password");
             String systemEventstream = pgPassword(ctx, state, "PG_SYSTEM_EVENTSTREAM_PASSWORD",
                     "qits.pg.system-eventstream-password");
+            String configuration = pgPassword(ctx, state, "PG_CONFIGURATION_PASSWORD",
+                    "qits.pg.configuration-password");
+            String configurationEventstream = pgPassword(ctx, state,
+                    "PG_CONFIGURATION_EVENTSTREAM_PASSWORD",
+                    "qits.pg.configuration-eventstream-password");
+            String workspaces = pgPassword(ctx, state, "PG_WORKSPACES_PASSWORD",
+                    "qits.pg.workspaces-password");
+            String workspacesEventstream = pgPassword(ctx, state,
+                    "PG_WORKSPACES_EVENTSTREAM_PASSWORD",
+                    "qits.pg.workspaces-eventstream-password");
             boot.state.pgSuperuserPassword = superuser;
             boot.state.pgDeploymentsPassword = deployments;
             boot.state.pgDeploymentsEventstreamPassword = deploymentsEventstream;
@@ -2702,6 +3315,10 @@ public class SeedPhases {
             boot.state.pgPlatformEdgeEventstreamPassword = platformEdgeEventstream;
             boot.state.pgSystemPassword = system;
             boot.state.pgSystemEventstreamPassword = systemEventstream;
+            boot.state.pgConfigurationPassword = configuration;
+            boot.state.pgConfigurationEventstreamPassword = configurationEventstream;
+            boot.state.pgWorkspacesPassword = workspaces;
+            boot.state.pgWorkspacesEventstreamPassword = workspacesEventstream;
 
             // RECORDED BEFORE THE SERVER IS STARTED, and the order is the whole point.
             // POSTGRES_PASSWORD applies at initdb only: once the data volume holds a cluster, the
@@ -2732,6 +3349,10 @@ public class SeedPhases {
             state.put("PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD", platformEdgeEventstream);
             state.put("PG_SYSTEM_PASSWORD", system);
             state.put("PG_SYSTEM_EVENTSTREAM_PASSWORD", systemEventstream);
+            state.put("PG_CONFIGURATION_PASSWORD", configuration);
+            state.put("PG_CONFIGURATION_EVENTSTREAM_PASSWORD", configurationEventstream);
+            state.put("PG_WORKSPACES_PASSWORD", workspaces);
+            state.put("PG_WORKSPACES_EVENTSTREAM_PASSWORD", workspacesEventstream);
             state.write();
             ctx.log("  recorded in " + state.file() + " before the server starts");
 
@@ -2810,6 +3431,12 @@ public class SeedPhases {
                     registry.getOrDefault("qits_platform_edge_eventstream", platformEdgeEventstream);
             system = registry.getOrDefault("qits_system", system);
             systemEventstream = registry.getOrDefault("qits_system_eventstream", systemEventstream);
+            configuration = registry.getOrDefault("qits_configuration", configuration);
+            configurationEventstream = registry.getOrDefault("qits_configuration_eventstream",
+                    configurationEventstream);
+            workspaces = registry.getOrDefault("qits_workspaces", workspaces);
+            workspacesEventstream = registry.getOrDefault("qits_workspaces_eventstream",
+                    workspacesEventstream);
             if (!registry.isEmpty()) {
                 boot.state.pgCiPassword = ci;
                 boot.state.pgCiEventstreamPassword = ciEventstream;
@@ -2828,6 +3455,10 @@ public class SeedPhases {
                 boot.state.pgPlatformEdgeEventstreamPassword = platformEdgeEventstream;
                 boot.state.pgSystemPassword = system;
                 boot.state.pgSystemEventstreamPassword = systemEventstream;
+                boot.state.pgConfigurationPassword = configuration;
+                boot.state.pgConfigurationEventstreamPassword = configurationEventstream;
+                boot.state.pgWorkspacesPassword = workspaces;
+                boot.state.pgWorkspacesEventstreamPassword = workspacesEventstream;
                 state.put("PG_CI_PASSWORD", ci);
                 state.put("PG_CI_EVENTSTREAM_PASSWORD", ciEventstream);
                 state.put("PG_PLATFORM_IDP_PASSWORD", platformIdp);
@@ -2845,6 +3476,10 @@ public class SeedPhases {
                 state.put("PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD", platformEdgeEventstream);
                 state.put("PG_SYSTEM_PASSWORD", system);
                 state.put("PG_SYSTEM_EVENTSTREAM_PASSWORD", systemEventstream);
+                state.put("PG_CONFIGURATION_PASSWORD", configuration);
+                state.put("PG_CONFIGURATION_EVENTSTREAM_PASSWORD", configurationEventstream);
+                state.put("PG_WORKSPACES_PASSWORD", workspaces);
+                state.put("PG_WORKSPACES_EVENTSTREAM_PASSWORD", workspacesEventstream);
                 state.write();
                 ctx.log("  " + registry.size() + " credentials read back from the deployer's "
                         + "registry — the seed uses what the rows say");
@@ -2936,6 +3571,16 @@ public class SeedPhases {
                 // first pipeline deployment are the rows this creates.
                 provision(ctx, admin, "qits_system", system, false);
                 provision(ctx, admin, "qits_system_eventstream", systemEventstream, false);
+                // THE TWO SERVICES PHASE 1 GAINED IN qits-889, on the same terms: each boots from
+                // the seed stack before any deployer exists, and each declares a domain store and
+                // the eventstream outbox (`postgresql:db, postgresql:eventstream:<app>_eventstream`)
+                // — so the rows the deployer registers at its first deployment are the rows this
+                // creates.
+                provision(ctx, admin, "qits_configuration", configuration, false);
+                provision(ctx, admin, "qits_configuration_eventstream", configurationEventstream,
+                        false);
+                provision(ctx, admin, "qits_workspaces", workspaces, false);
+                provision(ctx, admin, "qits_workspaces_eventstream", workspacesEventstream, false);
             }
             ctx.note(SEED_DATABASES.size() + " databases ready on " + pg);
         });
@@ -3447,6 +4092,10 @@ public class SeedPhases {
                     .mask(orEmpty(boot.state.pgGithostEventstreamPassword))
                     .mask(orEmpty(boot.state.pgSystemPassword))
                     .mask(orEmpty(boot.state.pgSystemEventstreamPassword))
+                    .mask(orEmpty(boot.state.pgConfigurationPassword))
+                    .mask(orEmpty(boot.state.pgConfigurationEventstreamPassword))
+                    .mask(orEmpty(boot.state.pgWorkspacesPassword))
+                    .mask(orEmpty(boot.state.pgWorkspacesEventstreamPassword))
                     // The Hetzner DNS token, which the deployed edge is handed as a VALUE: the
                     // deployer mounts no swarm secrets, so the file form the seed uses would name
                     // nothing on the successor. Same masking every other credential in this file
@@ -4028,6 +4677,12 @@ public class SeedPhases {
         values.put("PG_SYSTEM_PASSWORD", orEmpty(boot.state.pgSystemPassword));
         values.put("PG_SYSTEM_EVENTSTREAM_PASSWORD",
                 orEmpty(boot.state.pgSystemEventstreamPassword));
+        values.put("PG_CONFIGURATION_PASSWORD", orEmpty(boot.state.pgConfigurationPassword));
+        values.put("PG_CONFIGURATION_EVENTSTREAM_PASSWORD",
+                orEmpty(boot.state.pgConfigurationEventstreamPassword));
+        values.put("PG_WORKSPACES_PASSWORD", orEmpty(boot.state.pgWorkspacesPassword));
+        values.put("PG_WORKSPACES_EVENTSTREAM_PASSWORD",
+                orEmpty(boot.state.pgWorkspacesEventstreamPassword));
         // The idp derives its own issuer from QITS_DOMAIN now (qits-730) and reads no
         // environment variable for it, so this program writes nothing for it any more. IDP_DIAL
         // is the ADDRESS, environment-qualified like every other. See BootstrapConfig.idpDialUrl.

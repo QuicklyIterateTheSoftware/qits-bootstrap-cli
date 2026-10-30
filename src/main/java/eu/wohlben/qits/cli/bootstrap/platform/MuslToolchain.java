@@ -85,6 +85,22 @@ public final class MuslToolchain {
      * default — and one that does but carries no pin stops the caller.
      */
     public static List<Tarball> read(String dockerfile) {
+        return read(dockerfile, true);
+    }
+
+    /**
+     * <b>The same tarballs as references only</b> — the argument and the store path, with no
+     * upstream, size or checksum — for a Dockerfile that CONSUMES the toolchain without being the
+     * one that pins it. qits-platform-access-cli's binary Dockerfile {@code ADD}s the two tarballs
+     * qits-ci-daemon's builder pins and records no pin of its own (qits-889), so the seed copies
+     * what {@code seed-toolchain} downloaded and verified against qits-ci-daemon's, and asks the
+     * volume whether it holds them.
+     */
+    public static List<Tarball> references(String dockerfile) {
+        return read(dockerfile, false);
+    }
+
+    private static List<Tarball> read(String dockerfile, boolean pinned) {
         List<Tarball> tarballs = new ArrayList<>();
         Matcher arg = ARG.matcher(dockerfile);
         while (arg.find()) {
@@ -110,9 +126,12 @@ public final class MuslToolchain {
                         + "docker/Dockerfile.musl-builder names " + fileName + ", which is not "
                         + prefix + "<extension>");
             }
-            tarballs.add(new Tarball(name, groupPath, artifactId, version, fileName,
-                    fileName.substring(prefix.length()), upstream(dockerfile, name),
-                    pin(dockerfile, name, artifactId), bytes(dockerfile, name, artifactId)));
+            tarballs.add(pinned
+                    ? new Tarball(name, groupPath, artifactId, version, fileName,
+                            fileName.substring(prefix.length()), upstream(dockerfile, name),
+                            pin(dockerfile, name, artifactId), bytes(dockerfile, name, artifactId))
+                    : new Tarball(name, groupPath, artifactId, version, fileName,
+                            fileName.substring(prefix.length()), "", "", 0));
         }
         if (tarballs.isEmpty()) {
             throw new IllegalStateException("docker/Dockerfile.musl-builder declares no ARG "

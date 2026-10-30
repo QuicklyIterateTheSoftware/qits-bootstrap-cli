@@ -117,6 +117,14 @@ public class RunState {
     public String pgSystemPassword;
     public String pgSystemEventstreamPassword;
     /**
+     * qits-configuration's and qits-workspaces' pairs, in the seed since qits-889: each joins a
+     * domain store and the eventstream outbox, two Flyway lineages apiece.
+     */
+    public String pgConfigurationPassword;
+    public String pgConfigurationEventstreamPassword;
+    public String pgWorkspacesPassword;
+    public String pgWorkspacesEventstreamPassword;
+    /**
      * <b>qits-projects' THREE, and three is what its own deployments.yml declares</b>: its domain
      * store, the epics store beside it, and the eventstream outbox. Three Flyway lineages, so three
      * databases — the same rule that gives ci, the git host and the orchestrator two each.

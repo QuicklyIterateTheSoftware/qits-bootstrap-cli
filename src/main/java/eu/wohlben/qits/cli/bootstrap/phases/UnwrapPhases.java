@@ -83,11 +83,13 @@ public class UnwrapPhases {
      * Deleted by {@code --with-data-volumes}. {@code qits-maven-seed} is the temporary Maven
      * repository the first-boot dependency cycle is broken with — rebuilt by the next bootstrap,
      * so it is data in every sense that matters here. {@code qits-npm-seed} is its npm twin: the
-     * {@code @qits} tarballs and client bundles phase 1 built (qits-889). The cache above is their
-     * opposite: qits bytes that this platform published against third-party bytes that it did not.
+     * {@code @qits} tarballs and client bundles phase 1 built (qits-889), and {@code qits-oci-seed}
+     * its image twin: the platform-built bases phase 1 exported as OCI layouts for the builds that
+     * start from them. The cache above is their opposite: qits bytes that this platform published
+     * against third-party bytes that it did not.
      */
     private static final List<String> DATA = List.of("qits-*-data", "qits-maven-seed",
-            "qits-npm-seed");
+            "qits-npm-seed", "qits-oci-seed");
 
     private final Boot boot;
     private final boolean withVolumes;

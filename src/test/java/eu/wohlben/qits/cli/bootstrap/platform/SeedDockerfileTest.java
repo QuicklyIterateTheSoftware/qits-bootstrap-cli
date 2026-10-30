@@ -364,4 +364,66 @@ class SeedDockerfileTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("LIBFFI_URL");
     }
+
+    // --- platform-built bases (qits-889) -------------------------------------------------------
+
+    private static final String WORKSPACE = """
+            ARG QITS_DOMAIN=wohlben.eu
+            ARG WORKSPACE_BASE=registry.qits.${QITS_DOMAIN}/qits/workspace-base:2026.1030.75245
+            FROM mirror.qits.${QITS_DOMAIN}/quay/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25 AS build
+            RUN ./mvnw package
+            FROM ${WORKSPACE_BASE}
+            COPY --from=build /src/a /usr/local/bin/a
+            """;
+
+    /** The committed default of a base argument, and the tag the boot builds that base at. */
+    @Test
+    void theBaseAFileNamesIsReadFromItsArgument() {
+        assertThat(SeedDockerfile.argDefault(WORKSPACE, "WORKSPACE_BASE"))
+                .isEqualTo("registry.qits.${QITS_DOMAIN}/qits/workspace-base:2026.1030.75245");
+        assertThat(SeedDockerfile.argDefault(WORKSPACE, "NOPE")).isNull();
+        assertThat(SeedDockerfile.tagOf("registry.qits.${QITS_DOMAIN}/qits/workspace-base:1.2"))
+                .isEqualTo("1.2");
+        assertThat(SeedDockerfile.tagOf("localhost:5000/qits/x")).isNull();
+        assertThat(SeedDockerfile.tagOf(null)).isNull();
+    }
+
+    /**
+     * <b>A platform-built base is pointed at this run's build</b>: the argument's default becomes
+     * the local reference, the FROM reads it, and no stage starts from a platform registry any more.
+     * Before the rewrite the same file is refused, naming the stage.
+     */
+    @Test
+    void aPlatformBuiltBaseIsTakenFromThisRunsBuild() {
+        String local = SeedDockerfile.localBase(SeedDockerfile.rewrite(WORKSPACE), "wd",
+                "WORKSPACE_BASE", "qits/workspace-base:2026.1030.75245");
+
+        assertThat(local).contains("ARG WORKSPACE_BASE=qits/workspace-base:2026.1030.75245\n")
+                .doesNotContain("registry.qits.")
+                .contains("FROM quay.io/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25 AS build");
+        assertThat(SeedDockerfile.refusePlatformBases(local, "wd")).isEqualTo(local);
+        assertThatThrownBy(() -> SeedDockerfile.refusePlatformBases(
+                SeedDockerfile.rewrite(WORKSPACE), "wd"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("wd still starts a stage from registry.qits.")
+                .hasMessageContaining("FROM ${WORKSPACE_BASE}");
+    }
+
+    /** A file with no default for the argument changed shape, and the rewrite says so. */
+    @Test
+    void aBaseArgumentThatIsGoneIsRefused() {
+        assertThatThrownBy(() -> SeedDockerfile.localBase("FROM ${X}\n", "editor", "WORKSPACE_IMAGE",
+                "qits/workspace:1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("editor declares no `ARG WORKSPACE_IMAGE=<image>`");
+    }
+
+    /** A stage FROM a mirror the rewrite does not know is refused the same way. */
+    @Test
+    void aStageFromAnUnknownMirrorIsRefused() {
+        assertThatThrownBy(() -> SeedDockerfile.refusePlatformBases(
+                "FROM mirror.qits.${QITS_DOMAIN}/elsewhere/x:1\n", "f"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("mirror.qits.");
+    }
 }

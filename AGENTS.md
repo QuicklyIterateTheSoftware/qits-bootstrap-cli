@@ -220,6 +220,33 @@ forced. Add to that list rather than deviating quietly.
   the generated `.npmrc`'s last word, and both lock rewrites stop on any platform host left. **A
   pin this boot cannot build stops the boot by name** — teach `NpmSeed`/`npmClosure` to produce
   it; never bring a placeholder back.
+- **Phase 1 builds EVERYTHING the platform runs, and what it does not is a named list**
+  (qits-889). The seed is every service the platform runs in steady state — `PlatformModel.CORE`,
+  qits-configuration and qits-workspaces included — and the images it starts workspaces and
+  agents from are built too: `qits/workspace-base`, `qits/workspace`, `qits/projects-daemon`,
+  `qits/project-agent`, and the `qits` binary and browser base the workspace base carries
+  (`seed-qits-cli` … `seed-project-agent`). Their versions are READ, never chosen:
+  `SeedPhases.workspaceImages` starts from the consumers' `qits.workspace-daemon-protocol.version`
+  / `qits.projects-daemon-protocol.version` pins (the jar's version IS the image tag) and closes
+  over the `ARG WORKSPACE_BASE`/`ARG BASE`/`ARG BROWSER_BASE` and `qits.platform-access-cli-binary`
+  pins each release tag names. What phase 1 leaves to phase 4 is
+  `PlatformModel.DEFERRED_TO_PHASE_4` — satellites phase 4 still wants built — and what it leaves
+  built nowhere at all is `PlatformModel.NOT_BUILT` — retired or unused model entries; each entry
+  of either carries its reason, and the summary prints both under their own headings.
+  `BootstrapPlanTest` fails a repository the model clones that is in none of the three:
+  `SeedPhases.phaseOneBuilds`, `DEFERRED_TO_PHASE_4` or `NOT_BUILT`. Add to one of the three, with
+  the reason — never let a repository drop out of all of them.
+- **A PLATFORM-BUILT BASE comes from this run's own build, through `qits-oci-seed`, never a
+  registry.** qits-buildkitd is its own daemon and cannot read the host's image store, so a `FROM`
+  of an image this run `docker load`ed would be a pull — from Docker Hub, or from the live
+  registry the committed `ARG` default names. A base is therefore exported a second time as an OCI
+  layout into the `qits-oci-seed` volume (`--output type=oci,tar=false`), and a dependent build
+  reads it back as a named context (`--oci-layout base<i>=…`,
+  `context:<ref>=oci-layout://base<i>@<digest>`, `Docker.buildSeedImage`). `SeedDockerfile.localBase`
+  rewrites the base argument's default to that local reference and refuses a file that declares
+  none; `SeedDockerfile.refusePlatformBases` refuses a build any stage of which would still start
+  from `registry.qits.`/`mirror.qits.`. A `docker-image://` context is NOT the answer: on a
+  standalone buildkitd it resolves from a registry too.
 - **The seed is a docker STACK, and four compose words do not survive the move.** The generated
   file carries no root `name:` and no `group_add:` — either one makes `docker stack deploy` refuse
   it outright, measured — no `container_name:` (ignored; a task's container is
@@ -238,8 +265,9 @@ forced. Add to that list rather than deviating quietly.
   leaves a deployer-managed application out of the FILE (a stack deploy takes no service list) and
   removes any seed service of it outright.
 - **A cold boot is FOUR STEPS, in the owner's order, and `BootstrapPlan` is built around them.**
-  (1) Build locally everything the platform needs, out of the `qits-maven-seed` and `qits-npm-seed`
-  volumes and upstream sources only, with the temporary bootstrap ingress serving the progress page the whole time. (2) Bring the platform up as it
+  (1) Build locally everything the platform needs, out of the `qits-maven-seed`, `qits-npm-seed`
+  and `qits-oci-seed` volumes and upstream sources only, with the temporary bootstrap ingress
+  serving the progress page the whole time. (2) Bring the platform up as it
   runs in steady state: `seed-images-publish` puts each `PlatformModel.SEED_DEPLOYED` application's
   seed build in the store as `qits/<application>:<real release tag>`, and `seed-deploy-*` hands the
   deployer that version at its manual door — the edge last, whose phase retires the ingress. (3)
@@ -277,7 +305,9 @@ forced. Add to that list rather than deviating quietly.
   holding the url over a service nobody imported into. The seed stack therefore spells NONE of
   those keys — the seed deployer has to start without them — while the generated extras spell all
   of them, because a live `service update --env-add` alone is exactly the fix the old model kept
-  reverting.
+  reverting. **qits-configuration being a SEED service since qits-889 moves none of this**: its
+  seed image is put live at its release tag in step two, but nothing reads it until the import and
+  the flip, which stay hung off its RELEASE image's deployment in the train.
 - **The extras file is BOOTSTRAP-ONLY, and after the flip it is unread.** It is what the seed
   deployer runs from before qits-configuration exists and what `configuration-import` imports whole,
   so the store and the file cannot disagree at the moment authority moves. From the flip on, the
@@ -385,8 +415,9 @@ forced. Add to that list rather than deviating quietly.
   Adding a pattern is how this changes; removing one is not.
 - **A volume is data, config or CACHE, and the three sweeps differ.** `--with-data-volumes` is a
   cold boot of this platform's state, so it takes `qits-*-data`, `qits-maven-seed` (the run's
-  file repository of seed-built qits jars and the musl tarballs) and `qits-npm-seed` (the `@qits`
-  tarballs and seed client bundles) and keeps
+  file repository of seed-built qits jars and the musl tarballs), `qits-npm-seed` (the `@qits`
+  tarballs and seed client bundles) and `qits-oci-seed` (the platform-built bases as OCI layouts)
+  and keeps
   `qits-*-config` and `qits-maven-cache`; `--with-volumes` takes every `qits-*` volume. The cache
   holds third-party jars the bootstrap's own maven containers pulled from Maven Central — one
   `/cache` mount named by `-Dmaven.repo.local`, shared by the seed, every phase-1 build and the
