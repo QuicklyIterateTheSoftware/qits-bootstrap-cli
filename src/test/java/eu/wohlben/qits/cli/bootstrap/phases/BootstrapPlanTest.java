@@ -296,8 +296,9 @@ class BootstrapPlanTest {
 
             List<String> seedDeploys = ids.stream().filter(id -> id.startsWith("seed-deploy-"))
                     .toList();
-            assertThat(seedDeploys).containsExactly("seed-deploy-idp", "seed-deploy-projects",
-                    "seed-deploy-events", "seed-deploy-mirror", "seed-deploy-artifacts",
+            assertThat(seedDeploys).containsExactly("seed-deploy-idp",
+                    "seed-deploy-configuration", "seed-deploy-projects",
+                    "seed-deploy-workspaces", "seed-deploy-events", "seed-deploy-mirror", "seed-deploy-artifacts",
                     "seed-deploy-githost", "seed-deploy-containers", "seed-deploy-ci",
                     "seed-deploy-system", "seed-deploy-edge");
             // Contiguous: nothing builds, publishes or pushes in the middle of step two.
@@ -627,5 +628,84 @@ class BootstrapPlanTest {
                 .contains("teardown-bootstrap-builder");
         assertThat(plan(Map.of("QITS_KEEP_BUILDER", "1")))
                 .hasSameSizeAs(plan(Map.of()));
+    }
+
+    /**
+     * <b>qits-configuration and qits-workspaces are built in phase 1 like every seed service</b>
+     * (qits-889): after the workspace daemon's contract, which qits-workspaces compiles against at
+     * its own pin, and before the identity order. A warm rerun builds neither.
+     */
+    @Test
+    void configurationAndWorkspacesAreSeedImages() {
+        List<String> ids = ids(plan(Map.of()));
+
+        assertThat(ids).containsSubsequence("seed-npm-packages",
+                "seed-qits-workspace-daemon-protocol", "seed-image-projects", "seed-image-system",
+                "seed-image-configuration", "seed-image-workspaces", "idp-bootstrap-client");
+        assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1"))))
+                .doesNotContain("seed-image-configuration", "seed-image-workspaces");
+    }
+
+    /**
+     * <b>The images the platform starts workspaces and agents from are built in phase 1, each
+     * producer before its consumer</b> (qits-889): the qits binary after the toolchain it compiles
+     * on, the browser base before the workspace bases, those before the workspace and agent
+     * images — and all of it before the idp, so nothing is published before there is a credential
+     * to publish with. images-publish pushes them after the idp.
+     */
+    @Test
+    void theWorkspaceImagesAreBuiltProducersFirstBeforeTheIdp() {
+        List<String> ids = ids(plan(Map.of()));
+
+        assertThat(ids).containsSubsequence("seed-toolchain", "ci-daemon", "system-runner-image",
+                "seed-qits-cli", "seed-node-browser-base", "seed-workspace-base", "seed-workspace",
+                "seed-project-agent", "idp-bootstrap-client", "seed-idp", "store-seed",
+                "images-publish", "daemon-publish", "publish-credential-release");
+        assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1")))).doesNotContain("seed-qits-cli",
+                "seed-node-browser-base", "seed-workspace-base", "seed-workspace",
+                "seed-project-agent");
+    }
+
+    /**
+     * <b>Every repository the model clones is built in phase 1, deferred to phase 4, or not built
+     * at all, by name and with a reason</b> (qits-889) — a frontend of a deferred or not-built
+     * service with it, since its bundle ships in that service's image. A repository added to the
+     * model without any of the three is a gap the summary would not state.
+     */
+    @Test
+    void everyRepositoryIsBuiltInPhaseOneOrDeferredOrNotBuilt() {
+        java.util.SortedMap<String, String> built = SeedPhases.phaseOneBuilds();
+        Map<String, String> deferred =
+                eu.wohlben.qits.cli.bootstrap.platform.PlatformModel.DEFERRED_TO_PHASE_4;
+        Map<String, String> notBuilt =
+                eu.wohlben.qits.cli.bootstrap.platform.PlatformModel.NOT_BUILT;
+
+        for (String name : eu.wohlben.qits.cli.bootstrap.platform.PlatformModel.sourceRepos()) {
+            boolean covered = built.containsKey(name) || deferred.containsKey(name)
+                    || notBuilt.containsKey(name)
+                    || (name.startsWith("spa-")
+                            && (deferred.containsKey(name.substring(4))
+                                    || notBuilt.containsKey(name.substring(4))));
+            assertThat(covered)
+                    .as("%s is neither built in phase 1, deferred to phase 4, nor not built", name)
+                    .isTrue();
+        }
+        // The brief's six, each with its one-line reason.
+        assertThat(deferred).containsKeys("stt", "docs", "observability", "maintenance",
+                "orchestrator", "landing-app");
+        assertThat(deferred.values()).allSatisfy(reason -> assertThat(reason).isNotBlank());
+        // The three retired or unused entries, each with its one-line reason, and exactly these.
+        assertThat(notBuilt).containsOnlyKeys("oci-workspace-editor", "workspaces-runner-daemon",
+                "spa-workspaces");
+        assertThat(notBuilt.values()).allSatisfy(reason -> assertThat(reason).isNotBlank());
+        // Nothing is both: a deferred repository phase 1 also built would be a stale entry —
+        // except landing-app, whose PACTS phase 1 packs while the app itself is deferred.
+        assertThat(deferred.keySet().stream().filter(built::containsKey))
+                .containsExactly("landing-app");
+        // Nothing not-built is also built in phase 1: that would be a stale entry too.
+        assertThat(notBuilt.keySet().stream().filter(built::containsKey)).isEmpty();
+        // configuration and workspaces are among the built, with their client and their images.
+        assertThat(built).containsKeys("configuration", "workspaces", "spa-configuration",
+                "oci-workspace", "workspace-daemon", "projects-daemon", "platform-access-cli");
     }
 }

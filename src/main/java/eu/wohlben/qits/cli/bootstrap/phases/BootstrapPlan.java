@@ -118,13 +118,14 @@ public final class BootstrapPlan {
             // PlatformModel.seedUiPath.
             // ITS TWO DAEMONS' WIRE CONTRACTS, on qits-ci's terms (qits-889): qits-projects
             // compiles against qits-projects-daemon-protocol and qits-workspace-daemon-protocol at
-            // the versions its root pom pins, built from those release tags. qits-system compiles
-            // against the workspace daemon's contract too, at its own pin, so that one phase
-            // seeds both consumers' versions, here before the first of them.
+            // the versions its root pom pins, built from those release tags. qits-system and
+            // qits-workspaces compile against the workspace daemon's contract too, each at its own
+            // pin, so that one phase seeds every consumer's version, here before the first of them.
             phases.add(seed.protocolSeed("projects", "projects-daemon",
                     "qits-projects-daemon-protocol", "qits.projects-daemon-protocol.version"));
-            phases.add(seed.protocolSeed(List.of("projects", "system"), "workspace-daemon",
-                    "qits-workspace-daemon-protocol", "qits.workspace-daemon-protocol.version"));
+            phases.add(seed.protocolSeed(List.of("projects", "system", "workspaces"),
+                    "workspace-daemon", "qits-workspace-daemon-protocol",
+                    "qits.workspace-daemon-protocol.version"));
             phases.add(seed.seedImage("projects"));
             // THE TARGETS' OWNER, a seed service since qits-1547 because every CI run is a lease on
             // one of its targets. Its reactor resolves qits-eventstream, qits-db-core and
@@ -135,6 +136,13 @@ public final class BootstrapPlan {
             phases.add(seed.protocolSeed("system", "system-runner-daemon",
                     "qits-system-runner-protocol", "qits.system-runner-protocol.version"));
             phases.add(seed.seedImage("system"));
+            // THE TWO SERVICES PHASE 1 GAINED IN qits-889, built like every other seed service.
+            // qits-configuration has a client and resolves the three integration jars and the
+            // eventstream out of the file repository; qits-workspaces has no client since qits-1245
+            // and resolves, besides those, qits-coding-agents, the qits-containers client and the
+            // workspace daemon's contract the phase above seeded at its pin.
+            phases.add(seed.seedImage("configuration"));
+            phases.add(seed.seedImage("workspaces"));
             for (String image : SeedPhases.STEP_IMAGES) {
                 phases.add(seed.stepImage(image));
             }
@@ -147,6 +155,19 @@ public final class BootstrapPlan {
             // replay on, so its image has to exist before the seed stack is up — and only a build
             // arm can make it: a warm rerun starts the runner from the image the last one left.
             phases.add(seed.systemRunnerImage());
+            // THE IMAGES THE PLATFORM STARTS WORKSPACES AND AGENTS FROM (qits-889), at the
+            // versions qits-workspaces, qits-projects and qits-system pin, each producer before its
+            // consumer. The qits binary first — a static musl native build on the toolchain
+            // seed-toolchain filled — because qits/workspace-base carries it; then the browser
+            // base, then the workspace bases on it; then qits/workspace and qits/project-agent on
+            // those. qits-buildkitd cannot see the host's image store, so every platform-built base
+            // is exported to the qits-oci-seed volume and read back as a named context: nothing
+            // here pulls from a registry. images-publish pushes them after the idp.
+            phases.add(seed.qitsCliSeed());
+            phases.add(seed.browserBaseSeed());
+            phases.add(seed.workspaceBaseSeed());
+            phases.add(seed.workspaceImageSeed());
+            phases.add(seed.projectAgentSeed());
         }
 
         // seed-postgres is inside BOTH arms above rather than here: the build arm starts it among
@@ -189,7 +210,8 @@ public final class BootstrapPlan {
         // and healthy by now, which is the one thing a commission needs.
         phases.add(seed.storeSeed());
         //
-        // THE IMAGES A RUN IS STARTED FROM, into the store — and it has to be a PUSH, through the
+        // THE IMAGES A RUN IS STARTED FROM, into the store — and the workspace and agent images and
+        // their bases beside them (qits-889) — and it has to be a PUSH, through the
         // edge, which is why it waits for the seed stack. qits-ci pins a step image by asking the
         // store for its digest and refuses the run when the store has no such tag, so an image the
         // host daemon merely holds is an image no run may use. Before the first run there is, and

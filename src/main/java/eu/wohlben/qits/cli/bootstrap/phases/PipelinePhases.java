@@ -330,6 +330,16 @@ public class PipelinePhases {
             // refuses to boot without.
             boot.awaitHealth(ctx, PlatformModel.wireAlias("system", env) + " (the targets, on "
                     + "qits-net)", boot.system::health);
+            // THE TWO SERVICES PHASE 1 GAINED (qits-889). Nothing in the seed window calls either,
+            // but each is seed-deployed below at its release tag, and a seed-deploy waits on the
+            // deployment row — a seed service that never came up is a cutover with nothing to hand
+            // over, found here in one line rather than there in a timeout.
+            boot.awaitHealth(ctx, PlatformModel.wireAlias("configuration", env)
+                    + " (deployment configuration, on qits-net)", () -> boot.configuration.health());
+            boot.awaitHealth(ctx, PlatformModel.wireAlias("workspaces", env)
+                    + " (the workspaces, on qits-net)",
+                    () -> boot.http.get("http://" + PlatformModel.wireAlias("workspaces", env)
+                            + ":8080/workspaces/q/health/ready", Map.of()));
             // Health is not enough with the machine gate on: a freshly (re)created service
             // initializes its OIDC tenant lazily on the FIRST request, and if that races idp's own
             // restart, every request 500s for a few seconds — reads included. Poll one read per
@@ -657,11 +667,20 @@ public class PipelinePhases {
 
     /** The step images and the target's runner image, in the order they are asked for and pushed. */
     static List<StoreImage> storeImages(String systemRunnerVersion) {
+        return storeImages(systemRunnerVersion, List.of());
+    }
+
+    /**
+     * The same, then the workspace-side images phase 1 built (qits-889) — the bases, the
+     * workspace images, the projects daemons and the agents, at their pinned versions.
+     */
+    static List<StoreImage> storeImages(String systemRunnerVersion, List<StoreImage> workspace) {
         List<StoreImage> images = new ArrayList<>();
         for (String name : SeedPhases.STEP_IMAGES) {
             images.add(new StoreImage("qits/build-images/" + name, "latest"));
         }
         images.add(new StoreImage(SeedPhases.SYSTEM_RUNNER_IMAGE, systemRunnerVersion));
+        images.addAll(workspace);
         return images;
     }
 
@@ -683,6 +702,14 @@ public class PipelinePhases {
      * but a runner told to upgrade pulls {@code <registry>/qits/qits-system-runner:<version>}, and
      * the version this boot built is the one a store of a fresh platform would otherwise not hold.
      * <p>
+     * <b>So do the workspace-side images phase 1 built (qits-889)</b>, and they are addressed the
+     * runner's way — {@code qits/<image>:<release version>}: {@code qits/workspace} and
+     * {@code qits/project-agent} at the versions qits-workspaces, qits-projects and qits-system pin,
+     * which a target on another host pulls; {@code qits/projects-daemon}, beside its agent as its
+     * release publishes it; and the two bases, {@code qits/workspace-base} and
+     * {@code qits/build-images/node-browser-base}, which phase 4's release builds of those images
+     * start {@code FROM} through the registry.
+     * <p>
      * <b>Pushed by the HOST's daemon, through the edge</b>, under the registry host's name — the
      * path a release step's own push takes. That is why this phase sits after the seed stack is
      * healthy, and why a push leaves the local image knowing the digest the store will answer:
@@ -699,9 +726,10 @@ public class PipelinePhases {
      */
     public Phase imagesPublish() {
         return new Phase("images-publish",
-                "push the step images and the target's runner image into the registry", ctx -> {
+                "push the step, runner and workspace images into the registry", ctx -> {
             String registryHost = boot.config.registryVhost();
-            List<StoreImage> images = storeImages(SeedPhases.systemRunnerVersion(boot));
+            List<StoreImage> images = storeImages(SeedPhases.systemRunnerVersion(boot),
+                    new SeedPhases(boot).workspaceStoreImages());
             List<StoreImage> missing = new ArrayList<>();
             for (StoreImage image : images) {
                 boolean held = boot.artifacts.imagePublished(image.repository(), image.tag());
@@ -867,14 +895,19 @@ public class PipelinePhases {
         return push;
     }
 
+    /** The name the qits binary is published under in the store's daemon area. */
+    static final String QITS_CLI_DAEMON = "qits-platform-access-cli";
+
     public Phase daemonPublish() {
-        return new Phase("daemon-publish", "publish the ci-daemon binary to the registry", ctx -> {
+        return new Phase("daemon-publish", "publish the ci-daemon and qits binaries to the registry", ctx -> {
             String sha = boot.state.daemonSha;
             if (sha == null || sha.isBlank()) {
                 throw new IllegalStateException("no ci-daemon digest to publish");
             }
+            int cli = publishCliBinaries(ctx);
             if (boot.artifacts.daemonPublished("qits-ci-daemon", sha)) {
-                ctx.skip("qits-ci-daemon " + SeedPhases.shortSha(sha) + " already published");
+                ctx.skip("qits-ci-daemon " + SeedPhases.shortSha(sha) + " already published"
+                        + (cli > 0 ? ", " + cli + " qits binaries published" : ""));
             }
             Path binary = boot.state.daemonBinary;
             if (binary == null || !Files.isRegularFile(binary)) {
@@ -893,8 +926,40 @@ public class PipelinePhases {
                 throw new IllegalStateException("daemon publish answered " + response.describe());
             }
             ctx.log("  published qits-ci-daemon " + sha);
-            ctx.note(SeedPhases.shortSha(sha));
+            ctx.note(SeedPhases.shortSha(sha) + (cli > 0 ? ", " + cli + " qits binaries" : ""));
         });
+    }
+
+    /**
+     * THE qits BINARIES phase 1 built for the workspace bases (qits-889), where a base's release
+     * build downloads its own: {@code artifacts/daemons/qits-platform-access-cli/<version>}. Same
+     * credential as the ci-daemon's, HEAD before PUT; a version the store holds is left alone.
+     *
+     * @return how many were published
+     */
+    private int publishCliBinaries(PhaseContext ctx) throws IOException {
+        int cli = 0;
+        SeedPhases seed = new SeedPhases(boot);
+        for (String version : seed.workspaceImages().cli()) {
+            if (boot.artifacts.daemonPublished(QITS_CLI_DAEMON, version)) {
+                ctx.log("  " + QITS_CLI_DAEMON + " " + version + " already published");
+                continue;
+            }
+            Path file = seed.cliBinary(version);
+            if (!Files.isRegularFile(file)) {
+                throw new IllegalStateException("the qits binary " + version + " is neither on "
+                        + "disk (" + file + ") nor published — rerun without QITS_SKIP_BUILD");
+            }
+            Http.Response answer = boot.artifacts.publishDaemon(QITS_CLI_DAEMON, version, file,
+                    boot.publishAuthorization(ctx));
+            if (answer.status() != 201) {
+                throw new IllegalStateException(QITS_CLI_DAEMON + " " + version
+                        + " publish answered " + answer.describe());
+            }
+            ctx.log("  published " + QITS_CLI_DAEMON + " " + version);
+            cli++;
+        }
+        return cli;
     }
 
     /**
@@ -3818,13 +3883,34 @@ public class PipelinePhases {
                     // courtesy every optional read in this program keeps.
                     projectSlugs(),
                     ExtraSans.of(boot.config, apex)));
-            report.add("images:    the release replays published qits/workspace-base, qits/workspace,");
-            report.add("           qits/projects-daemon and qits/project-agent at their released "
-                    + "versions —");
-            report.add("           the coordinates qits-workspaces and qits-projects pin. Nothing "
-                    + "is supplied by hand.");
+            report.add("images:    phase 1 built qits/workspace-base, qits/workspace, "
+                    + "qits/projects-daemon and");
+            report.add("           qits/project-agent at the versions qits-workspaces, qits-projects "
+                    + "and qits-system pin,");
+            report.add("           and images-publish pushed them; the release replays rebuild "
+                    + "them. Nothing is supplied by hand.");
+            report.addAll(deferredLines());
             report.forEach(ctx::log);
         });
+    }
+
+    /**
+     * <b>What phase 1 did NOT build, and why</b> — {@link PlatformModel#DEFERRED_TO_PHASE_4} and
+     * {@link PlatformModel#NOT_BUILT}, one line each under its own heading, so the boot states its
+     * own gap rather than leaving it to be found (qits-889). The two are not the same gap: the
+     * first six are satellites phase 4 (the release replays and the train) still wants built, the
+     * last three are retired or unused model entries nothing ahead of phase 1 wants at all.
+     */
+    static List<String> deferredLines() {
+        List<String> lines = new ArrayList<>();
+        lines.add("deferred:  phase 1 builds everything the platform runs but these, deferred to "
+                + "phase 4:");
+        PlatformModel.DEFERRED_TO_PHASE_4.forEach((name, reason) ->
+                lines.add("             " + PlatformModel.repo(name) + " — " + reason));
+        lines.add("not built: retired or unused, and built nowhere in this boot:");
+        PlatformModel.NOT_BUILT.forEach((name, reason) ->
+                lines.add("             " + PlatformModel.repo(name) + " — " + reason));
+        return lines;
     }
 
     /**

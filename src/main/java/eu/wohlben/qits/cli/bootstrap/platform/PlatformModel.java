@@ -93,11 +93,71 @@ public final class PlatformModel {
      * and the target registers with qits-system, which therefore has to be up with its database,
      * its eventstream outbox and its idp client before it. No deployer exists yet to provision any
      * of the three, so this boot does, as it does for every seed service.
+     * <p>
+     * <b>qits-configuration and qits-workspaces joined on 2026-10-30 (qits-889), because phase 1
+     * builds everything the platform needs.</b> Neither is called during the seed window — the
+     * configuration import and flip stay in the train, after its own deployment — but the platform
+     * runs both in steady state, and step two of the boot is bringing it up as it runs in steady
+     * state. Built here, a cold boot's first workspace and the deployer's flip no longer wait on two
+     * release builds of the train; deployed again in the train, from their release runs' images,
+     * like every other seed service.
      */
     public static final List<String> CORE = List.of(
             "edge", "mirror", "artifacts", "githost", "projects", "ci",
             "containers", "deployments", "idp", "events", "system",
-            "oci-postgresql");
+            "configuration", "workspaces", "oci-postgresql");
+
+    /**
+     * <b>THE REPOSITORIES PHASE 1 DOES NOT BUILD BECAUSE NOTHING THE BOOT BRINGS UP CALLS THEM
+     * YET, each with the reason</b> (qits-889). Phase 1 builds everything the platform needs to
+     * run in steady state; these six are left to phase 4 — the release replays and the train —
+     * and the summary prints this list so the gap is stated rather than discovered. Every other
+     * repository the model clones is built in phase 1 ({@code SeedPhases.phaseOneBuilds}) or is in
+     * {@link #NOT_BUILT}, and a test holds the three together. A frontend of a deferred service is
+     * deferred with it: its bundle ships in that service's image.
+     * <p>
+     * These are the brief's six — genuine satellites, each wanted later. {@link #NOT_BUILT} is the
+     * other half of what that coverage test found: repositories the model clones that nothing
+     * built here is waiting on at all.
+     */
+    public static final Map<String, String> DEFERRED_TO_PHASE_4 = deferred(
+            // Speech-to-text: nothing on the platform calls it at runtime.
+            "stt", "speech-to-text — nothing calls it at runtime",
+            // The documentation reader: no service the boot brings up reads documentation.
+            "docs", "the documentation reader — nothing the boot brings up reads it",
+            // Telemetry's sink: every service runs without it; its address only collects.
+            "observability", "the telemetry sink — every service runs without it",
+            // A scheduled caller of five peers; nothing calls it, so nothing waits on it.
+            "maintenance", "the bump scanner — a scheduled caller nothing waits on",
+            // Technical processes (the deletion run); a caller of four peers nothing calls.
+            "orchestrator", "technical processes — a scheduled caller nothing waits on",
+            // The apex browser app; no service depends on it. Its PACTS are packed in phase 1.
+            "landing-app", "the apex browser app — no service depends on it (its pacts are packed)");
+
+    /**
+     * <b>THE REPOSITORIES THE MODEL CLONES THAT ARE NOT DEFERRED WORK AT ALL, each with the
+     * reason</b> (qits-889). {@link #DEFERRED_TO_PHASE_4} is six satellites phase 1 skips because
+     * their turn is later; these three are retired or unused model entries the same coverage test
+     * found beside them — nothing ahead ever wants them built, so they are named here rather than
+     * folded into the deferred list they do not belong to. The summary prints both, each under its
+     * own heading, so the gap this list states is "not built (retired)" and not "deferred".
+     */
+    public static final Map<String, String> NOT_BUILT = deferred(
+            // qits/workspace-editor: no consumer since qits-1152.
+            "oci-workspace-editor", "qits/workspace-editor — no consumer since qits-1152",
+            // Retired by the target (qits-1535), and no submodule of the wrapper any more either.
+            "workspaces-runner-daemon",
+            "qits/qits-workspaces-runner — retired by the target (qits-1535), not in the wrapper",
+            // The client qits-workspaces stopped serving (qits-1245); not in the wrapper either.
+            "spa-workspaces", "the retired workspaces client (qits-1245), not in the wrapper");
+
+    private static Map<String, String> deferred(String... pairs) {
+        Map<String, String> map = new LinkedHashMap<>();
+        for (int i = 0; i < pairs.length; i += 2) {
+            map.put(pairs[i], pairs[i + 1]);
+        }
+        return java.util.Collections.unmodifiableMap(map);
+    }
 
     /**
      * Everything the platform deploys through itself. Order matters: observability first (quiets
@@ -205,9 +265,10 @@ public final class PlatformModel {
      * It is {@link #CORE} in {@link #DEPLOYABLES} order, less two. qits-oci-postgresql is never
      * deployed at all (see {@link #DEPLOYABLES}). qits-deployments stays where it is, LAST of the
      * train: its own deployment is the self-update handoff, and it has to come after the
-     * configuration flip, which needs qits-configuration — an application no seed image is built
-     * for. The edge is last of these for the train's own reason: its cutover takes the bootstrap
-     * ingress's door away, so everything that still needs that door is done by then.
+     * configuration flip — which stays in the train, after qits-configuration's RELEASE image is
+     * deployed and imported into, although a seed image of it is put live here since qits-889. The
+     * edge is last of these for the train's own reason: its cutover takes the bootstrap ingress's
+     * door away, so everything that still needs that door is done by then.
      * <p>
      * Each of them is deployed a SECOND time in the train, from the image its release run builds:
      * a seed image is the release's code built by this run rather than by the release's own run,
@@ -389,6 +450,11 @@ public final class PlatformModel {
      *       qits-system's own build in the train resolves. It replaced the workspaces runner as
      *       this host's agent runtime, so it sits beside it.
      * </ul>
+     * <p>
+     * <b>Phase 1 builds the four workspace-side images too since qits-889</b>, at the versions the
+     * platform PINS, and images-publish pushes them — so a replay of a pinned version finds its
+     * images held. The replays stay: the newest release is not always a pinned one, and its
+     * jars and binaries are the replay's to publish.
      * <p>
      * <b>qits-registries is NOT here yet, deliberately.</b> A replay restores a pin, and nothing
      * pins a calver of it or of the qits-blobstore jar its reactor carries: every consumer still
@@ -1152,6 +1218,10 @@ public final class PlatformModel {
             // qits-system joined the seed on 2026-10-23 (qits-1547) with its client in the same
             // shape; the Angular project inside it still carries the plane-era name.
             case "system" -> "service/src/main/webui/dist/qits-platform-spa-system/browser";
+            // qits-configuration joined the seed on 2026-10-30 (qits-889) with its client in the
+            // same shape. qits-workspaces, beside it, serves no client since qits-1245 — the
+            // workspace pages are qits-landing-app's — so it has no line here and needs none.
+            case "configuration" -> "service/src/main/webui/dist/qits-spa-configuration/browser";
             default -> "";
         };
     }
@@ -1194,9 +1264,15 @@ public final class PlatformModel {
      * A client id here is the WIRE ALIAS ({@link #wireAlias}) and the registry row is keyed by the
      * APPLICATION ({@link #application}) — the same two spellings of one identity every other part
      * of this model carries.
+     * <p>
+     * <b>qits-workspaces joined on 2026-10-30 (qits-889), with its seed image.</b> Its own
+     * {@code deployments.yml} declares {@code idp:client}, and every git-host, qits-projects,
+     * qits-system and qits-containers call it makes carries a bearer minted from that client — so a
+     * seed container started without one answers every workspace start with a 401 from a peer.
+     * qits-configuration, the other newcomer, mints nothing: it validates and is not a client.
      */
     public static final List<String> SEED_IDP_CLIENT_APPS =
-            List.of("projects", "ci", "containers", "deployments", "edge", "system");
+            List.of("projects", "ci", "containers", "deployments", "edge", "system", "workspaces");
 
     /**
      * <b>The one client whose secret this program still records itself</b>, and the reason it is

@@ -291,6 +291,9 @@ class ComposeTemplateTest {
         // qits-system joined on 2026-10-23 (qits-1547): its targets module commissions every
         // target's credentials with this client.
         byService.put(ENV + "-qits-system", ENV + "-qits-system");
+        // qits-workspaces joined on 2026-10-30 (qits-889): its deployments.yml declares
+        // idp:client, and every peer call it makes carries a bearer minted from it.
+        byService.put(ENV + "-qits-workspaces", ENV + "-qits-workspaces");
         byService.forEach((service, client) -> assertThat(serviceBlock(compose, service))
                 .as("the idp client of %s", service)
                 .contains("QITS_RESOURCE_IDP_URL: " + issuer)
@@ -803,13 +806,18 @@ class ComposeTemplateTest {
         assertThat(serviceBlock(compose, ENV + "-qits-deployments"))
                 .doesNotContain("QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL")
                 .doesNotContain("QUARKUS_OIDC_CLIENT_CONFIGURATION_");
-        // And there is no seed service for it either, under EITHER spelling: it is deployed through
-        // the pipeline like every other application, and the plane move changed which name a seed
-        // block would have carried rather than whether there is one. Both are asserted because the
-        // old name is the one a stale block would still be written under.
-        assertThat(compose).doesNotContain("\n  " + ENV + "-qits-configuration:\n")
+        // THE SEED qits-configuration IS THERE SINCE qits-889, and nothing points at it: phase 1
+        // builds it so step two can put it live at its release tag, while the import and the flip
+        // stay in the train, after its release image. Its block spells its stores and its gate and
+        // no extras of anybody's, and never under the bare name a stale block would carry.
+        assertThat(compose).contains("\n  " + ENV + "-qits-configuration:\n")
                 .doesNotContain("\n  qits-configuration:\n");
-        assertThat(PlatformModel.CORE).doesNotContain("configuration");
+        assertThat(serviceBlock(compose, ENV + "-qits-configuration"))
+                .contains("QITS_RESOURCE_DB_URL: jdbc:postgresql://" + ENV
+                        + "-qits-oci-postgresql:5432/qits_configuration")
+                .doesNotContain("qits.deployments.extras")
+                .doesNotContain("QITS_RESOURCE_IDP_");
+        assertThat(PlatformModel.CORE).contains("configuration");
     }
 
     /**

@@ -476,7 +476,7 @@ public class Docker {
             dockerfileDir = Files.createTempDirectory(scratchRoot(), "dockerfile-");
             Files.writeString(dockerfileDir.resolve(DOCKERFILE), dockerfile, StandardCharsets.UTF_8);
             return buildkitBuild(tag, dockerfileDir, DOCKERFILE, context, extraBuildArgs,
-                    volumeContexts, null, out);
+                    volumeContexts, List.of(), null, null, out);
         } catch (IOException e) {
             return failed("the Dockerfile for " + tag + " could not be written: " + e.getMessage());
         } finally {
@@ -507,7 +507,96 @@ public class Docker {
                                        List<String> extraBuildArgs, String target,
                                        Consumer<String> out) {
         return buildkitBuild(tag, dockerfile.getParent(), dockerfile.getFileName().toString(),
-                context, extraBuildArgs, Map.of(), target, out);
+                context, extraBuildArgs, Map.of(), List.of(), null, target, out);
+    }
+
+    /**
+     * <b>The run's store of PLATFORM-BUILT BASE images</b> (qits-889), one OCI image layout per
+     * image under {@code /<layout>}. qits-buildkitd is a daemon of its own: it cannot read the host
+     * daemon's image store, so an image this run built and {@code docker load}ed is invisible to a
+     * second build's {@code FROM} — that would be a pull from Docker Hub, or from the live
+     * registry the committed default names. A base is therefore exported a second time, as a
+     * layout into this volume, and a dependent build reads it back through
+     * {@code --oci-layout}. Run-scoped like {@code qits-maven-seed}: what it holds is this run's
+     * bytes.
+     */
+    public static final String OCI_SEED_VOLUME = "qits-oci-seed";
+
+    /**
+     * One platform-built base a build takes from {@link #OCI_SEED_VOLUME}: the reference its
+     * Dockerfile's {@code FROM} names (after {@code SeedDockerfile.localBase}), the layout it was
+     * exported to, and that layout's manifest digest.
+     */
+    public record LocalBase(String reference, String layout, String digest) {
+    }
+
+    /**
+     * <b>A seed image whose bases are this run's own builds, and which may be one itself.</b> The
+     * text is written to a scratch directory like {@link #buildFromStdin}; each base is a named
+     * context {@code context:<reference>=oci-layout://base<i>@<digest>} over
+     * {@code --oci-layout base<i>=/layouts/<layout>}, and {@code exportLayout}, when set, writes the
+     * image as a layout there as well as into the host daemon.
+     *
+     * @param bases        the platform-built images the file's FROMs name
+     * @param exportLayout the layout to export this image to for a later build, or null
+     * @param target       the stage to build, or null for the last one
+     */
+    public ProcessResult buildSeedImage(String tag, String dockerfile, Path context,
+                                        List<String> extraBuildArgs,
+                                        Map<String, String> volumeContexts, List<LocalBase> bases,
+                                        String exportLayout, String target, Consumer<String> out) {
+        Path dockerfileDir = null;
+        try {
+            dockerfileDir = Files.createTempDirectory(scratchRoot(), "dockerfile-");
+            Files.writeString(dockerfileDir.resolve(DOCKERFILE), dockerfile, StandardCharsets.UTF_8);
+            if (exportLayout != null) {
+                ensureVolume(OCI_SEED_VOLUME, out);
+                // A layout directory is a content store with an index; one left from an earlier
+                // run would be merged into rather than replaced.
+                ProcessResult cleared = runner.run(Cmd.of(clearLayoutCommand(exportLayout)), out);
+                if (!cleared.ok()) {
+                    return cleared;
+                }
+            }
+            return buildkitBuild(tag, dockerfileDir, DOCKERFILE, context, extraBuildArgs,
+                    volumeContexts, bases, exportLayout, target, out);
+        } catch (IOException e) {
+            return failed("the Dockerfile for " + tag + " could not be written: " + e.getMessage());
+        } finally {
+            deleteTree(dockerfileDir);
+        }
+    }
+
+    /** The throwaway container that empties one layout directory of the volume. */
+    static List<String> clearLayoutCommand(String layout) {
+        return List.of("docker", "run", "--rm", "-v", OCI_SEED_VOLUME + ":/layouts",
+                "--entrypoint", "rm", BUILDKIT_IMAGE, "-rf", "/layouts/" + layout);
+    }
+
+    /** The throwaway container that prints one layout's {@code index.json}. */
+    static List<String> layoutIndexCommand(String layout) {
+        return List.of("docker", "run", "--rm", "-v", OCI_SEED_VOLUME + ":/layouts:ro",
+                "--entrypoint", "cat", BUILDKIT_IMAGE, "/layouts/" + layout + "/index.json");
+    }
+
+    private static final java.util.regex.Pattern INDEX_DIGEST =
+            java.util.regex.Pattern.compile("\"digest\"\\s*:\\s*\"(sha256:[0-9a-f]{64})\"");
+
+    /** The first manifest digest an OCI {@code index.json} names, or null. */
+    static String indexDigest(String indexJson) {
+        java.util.regex.Matcher digest = INDEX_DIGEST.matcher(indexJson == null ? "" : indexJson);
+        return digest.find() ? digest.group(1) : null;
+    }
+
+    /**
+     * The manifest digest of one layout in {@link #OCI_SEED_VOLUME}, or null when the volume holds
+     * no such layout — which is how a phase knows its base was not built by this run or an earlier
+     * one on this host.
+     */
+    public String layoutDigest(String layout) {
+        ProcessResult result = runner.run(Cmd.of(layoutIndexCommand(layout)).captureLimit(200),
+                null);
+        return result.ok() ? indexDigest(String.join("\n", result.captured())) : null;
     }
 
     /**
@@ -530,7 +619,8 @@ public class Docker {
      */
     private ProcessResult buildkitBuild(String tag, Path dockerfileDir, String dockerfileName,
                                         Path context, List<String> extraBuildArgs,
-                                        Map<String, String> volumeContexts, String target,
+                                        Map<String, String> volumeContexts, List<LocalBase> bases,
+                                        String exportLayout, String target,
                                         Consumer<String> out) {
         ProcessResult ready = ensureBuildkitd(out);
         if (!ready.ok()) {
@@ -550,6 +640,12 @@ public class Docker {
                 command.add("-v");
                 command.add(volume + ":/named/" + name + ":ro");
             });
+            // The layouts are read — and one is written — by the CLIENT, which streams them to the
+            // daemon over the build's session, so the volume is mounted here and nowhere else.
+            if (!bases.isEmpty() || exportLayout != null) {
+                command.add("-v");
+                command.add(OCI_SEED_VOLUME + ":/layouts" + (exportLayout == null ? ":ro" : ""));
+            }
             command.addAll(List.of(
                     "--entrypoint", "buildctl", BUILDKIT_IMAGE,
                     "--addr", BUILDKIT_ADDR,
@@ -563,6 +659,14 @@ public class Docker {
                 command.add("--opt");
                 command.add("context:" + name + "=local:" + name);
             });
+            for (int i = 0; i < bases.size(); i++) {
+                LocalBase base = bases.get(i);
+                command.add("--oci-layout");
+                command.add("base" + i + "=/layouts/" + base.layout());
+                command.add("--opt");
+                command.add("context:" + base.reference() + "=oci-layout://base" + i + "@"
+                        + base.digest());
+            }
             if (target != null) {
                 command.add("--opt");
                 command.add("target=" + target);
@@ -573,6 +677,10 @@ public class Docker {
             }
             command.add("--output");
             command.add("type=docker,name=" + tag + ",dest=/out/" + IMAGE_TAR);
+            if (exportLayout != null) {
+                command.add("--output");
+                command.add("type=oci,name=" + tag + ",tar=false,dest=/layouts/" + exportLayout);
+            }
             Cmd cmd = Cmd.of(command).timeout(BUILD_TIMEOUT);
             ProcessResult built = runner.run(cmd, out);
             if (!built.ok()) {

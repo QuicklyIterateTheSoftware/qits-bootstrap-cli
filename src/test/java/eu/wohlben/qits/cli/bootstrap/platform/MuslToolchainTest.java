@@ -152,4 +152,33 @@ class MuslToolchainTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("no upstream address for MUSL_URL");
     }
+
+    /**
+     * <b>A Dockerfile that only CONSUMES the toolchain is read as references</b> (qits-889):
+     * qits-platform-access-cli's binary build ADDs the same two coordinates and records no pin of
+     * its own, so its store paths are what is asked of the volume and nothing is checked further.
+     */
+    @Test
+    void aConsumerOfTheToolchainIsReadAsReferences() {
+        String consumer = """
+                ARG QITS_DOMAIN=wohlben.eu
+                ARG MUSL_URL=https://registry.qits.${QITS_DOMAIN}/artifacts/maven/maven/eu/wohlben/qits/toolchain/x86_64-linux-musl-native/11.2.1/x86_64-linux-musl-native-11.2.1.tgz
+                ARG ZLIB_URL=https://registry.qits.${QITS_DOMAIN}/artifacts/maven/maven/eu/wohlben/qits/toolchain/zlib/1.3.1/zlib-1.3.1.tar.gz
+                FROM scratch AS tarballs
+                ADD $MUSL_URL /musl.tgz
+                """;
+
+        List<MuslToolchain.Tarball> tarballs = MuslToolchain.references(consumer);
+
+        assertThat(tarballs).extracting(MuslToolchain.Tarball::arg)
+                .containsExactly("MUSL_URL", "ZLIB_URL");
+        assertThat(tarballs).extracting(MuslToolchain.Tarball::storePath).containsExactly(
+                "eu/wohlben/qits/toolchain/x86_64-linux-musl-native/11.2.1/"
+                        + "x86_64-linux-musl-native-11.2.1.tgz",
+                "eu/wohlben/qits/toolchain/zlib/1.3.1/zlib-1.3.1.tar.gz");
+        assertThat(tarballs).allSatisfy(tarball -> assertThat(tarball.sha256()).isEmpty());
+        // The pinning read refuses the same file: it records no upstream and no checksum.
+        assertThatThrownBy(() -> MuslToolchain.read(consumer))
+                .isInstanceOf(IllegalStateException.class);
+    }
 }

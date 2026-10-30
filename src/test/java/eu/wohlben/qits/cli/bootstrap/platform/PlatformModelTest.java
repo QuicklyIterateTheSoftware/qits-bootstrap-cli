@@ -544,10 +544,12 @@ class PlatformModelTest {
         // qits-system is in it since 2026-10-23 (qits-1547), because a run is a LEASE: every CI
         // run is one on a qits-system target, so the first release replay of a cold boot needs the
         // service the localhost target registers with — up, with its database and idp client.
+        // qits-configuration and qits-workspaces are in it since 2026-10-30 (qits-889), because
+        // phase 1 builds everything the platform runs in steady state.
         assertThat(PlatformModel.CORE).containsExactlyInAnyOrder(
                 "edge", "mirror", "artifacts", "githost", "projects", "ci",
                 "containers", "deployments", "idp", "events", "system",
-                "oci-postgresql");
+                "configuration", "workspaces", "oci-postgresql");
         // Every seed service is also deployed through the pipeline afterwards, with ONE exception:
         // postgres stays the seed service for good, because re-reading its spec from qits-githost
         // (whose storage IS postgres) is a circular dependency that crash-loops it.
@@ -565,8 +567,8 @@ class PlatformModelTest {
     @Test
     void theSeedDeployedAreTheCoreLessTheDeployerInTrainOrder() {
         assertThat(PlatformModel.SEED_DEPLOYED).containsExactly(
-                "idp", "projects", "events", "mirror", "artifacts", "githost", "containers", "ci",
-                "system", "edge");
+                "idp", "configuration", "projects", "workspaces", "events", "mirror", "artifacts",
+                "githost", "containers", "ci", "system", "edge");
         assertThat(PlatformModel.SEED_DEPLOYED).doesNotContain("deployments", "oci-postgresql");
     }
 
@@ -654,10 +656,13 @@ class PlatformModelTest {
                 .isEqualTo("dist/qits-platform-spa-mirror/browser");
         assertThat(PlatformModel.seedWebuiPath("edge")).isEmpty();
         assertThat(PlatformModel.seedBundlePath("edge")).isEmpty();
-        // Nine seed images carry a client; the edge, the orchestrator's container service and the
-        // postgres image do not.
+        // Ten seed images carry a client; the edge, the orchestrator's container service,
+        // qits-workspaces (no client since qits-1245) and the postgres image do not.
         assertThat(PlatformModel.seedClients()).containsExactly("mirror", "artifacts", "githost",
-                "projects", "ci", "deployments", "idp", "events", "system");
+                "projects", "ci", "deployments", "idp", "events", "system", "configuration");
+        assertThat(PlatformModel.seedUiPath("configuration"))
+                .isEqualTo("service/src/main/webui/dist/qits-spa-configuration/browser");
+        assertThat(PlatformModel.seedUiPath("workspaces")).isEmpty();
     }
 
     @Test
@@ -1183,18 +1188,19 @@ class PlatformModelTest {
         assertThat(PlatformModel.SEED_IDP_CLIENT_APPS.stream()
                 .map(app -> PlatformModel.wireAlias(app, "prod")).toList())
                 .containsExactly("prod-qits-projects", "prod-qits-ci", "prod-qits-containers",
-                        "prod-qits-deployments", "prod-qits-edge", "prod-qits-system");
+                        "prod-qits-deployments", "prod-qits-edge", "prod-qits-system",
+                        "prod-qits-workspaces");
         assertThat(PlatformModel.SEED_IDP_CLIENT_APPS.stream()
                 .map(app -> PlatformModel.wireAlias(app, "preprod")).toList())
                 .containsExactly("preprod-qits-projects", "preprod-qits-ci",
                         "preprod-qits-containers", "preprod-qits-deployments",
-                        "preprod-qits-edge", "preprod-qits-system");
+                        "preprod-qits-edge", "preprod-qits-system", "preprod-qits-workspaces");
         // The registry row and the generated files are keyed by the APPLICATION instead, because a
         // placeholder cannot be spelled with an environment name the template does not know yet.
         assertThat(PlatformModel.SEED_IDP_CLIENT_APPS.stream()
                 .map(PlatformModel::application).toList())
                 .containsExactly("qits-projects", "qits-ci", "qits-containers", "qits-deployments",
-                        "qits-edge", "qits-system");
+                        "qits-edge", "qits-system", "qits-workspaces");
         // The two other byte services hold no client at all: the mirror has no auth surface, and
         // the git host validates and mints nothing.
         assertThat(PlatformModel.SEED_IDP_CLIENT_APPS)
@@ -1393,5 +1399,25 @@ class PlatformModelTest {
         assertThat(PlatformModel.repo("platform-access-cli")).isEqualTo("qits-platform-access-cli");
         assertThat(PlatformModel.mavenModule("platform-access-cli"))
                 .isEqualTo("platform-access-cli-binary");
+    }
+
+    /**
+     * <b>{@link PlatformModel#DEFERRED_TO_PHASE_4} holds exactly the brief's six satellites, and
+     * {@link PlatformModel#NOT_BUILT} the three retired or unused entries beside them</b>
+     * (qits-889). The two used to be one list; splitting them keeps "phase 4 still wants this"
+     * apart from "nobody wants this any more", and neither list may claim an entry of the other.
+     */
+    @Test
+    void deferredToPhaseFourIsExactlyTheSixSatellitesAndNotBuiltTheThreeRetiredEntries() {
+        assertThat(PlatformModel.DEFERRED_TO_PHASE_4.keySet()).containsExactlyInAnyOrder(
+                "stt", "docs", "observability", "maintenance", "orchestrator", "landing-app");
+        assertThat(PlatformModel.NOT_BUILT.keySet()).containsExactlyInAnyOrder(
+                "oci-workspace-editor", "workspaces-runner-daemon", "spa-workspaces");
+        assertThat(PlatformModel.DEFERRED_TO_PHASE_4.keySet())
+                .doesNotContainAnyElementsOf(PlatformModel.NOT_BUILT.keySet());
+        assertThat(PlatformModel.DEFERRED_TO_PHASE_4.values())
+                .allSatisfy(reason -> assertThat(reason).isNotBlank());
+        assertThat(PlatformModel.NOT_BUILT.values())
+                .allSatisfy(reason -> assertThat(reason).isNotBlank());
     }
 }

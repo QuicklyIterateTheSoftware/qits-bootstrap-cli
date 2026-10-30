@@ -1844,4 +1844,82 @@ class SeedPhasesTest {
                 || line.startsWith("docker service ls"));
         assertThat(boot.state.bootstrapIngressEnvFile).isNull();
     }
+
+    // --- the workspace-side images (qits-889) ----------------------------------------------------
+
+    private static String pom(String property, String version) {
+        return "<project><properties><" + property + ">" + version + "</" + property
+                + "></properties></project>";
+    }
+
+    /** A checkout that answers the release files the closure reads, and nothing else. */
+    private static SeedPhases.ReleaseFiles releases(Map<String, String> files) {
+        return (repository, version, path) -> files.get(repository + "@" + version + ":" + path);
+    }
+
+    /**
+     * <b>Every version of every workspace-side image, closed over its bases</b>: qits/workspace at
+     * each consumer's pin (two consumers sharing one version build it once), qits/project-agent at
+     * qits-projects', the workspace bases their Dockerfiles name at those tags, and the browser
+     * base and qits binary each base names.
+     */
+    @Test
+    void theWorkspaceImagesAreClosedOverTheirBases() {
+        Map<String, String> poms = Map.of(
+                "workspaces", pom(SeedPhases.WORKSPACE_IMAGE_PIN, "10"),
+                "projects", pom(SeedPhases.WORKSPACE_IMAGE_PIN, "10")
+                        .replace("</properties>", "<" + SeedPhases.AGENT_IMAGE_PIN + ">20</"
+                                + SeedPhases.AGENT_IMAGE_PIN + "></properties>"),
+                "system", pom(SeedPhases.WORKSPACE_IMAGE_PIN, "11"));
+        Map<String, String> files = new java.util.HashMap<>();
+        files.put("workspace-daemon@10:docker/Dockerfile",
+                "ARG WORKSPACE_BASE=registry.qits.${QITS_DOMAIN}/qits/workspace-base:1\n");
+        files.put("workspace-daemon@11:docker/Dockerfile",
+                "ARG WORKSPACE_BASE=registry.qits.${QITS_DOMAIN}/qits/workspace-base:2\n");
+        files.put("projects-daemon@20:docker/Dockerfile.projects",
+                "ARG BASE=qits/workspace-base:1\n");
+        for (String base : List.of("1", "2")) {
+            files.put("oci-workspace@" + base + ":Dockerfile", "ARG BROWSER_BASE=registry.qits."
+                    + "${QITS_DOMAIN}/qits/build-images/node-browser-base:99\n");
+            files.put("oci-workspace@" + base + ":pom.xml", pom(SeedPhases.CLI_PIN, "c" + base));
+        }
+
+        SeedPhases.WorkspaceImages closure = SeedPhases.workspaceImages(poms, releases(files));
+
+        assertThat(closure.workspaces()).containsExactlyInAnyOrderEntriesOf(
+                Map.of("10", "1", "11", "2"));
+        assertThat(closure.agents()).containsExactlyInAnyOrderEntriesOf(Map.of("20", "1"));
+        assertThat(closure.bases()).containsExactlyInAnyOrderEntriesOf(
+                Map.of("1", "99", "2", "99"));
+        assertThat(closure.browserBases()).containsExactly("99");
+        assertThat(closure.cli()).containsExactly("c1", "c2");
+    }
+
+    /** A consumer that pins no workspace image is owed none; a tag that is not there stops the boot. */
+    @Test
+    void aMissingReleaseOfAPinnedImageStopsTheBoot() {
+        assertThat(SeedPhases.workspaceImages(Map.of("system", "<project/>"),
+                releases(Map.of())).workspaces()).isEmpty();
+        assertThatThrownBy(() -> SeedPhases.workspaceImages(
+                Map.of("workspaces", pom(SeedPhases.WORKSPACE_IMAGE_PIN, "10")),
+                releases(Map.of())))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("qits-workspace-daemon 10")
+                .hasMessageContaining("git fetch --tags");
+        assertThatThrownBy(() -> SeedPhases.workspaceImages(
+                Map.of("workspaces", pom(SeedPhases.WORKSPACE_IMAGE_PIN, "10")),
+                releases(Map.of("workspace-daemon@10:docker/Dockerfile",
+                        "ARG WORKSPACE_BASE=${BASE}\n"))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("names no versioned base");
+    }
+
+    /** A base's layout directory is named after its image, one per version. */
+    @Test
+    void theLayoutOfABaseIsNamedAfterItsImage() {
+        assertThat(SeedPhases.layout("qits/build-images/node-browser-base", "9"))
+                .isEqualTo("node-browser-base@9");
+        assertThat(SeedPhases.layout("qits/workspace-base", "1")).isEqualTo("workspace-base@1");
+        assertThat(SeedPhases.image("qits/workspace", "1")).isEqualTo("qits/workspace:1");
+    }
 }

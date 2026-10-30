@@ -286,6 +286,100 @@ public final class SeedDockerfile {
         return dockerfile;
     }
 
+    // --- platform-built bases, from this run's own builds (qits-889) ------------------------------
+
+    private static final Pattern GLOBAL_ARG = Pattern.compile("(?m)^ARG[ \\t]+([A-Za-z0-9_]+)=(\\S*)[ \\t]*$");
+
+    /**
+     * The committed default of a build argument — {@code ARG <name>=<value>} — or null when the file
+     * declares none. The FIRST declaration is the answer, because that is the global one a
+     * {@code FROM} reads; a stage's own {@code ARG <name>} redeclaration carries no default.
+     */
+    public static String argDefault(String dockerfile, String name) {
+        Matcher matcher = GLOBAL_ARG.matcher(dockerfile);
+        while (matcher.find()) {
+            if (matcher.group(1).equals(name)) {
+                return matcher.group(2);
+            }
+        }
+        return null;
+    }
+
+    /** The tag of an image reference — what follows its last {@code :} after the last {@code /}. */
+    public static String tagOf(String reference) {
+        if (reference == null) {
+            return null;
+        }
+        int slash = reference.lastIndexOf('/');
+        int colon = reference.lastIndexOf(':');
+        return colon > slash ? reference.substring(colon + 1) : null;
+    }
+
+    /**
+     * <b>A base image this platform builds, taken from THIS RUN's build and from no registry.</b>
+     * <p>
+     * The image Dockerfiles name their platform-built base as a build argument whose default is the
+     * live registry — {@code ARG WORKSPACE_BASE=registry.qits.${QITS_DOMAIN}/qits/workspace-base:<pin>}
+     * — and {@code FROM ${WORKSPACE_BASE}}. This rewrites every default of that argument to the
+     * LOCAL reference the bootstrap built the base under, which the build then resolves through a
+     * named context ({@link Docker} {@code LocalBase}): qits-buildkitd is its own daemon and cannot
+     * see the host's image store, so the reference alone would be a pull from Docker Hub.
+     * <p>
+     * <b>It refuses rather than guesses</b>: a file that declares no default for the argument
+     * changed shape, and building it would reach for whatever its FROM now names.
+     */
+    public static String localBase(String dockerfile, String origin, String arg, String localRef) {
+        Pattern declared = Pattern.compile("(?m)^(ARG[ \\t]+" + Pattern.quote(arg) + ")=\\S*[ \\t]*$");
+        Matcher matcher = declared.matcher(dockerfile);
+        if (!matcher.find()) {
+            throw new IllegalStateException(origin + " declares no `ARG " + arg + "=<image>`, so "
+                    + "the seed build cannot hand it " + localRef + " from this run's own build. The "
+                    + "Dockerfile changed shape: teach SeedDockerfile.localBase the new one rather "
+                    + "than let the build pull its base from a registry");
+        }
+        return matcher.replaceAll(Matcher.quoteReplacement(matcher.group(1) + "=" + localRef));
+    }
+
+    private static final Pattern FROM_ARG = Pattern.compile("\\$\\{?([A-Za-z0-9_]+)\\}?");
+
+    /**
+     * <b>No stage of the file starts from a platform registry</b> — neither a {@code FROM} that
+     * names {@code registry.qits.}/{@code mirror.qits.} after {@link #rewrite}, nor a build argument
+     * a {@code FROM} reads whose default still does. {@link #refuseServers} looks at the build
+     * steps; this is the same refusal for the bases, which a platform-built base needs and an
+     * upstream one never did.
+     */
+    public static String refusePlatformBases(String dockerfile, String origin) {
+        for (String instruction : instructions(dockerfile)) {
+            if (!isInstruction(instruction, "FROM")) {
+                continue;
+            }
+            // The instruction's own lines: the comment paragraph above it rides in the piece.
+            String from = instruction.lines().map(String::strip)
+                    .filter(line -> !line.isEmpty() && !line.startsWith("#"))
+                    .collect(java.util.stream.Collectors.joining(" "));
+            List<String> named = new ArrayList<>(List.of(from));
+            Matcher arg = FROM_ARG.matcher(from);
+            while (arg.find()) {
+                String value = argDefault(dockerfile, arg.group(1));
+                if (value != null) {
+                    named.add(value);
+                }
+            }
+            for (String text : named) {
+                for (String host : PLATFORM_HOSTS) {
+                    if (text.contains(host)) {
+                        throw new IllegalStateException(origin + " still starts a stage from "
+                                + host + "… after the seed rewrite: `" + from + "` (" + text
+                                + "). A seed build takes a platform-built base from this run's "
+                                + "own build; teach SeedDockerfile.localBase about this argument");
+                    }
+                }
+            }
+        }
+        return dockerfile;
+    }
+
     /**
      * The file cut into instructions, each with its continuation lines and the comment and blank
      * lines before it, so joining the pieces gives the file back byte for byte. A line ending in a
