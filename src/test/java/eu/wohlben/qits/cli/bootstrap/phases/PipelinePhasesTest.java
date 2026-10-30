@@ -1577,12 +1577,25 @@ class PipelinePhasesTest {
                 + "<qits.system-runner-protocol.version>" + PIN
                 + "</qits.system-runner-protocol.version></properties></project>",
                 StandardCharsets.UTF_8);
+        // The bootstrap's own pair, as idp-bootstrap-client records it: a publish commissions its
+        // credential with it, gate on or off.
+        boot.state.bootstrapClientId = "prod-qits-bootstrap";
+        boot.state.bootstrapSecret = "boot";
         return boot;
+    }
+
+    /** An idp that answers, commissions a publishing credential and mints for it. */
+    static CannedHttp commissioning(CannedHttp http) {
+        return http.answer("GET http://prod-qits-idp:8080/idp/q/health/ready", 200, "")
+                .answer("FORM http://prod-qits-idp:8080/idp/token", 200,
+                        "{\"access_token\":\"publish-token\",\"expires_in\":3600}")
+                .answer("POST http://prod-qits-idp:8080/idp/api/clients", 201,
+                        "{\"clientId\":\"dyn-bootstrap-publish-1\",\"secret\":\"s3cr3t-pair\"}");
     }
 
     /** A store that answers 200 for the listed manifests and 404 for the rest. */
     private static CannedHttp store(List<String> held) {
-        CannedHttp http = new CannedHttp();
+        CannedHttp http = commissioning(new CannedHttp());
         for (String image : STORE_IMAGES) {
             http.answer(MANIFESTS + image, held.contains(image) ? 200 : 404, "");
         }
@@ -1718,7 +1731,7 @@ class PipelinePhasesTest {
 
     /** A store that answers 404 for every seed-deployed image except the listed applications. */
     private static CannedHttp seedStore(Map<String, Integer> answers) {
-        CannedHttp http = new CannedHttp();
+        CannedHttp http = commissioning(new CannedHttp());
         for (String name : eu.wohlben.qits.cli.bootstrap.platform.PlatformModel.SEED_DEPLOYED) {
             String application = eu.wohlben.qits.cli.bootstrap.platform.PlatformModel
                     .application(name);

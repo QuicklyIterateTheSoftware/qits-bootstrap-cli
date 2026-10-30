@@ -318,13 +318,12 @@ class SeedPhasesTest {
                 .isEqualTo("rm -rf /cache/repository/eu/wohlben/qits\n");
     }
 
-    /** The publish half of the same script, which is what phase 18 was killed in. */
+    /** The other phase-1 builds, which is what phase 18 was killed in. */
     @Test
-    void aPublishBuildCachesAndPurgesTheSameWay() {
-        SeedPhases phases = new SeedPhases(
-                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
-
-        String script = phases.publishScript("githost", List.of(SeedPhases.publishTree(null)), null);
+    void aProtocolBuildCachesAndPurgesTheSameWay() {
+        String script = new SeedPhases(
+                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))))
+                .protocolScript("githost", List.of("2026.1.1"));
 
         assertThat(script).contains("rm -rf /cache/repository/eu/wohlben/qits\n");
         assertThat(script).contains("-Dmaven.repo.local=/cache/repository");
@@ -333,9 +332,10 @@ class SeedPhasesTest {
         assertThat(script.indexOf("SETTINGS"))
                 .isLessThan(script.indexOf("rm -rf /cache/repository"));
         assertThat(script.indexOf("rm -rf /cache/repository")).isLessThan(script.indexOf("mvn "));
-        // Still by module, and still deploying to the store.
+        // Still by module, and into the file repository only.
         assertThat(script).contains(" -pl githost-events -am")
-                .contains("-DaltDeploymentRepository=qits::default::");
+                .contains("-DaltDeploymentRepository=seed::default::file:///repo")
+                .doesNotContain("qits::default::");
     }
 
     // --- the versions a lagging pin adds ----------------------------------------------------------
@@ -403,33 +403,6 @@ class SeedPhasesTest {
         assertThat(SeedPhases.seedTree("eventstream", null)).isEqualTo("/src-eventstream");
     }
 
-    /** The store half publishes the same set, out of a container holding one repository. */
-    @Test
-    void theStorePublishesEveryPinnedVersionToo() {
-        SeedPhases phases = new SeedPhases(
-                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
-
-        String script = phases.publishScript("eventstream",
-                List.of(SeedPhases.publishTree("2026.904.82646"), SeedPhases.publishTree(null)),
-                null);
-
-        assertThat(script.lines().filter(line -> line.startsWith("cd ")).toList())
-                .containsExactly(
-                        "cd /src@2026.904.82646 && mvn -B -ntp -s /root/.m2/settings.xml deploy "
-                                + "-DskipTests -Dmaven.repo.local=/cache/repository"
-                                + " -DaltDeploymentRepository=qits::default::"
-                                + "http://prod-qits-artifacts:8080/artifacts/maven/maven",
-                        "cd /src && mvn -B -ntp -s /root/.m2/settings.xml deploy "
-                                + "-DskipTests -Dmaven.repo.local=/cache/repository"
-                                + " -DaltDeploymentRepository=qits::default::"
-                                + "http://prod-qits-artifacts:8080/artifacts/maven/maven");
-        // The purge still runs once, before any of them: what one tree hands the next is this
-        // run's bytes, and a purge between the builds would throw away exactly that.
-        assertThat(script.split("rm -rf /cache/repository", -1)).hasSize(2);
-        // And the container's exit code is the FIRST failure's, not the last build's.
-        assertThat(script).startsWith("set -eu\n");
-    }
-
     // --- the wire contracts qits-ci and qits-system compile against ------------------------------
 
     private static final String CI_POM = """
@@ -486,17 +459,16 @@ class SeedPhasesTest {
     }
 
     /**
-     * <b>One module, from the tag's own tree, into BOTH registries — the file registry first.</b>
-     * The seed image builds resolve through the bootstrap ingress, which serves the file registry
-     * for the whole run, so a jar that reached only the store is a 404 to {@code seed-image-ci}.
+     * <b>One module per pinned version, from the tag's own tree, into the FILE repository and
+     * nowhere else</b> (qits-889): the seed image builds resolve from it, and the store gets the
+     * jar from {@code store-seed} once there is an idp to publish under.
      */
     @Test
-    void aProtocolJarIsBuiltFromItsTagIntoTheFileRegistryAndThenTheStore() {
+    void aProtocolJarIsBuiltFromItsTagIntoTheFileRegistryOnly() {
         SeedPhases phases = new SeedPhases(
                 new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
 
-        String script = phases.protocolScript("system-runner-daemon", "2026.930.132340", true, true,
-                "Bearer publish-token");
+        String script = phases.protocolScript("system-runner-daemon", List.of("2026.930.132340"));
 
         assertThat(script).startsWith("set -eu\n");
         assertThat(script.lines().filter(line -> line.startsWith("cd ")).toList())
@@ -504,29 +476,21 @@ class SeedPhasesTest {
                         "cd /src@2026.930.132340 && mvn -B -ntp -s /root/.m2/settings.xml deploy "
                                 + "-DskipTests -pl system-runner-protocol -am"
                                 + " -Dmaven.repo.local=/cache/repository"
-                                + " -DaltDeploymentRepository=seed::default::file:///repo",
-                        "cd /src@2026.930.132340 && mvn -B -ntp -s /root/.m2/settings.xml deploy "
-                                + "-DskipTests -pl system-runner-protocol -am"
-                                + " -Dmaven.repo.local=/cache/repository"
-                                + " -DaltDeploymentRepository=qits::default::"
-                                + "http://prod-qits-artifacts:8080/artifacts/maven/maven");
-        // The store half presents the publishing credential under the id the target names.
-        assertThat(script).contains("<id>qits</id>").contains("<value>Bearer publish-token</value>");
+                                + " -Dqits.maven.repository.url=file:///repo"
+                                + " -DaltDeploymentRepository=seed::default::file:///repo");
+        // No credential, no server, no store: the settings mirror the qits repository to the volume.
+        assertThat(script).doesNotContain("<server>").doesNotContain("Authorization")
+                .doesNotContain("qits-artifacts").doesNotContain("qits-platform-mirror")
+                .contains("<mirrorOf>qits-maven</mirrorOf>").contains("<url>file:///repo</url>");
         // Never the working tree: the checkout's own /src is not in the script at all.
         assertThat(script).doesNotContain("cd /src &&");
         // And the daemon's contract is the daemon's module.
-        assertThat(phases.protocolScript("ci-daemon", "2026.929.103640", true, false, null))
-                .contains("-pl ci-daemon-protocol -am")
-                .doesNotContain("qits::default::");
-        assertThat(phases.protocolScript("ci-daemon", "2026.929.103640", false, true, null))
-                .doesNotContain("seed::default::");
+        assertThat(phases.protocolScript("ci-daemon", List.of("2026.929.103640")))
+                .contains("-pl ci-daemon-protocol -am");
     }
 
     private static final String RUNNER_PROTOCOL_JAR = "eu/wohlben/qits/qits-system-runner-protocol/"
             + "2026.930.132340/qits-system-runner-protocol-2026.930.132340.jar";
-
-    private static final String STORE_JAR =
-            "GET http://prod-qits-artifacts:8080/artifacts/maven/maven/" + RUNNER_PROTOCOL_JAR;
 
     /**
      * A boot whose sources directory is this test's, holding a ci checkout and a system checkout
@@ -547,7 +511,7 @@ class SeedPhasesTest {
     }
 
     private static void runProtocolPublish(Boot boot, PhaseContext ctx) throws Exception {
-        new SeedPhases(boot).protocolPublish("system", "system-runner-daemon",
+        new SeedPhases(boot).protocolSeed("system", "system-runner-daemon",
                 "qits-system-runner-protocol", "qits.system-runner-protocol.version").action()
                 .run(ctx);
     }
@@ -572,24 +536,26 @@ class SeedPhasesTest {
         assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker create"));
     }
 
-    /** Both registries hold it: nothing is built, which is every warm rerun. */
+    /** The file registry holds it: nothing is built, which is every warm rerun. */
     @Test
-    void aProtocolJarBothRegistriesHoldIsNotPublishedAgain() throws Exception {
+    void aProtocolJarTheFileRegistryHoldsIsNotSeededAgain() throws Exception {
         ScriptedRunner runner = new ScriptedRunner(command ->
                 command.contains("--rm") ? ScriptedRunner.ok(RUNNER_PROTOCOL_JAR)
                         : ScriptedRunner.ok("<project/>"));
-        Boot boot = protocolBoot(runner, new CannedHttp().answer(STORE_JAR, 200, ""));
+        CannedHttp http = new CannedHttp();
+        Boot boot = protocolBoot(runner, http);
 
         assertThatThrownBy(() -> runProtocolPublish(boot, new CiLogStreamTest.Recorder()))
                 .isInstanceOf(PhaseSkipped.class)
-                .hasMessageContaining("2026.930.132340 is in both registries");
+                .hasMessageContaining("2026.930.132340 is in the file registry");
+        // And the store was not asked: no store runs in phase 1.
+        assertThat(http.calls).isEmpty();
         assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker create"));
     }
 
     /**
-     * <b>The store holds it and the file registry does not — the state of every rerun whose worker
-     * rebuilt the file registry.</b> Only the missing half is written, the tag's tree is what goes
-     * into the container, and the volume the ingress serves is the one mounted.
+     * <b>The file registry lacks it.</b> The tag's tree is what goes into the container, the volume
+     * is the one mounted, and the container is on no network of the platform's.
      */
     @Test
     void aProtocolJarTheFileRegistryLacksIsSeededFromTheTag() throws Exception {
@@ -601,14 +567,14 @@ class SeedPhasesTest {
             // The file registry answers with nothing: the jar is not there.
             return line.contains("--rm") ? ScriptedRunner.ok() : ScriptedRunner.ok("<project/>");
         });
-        Boot boot = protocolBoot(runner, new CannedHttp().answer(STORE_JAR, 200, ""));
+        Boot boot = protocolBoot(runner, new CannedHttp());
 
         runProtocolPublish(boot, new CiLogStreamTest.Recorder());
 
         List<String> create = runner.argv.stream()
                 .filter(command -> command.size() > 1 && command.get(1).equals("create"))
                 .findFirst().orElseThrow();
-        assertThat(create).containsSubsequence("--network", "qits-net")
+        assertThat(create).doesNotContain("--network")
                 .containsSubsequence("-v", "qits-maven-seed:/repo")
                 .containsSubsequence("-v", "qits-maven-cache:/cache");
         assertThat(create.getLast()).contains("seed::default::file:///repo")
@@ -627,7 +593,7 @@ class SeedPhasesTest {
      * lag independently, so each version is built from its own tag into the registries it lacks.
      */
     @Test
-    void aContractTwoServicesPinIsPublishedAtBothPins() throws Exception {
+    void aContractTwoServicesPinIsSeededAtBothPins() throws Exception {
         ScriptedRunner runner = new ScriptedRunner(command -> {
             String line = String.join(" ", command);
             if (line.startsWith("docker create")) {
@@ -643,7 +609,7 @@ class SeedPhasesTest {
                 "<qits.workspace-daemon-protocol.version>2026.1030.124906"
                         + "</qits.workspace-daemon-protocol.version>", StandardCharsets.UTF_8);
 
-        new SeedPhases(boot).protocolPublish(List.of("projects", "system"), "workspace-daemon",
+        new SeedPhases(boot).protocolSeed(List.of("projects", "system"), "workspace-daemon",
                 "qits-workspace-daemon-protocol", "qits.workspace-daemon-protocol.version")
                 .action().run(new CiLogStreamTest.Recorder());
 
@@ -759,20 +725,23 @@ class SeedPhasesTest {
         List<String> create = runner.argv.stream()
                 .filter(command -> command.size() > 1 && command.get(1).equals("create"))
                 .findFirst().orElseThrow();
-        assertThat(create).containsSubsequence("--network", "qits-net")
+        assertThat(create).doesNotContain("--network")
                 .containsSubsequence("--entrypoint", "bash")
                 .containsSubsequence("--memory", "6g")
+                .containsSubsequence("-v", "qits-maven-seed:/repo:ro")
                 .containsSubsequence("-v", "qits-maven-cache:/cache",
                         "qits/graalvmce-musl-builder:jdk-25", "-c");
-        // On qits-net with the publishes' settings: the qits jars it resolves are the store's.
+        // The qits jars it resolves are the file repository's, mounted read-only; no store runs.
         assertThat(create.getLast())
                 .contains("<mirrorOf>qits-maven</mirrorOf>")
-                .contains("<url>http://prod-qits-artifacts:8080/artifacts/maven/maven</url>")
+                .contains("<url>file:///repo</url>")
+                .doesNotContain("qits-artifacts").doesNotContain("qits-platform-mirror")
                 .endsWith("rm -rf /cache/repository/eu/wohlben/qits\n"
                         + "cd /qits-build && ./mvnw -B -ntp -s /root/.m2/settings.xml -pl"
                         + " system-runner -am package -Dnative -DskipTests"
                         + " -Dquarkus.native.container-build=false"
-                        + " -Dmaven.repo.local=/cache/repository");
+                        + " -Dmaven.repo.local=/cache/repository"
+                        + " -Dqits.maven.repository.url=file:///repo");
         Path context = temp.resolve("src/.exports/qits-system-runner-image");
         assertThat(runner.lines()).containsSubsequence(
                 "docker start -a cid-7",
@@ -847,7 +816,7 @@ class SeedPhasesTest {
      */
     @Test
     void aGoldenMastersJarIsPackedFromItsArchiveIntoTheFileRepository() {
-        String script = plainPhases().contractScript(List.of(goldenMasters()), false, null);
+        String script = SeedPhases.contractScript(List.of(goldenMasters()));
 
         assertThat(script).startsWith("set -eu\n")
                 .contains("mkdir -p /contracts/qits-idp-golden-masters@2026.1027.165632"
@@ -875,7 +844,7 @@ class SeedPhasesTest {
      */
     @Test
     void aPactJarHoldsOneProvidersPactsUnderPacts() {
-        String script = plainPhases().contractScript(List.of(edgePact()), false, null);
+        String script = SeedPhases.contractScript(List.of(edgePact()));
         String pack = "/tmp/pack/qits-ci-frontend-pacts-qits-edge-service@2026.1021.191659";
 
         assertThat(script)
@@ -893,19 +862,6 @@ class SeedPhasesTest {
                         + " (contracts)'")
                 .contains("-DrepositoryId=seed -Durl=file:///repo");
         assertThat(script).doesNotContain("golden-masters");
-    }
-
-    /** The store half writes the publishing settings and deploys to the store, and only there. */
-    @Test
-    void theStoreHalfOfTheGoldenMastersCarriesTheCredential() {
-        String script = plainPhases().contractScript(List.of(goldenMasters()), true,
-                "Bearer publish-token");
-
-        assertThat(script).contains("<value>Bearer publish-token</value>")
-                .contains("mvn -B -ntp -s /root/.m2/settings.xml org.apache.maven.plugins")
-                .contains("-DrepositoryId=qits"
-                        + " -Durl=http://prod-qits-artifacts:8080/artifacts/maven/maven")
-                .doesNotContain("file:///repo");
     }
 
     /** {@code ContractPackager.pacts}: a top-level {@code <consumer>_<provider>.json}, nothing else. */
@@ -1248,7 +1204,7 @@ class SeedPhasesTest {
         assertThat(script).contains("cd /src-containers && mvn -B -ntp deploy -DskipTests"
                 + " -pl client$([ -f client-contracts/pom.xml ] && echo ,client-contracts || true)"
                 + " -am");
-        // The store publish keeps the module its consumers resolve from there.
+        // A protocol build keeps the module its consumers resolve.
         assertThat(SeedPhases.mavenModuleArgs("containers")).isEqualTo(" -pl client -am");
         assertThat(SeedPhases.seedModuleArgs("githost")).isEqualTo(" -pl githost-events -am");
     }
@@ -1257,32 +1213,27 @@ class SeedPhasesTest {
 
     /**
      * The runner library from its tags, whole, its module poms' test scope stripped first — in
-     * the container's copy — and one deploy per registry each version still lacks.
+     * the container's copy — and one deploy per version into the file repository, resolving qits
+     * jars from the same volume.
      */
     @Test
     void theRunnerLibraryIsBuiltFromItsTagsWithItsTestScopeStripped() {
-        SeedPhases phases = new SeedPhases(
-                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
-
-        String script = phases.runnerScript(List.of("2026.1023.80958", "2026.1023.52004"),
-                List.of("2026.1023.80958"), List.of("2026.1023.80958", "2026.1023.52004"),
-                "Bearer publish-token");
+        String script = SeedPhases.runnerScript(List.of("2026.1023.80958", "2026.1023.52004"));
 
         assertThat(script).startsWith("set -eu\n");
         assertThat(script.split("rm -rf /cache/repository", -1)).hasSize(2);
         assertThat(script.lines().filter(line -> line.startsWith("cd ")).toList()).containsExactly(
                 "cd /src@2026.1023.80958 && mvn -B -ntp -s /root/.m2/settings.xml deploy"
                         + " -DskipTests -Dmaven.repo.local=/cache/repository"
+                        + " -Dqits.maven.repository.url=file:///repo"
                         + " -DaltDeploymentRepository=seed::default::file:///repo",
-                "cd /src@2026.1023.80958 && mvn -B -ntp -s /root/.m2/settings.xml deploy"
-                        + " -DskipTests -Dmaven.repo.local=/cache/repository"
-                        + " -DaltDeploymentRepository=qits::default::"
-                        + "http://prod-qits-artifacts:8080/artifacts/maven/maven",
                 "cd /src@2026.1023.52004 && mvn -B -ntp -s /root/.m2/settings.xml deploy"
                         + " -DskipTests -Dmaven.repo.local=/cache/repository"
-                        + " -DaltDeploymentRepository=qits::default::"
-                        + "http://prod-qits-artifacts:8080/artifacts/maven/maven");
-        // The strip comes before each tree's first build, and never touches the root pom.
+                        + " -Dqits.maven.repository.url=file:///repo"
+                        + " -DaltDeploymentRepository=seed::default::file:///repo");
+        assertThat(script).contains("<url>file:///repo</url>").doesNotContain("qits::default::")
+                .doesNotContain("<server>");
+        // The strip comes before each tree's build, and never touches the root pom.
         assertThat(script).containsSubsequence(SeedPhases.stripTestDependencies("/src@2026.1023.80958"),
                 "cd /src@2026.1023.80958");
         assertThat(SeedPhases.stripTestDependencies("/src@v")).contains("-mindepth 2")
@@ -1313,123 +1264,154 @@ class SeedPhasesTest {
         assertThat(Files.readString(temp.resolve("tree/pom.xml"))).contains("managed");
     }
 
-    // --- what a publish presents at the store ----------------------------------------------------
+    // --- what phase 1 resolves through, and what store-seed presents (qits-889) -----------------
 
     /**
-     * <b>The {@code <server>} id is {@code qits} and it is not free to choose.</b> Maven matches a
-     * server to a repository by id, and the repository a publish lands in is the one
-     * {@code -DaltDeploymentRepository=qits::default::<url>} names — so any other spelling is a
-     * credential Maven holds and never sends.
+     * <b>The phase-1 settings resolve qits jars from the volume and nothing else of the
+     * platform's</b>: one exact-id mirror of {@code qits-maven} to {@code file:///repo}, Central
+     * left as it is, and no {@code <server>} — nothing in phase 1 deploys to a server.
      */
     @Test
-    void thePublishSettingsCarryAServerForTheIdTheDeployTargetNames() {
-        SeedPhases phases = new SeedPhases(
-                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+    void thePhaseOneSettingsMirrorTheQitsRepositoryToTheVolume() {
+        String settings = SeedPhases.seedSettings();
 
-        String script = phases.publishScript("githost", List.of(SeedPhases.publishTree(null)),
-                "Bearer publish-token");
-
-        assertThat(script).contains("""
-                  <servers>
-                    <server>
-                      <id>qits</id>
-                      <configuration>
-                        <httpHeaders>
-                          <property>
-                            <name>Authorization</name>
-                            <value>Bearer publish-token</value>
-                          </property>
-                        </httpHeaders>
-                      </configuration>
-                    </server>
-                  </servers>
-                """);
-        assertThat(script).contains("-DaltDeploymentRepository=qits::default::");
-        // The servers come before the mirrors, which is the order a settings.xml takes them in.
-        assertThat(script.indexOf("<servers>")).isLessThan(script.indexOf("<mirrors>"));
+        assertThat(settings).contains("<id>qits-maven</id>")
+                .contains("<mirrorOf>qits-maven</mirrorOf>")
+                .contains("<url>file:///repo</url>")
+                .doesNotContain("<servers>").doesNotContain("central")
+                .doesNotContain("qits-artifacts").doesNotContain("qits-platform-mirror");
     }
 
-    /**
-     * <b>A HEADER, and not a {@code <username>}/{@code <password>} pair.</b> Maven does not
-     * authenticate preemptively — it sends the request bare and answers the challenge that comes
-     * back — so a Basic pair would never leave the container against a store that refuses rather
-     * than challenges, and a bearer has no Basic challenge to answer at all.
-     */
+    /** {@code bearerOf} is still what the container masking reads a header value through. */
     @Test
-    void theCredentialIsAHeaderRatherThanAPasswordMavenWouldNeverSend() {
-        SeedPhases phases = new SeedPhases(
-                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
-
-        String script = phases.mavenSettings("Bearer publish-token");
-
-        assertThat(script).doesNotContain("<username>").doesNotContain("<password>");
-        assertThat(script).contains("<name>Authorization</name>");
-    }
-
-    /**
-     * Nothing to present is no {@code <servers>} block at all — the seed store this run started
-     * itself, before any idp existed to commission a publishing credential at.
-     */
-    @Test
-    void withNoCredentialTheSettingsAreTheOnesThisBootAlwaysWrote() {
-        SeedPhases phases = new SeedPhases(
-                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
-
-        assertThat(phases.mavenSettings(null)).doesNotContain("<servers>")
-                .contains("<mirrors>");
-        assertThat(phases.mavenSettings("")).doesNotContain("<servers>");
-    }
-
-    /**
-     * <b>The npm half carries the real token now.</b> npm sends {@code _authToken} as
-     * {@code Authorization: Bearer <value>}, so the value is the bearer WITHOUT the word in front
-     * of it — spelled twice, it is a header the store cannot read. The literal
-     * {@code qits-bootstrap} it replaced was ceremony: the registry read no credential at all.
-     */
-    @Test
-    void theNpmrcCarriesTheBearerUnderTheRegistryItPublishesTo() {
-        SeedPhases phases = new SeedPhases(
-                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
-
-        String npmrc = phases.npmrc(SeedPhases.bearerOf("Bearer publish-token"));
-
-        assertThat(npmrc).contains(
-                "//prod-qits-artifacts:8080/artifacts/npm/npm/:_authToken=publish-token\n");
-        assertThat(npmrc).doesNotContain("qits-bootstrap").doesNotContain("Bearer");
-        // The two registries are unchanged: @qits to the store, everything else to the mirror's
-        // cache of npmjs, and the DEFAULT must not be the qits one.
-        assertThat(npmrc).contains("@qits:registry=http://prod-qits-artifacts:8080/artifacts/npm/npm/")
-                .contains("registry=http://prod-qits-mirror:8080/npm/npmjs/\n");
-    }
-
-    /** No credential, no auth line — and the two registries still stand. */
-    @Test
-    void withNoTokenTheNpmrcHasNoAuthLineAtAll() {
-        SeedPhases phases = new SeedPhases(
-                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
-
-        assertThat(phases.npmrc("")).doesNotContain("_authToken").contains("@qits:registry=");
+    void theBearerOfAHeaderIsItsTokenAlone() {
         assertThat(SeedPhases.bearerOf(null)).isEmpty();
         assertThat(SeedPhases.bearerOf("Bearer t")).isEqualTo("t");
         assertThat(SeedPhases.bearerOf("t")).isEqualTo("t");
     }
 
+    private static final String STORE = "http://prod-qits-artifacts:8080/artifacts/maven/maven";
+
     /**
-     * The toolchain seed deploys to the same {@code qits} repository id through the same settings
-     * file, so it is the same credential — one code path, both publishes.
+     * <b>store-seed: the whole {@code eu/wohlben/qits} subtree, one PUT per file, the bearer on
+     * every request.</b> Asked for first with a HEAD, so a coordinate the store holds is never
+     * written again (immutable release paths answer different bytes with a 403); metadata never
+     * sent (the store derives it and discards a client's); checksums with their file; poms last.
      */
     @Test
-    void theToolchainStorePublishGoesThroughTheSameServerBlock() {
-        SeedPhases phases = new SeedPhases(
-                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
+    void theStoreSeedScriptUploadsTheSubtreeUnderTheBearer() {
+        String script = SeedPhases.storeSeedScript(STORE, "Bearer publish-token");
 
-        String script = phases.toolchainScript(bothRegistries(), "Bearer publish-token");
+        assertThat(script).startsWith("set -eu\n")
+                .contains("base='" + STORE + "'\n")
+                .contains("cat > /tmp/auth <<'AUTH'\nAuthorization: Bearer publish-token\nAUTH\n")
+                .contains("cd /repo\n")
+                .contains("find eu/wohlben/qits -type f ! -name 'maven-metadata*'")
+                .contains("! -name '*.sha1'")
+                .contains("find eu/wohlben/qits -type f -name '*.pom' | sort >> /tmp/files");
+        // Every request presents the header file: the HEAD and each PUT.
+        assertThat(script).contains("-I -H @/tmp/auth \"$base/$f\"")
+                .contains("-T \"$1\" -H @/tmp/auth \"$base/$1\"");
+        // Held is left alone, absent is uploaded, anything else stops the phase.
+        assertThat(script).contains("200) held=$((held + 1)); continue ;;")
+                .contains("404) ;;")
+                .contains("asking the store for $f answered $code\" >&2; exit 1");
+        assertThat(script).contains("for sum in md5 sha1 sha256 sha512; do");
+        // The bearer is in the header file and nowhere on a command line.
+        assertThat(script.lines().filter(line -> line.contains("publish-token"))).hasSize(1);
+        // Non-poms before poms: the pom is what a presence check reads as published.
+        assertThat(script.indexOf("! -name '*.pom' | sort > /tmp/files"))
+                .isLessThan(script.indexOf("-name '*.pom' | sort >> /tmp/files"));
+    }
 
-        assertThat(script).contains("<id>qits</id>")
-                .contains("<value>Bearer publish-token</value>")
-                .contains("-DrepositoryId=qits");
-        // The file registry half is a file:// url and takes no credential.
-        assertThat(script).contains("-DrepositoryId=seed -Durl=file:///repo");
+    /** No credential is no script: the store is never published to bare. */
+    @Test
+    void theStoreSeedRefusesToBuildABareUpload() {
+        assertThatThrownBy(() -> SeedPhases.storeSeedScript(STORE, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("never published to bare");
+        assertThatThrownBy(() -> SeedPhases.storeSeedScript(STORE, " "))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /** The container: on qits-net to reach the store, the volume read-only. */
+    @Test
+    void theStoreSeedContainerReadsTheVolumeOnQitsNet() {
+        List<String> create = SeedPhases.storeSeedCommand(STORE, "Bearer t");
+
+        assertThat(create).containsSubsequence("docker", "create", "--network", "qits-net")
+                .containsSubsequence("-v", "qits-maven-seed:/repo:ro")
+                .doesNotContain("qits-maven-cache:/cache");
+        assertThat(create.getLast()).isEqualTo(SeedPhases.storeSeedScript(STORE, "Bearer t"));
+    }
+
+    /**
+     * <b>The script, run.</b> A fake curl answers HEAD 200 for one held jar and 404 for the rest:
+     * the held one and its checksum are not PUT, the absent ones are — with their checksums,
+     * poms last — and metadata is never sent.
+     */
+    @Test
+    void theStoreSeedScriptSkipsHeldFilesAndUploadsTheRest() throws Exception {
+        Path repo = Files.createDirectories(temp.resolve("repo/eu/wohlben/qits/qits-a/1"));
+        Files.writeString(repo.resolve("qits-a-1.jar"), "a");
+        Files.writeString(repo.resolve("qits-a-1.jar.sha1"), "s");
+        Files.writeString(repo.resolve("qits-a-1.pom"), "p");
+        Files.writeString(repo.resolve("qits-a-1.pom.md5"), "m");
+        Files.writeString(repo.getParent().resolve("maven-metadata.xml"), "x");
+        Path held = Files.createDirectories(temp.resolve("repo/eu/wohlben/qits/qits-b/2"));
+        Files.writeString(held.resolve("qits-b-2.jar"), "b");
+        Files.writeString(held.resolve("qits-b-2.jar.sha1"), "s");
+        Path bin = Files.createDirectories(temp.resolve("bin"));
+        Path log = temp.resolve("curl.log");
+        Files.writeString(bin.resolve("curl"), """
+                #!/bin/sh
+                url=""; put=""; head=""
+                for a in "$@"; do
+                  case "$a" in http*) url="$a" ;; -I) head=1 ;; esac
+                done
+                prev=""
+                for a in "$@"; do [ "$prev" = "-T" ] && put="$a"; prev="$a"; done
+                if [ -n "$head" ]; then
+                  echo "HEAD $url" >> %1$s
+                  case "$url" in *qits-b-2.jar) printf 200 ;; *) printf 404 ;; esac
+                else
+                  echo "PUT $put" >> %1$s
+                fi
+                """.formatted(log));
+        bin.resolve("curl").toFile().setExecutable(true);
+        String script = SeedPhases.storeSeedScript(STORE, "Bearer t")
+                .replace("/tmp/", temp + "/")
+                .replace("cd /repo\n", "cd " + temp.resolve("repo") + "\n");
+
+        ProcessBuilder builder = new ProcessBuilder("sh", "-c", script).redirectErrorStream(true);
+        builder.environment().put("PATH", bin + ":" + System.getenv("PATH"));
+        Process run = builder.start();
+        String out = new String(run.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertThat(run.waitFor()).as(out).isZero();
+
+        assertThat(out).contains("store-seed: 2 uploaded, 1 already held");
+        List<String> puts = Files.readAllLines(log).stream()
+                .filter(line -> line.startsWith("PUT ")).toList();
+        assertThat(puts).containsExactly(
+                "PUT eu/wohlben/qits/qits-a/1/qits-a-1.jar",
+                "PUT eu/wohlben/qits/qits-a/1/qits-a-1.jar.sha1",
+                "PUT eu/wohlben/qits/qits-a/1/qits-a-1.pom",
+                "PUT eu/wohlben/qits/qits-a/1/qits-a-1.pom.md5");
+        assertThat(Files.readString(log)).doesNotContain("maven-metadata");
+    }
+
+    /** An empty volume is said, not failed: there is nothing to upload. */
+    @Test
+    void theStoreSeedScriptSaysSoWhenTheVolumeIsEmpty() throws Exception {
+        Path empty = Files.createDirectories(temp.resolve("empty"));
+        String script = SeedPhases.storeSeedScript(STORE, "Bearer t")
+                .replace("/tmp/", temp + "/").replace("cd /repo\n", "cd " + empty + "\n");
+
+        Process run = new ProcessBuilder("sh", "-c", script).redirectErrorStream(true).start();
+        String out = new String(run.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+
+        assertThat(run.waitFor()).isZero();
+        assertThat(out).contains(SeedPhases.STORE_SEED_EMPTY);
     }
 
     // --- the toolchain the ci-daemon builder image is made of ------------------------------------
@@ -1443,10 +1425,8 @@ class SeedPhasesTest {
             ARG ZLIB_URL=http://registry.dev.localhost:8080/artifacts/maven/maven/eu/wohlben/qits/toolchain/zlib/1.3.1/zlib-1.3.1.tar.gz
             """;
 
-    private static List<SeedPhases.Publish> bothRegistries() {
-        return MuslToolchain.read(MUSL_DOCKERFILE).stream()
-                .map(tarball -> new SeedPhases.Publish(tarball, true, true))
-                .toList();
+    private static List<MuslToolchain.Tarball> bothTarballs() {
+        return MuslToolchain.read(MUSL_DOCKERFILE);
     }
 
     /**
@@ -1457,10 +1437,7 @@ class SeedPhasesTest {
      */
     @Test
     void theToolchainSeedVerifiesEachTarballBeforeItPublishesIt() {
-        SeedPhases phases = new SeedPhases(
-                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
-
-        String script = phases.toolchainScript(bothRegistries(), null);
+        String script = SeedPhases.toolchainScript(bothTarballs());
 
         assertThat(script).startsWith("set -eu\n");
         assertThat(script).contains(
@@ -1476,46 +1453,20 @@ class SeedPhasesTest {
     }
 
     /**
-     * <b>BOTH REGISTRIES, and the temporary one FIRST.</b> The bootstrap ingress proxies its maven
-     * route to the temporary file registry for the whole run and is never repointed at the store —
-     * so a tarball published only to the store is a 404 to the builder build two phases below,
-     * which is exactly what happened on 2026-09-05 with both files sitting in the store.
+     * <b>Into the FILE repository only (qits-889)</b>, with no settings file: the plugin comes from
+     * Maven Central direct and the store gets the tarballs from {@code store-seed}.
      */
     @Test
-    void theToolchainReachesTheFileRegistryBeforeTheStore() {
-        SeedPhases phases = new SeedPhases(
-                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
-
-        String script = phases.toolchainScript(bothRegistries(), null);
+    void theToolchainReachesTheFileRegistryAndNothingElse() {
+        String script = SeedPhases.toolchainScript(bothTarballs());
 
         assertThat(script).contains("-DrepositoryId=seed -Durl=file:///repo")
-                .contains("-DrepositoryId=qits -Durl=http://prod-qits-artifacts:8080/artifacts"
-                        + "/maven/maven");
-        assertThat(script.indexOf("-DrepositoryId=seed"))
-                .isLessThan(script.indexOf("-DrepositoryId=qits"));
-        // And the mount those two lines need is the one the library seed writes through.
+                .doesNotContain("-DrepositoryId=qits").doesNotContain("settings.xml")
+                .doesNotContain("prod-qits-artifacts");
+        // And the mount that line needs is the one the library seed writes through.
         assertThat(SeedPhases.SEED_REPO_VOLUME).isEqualTo("qits-maven-seed");
-    }
-
-    /** A registry that already holds a tarball is not written to again. */
-    @Test
-    void aRegistryThatHoldsTheTarballIsSkippedOnItsOwn() {
-        SeedPhases phases = new SeedPhases(
-                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
-        MuslToolchain.Tarball zlib = MuslToolchain.read(MUSL_DOCKERFILE).get(1);
-
-        String storeOnly = phases.toolchainScript(
-                List.of(new SeedPhases.Publish(zlib, false, true)), null);
-        String seedOnly = phases.toolchainScript(
-                List.of(new SeedPhases.Publish(zlib, true, false)), null);
-
-        assertThat(storeOnly).doesNotContain("-DrepositoryId=seed").contains("-DrepositoryId=qits");
-        assertThat(seedOnly).contains("-DrepositoryId=seed").doesNotContain("-DrepositoryId=qits");
-        // Both still download and check: the bytes are what the checksum is for.
-        assertThat(storeOnly).contains("sha256sum -c -");
-        assertThat(seedOnly).contains("sha256sum -c -");
-        // Nothing missing anywhere is an empty script — the phase skips before it gets here.
-        assertThat(phases.toolchainScript(List.of(), null)).doesNotContain("curl");
+        // Nothing missing is an empty script — the phase skips before it gets here.
+        assertThat(SeedPhases.toolchainScript(List.of())).doesNotContain("curl");
     }
 
     /**
@@ -1526,10 +1477,7 @@ class SeedPhasesTest {
      */
     @Test
     void theToolchainIsDeployedAtTheCoordinateTheDockerfileReads() {
-        SeedPhases phases = new SeedPhases(
-                new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log"))));
-
-        String script = phases.toolchainScript(bothRegistries(), null);
+        String script = SeedPhases.toolchainScript(bothTarballs());
 
         assertThat(script).contains("org.apache.maven.plugins:maven-deploy-plugin:3.1.2:deploy-file")
                 .contains("-DgroupId=eu.wohlben.qits.toolchain")

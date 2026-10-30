@@ -66,51 +66,48 @@ class BootstrapPlanTest {
      * <b>Each protocol jar lands immediately before the image that compiles against it, and
      * nowhere on a warm rerun.</b> qits-ci pins the daemon's contract and qits-system the target
      * runner's, both as released coordinates, so neither image build resolves until its jar is
-     * published; a run that builds no image publishes neither. The CI runner's contract is gone
-     * with the CI runner (qits-1547).
+     * in the file repository; a run that builds no image seeds neither. The CI runner's contract
+     * is gone with the CI runner (qits-1547).
      */
     @Test
-    void theProtocolJarsArePublishedImmediatelyBeforeTheImagesThatCompileAgainstThem() {
+    void theProtocolJarsAreSeededImmediatelyBeforeTheImagesThatCompileAgainstThem() {
         List<String> ids = ids(plan(Map.of()));
 
         int ci = ids.indexOf("seed-image-ci");
-        assertThat(ids.get(ci - 1)).isEqualTo("publish-qits-ci-daemon-protocol");
+        assertThat(ids.get(ci - 1)).isEqualTo("seed-qits-ci-daemon-protocol");
         int system = ids.indexOf("seed-image-system");
-        assertThat(ids.get(system - 1)).isEqualTo("publish-qits-system-runner-protocol");
-        // After the store answers: half of each publish lands there.
-        assertThat(ids).containsSubsequence("seed-artifacts", "publish-qits-ci-daemon-protocol");
-        assertThat(ids).doesNotContain("publish-qits-ci-runner-protocol");
+        assertThat(ids.get(system - 1)).isEqualTo("seed-qits-system-runner-protocol");
+        assertThat(ids).containsSubsequence("maven-seed", "seed-qits-ci-daemon-protocol");
+        assertThat(ids).doesNotContain("seed-qits-ci-runner-protocol",
+                "publish-qits-ci-daemon-protocol");
 
         assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1")))).doesNotContain(
-                "publish-qits-ci-daemon-protocol", "publish-qits-system-runner-protocol");
+                "seed-qits-ci-daemon-protocol", "seed-qits-system-runner-protocol");
     }
 
     /**
      * <b>The golden masters and the runner library land before every build that resolves them</b>
-     * (qits-1547): after the store and the last maven publish whose jars the runner build reads,
-     * before qits-system's protocol publish and seed image, and long before the runner's native
-     * build. Neither runs on a warm rerun, which builds nothing.
+     * (qits-1547): after maven-seed, whose containers-driver the runner build reads, before
+     * qits-system's protocol seed and seed image, and long before the runner's native build.
+     * Neither runs on a warm rerun, which builds nothing.
      */
     @Test
     void theRunnerLibraryIsSeededBeforeQitsSystemAndItsRunnerAreBuilt() {
         List<String> ids = ids(plan(Map.of()));
 
-        assertThat(ids).containsSubsequence("seed-artifacts", "publish-golden-masters",
-                "publish-qits-containers-driver", "publish-qits-containers-client",
-                "publish-qits-runner", "publish-qits-system-runner-protocol", "seed-image-system",
+        assertThat(ids).containsSubsequence("seed-golden-masters", "maven-seed",
+                "seed-qits-runner", "seed-qits-system-runner-protocol", "seed-image-system",
                 "ci-daemon", "system-runner-image");
         assertThat(ids).containsSubsequence("seed-golden-masters", "seed-image-ci");
         assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1"))))
-                .doesNotContain("seed-golden-masters", "publish-golden-masters",
-                        "publish-qits-runner");
+                .doesNotContain("seed-golden-masters", "seed-qits-runner");
     }
 
     /**
      * <b>The contract jars are in the file repository before ANYTHING is built</b> (qits-889):
      * the edge, the first image, pins fourteen pacts and qits-idp's golden masters, and maven-seed
      * builds two contracts kits that compile against golden masters. Neither phase needs a server,
-     * so both precede everything of the platform; the store's copy of the golden masters waits for
-     * the store and precedes every library publish into it, which resolve from there.
+     * so both precede everything of the platform; the store gets them from store-seed.
      */
     @Test
     void theContractJarsAreInTheFileRepositoryBeforeTheFirstBuild() {
@@ -118,13 +115,7 @@ class BootstrapPlanTest {
 
         assertThat(ids).containsSubsequence("sources", "seed-golden-masters", "seed-pacts",
                 "maven-seed", "seed-image-edge", "seed-image-mirror");
-        assertThat(ids.indexOf("seed-pacts")).isLessThan(ids.indexOf("seed-mirror"))
-                .isLessThan(ids.indexOf("seed-artifacts"));
-        assertThat(ids.get(ids.indexOf("seed-artifacts") + 1)).isEqualTo("publish-golden-masters");
-        assertThat(ids).containsSubsequence("publish-golden-masters", "publish-qits-userflows",
-                "publish-qits-eventstream", "publish-qits-containers-client");
-        // No store publish of a pact: the file repository is the one reader there is.
-        assertThat(ids).doesNotContain("publish-pacts");
+        assertThat(ids).doesNotContain("publish-golden-masters", "publish-pacts");
         assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1"))))
                 .doesNotContain("seed-pacts", "seed-golden-masters");
     }
@@ -139,16 +130,60 @@ class BootstrapPlanTest {
     void theDaemonContractsQitsProjectsCompilesAgainstLandBeforeItsImage() {
         List<String> ids = ids(plan(Map.of()));
 
-        assertThat(ids).containsSubsequence("seed-artifacts", "publish-qits-platform-access-cli-binary",
-                "publish-qits-ci-daemon-protocol", "seed-image-ci");
+        assertThat(ids).containsSubsequence("maven-seed", "seed-qits-platform-access-cli-binary",
+                "seed-qits-ci-daemon-protocol", "seed-image-ci");
         int projects = ids.indexOf("seed-image-projects");
         assertThat(ids.subList(projects - 2, projects)).containsExactly(
-                "publish-qits-projects-daemon-protocol", "publish-qits-workspace-daemon-protocol");
-        assertThat(ids).containsSubsequence("publish-qits-workspace-daemon-protocol",
+                "seed-qits-projects-daemon-protocol", "seed-qits-workspace-daemon-protocol");
+        assertThat(ids).containsSubsequence("seed-qits-workspace-daemon-protocol",
                 "seed-image-projects", "seed-image-system");
         assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1")))).doesNotContain(
-                "publish-qits-projects-daemon-protocol", "publish-qits-workspace-daemon-protocol",
-                "publish-qits-platform-access-cli-binary");
+                "seed-qits-projects-daemon-protocol", "seed-qits-workspace-daemon-protocol",
+                "seed-qits-platform-access-cli-binary");
+    }
+
+    /**
+     * <b>NO PHASE BEFORE seed-idp TALKS TO A STORE OR A MIRROR</b> (qits-889). Nothing in phase 1
+     * publishes, and no store or mirror is started by hand: the seed builds resolve from the
+     * qits-maven-seed file repository and upstream. The two fixed-commit npm publishes are gone
+     * with it — no lockfile at any pin resolves {@code 0.0.x} of either package.
+     */
+    @Test
+    void noPhaseBeforeTheIdpPublishesOrStartsAStore() {
+        for (Map<String, String> env : List.of(Map.<String, String>of(),
+                Map.of("QITS_SKIP_BUILD", "1"))) {
+            List<String> ids = ids(plan(env));
+            List<String> beforeIdp = ids.subList(0, ids.indexOf("seed-idp"));
+
+            assertThat(beforeIdp).noneMatch(id -> id.startsWith("publish-"));
+            assertThat(beforeIdp).doesNotContain("seed-artifacts", "seed-mirror", "store-seed",
+                    "images-publish", "seed-images-publish", "daemon-publish");
+            assertThat(ids).doesNotContain("seed-artifacts", "seed-mirror", "publish-ui-components",
+                    "publish-angular", "publish-golden-masters");
+            assertThat(ids).noneMatch(id -> id.matches("publish-qits-(userflows|coding-agents|"
+                    + "auth-core|registries-oci|eventstream|githost-events|containers-driver|"
+                    + "containers-client|runner)"));
+        }
+    }
+
+    /**
+     * <b>store-seed fills the store once, after the idp and the stack, and is the first publish
+     * of the boot</b>: after register-token — the seed stack is healthy and the idp answers, so the
+     * publishing credential can be commissioned — and before images-publish, inside the publish
+     * half that publish-credential-release closes. In both arms: a warm rerun uploads what the
+     * volume still holds that the store lacks.
+     */
+    @Test
+    void theStoreIsSeededAfterTheIdpAndBeforeTheImagesArePublished() {
+        for (Map<String, String> env : List.of(Map.<String, String>of(),
+                Map.of("QITS_SKIP_BUILD", "1"))) {
+            List<String> ids = ids(plan(env));
+
+            assertThat(ids).containsSubsequence("seed-idp", "seed-stack", "seed-health",
+                    "register-token", "store-seed", "images-publish", "seed-images-publish",
+                    "daemon-publish", "publish-credential-release");
+            assertThat(ids.get(ids.indexOf("images-publish") - 1)).isEqualTo("store-seed");
+        }
     }
 
     /**
@@ -268,62 +303,25 @@ class BootstrapPlanTest {
     void theSeedOrderIsTheOneTheDependenciesForce() {
         List<String> ids = ids(plan(Map.of()));
 
-        // artifacts is built and started before anything can be published into it, and every maven
-        // publish lands before the ci image that consumes them is built.
-        assertThat(ids).containsSubsequence("seed-image-artifacts", "seed-artifacts",
-                // The integrations FIRST: the blob store is built against qits-db-core since its
-                // DbRetry release, and qits-eventstream since 2026-08-11 — one of their three
-                // modules either way. The blob store has no publish of its own since 2026-08-30:
-                // its jar is a module of the qits-registries reactor, which is deployed whole.
-                // qits-userflows first: it resolves nothing of ours, and every service build on
-                // this platform resolves it — test-scoped, which a -DskipTests build still needs.
-                "publish-qits-userflows",
-                // The shared agent harness resolves nothing of ours either; both agent daemons'
-                // release replays resolve it from the store.
-                "publish-qits-coding-agents",
-                "publish-qits-auth-core",
-                "publish-qits-registries-oci",
-                "publish-qits-eventstream",
-                // The git host's vocabulary follows its own dependency: it is built against
-                // qits-eventstream and against nothing else of this platform.
-                "publish-qits-githost-events",
-                // qits-containers-javalib, on qits-eventstream's own terms — no qits dependency of
-                // its own, and it joins here because qits-containers-service's client now depends
-                // on it, so it has to be in the store before that publish below.
-                "publish-qits-containers-driver",
-                // The orchestrator's client, last of the publishes: it is built against
-                // qits-db-core, qits-arch-rules, qits-auth-core, qits-eventstream and
-                // qits-containers-driver, so everything it resolves is already in the store.
-                "publish-qits-containers-client", "publish-ui-components",
-                "publish-angular", "seed-image-ci", "seed-image-deployments",
-                "seed-image-idp", "seed-image-containers", "seed-image-projects",
-                "ci-daemon");
-        // BEFORE the ci image, because ci pins qits-containers-client and a step-container image
-        // build resolves from the platform's own Maven registry — there is no host ~/.m2 in this
-        // run to fall back on.
-        assertThat(ids).containsSubsequence("publish-qits-containers-driver",
-                "publish-qits-containers-client", "seed-image-ci");
-        // The ci image consumes qits-githost-events, so the publish is before it — and qits-projects
-        // consumes it too, which the deploy train reaches long before the git host's own deployment.
-        assertThat(ids).containsSubsequence("publish-qits-githost-events", "seed-image-ci",
+        // maven-seed fills the file repository every seed image resolves from, so every image is
+        // after it — in the order the libraries' consumers force, not one a store would.
+        assertThat(ids).containsSubsequence("maven-seed", "seed-image-edge", "seed-image-mirror",
+                "seed-image-artifacts", "seed-image-githost", "seed-image-oci-postgresql",
+                "seed-image-events", "seed-postgres", "seed-qits-runner",
+                "seed-qits-platform-access-cli-binary", "seed-qits-ci-daemon-protocol",
+                "seed-image-ci", "seed-image-deployments", "seed-image-idp",
+                "seed-image-containers", "seed-qits-projects-daemon-protocol",
+                "seed-qits-workspace-daemon-protocol", "seed-image-projects",
+                "seed-qits-system-runner-protocol", "seed-image-system", "step-image-ci-base",
+                "step-image-ci-slot", "seed-toolchain", "ci-daemon", "system-runner-image");
+        // The ci image consumes qits-githost-events, which maven-seed builds — and qits-projects
+        // consumes it too, which the deploy train reaches long before the git host's own
+        // deployment; the store holds it by then, from store-seed.
+        assertThat(ids).containsSubsequence("maven-seed", "seed-image-ci", "store-seed",
                 "deploy-projects", "deploy-githost");
-        // THE BYTE PLANE'S THREE IMAGES ARE BUILT TOGETHER, and all three before the store is
-        // started: each is built out of qits-blobstore and qits-registries, which the maven seed
-        // put in the temporary registry before the first image. There is nothing they could wait
-        // for — the real store does not exist until one of them is running.
-        assertThat(ids).containsSubsequence("maven-seed", "seed-image-mirror",
-                "seed-image-artifacts", "seed-image-githost", "seed-artifacts");
-        // THE MIRROR IS STARTED BEFORE THE STORE, because every publish after it resolves its
-        // third-party half through the mirror's caches — and postgres before the mirror, which
-        // refuses to boot without its database.
-        assertThat(ids).containsSubsequence("seed-image-mirror", "seed-postgres",
-                "seed-mirror", "seed-artifacts", "publish-qits-registries-oci");
         // The edge needs nothing from the platform — no client bundle, no qits dependency — so its
         // image is built in the first half and needs no service image before it.
         assertThat(ids).containsSubsequence("seed-image-edge", "seed-image-artifacts");
-        // The bus is in the first half too: qits-events declares no qits Maven dependency, so it
-        // waits on none of the publishes below it.
-        assertThat(ids).containsSubsequence("seed-image-events", "seed-artifacts");
         // The daemon digest is written into the compose file and the deployer's extras, so it is
         // measured before either is generated.
         // AND THE IDENTITY ORDER INSIDE IT. The seed services' clients are created against a
@@ -568,11 +566,8 @@ class BootstrapPlanTest {
         assertThat(warm).contains("seed-skipped")
                 .doesNotContain("ci-daemon", "seed-image-ci", "seed-image-edge",
                         "seed-image-oci-postgresql", "seed-image-events",
-                        "seed-image-containers", "publish-qits-containers-client",
-                        "publish-qits-containers-driver", "maven-seed",
-                        // The mirror is started by hand only on the build path; a warm rerun's
-                        // compose file starts it like every other seed service.
-                        "seed-mirror", "seed-artifacts");
+                        "seed-image-containers", "seed-qits-runner", "seed-toolchain",
+                        "maven-seed");
         assertThat(warm.size()).isLessThan(cold.size());
         // The pipeline half is untouched: a warm rerun still pushes and still waits.
         assertThat(warm).contains("deploy-deployments", "release-train-push", "summary");

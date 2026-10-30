@@ -58,25 +58,22 @@ public class SeedPhases {
     /**
      * <b>The run's local file repository, and what every seed build resolves the platform's own
      * jars through.</b> {@code maven-seed} deploys every {@link #SEED_LIBRARIES} entry into it with
-     * {@code mvn deploy … file:///repo}, the protocol, golden-master and runner publishes write it
-     * beside the store, and {@code seed-toolchain} puts the musl tarballs in it. No server fronts
-     * it: a seed image build reads it as the named context {@link SeedDockerfile#SEED_M2_CONTEXT}
-     * (see {@link SeedDockerfile#localMaven}), and the probes ask the bytes with a {@code test -f}
-     * in a throwaway container.
+     * {@code mvn deploy … file:///repo}, the protocol, golden-master, pact and runner seeds write
+     * it, and {@code seed-toolchain} puts the musl tarballs in it. No server fronts it: a seed image
+     * build reads it as the named context {@link SeedDockerfile#SEED_M2_CONTEXT} (see
+     * {@link SeedDockerfile#localMaven}), and the probes ask the bytes with a {@code test -f} in a
+     * throwaway container.
+     * <p>
+     * <b>It is also where the store's first contents come from.</b> Phase 1 publishes nothing
+     * (qits-889); {@link #storeSeed} uploads its {@code eu/wohlben/qits} subtree into qits-artifacts
+     * once the idp exists to commission the publishing credential.
      */
     static final String SEED_REPO_VOLUME = "qits-maven-seed";
 
     /**
-     * Where the metadata of the seed's LAST published artifact lives under an artifacts base url —
-     * the sentinel the skip probe asks for. See {@link #mavenSeed()} for why it is this one.
-     */
-    private static final String SEED_SENTINEL_METADATA =
-            "/maven/maven/eu/wohlben/qits/qits-containers-client/maven-metadata.xml";
-
-    /**
      * The qits libraries a seed image build resolves, in DEPENDENCY ORDER, and the repository each
-     * one is built from. Every one of them is published into the temporary registry below before
-     * the first seed image is built, and into the real store once it answers.
+     * one is built from. Every one of them is deployed into the file repository below before the
+     * first seed image is built, and reaches the store through {@code store-seed}.
      * <p>
      * Every pair here is forced by a pom:
      * <ul>
@@ -113,7 +110,7 @@ public class SeedPhases {
      *   <li><b>qits-coding-agents is SECOND and depends on nothing of ours either</b> — vertx-core
      *       and junit. No seed image resolves it today: the two agent daemons that do are built by
      *       their release replays, which resolve from the store. It is here anyway because the
-     *       temporary registry holds every qits jar a seed image could ask for, and a daemon that
+     *       file repository holds every qits jar a seed image could ask for, and a daemon that
      *       becomes a seed image must not be able to turn that into a failed build.
      * </ul>
      * <b>githost and containers name SERVICE repositories and publish one module of them each</b> —
@@ -731,9 +728,9 @@ public class SeedPhases {
      * file repository does not hold fails minutes in, naming a version nobody ever deployed.
      * <p>
      * <b>The file repository holds every qits jar a seed image could ask for, whatever the plan's
-     * order is.</b> Every seed image resolves from it and from nothing else of this platform, the
-     * ones built after {@code seed-artifacts} included — the store is filled for the release
-     * replays of phase 4, not for the seed builds.
+     * order is.</b> Every seed image resolves from it and from nothing else of this platform — the
+     * store is filled from it, by {@code store-seed}, for the release replays of phase 4, not for
+     * the seed builds.
      * <p>
      * <b>One container, one deploy per entry, in the order {@link #SEED_LIBRARIES} spells.</b>
      * {@code mvn deploy} installs into the local repository on its way out, so qits-registries
@@ -975,153 +972,6 @@ public class SeedPhases {
     }
 
     /**
-     * <b>Brings up qits-platform-mirror alone, because everything after it resolves through it.</b>
-     * The Maven publishes below fetch their plugins and their third-party dependencies through the
-     * mirror's Maven Central cache, and the npm ones fetch every package that is not {@code @qits}
-     * through its npmjs cache — so a mirror that is not answering is not a slow publish but a failed
-     * one.
-     * <p>
-     * <b>It cannot pull through itself, and nothing here has to arrange that.</b> Its own seed image
-     * was built minutes ago with the mirror prefixes rewritten to the direct upstreams, exactly like
-     * every other seed image — see {@link SeedDockerfile}. What this phase starts is a service whose
-     * layers came from quay.io.
-     * <p>
-     * Started by hand rather than by the stack, under the wire alias the stack service will claim,
-     * so the two never run side by side under one name. Whoever already serves, serves: a deployed
-     * mirror answers at that same alias from the same database and is strictly better than the seed
-     * this phase would have started.
-     * <p>
-     * <b>It publishes no port, and no seed build reads it.</b> The publish containers below reach
-     * it on qits-net; a seed image build takes its base layers and Maven Central from upstream.
-     */
-    public Phase seedMirrorStart() {
-        return new Phase("seed-mirror",
-                "have qits-platform-mirror serving before anything resolves through it", ctx -> {
-            boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
-            String mirror = PlatformModel.wireAlias("mirror", boot.config.envName());
-            String prefix = PlatformModel.pdNamePrefix("mirror", boot.config.envName());
-            Optional<String> serving = alreadyServing(mirror, prefix,
-                    boot.docker.runningNames(), boot.docker.serviceNames());
-            if (serving.isPresent()) {
-                ctx.log("  " + serving.get() + " already answers as " + mirror
-                        + " from the same database — no seed mirror to start");
-            } else {
-                boot.docker.removeContainer(mirror, null);
-                Boot.must(boot.docker.run(Cmd.of(List.of(
-                                "docker", "run", "-d", "--name", mirror,
-                                "--network", Boot.NETWORK,
-                                // The seed's own credential, on the same terms as the idp's and the
-                                // bus's: this container starts before any deployer exists, so the
-                                // role and the database were created by seed-postgres and handed
-                                // over here. It refuses to boot without the triple.
-                                //
-                                // The whole store, cached bytes included: there is no blobs
-                                // directory and no volume any more, so this container is stateless.
-                                "-e", "QITS_RESOURCE_DB_URL=jdbc:postgresql://"
-                                        + PlatformModel.wireAlias("oci-postgresql",
-                                                boot.config.envName())
-                                        + ":5432/qits_platform_mirror",
-                                "-e", "QITS_RESOURCE_DB_USERNAME=qits_platform_mirror",
-                                "-e", "QITS_RESOURCE_DB_PASSWORD="
-                                        + orEmpty(boot.state.pgPlatformMirrorPassword),
-                                "qits/platform-mirror:latest"))
-                        .mask(orEmpty(boot.state.pgPlatformMirrorPassword)), ctx::log),
-                        "the seed " + mirror + " did not start");
-            }
-            // Always waited for, whoever is behind the alias: the four publishes after this phase
-            // resolve through it, and a phase that skipped the start still owes them that.
-            boot.awaitHealth(ctx, serving.orElse(mirror) + " on qits-net",
-                    () -> boot.http.get(boot.config.mirrorUrl() + "/mirror/q/health/ready",
-                            Map.of()));
-        });
-    }
-
-    /**
-     * Brings up qits-artifacts alone, so the Maven and npm publishes below have somewhere to land
-     * before any pipeline exists. It STARTS one only when nothing answers at the store's alias yet
-     * — what this phase owes the ones after it is a store that answers, not a container it created.
-     */
-    public Phase seedArtifactsStart() {
-        return new Phase("seed-artifacts",
-                "have qits-artifacts serving for the Maven bootstrap", ctx -> {
-            boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
-            // Named after its wire alias, like every other seed container: this one is started by
-            // hand rather than by the stack, and the name it takes has to be the same one the stack
-            // service would have claimed, or the two run side by side under one name.
-            String artifacts = PlatformModel.wireAlias("artifacts", boot.config.envName());
-            // Whoever already serves, serves. A DEPLOYED store reads the same qits_artifacts
-            // database and answers the same API at the same alias, so it is strictly better than
-            // the seed this phase would have started. This run's own seed container is asked for by
-            // name first, so a rerun still reports it as itself rather than as the deployer's.
-            //
-            // It used to be a bind conflict as well — a seed beside a running store answered "port
-            // is already allocated", exit 125, and the boot stopped exactly there on the 2026-08-08
-            // validation rerun. The deployed store publishes no host port since unify-ingress, so
-            // that collision is gone and this check now buys only the duplicate it always meant to
-            // prevent.
-            Optional<String> serving = alreadyServing(artifacts,
-                    PlatformModel.pdNamePrefix("artifacts", boot.config.envName()),
-                    boot.docker.runningNames(), boot.docker.serviceNames())
-                    .or(this::storeAlreadyServing);
-            if (serving.isPresent()) {
-                ctx.log("  " + serving.get() + " already serves as " + artifacts
-                        + " from the same database — no seed store to start");
-                ctx.note(serving.get() + " serves");
-            } else {
-                boot.docker.removeContainer(artifacts, null);
-                // No git env any more, and no ci intake: this service hosts no repositories and
-                // announces nothing since the byte-plane split. What is left is the store.
-                //
-                // The store is the whole of it: metadata AND blob bytes are rows in qits_artifacts,
-                // so this container mounts nothing and a restart loses only in-flight uploads. The
-                // credential comes from seed-postgres on the same terms as the mirror's — this
-                // container starts before any deployer exists, so the CLI created the role and the
-                // database and hands the triple over itself.
-                Boot.must(boot.docker.run(Cmd.of(List.of(
-                                "docker", "run", "-d", "--name", artifacts,
-                                "--network", Boot.NETWORK,
-                                "-e", "QITS_RESOURCE_DB_URL=jdbc:postgresql://"
-                                        + PlatformModel.wireAlias("oci-postgresql",
-                                                boot.config.envName())
-                                        + ":5432/qits_artifacts",
-                                "-e", "QITS_RESOURCE_DB_USERNAME=qits_artifacts",
-                                "-e", "QITS_RESOURCE_DB_PASSWORD="
-                                        + orEmpty(boot.state.pgArtifactsPassword),
-                                "qits/artifacts:latest"))
-                        .mask(orEmpty(boot.state.pgArtifactsPassword)), ctx::log),
-                        "the seed " + artifacts + " did not start");
-            }
-            // Always waited for, whoever is behind the alias: every publish after this phase — the
-            // two Maven ones, both npm ones, the daemon upload — needs the store answering, and a
-            // phase that skipped the start still owes them that.
-            boot.awaitHealth(ctx, serving.orElse(artifacts) + " on qits-net",
-                    boot.artifacts::health);
-        });
-    }
-
-    /**
-     * Who already answers as the store, when the platform's own store does — the deployed
-     * container's name if one is running, otherwise the service's plain name.
-     * <p>
-     * <b>The answer comes from the API, not from the container list.</b> A deployed store is named
-     * {@code qits-pd-<env>-qits-artifacts-<id8>}, and matching that shape alone would still miss
-     * anything else the alias could be behind. The artifacts API's own health is the honest
-     * question: it is asked at the store's WIRE ALIAS, where qits-artifacts answers 200 whether it
-     * was started by this bootstrap, by compose or by the deployer. The container list is then read
-     * only to name who it is, which is what makes the phase log readable.
-     */
-    private Optional<String> storeAlreadyServing() {
-        if (!boot.artifacts.ready()) {
-            return Optional.empty();
-        }
-        String prefix = PlatformModel.pdNamePrefix("artifacts", boot.config.envName());
-        return Optional.of(boot.docker.runningNames().stream()
-                .filter(name -> name.startsWith(prefix))
-                .findFirst()
-                .orElse(PlatformModel.wireAlias("artifacts", boot.config.envName())));
-    }
-
-    /**
      * Who already serves this application, when anything does — and the two lists are asked in the
      * one order that matters: a container first, then a SERVICE.
      * <p>
@@ -1150,25 +1000,11 @@ public class SeedPhases {
                 .findFirst();
     }
 
-    // --- the publishes the seed builds need -------------------------------------------------------
-
-    /** The version the repo's root pom would publish: its first version element outside parent. */
-    static String checkedOutVersion(Path repoDir) {
-        try {
-            String pom = Files.readString(repoDir.resolve("pom.xml"), StandardCharsets.UTF_8);
-            String withoutParent = pom.replaceAll("(?s)<parent>.*?</parent>", "");
-            java.util.regex.Matcher m =
-                    java.util.regex.Pattern.compile("<version>([^<$]+)</version>").matcher(withoutParent);
-            return m.find() ? m.group(1).trim() : null;
-        } catch (IOException e) {
-            return null;
-        }
-    }
+    // --- what the seed builds resolve -------------------------------------------------------------
 
     /**
      * The maven arguments that build ONE module of a repository, or none when the whole repository
-     * is published. Both halves of the seed use it, so a repository published by module is
-     * published the same way into the temporary registry and into the store.
+     * is deployed.
      */
     static String mavenModuleArgs(String repoName) {
         String module = PlatformModel.mavenModule(repoName);
@@ -1201,8 +1037,8 @@ public class SeedPhases {
     }
 
     /**
-     * One container, every seed library at every version anything still pins, into the temporary
-     * file repository at {@code /repo}.
+     * One container, every seed library at every version anything still pins, into the file
+     * repository at {@code /repo}.
      *
      * @param pinned the extra versions per library — {@link PinnedVersions#extraVersions}
      */
@@ -1259,87 +1095,6 @@ public class SeedPhases {
         return version == null ? "/src" : "/src@" + version;
     }
 
-    /**
-     * One repository, into the store. The settings first, then the purge, then one build per tree.
-     *
-     * @param trees the source trees to deploy, in build order — {@link #publishTree}
-     */
-    String publishScript(String repoName, List<String> trees, String authorization) {
-        // `set -eu` is not decoration now that there can be more than one build in here: without
-        // it the container's exit code is the LAST command's, so a failed older version followed
-        // by a green checkout would report success and leave the store short a version.
-        StringBuilder script = new StringBuilder("set -eu\n").append(mavenSettings(authorization))
-                .append(MAVEN_PURGE_QITS);
-        for (String tree : trees) {
-            script.append("cd ").append(tree)
-                    .append(" && mvn -B -ntp -s /root/.m2/settings.xml deploy -DskipTests")
-                    .append(mavenModuleArgs(repoName)).append(MAVEN_REPO_LOCAL)
-                    .append(" -DaltDeploymentRepository=qits::default::")
-                    .append(boot.config.artifactsUrl()).append("/maven/maven\n");
-        }
-        return script.toString();
-    }
-
-    public Phase mavenPublish(String repoName, String artifactId, String title) {
-        return new Phase("publish-" + artifactId, title, ctx -> {
-            // The checkouts publish their real calver, and the registry refuses to overwrite a
-            // released version (403) — so probe the version this checkout would publish, parsed
-            // from its root pom, before starting a container. Found by the third proving run.
-            //
-            // In a restore that version IS the released one, because the checkout stands at the
-            // release tag: the probe then answers "already published" on any platform whose store
-            // survived, and where it does not, the seed publishes the released bytes under the
-            // released version — which is the one publish this phase is allowed to make. The rule
-            // it must never break is below: unreleased work reaching a released coordinate.
-            String version = checkedOutVersion(boot.state.repoDir(repoName));
-            // AND THE VERSIONS THE ESTATE STILL PINS, on the same terms. The store is empty on a
-            // cold boot, so a consumer's lagging pin resolves nothing unless this phase publishes
-            // what it names — the defect that killed the maven-seed phase of 2026-09-05, which the
-            // store half of the boot would have hit a few phases later.
-            List<String> missing = new ArrayList<>();
-            for (String pinned : boot.pinnedVersions(ctx).extraVersions(repoName)) {
-                if (!boot.artifacts.mavenPublished("eu/wohlben/qits", artifactId, pinned, "jar")) {
-                    missing.add(pinned);
-                }
-            }
-            boolean publishCheckout = version == null
-                    || !boot.artifacts.mavenPublished("eu/wohlben/qits", artifactId, version, "jar");
-            if (missing.isEmpty() && !publishCheckout) {
-                ctx.skip(artifactId + " " + version + " already published");
-            }
-            List<String> trees = new ArrayList<>();
-            for (String pinned : missing) {
-                trees.add(publishTree(pinned));
-            }
-            if (publishCheckout) {
-                trees.add(publishTree(null));
-            }
-            boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
-            // Minted here rather than once for the boot, and that is the whole answer to the
-            // settings file outliving its token: the file is written into a container that is
-            // created on the next line and started on the one after, so the token is at most
-            // seconds old when the first deploy runs. What it does NOT survive is one publish
-            // container taking longer than the token's hour — the file cannot be rewritten from
-            // out here — and the symptom would be a 401 at the end of a long build. Per phase is
-            // the shortest exposure this shape allows.
-            String authorization = boot.publishAuthorization(ctx);
-            String cid = create(ctx, List.of(
-                    "docker", "create", "--network", Boot.NETWORK, "--user", "root",
-                    "--entrypoint", "sh", "-v", MAVEN_CACHE_MOUNT,
-                    "maven:3.9-eclipse-temurin-25",
-                    "-c", publishScript(repoName, trees, authorization)), authorization);
-            for (String pinned : missing) {
-                copyTag(ctx, repoName, pinned, cid, publishTree(pinned));
-            }
-            if (publishCheckout) {
-                copyIn(ctx, boot.state.repoDir(repoName), cid);
-            }
-            startAndReap(ctx, cid, artifactId + " publish failed");
-            ctx.note(missing.isEmpty() ? String.valueOf(version)
-                    : missing.size() + " pinned + " + version);
-        });
-    }
-
     // --- the two wire contracts qits-ci compiles against -----------------------------------------
 
     /** The Maven group every qits library is published under, as a path. */
@@ -1383,43 +1138,24 @@ public class SeedPhases {
     }
 
     /**
-     * One protocol module, built from its release tag, into the registries that still lack it.
-     * <p>
-     * <b>The file registry first</b>, for the reason the toolchain seed gives: it is the copy the
-     * next phase reads. One deploy per registry rather than one build copied twice, because
-     * {@code mvn deploy} is what writes the checksums and the metadata a Maven client expects
-     * beside a jar, and the module is a handful of records — the second build costs seconds.
+     * One protocol module per version, built from its release tag, into the file repository.
+     * {@code mvn deploy} is what writes the checksums and the metadata a Maven client expects beside
+     * a jar, and the store gets those same files from {@code store-seed}.
      */
-    String protocolScript(String repoName, String version, boolean toFileRegistry, boolean toStore,
-                          String authorization) {
-        return protocolHeader(authorization)
-                + protocolBuilds(repoName, version, toFileRegistry, toStore);
-    }
-
-    /** The settings and the purge, once per container. */
-    String protocolHeader(String authorization) {
-        return "set -eu\n" + mavenSettings(authorization) + MAVEN_PURGE_QITS;
-    }
-
-    /** One version's builds, one per registry it still lacks. */
-    String protocolBuilds(String repoName, String version, boolean toFileRegistry,
-                          boolean toStore) {
-        StringBuilder script = new StringBuilder();
-        String build = "cd " + publishTree(version)
-                + " && mvn -B -ntp -s /root/.m2/settings.xml deploy -DskipTests"
-                + mavenModuleArgs(repoName) + MAVEN_REPO_LOCAL;
-        if (toFileRegistry) {
-            script.append(build).append(" -DaltDeploymentRepository=seed::default::file:///repo\n");
-        }
-        if (toStore) {
-            script.append(build).append(" -DaltDeploymentRepository=qits::default::")
-                    .append(boot.config.artifactsUrl()).append("/maven/maven\n");
+    String protocolScript(String repoName, List<String> versions) {
+        StringBuilder script = new StringBuilder("set -eu\n").append(seedSettings())
+                .append(MAVEN_PURGE_QITS);
+        for (String version : versions) {
+            script.append("cd ").append(publishTree(version))
+                    .append(" && mvn -B -ntp -s /root/.m2/settings.xml deploy -DskipTests")
+                    .append(mavenModuleArgs(repoName)).append(MAVEN_REPO_LOCAL)
+                    .append(SEED_DEPLOYMENT).append('\n');
         }
         return script.toString();
     }
 
     /**
-     * <b>A wire contract a seed service compiles against, published at the version that service
+     * <b>A wire contract a seed service compiles against, seeded at the version that service
      * PINS — before its seed image, which cannot be built without it.</b>
      * <p>
      * qits-ci's reactor dropped its own {@code ci-daemon-protocol} module for a dependency on the
@@ -1441,15 +1177,15 @@ public class SeedPhases {
      * hold stops the boot here, with the tag named, rather than in a native build that resolves
      * nothing.
      * <p>
-     * <b>BOTH registries, and the file registry first.</b> The seed image builds resolve from the
-     * file repository and from nothing else of this platform, so a jar that reached only the store
-     * is unresolvable to {@code seed-image-ci}. The store needs it as well: qits-ci's release
-     * build, later in this boot, resolves from there. Whatever a registry already holds is left
-     * alone, one registry at a time.
-     *
+     * <b>Into the FILE repository only (qits-889).</b> The seed image builds resolve from it and
+     * from nothing else of this platform. The store needs the jar as well — qits-ci's release
+     * build, later in this boot, resolves from there — and gets it from {@code store-seed}, which
+     * uploads the file repository once the idp exists. A version the file repository already holds
+     * is left alone. The build resolves Maven Central direct: no mirror runs in phase 1.
+     * <p>
      * <b>qits-system is the second consumer since qits-1547</b>: it compiles against
      * {@code qits-system-runner-protocol} the same way, and its seed image is built after this
-     * publish for the reason qits-ci's is.
+     * phase for the reason qits-ci's is.
      *
      * @param consumer    the model name of the service whose root pom pins it — {@code ci},
      *                    {@code system}
@@ -1458,9 +1194,9 @@ public class SeedPhases {
      * @param artifactId  the jar, {@code qits-ci-daemon-protocol}
      * @param pomProperty the property in the consumer's root pom that pins it
      */
-    public Phase protocolPublish(String consumer, String repoName, String artifactId,
-                                 String pomProperty) {
-        return protocolPublish(List.of(consumer), repoName, artifactId, pomProperty);
+    public Phase protocolSeed(String consumer, String repoName, String artifactId,
+                              String pomProperty) {
+        return protocolSeed(List.of(consumer), repoName, artifactId, pomProperty);
     }
 
     /**
@@ -1469,12 +1205,12 @@ public class SeedPhases {
      * and qits-system both compile against it (qits-889). One phase, every version, before the
      * first of the consumers' images.
      */
-    public Phase protocolPublish(List<String> consumers, String repoName, String artifactId,
-                                 String pomProperty) {
+    public Phase protocolSeed(List<String> consumers, String repoName, String artifactId,
+                              String pomProperty) {
         String owners = consumers.stream().map(PlatformModel::application)
                 .collect(Collectors.joining(" and "));
-        return new Phase("publish-" + artifactId,
-                "publish " + artifactId + " at the version " + owners + " pin"
+        return new Phase("seed-" + artifactId,
+                "seed " + artifactId + " at the version " + owners + " pin"
                         + (consumers.size() == 1 ? "s" : ""), ctx -> {
             java.util.LinkedHashSet<String> pinned = new java.util.LinkedHashSet<>();
             for (String consumer : consumers) {
@@ -1497,133 +1233,31 @@ public class SeedPhases {
             boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
             List<String> held = fileRegistryHolds(versions.stream()
                     .map(v -> protocolStorePath(artifactId, v)).toList());
-            List<String[]> owed = new ArrayList<>();
+            List<String> owed = new ArrayList<>();
             for (String version : versions) {
                 String path = protocolStorePath(artifactId, version);
                 boolean seeded = held.contains(path);
-                boolean stored = boot.artifacts.mavenPublished(QITS_GROUP_PATH, artifactId,
-                        version, "jar");
-                ctx.log("  " + path + " — file registry: " + (seeded ? "held" : "to seed")
-                        + ", store: " + (stored ? "held" : "to publish"));
-                if (!seeded || !stored) {
-                    owed.add(new String[] {version, String.valueOf(!seeded),
-                            String.valueOf(!stored)});
+                ctx.log("  " + path + " — file registry: " + (seeded ? "held" : "to seed"));
+                if (!seeded) {
+                    owed.add(version);
                 }
             }
             if (owed.isEmpty()) {
                 ctx.skip(artifactId + " " + String.join(", ", versions)
-                        + " is in both registries");
-            }
-            // The store half carries the publishing credential; the file registry is a file url
-            // and takes none.
-            boolean anyStore = owed.stream().anyMatch(o -> Boolean.parseBoolean(o[2]));
-            String authorization = anyStore ? boot.publishAuthorization(ctx) : null;
-            StringBuilder script = new StringBuilder(protocolHeader(authorization));
-            for (String[] o : owed) {
-                script.append(protocolBuilds(repoName, o[0], Boolean.parseBoolean(o[1]),
-                        Boolean.parseBoolean(o[2])));
+                        + " is in the file registry");
             }
             String cid = create(ctx, List.of(
-                    "docker", "create", "--network", Boot.NETWORK, "--user", "root",
+                    "docker", "create", "--user", "root",
                     "--entrypoint", "sh", "-v", SEED_REPO_VOLUME + ":/repo",
                     "-v", MAVEN_CACHE_MOUNT,
                     "maven:3.9-eclipse-temurin-25",
-                    "-c", script.toString()), authorization);
-            for (String[] o : owed) {
-                copyTag(ctx, repoName, o[0], cid, publishTree(o[0]));
+                    "-c", protocolScript(repoName, owed)));
+            for (String version : owed) {
+                copyTag(ctx, repoName, version, cid, publishTree(version));
             }
-            startAndReap(ctx, cid, artifactId + " publish failed");
+            startAndReap(ctx, cid, artifactId + " seed failed");
             ctx.note(String.join(", ", versions));
         });
-    }
-
-    /**
-     * The shared UI package, twice: the pinned version the checked-out lockfiles install, then
-     * whatever the working tree is at now. Publish-if-absent makes both idempotent.
-     */
-    /**
-     * Seed publishes are PINNED COMMITS ONLY. A working-tree publish under an already-released
-     * version puts different bytes behind a version every lockfile pins by hash — EINTEGRITY in
-     * every SPA build. The release replays own the released versions; unreleased work reaches the
-     * registry through a release, never through the seed. Found by the v3 proving run.
-     */
-    public Phase uiComponentsPublish() {
-        return new Phase("publish-ui-components", "publish the shared UI package into seed artifacts",
-                ctx -> {
-                    String token = bearerOf(boot.publishAuthorization(ctx));
-                    String script = """
-                            set -eu
-                            apk add --no-cache git >/dev/null
-                            git config --global --add safe.directory '*'
-                            git clone -q /src /src-004
-                            cd /src-004
-                            git checkout -q 9f9648482d6fe025cc7af9bd4496afab417f33f9
-                            corepack enable
-                            %s
-                            pnpm install --frozen-lockfile
-                            pnpm build
-                            cd dist/qits-spa-ui-components
-                            npm view @qits/ui-components@0.0.4 version >/dev/null 2>&1 || npm publish
-
-                            """.formatted(npmrc(token));
-                    nodePublish(ctx, "spa-ui-components", script, "UI package publish failed",
-                            token);
-                });
-    }
-
-    public Phase angularPublish() {
-        return new Phase("publish-angular", "publish the Angular integration package into seed artifacts",
-                ctx -> {
-                    String token = bearerOf(boot.publishAuthorization(ctx));
-                    String script = """
-                            set -eu
-                            apk add --no-cache git >/dev/null
-                            git config --global --add safe.directory '*'
-                            git clone -q /src /src-001
-                            cd /src-001
-                            git checkout -q 3f405717f14f0942399340d84db4ef0ca3769101
-                            corepack enable
-                            %s
-                            pnpm install --frozen-lockfile
-                            pnpm build
-                            version=$(node -p "require(\\"./dist/qits-integrations-angular/package.json\\").version")
-                            npm view "@qits/angular@$version" version >/dev/null 2>&1 || npm publish ./dist/qits-integrations-angular
-
-                            """.formatted(npmrc(token));
-                    nodePublish(ctx, "integrations-angular", script,
-                            "Angular integration publish failed", token);
-                });
-    }
-
-    /**
-     * <b>The npm half of the two-endpoint topology, as a shell fragment.</b> Two registries, and
-     * which package goes to which is decided by its SCOPE rather than by a path:
-     * <ul>
-     *   <li>{@code @qits} → this environment's own qits-artifacts, which is where these two phases
-     *       publish and where every SPA build reads the platform's own packages from. The
-     *       auth-token line beside it carries the run's PUBLISHING CREDENTIAL: npm sends
-     *       {@code _authToken} as {@code Authorization: Bearer <value>}, which is exactly what the
-     *       store's publish door now takes. It used to be the literal {@code qits-bootstrap} —
-     *       ceremony that made {@code npm publish} attempt the write at all, against a registry
-     *       that read no credential. Only CI may publish now (user ruling 2026-09-13), so the value
-     *       is a real token of a {@code bootstrap-publish} commission. Where there is none — the
-     *       gate off, or the seed store before any idp — the line is left out and the publish is
-     *       bare, as it was.
-     *   <li>everything else → qits-platform-mirror's cache of npmjs. One cache for the machine, cold
-     *       on a fresh platform and warm by the second build.
-     * </ul>
-     * <b>The default registry must not be the qits one.</b> A scoped entry is an override, so the
-     * default is what every unscoped package resolves through — and the hosted registry serves only
-     * what was published to it, which for npmjs' half of a lockfile is nothing.
-     */
-    String npmrc(String token) {
-        String registry = boot.config.artifactsUrl().replaceFirst("^https?://", "") + "/npm/npm/";
-        return "cat > /root/.npmrc <<'NPMRC'\n"
-                + "registry=" + boot.config.mirrorUrl() + "/npm/npmjs/\n"
-                + "@qits:registry=" + boot.config.artifactsUrl() + "/npm/npm/\n"
-                + (token == null || token.isBlank() ? ""
-                        : "//" + registry + ":_authToken=" + token + "\n")
-                + "NPMRC";
     }
 
     /**
@@ -1641,90 +1275,36 @@ public class SeedPhases {
     }
 
     /**
-     * <b>The third-party half of the two-endpoint topology, as a shell fragment.</b> A publish
-     * container resolves its plugins and its dependencies from Maven Central, and since the
-     * byte-plane split that means qits-platform-mirror's cache of it rather than the internet: one
-     * cache for the machine, warmed by the first build that needs a jar and reused by every one
-     * after it.
+     * <b>Where a phase-1 Maven build resolves from, as a shell fragment: the platform's own jars
+     * out of the file repository at {@code /repo}, everything else from Maven Central direct.</b>
      * <p>
-     * <b>A {@code <mirror>} with an exact {@code mirrorOf}, not a {@code <repository>}</b>, and that
-     * is what gets it past Maven's own {@code external:http:*} blocker: a plain HTTP repository is
-     * refused since 3.8.1, while an id-matched mirror of {@code central} wins over the blocking
-     * entry. It is the same shape every service's committed {@code .qits-maven-settings.xml} uses
-     * for the qits repository.
+     * No store and no mirror runs before the idp (qits-889), so there is nothing on qits-net to
+     * resolve through. The consumer poms declare the platform's repository as {@code qits-maven} at
+     * {@code ${qits.maven.repository.url}}, defaulting to the LIVE registry; an exact-id
+     * {@code <mirror>} is what turns that one repository into the volume, and
+     * {@link #SEED_REPOSITORY_URL} on the command line says the same to a pom that reads the
+     * property itself. {@code central} is left alone: it is Maven Central already.
      * <p>
-     * The deployment target is NOT here. It is {@code -DaltDeploymentRepository} on the command
-     * line, because where a publish LANDS is the phase's decision and where it READS from is the
-     * platform's.
+     * No {@code <server>} either. Nothing in phase 1 deploys anywhere but {@code file:///repo},
+     * which takes no credential.
      */
-    String mavenSettings(String authorization) {
+    static String seedSettings() {
         return "mkdir -p /root/.m2 && cat > /root/.m2/settings.xml <<'SETTINGS'\n"
                 + "<settings>\n"
-                + servers(authorization)
                 + "  <mirrors>\n"
-                + "    <mirror>\n"
-                + "      <id>qits-central-proxy</id>\n"
-                + "      <mirrorOf>central</mirrorOf>\n"
-                + "      <url>" + boot.config.mirrorUrl() + "/artifacts/maven/central</url>\n"
-                + "    </mirror>\n"
-                // The hosted half: a publish that consumes an earlier publish (registries needs
-                // qits-db-core, githost-events needs eventstream) resolves it from the store it was
-                // just deployed to. Same exact-id trick — the consumer poms declare a `qits-maven`
-                // repository, and this mirror is what wins over the external:http:* blocker.
                 + "    <mirror>\n"
                 + "      <id>qits-maven</id>\n"
                 + "      <mirrorOf>qits-maven</mirrorOf>\n"
-                + "      <url>" + boot.config.artifactsUrl() + "/maven/maven</url>\n"
+                + "      <url>file:///repo</url>\n"
                 + "    </mirror>\n"
                 + "  </mirrors>\n"
                 + "</settings>\n"
                 + "SETTINGS\n";
     }
 
-    /**
-     * <b>What a publish into the store presents, as Maven sends it.</b> Empty where there is
-     * nothing to present — the gate is off, or the seed store this run started itself and handed no
-     * gate.
-     * <p>
-     * <b>The id is {@code qits} and it is not free to choose.</b> A {@code <server>} is matched to
-     * a repository by id, and the repository a publish lands in is the one
-     * {@code -DaltDeploymentRepository=qits::default::<url>} names — so {@code qits} is the whole
-     * of what makes these credentials reach the wire. The toolchain seed's own {@code qits} target
-     * is the same id for the same reason; its {@code seed} target is a file url and takes none.
-     * <p>
-     * <b>A header, and NOT a {@code <username>}/{@code <password>} pair.</b> Maven does not
-     * authenticate preemptively: it sends a request bare, waits for the 401, and only then answers
-     * the challenge it names — so a Basic pair would never be sent at all against a store that
-     * refuses rather than challenges, and a bearer has no Basic challenge to answer in the first
-     * place. {@code httpHeaders} is what puts the value on the FIRST request.
-     */
-    private static String servers(String authorization) {
-        if (authorization == null || authorization.isBlank()) {
-            return "";
-        }
-        return "  <servers>\n"
-                + "    <server>\n"
-                + "      <id>qits</id>\n"
-                + "      <configuration>\n"
-                + "        <httpHeaders>\n"
-                + "          <property>\n"
-                + "            <name>Authorization</name>\n"
-                + "            <value>" + authorization + "</value>\n"
-                + "          </property>\n"
-                + "        </httpHeaders>\n"
-                + "      </configuration>\n"
-                + "    </server>\n"
-                + "  </servers>\n";
-    }
-
-    private void nodePublish(PhaseContext ctx, String repoName, String script, String failure,
-                             String token) throws Exception {
-        String cid = create(ctx, List.of(
-                "docker", "create", "--network", Boot.NETWORK, "--user", "root",
-                "--entrypoint", "sh", "node:24-alpine", "-c", script), token);
-        copyIn(ctx, boot.state.repoDir(repoName), cid);
-        startAndReap(ctx, cid, failure);
-    }
+    /** The deployment target of every phase-1 build: the file repository, never a server. */
+    static final String SEED_DEPLOYMENT = SEED_REPOSITORY_URL
+            + " -DaltDeploymentRepository=seed::default::file:///repo";
 
     // --- the ci-daemon binary ---------------------------------------------------------------------
 
@@ -1737,32 +1317,27 @@ public class SeedPhases {
     static final String MUSL_BUILDER_DOCKERFILE = "docker/Dockerfile.musl-builder";
 
     /**
-     * <b>The musl toolchain and the zlib source, from upstream into the file repository and the
-     * store, before the builder image asks for them.</b>
+     * <b>The musl toolchain and the zlib source, from upstream into the file repository, before the
+     * builder image asks for them.</b>
      * <p>
      * qits-ci-daemon's builder image stopped fetching those two tarballs from the internet on
      * 2026-09-05 and reads them out of the platform's own Maven store instead — which is the right
      * answer for a platform that has one, and a hole in a bootstrap: nothing in the estate uploads
-     * them, so a fresh host's store has neither. This phase is what makes the store's copy true on
-     * the first boot as well as the tenth, and what gives the seed's own builder build its copy.
+     * them, so a fresh host's store has neither. This phase is what gives the seed's own builder
+     * build its copy, and {@code store-seed} what makes the store's copy true on the first boot as
+     * well as the tenth.
      * <p>
-     * <b>Downloaded, checked against the consuming repository's own pin, and only then published.</b>
+     * <b>Downloaded, checked against the consuming repository's own pin, and only then deployed.</b>
      * {@link MuslToolchain} reads the size and the sha256 out of the Dockerfile that consumes the
-     * bytes, because that is where they belong; this phase refuses to upload anything that does not
+     * bytes, because that is where they belong; this phase refuses to deploy anything that does not
      * hash to them. Ninety megabytes from a community host is exactly the fetch a checksum is for.
      * <p>
-     * <b>Published the way every other Maven artifact of this boot is</b> — {@code deploy:deploy-file}
-     * in a maven container with the seed's own settings — so both registries get the shape a hand
-     * upload left on the live platform: the tarball, its {@code .sha1} and {@code .md5}, a generated
-     * pom and the metadata.
-     * <p>
-     * <b>BOTH registries, and they have different readers.</b> The file repository in
-     * {@link #SEED_REPO_VOLUME} is what the {@code ci-daemon} phase's builder build reads: its
-     * {@code ADD $MUSL_URL}/{@code ADD $ZLIB_URL} are rewritten into copies out of that volume
-     * ({@link SeedDockerfile#localToolchain}), so the build dials no server. The store's copy is
-     * for the platform's own release builds later. The file repository is written FIRST: it is the
-     * copy the next build actually reads. Whatever a registry already holds is skipped, one file
-     * and one registry at a time.
+     * <b>{@code deploy:deploy-file} into {@code file:///repo}</b>, so the volume gets the shape a hand
+     * upload left on the live platform — the tarball, its {@code .sha1} and {@code .md5}, a
+     * generated pom and the metadata — and {@code store-seed} carries all of it into the store. The
+     * {@code ci-daemon} phase's builder build reads it there: its {@code ADD $MUSL_URL}/{@code ADD
+     * $ZLIB_URL} are rewritten into copies out of that volume ({@link SeedDockerfile#localToolchain}),
+     * so the build dials no server. Whatever the volume already holds is skipped, one file at a time.
      */
     public Phase toolchainSeed() {
         return new Phase("seed-toolchain",
@@ -1775,40 +1350,28 @@ public class SeedPhases {
                     boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
                     List<String> inFileRegistry = fileRegistryHolds(declared.stream()
                             .map(MuslToolchain.Tarball::storePath).toList());
-                    List<Publish> wanted = new ArrayList<>();
+                    List<MuslToolchain.Tarball> wanted = new ArrayList<>();
                     for (MuslToolchain.Tarball tarball : declared) {
                         boolean seeded = inFileRegistry.contains(tarball.storePath());
-                        boolean stored = boot.artifacts.mavenPublished(tarball.groupPath(),
-                                tarball.artifactId(), tarball.version(), tarball.extension());
                         ctx.log("  " + tarball.storePath() + " — file registry: "
-                                + (seeded ? "held" : "to seed") + ", store: "
-                                + (stored ? "held" : "to publish"));
-                        if (!seeded || !stored) {
-                            wanted.add(new Publish(tarball, !seeded, !stored));
+                                + (seeded ? "held" : "to seed"));
+                        if (!seeded) {
+                            wanted.add(tarball);
                         }
                     }
                     if (wanted.isEmpty()) {
-                        ctx.skip("both registries hold both toolchain tarballs");
+                        ctx.skip("the file registry holds both toolchain tarballs");
                     }
-                    ctx.status("downloading and publishing " + wanted.size() + " tarball(s)");
-                    // The store half of this phase deploys to the same `qits` repository id the
-                    // library publishes do, through the same settings file — so it carries the
-                    // same credential. The file-registry half is a file url and takes none.
-                    String authorization = wanted.stream().anyMatch(Publish::toStore)
-                            ? boot.publishAuthorization(ctx) : null;
+                    ctx.status("downloading and seeding " + wanted.size() + " tarball(s)");
                     String cid = create(ctx, List.of(
-                            "docker", "create", "--network", Boot.NETWORK, "--user", "root",
+                            "docker", "create", "--user", "root",
                             "--entrypoint", "sh", "-v", SEED_REPO_VOLUME + ":/repo",
                             "-v", MAVEN_CACHE_MOUNT,
                             "maven:3.9-eclipse-temurin-25",
-                            "-c", toolchainScript(wanted, authorization)), authorization);
+                            "-c", toolchainScript(wanted)));
                     startAndReap(ctx, cid, "seeding the musl toolchain failed");
                     ctx.note(wanted.size() + " tarball(s) seeded");
                 });
-    }
-
-    /** One tarball and the registries it is still missing from. */
-    record Publish(MuslToolchain.Tarball tarball, boolean toFileRegistry, boolean toStore) {
     }
 
     /**
@@ -1826,52 +1389,35 @@ public class SeedPhases {
     }
 
     /**
-     * Download, verify, deploy — one block per tarball, in one container, into the registries that
-     * block still needs.
-     * <p>
-     * <b>The file registry comes first in every block.</b> It is the copy the builder build two
-     * phases below reads; writing the store first would leave a window where a retry of that build
-     * finds nothing to copy.
+     * Download, verify, deploy — one block per tarball, in one container, into the file repository.
      * <p>
      * The deploy plugin is PINNED rather than resolved as {@code deploy:deploy-file} would: a
-     * prefix goal asks the registry which version is newest, and a cold boot's answer to that is
-     * whatever the mirror happened to cache. {@code -DgeneratePom} is left at its default so both
-     * registries get the pom and the checksums a Maven client expects beside an artifact.
+     * prefix goal asks the repository which version is newest. It comes from Maven Central direct,
+     * with no settings file at all. {@code -DgeneratePom} is left at its default so the volume gets
+     * the pom and the checksums a Maven client expects beside an artifact.
      */
-    String toolchainScript(List<Publish> publishes, String authorization) {
-        StringBuilder script = new StringBuilder("set -eu\n").append(mavenSettings(authorization));
-        for (Publish publish : publishes) {
-            MuslToolchain.Tarball tarball = publish.tarball();
+    static String toolchainScript(List<MuslToolchain.Tarball> tarballs) {
+        StringBuilder script = new StringBuilder("set -eu\n");
+        for (MuslToolchain.Tarball tarball : tarballs) {
             script.append("echo \"downloading ").append(tarball.fileName()).append(" from ")
                     .append(tarball.upstream()).append("\"\n")
                     .append("curl -fsSL --retry 3 --retry-delay 5 -o /tmp/")
                     .append(tarball.fileName()).append(" '").append(tarball.upstream()).append("'\n")
                     // The pin is the consuming repository's, and it is checked before anything is
-                    // uploaded: a registry is forever, and a truncated download from a slow
-                    // community host would be a builder image that fails for everyone afterwards.
+                    // deployed: what lands in the volume reaches the store, and a store is forever.
                     .append("echo \"").append(tarball.sha256()).append("  /tmp/")
-                    .append(tarball.fileName()).append("\" | sha256sum -c -\n");
-            if (publish.toFileRegistry()) {
-                script.append(deployFile(tarball, "seed", "file:///repo"));
-            }
-            if (publish.toStore()) {
-                script.append(deployFile(tarball, "qits",
-                        boot.config.artifactsUrl() + "/maven/maven"));
-            }
+                    .append(tarball.fileName()).append("\" | sha256sum -c -\n")
+                    .append("mvn -B -ntp")
+                    .append(" org.apache.maven.plugins:maven-deploy-plugin:3.1.2:deploy-file")
+                    .append(" -Dfile=/tmp/").append(tarball.fileName())
+                    .append(" -DgroupId=").append(tarball.groupId())
+                    .append(" -DartifactId=").append(tarball.artifactId())
+                    .append(" -Dversion=").append(tarball.version())
+                    .append(" -Dpackaging=").append(tarball.extension())
+                    .append(" -DrepositoryId=seed -Durl=file:///repo")
+                    .append(MAVEN_REPO_LOCAL).append('\n');
         }
         return script.toString();
-    }
-
-    private static String deployFile(MuslToolchain.Tarball tarball, String repositoryId, String url) {
-        return "mvn -B -ntp -s /root/.m2/settings.xml"
-                + " org.apache.maven.plugins:maven-deploy-plugin:3.1.2:deploy-file"
-                + " -Dfile=/tmp/" + tarball.fileName()
-                + " -DgroupId=" + tarball.groupId()
-                + " -DartifactId=" + tarball.artifactId()
-                + " -Dversion=" + tarball.version()
-                + " -Dpackaging=" + tarball.extension()
-                + " -DrepositoryId=" + repositoryId + " -Durl=" + url
-                + MAVEN_REPO_LOCAL + "\n";
     }
 
     public Phase ciDaemon() {
@@ -1898,9 +1444,9 @@ public class SeedPhases {
 
             // --entrypoint: the builder image entrypoints to native-image itself.
             //
-            // The shared download cache, for the same reason the publishes have it — and this
-            // build needs it most: it is on no network of ours, so it reads Maven Central direct
-            // rather than through the mirror's proxy, with nothing in front of it to be warm.
+            // The shared download cache, for the same reason every maven container has it — and this
+            // build needs it most: it reads Maven Central direct, with nothing in front of it to be
+            // warm. Its reactor resolves no qits jar it does not build itself.
             boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
             String cid = create(ctx, List.of(
                     "docker", "create", "--user", "root", "--entrypoint", "bash",
@@ -2214,13 +1760,11 @@ public class SeedPhases {
      * <b>Nothing here dials a server</b>: the bytes are {@code git archive}s of the checkouts, the
      * jar is the JDK's {@code jar}, and the deploy plugin — pinned, the toolchain seed's rule — is
      * resolved from Maven Central into the shared cache. That is what lets it run before anything
-     * of the platform is up. The store's copy is {@link #publishGoldenMasters}, after the store
-     * starts.
+     * of the platform is up. The store's copy is {@code store-seed}'s, after the idp.
      */
     public Phase seedGoldenMasters() {
         return contractPhase("seed-golden-masters",
-                "pack the golden masters the seed builds resolve into the file repository",
-                false, false);
+                "pack the golden masters the seed builds resolve into the file repository", false);
     }
 
     /**
@@ -2239,23 +1783,10 @@ public class SeedPhases {
     public Phase seedPacts() {
         return contractPhase("seed-pacts",
                 "pack the pacts the seed images' provider suites resolve into the file repository",
-                true, false);
+                true);
     }
 
-    /**
-     * <b>The golden masters into the STORE</b>, the half of what {@code seed-golden-masters} used
-     * to do that needs a server — immediately after the store starts and before the first library
-     * publish into it, because those publishes resolve from the store and two of the libraries
-     * compile against golden masters. Re-packed from the same sources, so the two registries hold
-     * the same bytes. Whatever the store already holds is left alone: on a live platform it holds
-     * every release's jar, and those bytes are not this phase's to replace.
-     */
-    public Phase publishGoldenMasters() {
-        return contractPhase("publish-golden-masters",
-                "publish the golden masters into seed artifacts", false, true);
-    }
-
-    private Phase contractPhase(String id, String title, boolean pacts, boolean toStore) {
+    private Phase contractPhase(String id, String title, boolean pacts) {
         return new Phase(id, title, ctx -> {
             List<ContractJar> all = contractJars(ctx, pacts);
             if (all.isEmpty()) {
@@ -2263,36 +1794,27 @@ public class SeedPhases {
             }
             boot.docker.ensureVolume(SEED_REPO_VOLUME, ctx::log);
             boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
-            List<String> held = toStore ? List.of()
-                    : fileRegistryHolds(all.stream().map(ContractJar::repositoryPath).toList());
+            List<String> held = fileRegistryHolds(all.stream().map(ContractJar::repositoryPath)
+                    .toList());
             List<ContractJar> wanted = new ArrayList<>();
             for (ContractJar jar : all) {
-                boolean there = toStore
-                        ? boot.artifacts.mavenPublished(QITS_GROUP_PATH, jar.artifactId(),
-                                jar.version(), "jar")
-                        : held.contains(jar.repositoryPath());
+                boolean there = held.contains(jar.repositoryPath());
                 ctx.log("  " + jar.artifactId() + " " + jar.version() + " ("
                         + PlatformModel.repo(jar.repository()) + " " + jar.ref() + ") — "
-                        + (toStore ? "store: " : "file registry: ")
-                        + (there ? "held" : toStore ? "to publish" : "to seed"));
+                        + "file registry: " + (there ? "held" : "to seed"));
                 if (!there) {
                     wanted.add(jar);
                 }
             }
             if (wanted.isEmpty()) {
-                ctx.skip((toStore ? "the store holds" : "the file registry holds") + " all "
+                ctx.skip("the file registry holds all "
                         + all.size());
             }
-            String authorization = toStore ? boot.publishAuthorization(ctx) : null;
-            List<String> create = new ArrayList<>(List.of("docker", "create"));
-            if (toStore) {
-                create.addAll(List.of("--network", Boot.NETWORK));
-            }
-            create.addAll(List.of("--user", "root", "--entrypoint", "sh",
+            String cid = create(ctx, List.of("docker", "create", "--user", "root",
+                    "--entrypoint", "sh",
                     "-v", SEED_REPO_VOLUME + ":/repo", "-v", MAVEN_CACHE_MOUNT,
                     "maven:3.9-eclipse-temurin-25",
-                    "-c", contractScript(wanted, toStore, authorization)));
-            String cid = create(ctx, create, authorization);
+                    "-c", contractScript(wanted)));
             Path exports = Files.createDirectories(boot.state.srcDir.resolve(".exports"));
             for (ContractJar jar : wanted) {
                 Path tar = exports.resolve(jar.artifactId() + "@" + jar.version() + ".tar");
@@ -2315,7 +1837,7 @@ public class SeedPhases {
     }
 
     /**
-     * One jar per contract, packed from its unpacked archive, deployed into ONE registry.
+     * One jar per contract, packed from its unpacked archive, deployed into the file repository.
      * <p>
      * <b>The layout is the platform packager's</b> ({@code ContractPackager.jar}): the kind's root
      * directory as an entry, then a golden-masters tree whole or one provider's pact files, with a
@@ -2323,15 +1845,11 @@ public class SeedPhases {
      * and the description — which is what the deploy plugin generates from {@code
      * -DgeneratePom.description}, beside the checksums and metadata a Maven client expects.
      * <p>
-     * <b>The file registry takes no settings at all</b>: no mirror is up when it runs, so the
-     * plugin comes from Maven Central direct. The store half writes the publishing settings and
-     * resolves through the mirror like every other store publish.
+     * <b>No settings at all</b>: the plugin comes from Maven Central direct, and the target is a
+     * file url, which takes no credential.
      */
-    String contractScript(List<ContractJar> jars, boolean toStore, String authorization) {
+    static String contractScript(List<ContractJar> jars) {
         StringBuilder script = new StringBuilder("set -eu\n");
-        if (toStore) {
-            script.append(mavenSettings(authorization));
-        }
         for (ContractJar jar : jars) {
             String file = "/tmp/" + jar.artifactId() + "-" + jar.version() + ".jar";
             script.append("mkdir -p ").append(jar.tree()).append(" && tar -xf ")
@@ -2353,7 +1871,7 @@ public class SeedPhases {
                         .append("jar cf ").append(file).append(" -C ").append(jar.tree())
                         .append(" golden-masters\n");
             }
-            script.append("mvn -B -ntp").append(toStore ? " -s /root/.m2/settings.xml" : "")
+            script.append("mvn -B -ntp")
                     .append(" org.apache.maven.plugins:maven-deploy-plugin:3.1.2:deploy-file")
                     .append(" -Dfile=").append(file)
                     .append(" -DgroupId=eu.wohlben.qits -DartifactId=").append(jar.artifactId())
@@ -2361,10 +1879,7 @@ public class SeedPhases {
                     .append(" '-DgeneratePom.description=")
                     .append(jar.description().replace("'", "")).append("'")
                     .append(MAVEN_REPO_LOCAL)
-                    .append(toStore
-                            ? " -DrepositoryId=qits -Durl=" + boot.config.artifactsUrl()
-                                    + "/maven/maven"
-                            : " -DrepositoryId=seed -Durl=file:///repo")
+                    .append(" -DrepositoryId=seed -Durl=file:///repo")
                     .append('\n');
         }
         return script.toString();
@@ -2394,9 +1909,9 @@ public class SeedPhases {
 
     /**
      * <b>qits-runner-javalib — qits-runner-protocol, qits-runner-toolkit, the harness and
-     * qits-runner-toolkit-contracts — at every version the seed's runner consumers pin, into BOTH
-     * registries, the file registry first.</b> Built from the release TAG, the whole reactor, as
-     * {@link #protocolPublish} builds a daemon's contract.
+     * qits-runner-toolkit-contracts — at every version the seed's runner consumers pin, into the
+     * file repository.</b> Built from the release TAG, the whole reactor, as {@link #protocolSeed}
+     * builds a daemon's contract; the store gets the jars from {@code store-seed}.
      * <p>
      * qits-system's targets module compiles against the protocol and the toolkit, its runner's
      * native build against both and the contracts module at test scope, and nothing else on a
@@ -2406,17 +1921,18 @@ public class SeedPhases {
      * <p>
      * <b>The test scope is stripped from the module poms first</b> ({@link
      * #stripTestDependencies}): the reactor's suites read four providers' golden masters and the
-     * retired CI runner's contract, none of which a cold store holds or a jar needs. The
-     * golden masters the contracts module COMPILES against are seeded the phase before.
+     * retired CI runner's contract, none of which a cold platform holds or a jar needs. The
+     * golden masters the contracts module COMPILES against and the qits-containers-driver the
+     * toolkit is written against are in the file repository already ({@code seed-golden-masters},
+     * {@code maven-seed}).
      */
-    public Phase runnerPublish() {
-        return new Phase("publish-qits-runner",
-                "publish qits-runner-javalib at the versions its consumers pin", ctx -> {
+    public Phase runnerSeed() {
+        return new Phase("seed-qits-runner",
+                "seed qits-runner-javalib at the versions its consumers pin", ctx -> {
             List<String> versions = runnerVersions();
             boot.docker.ensureVolume(SEED_REPO_VOLUME, ctx::log);
             boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
             List<String> toFile = new ArrayList<>();
-            List<String> toStore = new ArrayList<>();
             List<String> held = fileRegistryHolds(versions.stream()
                     .map(v -> protocolStorePath(RUNNER_PROBE_ARTIFACT, v)).toList());
             for (String version : versions) {
@@ -2429,60 +1945,41 @@ public class SeedPhases {
                             + "--tags) and rerun");
                 }
                 boolean seeded = held.contains(protocolStorePath(RUNNER_PROBE_ARTIFACT, version));
-                boolean stored = boot.artifacts.mavenPublished(QITS_GROUP_PATH,
-                        RUNNER_PROBE_ARTIFACT, version, "jar");
                 ctx.log("  qits-runner " + version + " — file registry: "
-                        + (seeded ? "held" : "to seed") + ", store: "
-                        + (stored ? "held" : "to publish"));
+                        + (seeded ? "held" : "to seed"));
                 if (!seeded) {
                     toFile.add(version);
                 }
-                if (!stored) {
-                    toStore.add(version);
-                }
             }
-            if (toFile.isEmpty() && toStore.isEmpty()) {
-                ctx.skip("both registries hold qits-runner " + String.join(", ", versions));
+            if (toFile.isEmpty()) {
+                ctx.skip("the file registry holds qits-runner " + String.join(", ", versions));
             }
-            String authorization = toStore.isEmpty() ? null : boot.publishAuthorization(ctx);
             String cid = create(ctx, List.of(
-                    "docker", "create", "--network", Boot.NETWORK, "--user", "root",
+                    "docker", "create", "--user", "root",
                     "--entrypoint", "sh", "-v", SEED_REPO_VOLUME + ":/repo",
                     "-v", MAVEN_CACHE_MOUNT, "maven:3.9-eclipse-temurin-25",
-                    "-c", runnerScript(versions, toFile, toStore, authorization)), authorization);
-            for (String version : versions) {
-                if (toFile.contains(version) || toStore.contains(version)) {
-                    copyTag(ctx, "runner", version, cid, publishTree(version));
-                }
+                    "-c", runnerScript(toFile)));
+            for (String version : toFile) {
+                copyTag(ctx, "runner", version, cid, publishTree(version));
             }
-            startAndReap(ctx, cid, "the qits-runner publish failed");
+            startAndReap(ctx, cid, "the qits-runner seed failed");
             ctx.note(String.join(", ", versions));
         });
     }
 
-    /** The jar the runner publish probes a version by: the one every consumer compiles against. */
+    /** The jar the runner seed probes a version by: the one every consumer compiles against. */
     static final String RUNNER_PROBE_ARTIFACT = "qits-runner-toolkit";
 
-    /** The settings, the purge, then per version: the strip and one deploy per registry owed. */
-    String runnerScript(List<String> versions, List<String> toFile, List<String> toStore,
-                        String authorization) {
-        StringBuilder script = new StringBuilder("set -eu\n").append(mavenSettings(authorization))
+    /** The settings, the purge, then per version: the strip and the deploy into the volume. */
+    static String runnerScript(List<String> versions) {
+        StringBuilder script = new StringBuilder("set -eu\n").append(seedSettings())
                 .append(MAVEN_PURGE_QITS);
         for (String version : versions) {
-            if (!toFile.contains(version) && !toStore.contains(version)) {
-                continue;
-            }
             String tree = publishTree(version);
-            script.append(stripTestDependencies(tree));
-            String build = "cd " + tree + " && mvn -B -ntp -s /root/.m2/settings.xml deploy"
-                    + " -DskipTests" + MAVEN_REPO_LOCAL;
-            if (toFile.contains(version)) {
-                script.append(build).append(" -DaltDeploymentRepository=seed::default::file:///repo\n");
-            }
-            if (toStore.contains(version)) {
-                script.append(build).append(" -DaltDeploymentRepository=qits::default::")
-                        .append(boot.config.artifactsUrl()).append("/maven/maven\n");
-            }
+            script.append(stripTestDependencies(tree))
+                    .append("cd ").append(tree)
+                    .append(" && mvn -B -ntp -s /root/.m2/settings.xml deploy -DskipTests")
+                    .append(MAVEN_REPO_LOCAL).append(SEED_DEPLOYMENT).append('\n');
         }
         return script.toString();
     }
@@ -2581,16 +2078,16 @@ public class SeedPhases {
 
     /**
      * The runner's native compile, in the builder container — the ci-daemon's line, one module on,
-     * and ON qits-net with the publishes' settings: unlike the ci-daemon's reactor this one
-     * resolves qits jars (qits-runner-protocol, qits-runner-toolkit, and at test scope
-     * qits-runner-toolkit-contracts and a golden master), which the store holds by now and
-     * Maven Central never will.
+     * with the file repository mounted: unlike the ci-daemon's reactor this one resolves qits jars
+     * (qits-runner-protocol, qits-runner-toolkit, and at test scope qits-runner-toolkit-contracts
+     * and a golden master), which {@code seed-qits-runner} and {@code seed-golden-masters} put in
+     * the volume and Maven Central never will. Everything else comes from Central direct.
      */
-    String systemRunnerBuildScript() {
-        return mavenSettings(null) + MAVEN_PURGE_QITS
+    static String systemRunnerBuildScript() {
+        return seedSettings() + MAVEN_PURGE_QITS
                 + "cd /qits-build && ./mvnw -B -ntp -s /root/.m2/settings.xml -pl system-runner -am"
                 + " package -Dnative -DskipTests -Dquarkus.native.container-build=false"
-                + MAVEN_REPO_LOCAL;
+                + MAVEN_REPO_LOCAL + SEED_REPOSITORY_URL;
     }
 
     /**
@@ -2640,13 +2137,16 @@ public class SeedPhases {
             String stage = runnerImageStage(dockerfile, "qits-system-runner");
 
             boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
-            // The ci-daemon's container, but on qits-net: the builder image entrypoints to
-            // native-image itself, and this reactor resolves qits jars out of the store (the
-            // mirror for the rest), where the ci-daemon's resolves Maven Central alone.
+            // The ci-daemon's container, with the file repository mounted read-only: the builder
+            // image entrypoints to native-image itself, and this reactor resolves qits jars out
+            // of the volume (Maven Central for the rest), where the ci-daemon's resolves Maven
+            // Central alone.
+            boot.docker.ensureVolume(SEED_REPO_VOLUME, ctx::log);
             String cid = create(ctx, List.of(
-                    "docker", "create", "--network", Boot.NETWORK, "--user", "root",
+                    "docker", "create", "--user", "root",
                     "--entrypoint", "bash",
                     "--memory", "6g", "--cpu-quota", "400000", "--cpuset-cpus", "0-3",
+                    "-v", SEED_REPO_VOLUME + ":/repo:ro",
                     "-v", MAVEN_CACHE_MOUNT, "qits/graalvmce-musl-builder:jdk-25",
                     "-c", systemRunnerBuildScript()));
             // The build directory sits under the sources directory because the image build below
@@ -2686,6 +2186,129 @@ public class SeedPhases {
         }
     }
 
+    // --- the store, filled once the idp exists (qits-889) ---------------------------------------
+
+    /** What {@link #storeSeed} uploads: this platform's own group, the whole subtree of it. */
+    static final String STORE_SEED_SUBTREE = QITS_GROUP_PATH;
+
+    /**
+     * <b>THE STORE IS FILLED HERE AND NOWHERE ELSE IN THE BOOT: the whole {@code eu/wohlben/qits}
+     * subtree of the {@link #SEED_REPO_VOLUME} file repository, uploaded into the stack's
+     * qits-artifacts under the commissioned {@code bootstrap-publish} credential.</b>
+     * <p>
+     * Phase 1 builds and packs every qits artifact a seed build resolves into the volume and
+     * publishes nothing: no store or mirror runs before the idp, so nothing could commission the
+     * credential the store's publish door demands ("only CI may publish", user ruling 2026-09-13 —
+     * the bootstrap is the one exception, and it publishes as {@code qits:ci-run} or not at all).
+     * What phase 4's release replays need from the store is the same set — the libraries at every
+     * pinned version, golden masters, pacts (a provider replay resolves them), the protocols, the
+     * runner, the musl toolchain tarballs — so it is uploaded from the volume rather than rebuilt.
+     * <p>
+     * <b>ONE container, curl, one {@code PUT} per file</b>, the shape {@code mvn deploy} gives the
+     * store's Maven surface ({@code MavenRoutes} in qits-registries): a dumb path store whose
+     * checksums are verified against the stored blob and whose {@code maven-metadata.xml} is
+     * derived per request — a client's metadata PUT is accepted and discarded, so this sends none.
+     * The bearer rides on every request, PREEMPTIVELY: the store answers an uncredentialed PUT with
+     * a plain 401 and no challenge, so a client that waits to be asked never authenticates.
+     * <p>
+     * <b>Idempotent by asking first.</b> A release path is immutable: identical bytes re-PUT are a
+     * 201, different bytes a 403 — and a seed jar is rebuilt each run, so its bytes differ. So every
+     * file is asked for with a {@code HEAD} first, and one the store answers 200 for is left alone
+     * with its checksums; a 404 is uploaded; any other answer stops the phase. That is every rerun,
+     * and on a live platform it is every released coordinate, which is not this run's to replace.
+     * Within a version the POMs go last, the order {@code mvn deploy} uses, because the pom is the
+     * marker a presence check reads as "published".
+     * <p>
+     * In both arms of the plan: a warm rerun uploads whatever the volume still holds that the
+     * store lacks, which is nothing on a healthy platform.
+     */
+    public Phase storeSeed() {
+        return new Phase("store-seed",
+                "upload the file repository's qits artifacts into the store", ctx -> {
+            boot.docker.ensureVolume(SEED_REPO_VOLUME, ctx::log);
+            String authorization = boot.publishAuthorization(ctx);
+            String base = boot.config.artifactsUrl() + "/maven/maven";
+            ctx.status("uploading " + SEED_REPO_VOLUME + ":/" + STORE_SEED_SUBTREE + " to " + base);
+            String cid = create(ctx, storeSeedCommand(base, authorization), authorization);
+            ProcessResult run = boot.docker.exec(Docker.BUILD_TIMEOUT, ctx::log, "start", "-a",
+                    cid);
+            boot.docker.removeContainer(cid, null);
+            if (!run.ok()) {
+                throw new IllegalStateException("uploading the file repository into the store "
+                        + "failed\n" + run.tailText(20));
+            }
+            String summary = Boot.lastWords(run);
+            if (summary.contains(STORE_SEED_EMPTY)) {
+                ctx.warn(SEED_REPO_VOLUME + " holds nothing under " + STORE_SEED_SUBTREE
+                        + " — the store is left as it is");
+            }
+            ctx.note(summary.replaceFirst("^store-seed: ", ""));
+        });
+    }
+
+    /** What the upload script says when the volume has nothing to give. */
+    static final String STORE_SEED_EMPTY = "nothing under " + STORE_SEED_SUBTREE;
+
+    /** The container: on qits-net, the volume read-only, the script. */
+    static List<String> storeSeedCommand(String base, String authorization) {
+        return List.of("docker", "create", "--network", Boot.NETWORK, "--user", "root",
+                "--entrypoint", "sh", "-v", SEED_REPO_VOLUME + ":/repo:ro",
+                "maven:3.9-eclipse-temurin-25", "-c", storeSeedScript(base, authorization));
+    }
+
+    /**
+     * The upload, as a POSIX shell script. The header goes into a file curl reads with
+     * {@code -H @file}, so the bearer is on no command line inside the container either.
+     *
+     * @param base          the store's Maven repository, {@code <artifactsUrl>/maven/maven}
+     * @param authorization the {@code Authorization} value every request presents
+     */
+    static String storeSeedScript(String base, String authorization) {
+        if (authorization == null || authorization.isBlank()) {
+            throw new IllegalArgumentException("the store is never published to bare");
+        }
+        String checksums = "md5 sha1 sha256 sha512";
+        StringBuilder skip = new StringBuilder(" ! -name 'maven-metadata*'");
+        for (String sum : checksums.split(" ")) {
+            skip.append(" ! -name '*.").append(sum).append("'");
+        }
+        skip.append(" ! -name '*.lastUpdated' ! -name '_remote.repositories'");
+        return "set -eu\n"
+                + "base='" + base + "'\n"
+                + "cat > /tmp/auth <<'AUTH'\n"
+                + "Authorization: " + authorization + "\n"
+                + "AUTH\n"
+                + "cd /repo\n"
+                + "if [ ! -d " + STORE_SEED_SUBTREE + " ]; then echo 'store-seed: "
+                + STORE_SEED_EMPTY + "'; exit 0; fi\n"
+                // Poms last, as mvn deploy orders them: the pom is the published marker.
+                + "find " + STORE_SEED_SUBTREE + " -type f" + skip + " ! -name '*.pom' | sort"
+                + " > /tmp/files\n"
+                + "find " + STORE_SEED_SUBTREE + " -type f -name '*.pom' | sort >> /tmp/files\n"
+                + "put() {\n"
+                + "  curl -sS --fail-with-body -o /tmp/answer -T \"$1\" -H @/tmp/auth"
+                + " \"$base/$1\" || { echo \"PUT $1 was refused: $(cat /tmp/answer 2>/dev/null)\""
+                + " >&2; exit 1; }\n"
+                + "}\n"
+                + "uploaded=0\n"
+                + "held=0\n"
+                + "while IFS= read -r f; do\n"
+                + "  code=$(curl -sS -o /dev/null -w '%{http_code}' -I -H @/tmp/auth \"$base/$f\""
+                + " || true)\n"
+                + "  case \"$code\" in\n"
+                + "    200) held=$((held + 1)); continue ;;\n"
+                + "    404) ;;\n"
+                + "    *) echo \"asking the store for $f answered $code\" >&2; exit 1 ;;\n"
+                + "  esac\n"
+                + "  put \"$f\"\n"
+                + "  for sum in " + checksums + "; do\n"
+                + "    if [ -f \"$f.$sum\" ]; then put \"$f.$sum\"; fi\n"
+                + "  done\n"
+                + "  uploaded=$((uploaded + 1))\n"
+                + "done < /tmp/files\n"
+                + "echo \"store-seed: $uploaded uploaded, $held already held\"\n";
+    }
+
     // --- postgres ---------------------------------------------------------------------------------
 
     /**
@@ -2713,9 +2336,8 @@ public class SeedPhases {
      * first boot, and every database a seed container boots against.
      * <p>
      * <b>Before the first container that refuses to boot without a database, whichever one that
-     * is.</b> It used to be enough to sit before the compose file, because everything with a store
-     * was started by compose; qits-platform-mirror is started BY HAND several phases earlier, so
-     * this phase moved up in front of it. On {@code QITS_SKIP_BUILD} there is no mirror start and
+     * is.</b> That is the idp, which {@code seed-idp} brings up alone before the compose file is
+     * written. The build arm runs this among its image builds; on {@code QITS_SKIP_BUILD} there is
      * no image build, and it runs where it always did — the passwords it resolves fill both
      * generated files either way. That is why {@code BootstrapPlan} places it in each arm rather
      * than once after both: one run, one placement, and the right one for each.
@@ -2996,9 +2618,8 @@ public class SeedPhases {
                 // above: every one of these containers boots before any deployer exists, and each
                 // dies at Flyway's first connect without its database.
                 //
-                // The mirror and the hosted store are the earliest consumers of any database here —
-                // both are started BY HAND, before the compose file is even written, because every
-                // publish after them resolves through the one and lands in the other. The git host
+                // The mirror and the hosted store come up with the seed stack, and store-seed fills
+                // the store straight after it is healthy. The git host
                 // takes two, because the eventstream library keeps its outbox in a lineage of its
                 // own and a push that publishes no event is a push no consumer ever learns about.
                 //

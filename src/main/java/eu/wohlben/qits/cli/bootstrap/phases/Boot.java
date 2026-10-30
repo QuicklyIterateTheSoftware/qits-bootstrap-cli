@@ -356,9 +356,10 @@ public class Boot {
      * <b>Null is the honest answer three times over, and none of them weakens a gated store.</b>
      * The gate is off, so nothing is being asked for; no bootstrap pair is recorded yet, which on a
      * cold boot is every phase before {@code idp-bootstrap-client}; or the idp is not up yet, which
-     * is every phase before {@code seed-idp}. In all three the store being read is the SEED store,
-     * which this run started itself and handed no gate. A store that IS gated answers an
-     * uncredentialed read with a 401, loudly, rather than quietly serving it.
+     * is every phase before {@code seed-idp}. No phase before {@code seed-idp} reads the store at
+     * all since qits-889 — there is none to read until the seed stack is up — so the last two are
+     * the answer for a caller that asks too early, and a gated store answers its uncredentialed
+     * read with a 401, loudly, rather than quietly serving it.
      * <p>
      * <b>Cached to its expiry</b>, because this is called per probe and a release replay probes
      * every few seconds for the length of a native build: minting a token per poll would be
@@ -387,27 +388,26 @@ public class Boot {
 
     /**
      * <b>What a PUBLISH into qits-artifacts presents</b> — a credential of kind
-     * {@code bootstrap-publish}, commissioned on first use — or null where the gate is off or
-     * there is no idp to commission it at yet.
+     * {@code bootstrap-publish}, commissioned on first use. <b>Never null: the bootstrap never
+     * publishes bare</b> (qits-889).
      * <p>
      * Only CI may publish (user ruling 2026-09-13), so the store's anonymous publishing door is
      * closed and {@code qits:ci-run} is the only role that opens it. This run publishes before any
-     * CI exists, so it commissions itself that role for its publish phase and hands it back when
-     * that phase ends — see {@link BootstrapPublishCredential}.
+     * CI exists, so it commissions itself that role for its publish phases and hands it back when
+     * the last of them ends — see {@link BootstrapPublishCredential}.
      * <p>
-     * <b>Null has the same three reasons as {@link #storeReadAuthorization}</b>, and the same
-     * answer to why it is safe: the publishes that meet it are the seed ones into a store this run
-     * started without a gate, which is exactly the exception the ruling left standing. A gated
-     * store refuses an anonymous PUT.
+     * <b>The machine gate being off changes nothing here.</b> A store with the gate off ignores
+     * the credential; the bootstrap commissions and presents it all the same, so a publish is the
+     * same act on every platform and no branch of this program knows how to publish without one.
+     * No idp, no recorded bootstrap secret, or a refused commission stops the phase with the reason
+     * — every publish is planned after {@code seed-idp}, so meeting one of those is a defect, not a
+     * mode.
      *
-     * @param ctx the phase that is about to publish, so the reason it is publishing bare is on the
-     *            screen rather than only in the shape of a later 401
+     * @param ctx the phase that is about to publish, so who it publishes as is on the screen
+     * @throws IllegalStateException when there is no credential to present
      */
     public String publishAuthorization(PhaseContext ctx) {
         BootstrapPublishCredential credential = publishCredential(ctx);
-        if (credential == null) {
-            return null;
-        }
         String authorization = credential.authorization();
         ctx.log("  publishing as " + credential.clientId() + " ("
                 + BootstrapPublishCredential.CONTEXT_KIND + ", may push nothing)");
@@ -416,30 +416,39 @@ public class Boot {
 
     /**
      * <b>What a {@code docker push} into the store presents</b>: the same publishing credential,
-     * as the id and secret docker's own token dance needs — or null on the terms
-     * {@link #publishAuthorization} answers null on.
+     * as the id and secret docker's own token dance needs — never null, on the terms of
+     * {@link #publishAuthorization}.
      */
     public BootstrapPublishCredential.Pair publishPair(PhaseContext ctx) {
         BootstrapPublishCredential credential = publishCredential(ctx);
-        if (credential == null) {
-            return null;
-        }
         BootstrapPublishCredential.Pair pair = credential.pair();
         ctx.log("  pushing as " + pair.clientId() + " ("
                 + BootstrapPublishCredential.CONTEXT_KIND + ", may push no git ref)");
         return pair;
     }
 
-    /** The credential both forms present, made on first use — or null, with the reason logged. */
+    /**
+     * The credential both forms present, made on first use — or the phase stops, saying why there
+     * is none. Whether the machine gate is on is not asked.
+     */
     private BootstrapPublishCredential publishCredential(PhaseContext ctx) {
-        if (!config.machineAuth()) {
-            ctx.log("  the machine gate is off — publishing into the store without a credential");
-            return null;
+        if (publishCredential != null) {
+            return publishCredential;
         }
-        if (state.bootstrapSecret == null || state.bootstrapSecret.isBlank() || !idp.ready()) {
-            ctx.log("  no idp to commission a publishing credential at yet — publishing into the "
-                    + "ungated seed store without one");
-            return null;
+        if (state.bootstrapSecret == null || state.bootstrapSecret.isBlank()) {
+            throw new IllegalStateException("no publishing credential: the "
+                    + PlatformModel.bootstrapClientId(config.envName()) + " client has no "
+                    + "recorded secret to commission one with (idp-bootstrap-client did not run, or "
+                    + ".qits-bootstrap.env lost it) — the bootstrap never publishes without one");
+        }
+        if (!idp.ready()) {
+            throw new IllegalStateException("no publishing credential: the idp at "
+                    + config.idpDialUrl() + " is not answering, so none can be commissioned — "
+                    + "the bootstrap never publishes without one");
+        }
+        if (!config.machineAuth()) {
+            ctx.log("  the machine gate is off — the store will not ask, the credential is "
+                    + "presented all the same");
         }
         if (publishCredential == null) {
             publishCredential = new BootstrapPublishCredential(http, idp, config.idpDialUrl(),

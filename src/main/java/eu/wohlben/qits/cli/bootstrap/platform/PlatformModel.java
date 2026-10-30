@@ -329,7 +329,7 @@ public final class PlatformModel {
      * <b>qits-runner-javalib joined on 2026-10-23 (qits-1547), as a library no release replays.</b>
      * qits-system and its runner compile against qits-runner-protocol and qits-runner-toolkit, and
      * nothing on a cold platform publishes them — so the boot clones it, and
-     * {@code SeedPhases.runnerPublish} builds the versions the two pin from their tags. Model name
+     * {@code SeedPhases.runnerSeed} builds the versions the two pin from their tags. Model name
      * {@code runner}, after the {@code qits.runner.version} property both pin it by.
      * <p>
      * <b>qits-system-runner-daemon joined on 2026-10-23 (qits-1535), on the same terms.</b> The

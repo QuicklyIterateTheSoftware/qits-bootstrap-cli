@@ -82,7 +82,7 @@ public final class PinnedVersions {
      * qits-system {@code qits-system-runner-protocol}, one module of each daemon's reactor. They are
      * here so the closure says what is pinned rather than "no repository publishes it"; the
      * publish itself is
-     * {@code SeedPhases.protocolPublish}, which builds the pinned tag and stops the boot where it
+     * {@code SeedPhases.protocolSeed}, which builds the pinned tag and stops the boot where it
      * is missing.
      */
     static final Map<String, String> PRODUCERS = Map.ofEntries(
@@ -101,7 +101,7 @@ public final class PinnedVersions {
             Map.entry("pact-consumer", "integrations-quarkus"),
             // qits-runner-javalib, which qits-system and its runner pin as one property for its
             // four jars (qits-1547). Its own pins — qits-containers-driver above all — are what
-            // this entry brings into the closure; SeedPhases.runnerPublish builds the versions.
+            // this entry brings into the closure; SeedPhases.runnerSeed builds the versions.
             Map.entry("runner", "runner"),
             Map.entry("githost-events", "githost"),
             Map.entry("containers-client", "containers"),

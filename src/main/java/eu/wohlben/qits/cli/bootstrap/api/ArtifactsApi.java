@@ -159,8 +159,8 @@ public class ArtifactsApi {
      * bootstrap commissions itself one of kind {@code bootstrap-publish} for its publish phase and
      * hands it back when that phase ends. See {@link BootstrapPublishCredential}.
      *
-     * @param authorization the header value, or null where the gate is off and there is nothing to
-     *                      present — the seed store that has not been handed a gate yet
+     * @param authorization the header value — the bootstrap always passes one (qits-889); a null
+     *                      or blank value sends no header, which only a test does
      */
     public Http.Response publishDaemon(String name, String version, Path binary,
                                        String authorization) {

@@ -167,7 +167,11 @@ forced. Add to that list rather than deviating quietly.
 - **A seed build resolves the platform's own jars from the `qits-maven-seed` VOLUME, and from no
   server.** That volume is a file-layout Maven repository: `maven-seed` deploys every seed library
   into it with `mvn deploy … file:///repo`, `seed-golden-masters`/`seed-pacts` pack the contract
-  jars into it, the protocol and runner publishes write it beside the store, and `seed-toolchain` puts the musl tarballs in it. The buildctl client mounts
+  jars into it, the protocol and runner seeds deploy into it, and `seed-toolchain` puts the musl
+  tarballs in it; after the idp, `store-seed` uploads its `eu/wohlben/qits` subtree into the store.
+  The phase-1 maven containers that resolve qits jars (runner, protocols, the system-runner's native
+  build) read them from the same volume through a settings `<mirror>` of `qits-maven` to
+  `file:///repo`, and Maven Central direct for the rest — no mirror runs. The buildctl client mounts
   it read-only as the named context `qits-m2` for every seed service image and the ci-daemon's musl
   builder. The committed Dockerfiles cannot know that: each service's build `RUN` derives
   `https://registry.qits.$QITS_DOMAIN/artifacts/maven/maven` and
@@ -191,7 +195,7 @@ forced. Add to that list rather than deviating quietly.
   `git archive` of the tag, or of its `release(<version>):` commit where the tag is gone (four pact
   pins on 2026-10-30), in `ContractPackager`'s layout. `maven-seed` resolves what it did not build
   from the volume too (`-Dqits.maven.repository.url=file:///repo`). Compile-scoped jars of another
-  repository's release go through `protocolPublish` (ci-daemon, system-runner, projects-daemon and
+  repository's release go through `protocolSeed` (ci-daemon, system-runner, projects-daemon and
   workspace-daemon protocols, and `qits-platform-access-cli-binary`). Three pact consumers and the
   binary's producer are no pipeline repositories — `PlatformModel.READ_ONLY_REPOS` is cloned and
   nothing else. Then `seedImage` reads the checkout's poms with `MavenPins` and asks the volume for
@@ -366,7 +370,7 @@ forced. Add to that list rather than deviating quietly.
   file repository of seed-built qits jars and the musl tarballs) and keeps
   `qits-*-config` and `qits-maven-cache`; `--with-volumes` takes every `qits-*` volume. The cache
   holds third-party jars the bootstrap's own maven containers pulled from Maven Central — one
-  `/cache` mount named by `-Dmaven.repo.local`, shared by the seed, every publish and the
+  `/cache` mount named by `-Dmaven.repo.local`, shared by the seed, every phase-1 build and the
   ci-daemon build — and re-fetching that world on each re-bootstrap is what throttled this host on
   2026-08-11. **Every one of those scripts deletes `eu/wohlben/qits` out of the cache first**: a
   third-party jar is immutable at its version and a seed-built qits jar is not, because seed
@@ -476,20 +480,25 @@ forced. Add to that list rather than deviating quietly.
   only role that opens it. The bootstrap publishes before any CI exists, so it commissions ITSELF
   one: `POST /idp/api/clients` with `contextKind: bootstrap-publish` and `gitRefs: []` — the idp's
   `CommissionRoles` gives that kind `qits:ci-run`, and the empty list says it may push nothing.
-  Every publish into the store carries it: the maven ones through a `<server><id>qits</id>` with an
-  `Authorization` header (Maven does NOT authenticate preemptively, so a username/password pair
-  would never be sent at all), the npm ones as `_authToken`, which npm sends as a bearer, and the
-  daemon binary on its PUT. The id `qits` is not free to choose: it is what
-  `-DaltDeploymentRepository=qits::default::…` names, and any other spelling is a credential Maven
-  holds and never sends. **The lifetime is this program's to keep and nothing else's**: the
+  **Phase 1 publishes NOTHING, and no phase before `seed-idp` talks to a store or a mirror**
+  (qits-889): every seed build resolves the platform's jars from the `qits-maven-seed` file
+  repository and the rest from upstream, and no `seed-artifacts`/`seed-mirror` is started by hand.
+  The store is filled ONCE, by `store-seed` — after `register-token`, before `images-publish` —
+  which uploads the volume's whole `eu/wohlben/qits` subtree in one container, a `curl -T` PUT per
+  file with the bearer on every request (preemptively: the maven surface answers an uncredentialed
+  PUT with a plain 401 and no challenge). It HEADs each file first and leaves what the store holds
+  alone, because a release path is immutable and a rebuilt seed jar's bytes differ (403). Then the
+  image pushes, through docker's token dance with the pair, and the daemon binary on its PUT.
+  **`Boot.publishAuthorization` never answers null**: no idp, no recorded bootstrap secret, or a
+  refused commission fails the phase; with the machine gate OFF the credential is still
+  commissioned and presented — the store ignores it, and no branch of this program knows how to
+  publish bare. **The lifetime is this program's to keep and nothing else's**: the
   `publish-credential-release` phase hands it back the moment the daemon binary is up — the last
   publish of the boot — and `Boot.runPhases` hands it back in a `finally` as well, because a
   publish that FAILED ends the run before that phase and is exactly when one would be left standing.
   READS at the store are gated too and carry the run's OWN machine token instead, because they go
   on long after the publishing credential is gone; `health` is the one call that stays bare, since
-  every wait polls it before any idp exists. Where there is no idp yet — every phase of a cold boot
-  before `seed-idp` — there is nothing to present and the publishes go bare into the seed store
-  this run started without a gate, which is the exception the ruling left standing.
+  every wait polls it before any idp exists.
 - **`QITS_ENVIRONMENT` is a statement of tier membership, and a platform service is handed none.**
   The deployer records a resource row per application under that environment, `orElse(null)`, and
   looks a platform-target service's rows up by the null key. Tell a platform service it has a tier
