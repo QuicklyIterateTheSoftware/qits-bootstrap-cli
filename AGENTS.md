@@ -166,8 +166,8 @@ forced. Add to that list rather than deviating quietly.
   creates one again.
 - **A seed build resolves the platform's own jars from the `qits-maven-seed` VOLUME, and from no
   server.** That volume is a file-layout Maven repository: `maven-seed` deploys every seed library
-  into it with `mvn deploy … file:///repo`, the protocol, golden-master and runner publishes write
-  it beside the store, and `seed-toolchain` puts the musl tarballs in it. The buildctl client mounts
+  into it with `mvn deploy … file:///repo`, `seed-golden-masters`/`seed-pacts` pack the contract
+  jars into it, the protocol and runner publishes write it beside the store, and `seed-toolchain` puts the musl tarballs in it. The buildctl client mounts
   it read-only as the named context `qits-m2` for every seed service image and the ci-daemon's musl
   builder. The committed Dockerfiles cannot know that: each service's build `RUN` derives
   `https://registry.qits.$QITS_DOMAIN/artifacts/maven/maven` and
@@ -182,6 +182,22 @@ forced. Add to that list rather than deviating quietly.
   Teach the rewrite the new shape; never let a seed build fall back to a server. A seed build
   passes no `qits-client-*` secret: the Dockerfiles' secret mounts then mount nothing, their
   `|| true` reads an empty credential, and a file repository asks for none.
+- **Everything a seed service's poms pin is PRODUCED into that volume before its image, and the
+  image's preflight proves it** (qits-889). `-DskipTests` resolves test scope, so that is more than
+  the libraries: `seed-golden-masters` and `seed-pacts` (before `maven-seed`, no server, no
+  network) pack every golden-masters and pact coordinate the seed builds pin from the PUBLISHING
+  repository's release — the provider's for golden masters, the consumer's for pacts, because the
+  platform publishes a contract under that repository's `$QITS_VERSION`, its release tag — by
+  `git archive` of the tag, or of its `release(<version>):` commit where the tag is gone (four pact
+  pins on 2026-10-30), in `ContractPackager`'s layout. `maven-seed` resolves what it did not build
+  from the volume too (`-Dqits.maven.repository.url=file:///repo`). Compile-scoped jars of another
+  repository's release go through `protocolPublish` (ci-daemon, system-runner, projects-daemon and
+  workspace-daemon protocols, and `qits-platform-access-cli-binary`). Three pact consumers and the
+  binary's producer are no pipeline repositories — `PlatformModel.READ_ONLY_REPOS` is cloned and
+  nothing else. Then `seedImage` reads the checkout's poms with `MavenPins` and asks the volume for
+  every coordinate in ONE container, failing with the whole list. A new pin a seed image takes is
+  therefore a preflight failure naming it: teach a phase to PRODUCE it — never let the build reach
+  for a server, and never widen the preflight's skip list to get past it.
 - **The seed is a docker STACK, and four compose words do not survive the move.** The generated
   file carries no root `name:` and no `group_add:` — either one makes `docker stack deploy` refuse
   it outright, measured — no `container_name:` (ignored; a task's container is

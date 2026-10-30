@@ -1353,4 +1353,25 @@ class PlatformModelTest {
         assertThat(PlatformModel.newestRelease(List.of("latest", "nightly"))).isEmpty();
         assertThat(PlatformModel.newestRelease(List.of())).isEmpty();
     }
+
+    /**
+     * <b>Three repositories the boot reads and never hosts</b> (qits-889): the pact consumers and
+     * the binary pin's producer that are no part of the pipeline. Cloned — they are in the source
+     * list — and named nowhere a repository gets created, pushed or replayed.
+     */
+    @Test
+    void theReadOnlyRepositoriesAreClonedButNeverHosted() {
+        assertThat(PlatformModel.READ_ONLY_REPOS)
+                .containsExactly("bootstrap-cli", "landing-app", "platform-access-cli");
+        assertThat(PlatformModel.sourceRepos()).containsAll(PlatformModel.platformRepos())
+                .containsAll(PlatformModel.READ_ONLY_REPOS);
+        assertThat(PlatformModel.platformRepos()).doesNotContainAnyElementsOf(
+                PlatformModel.READ_ONLY_REPOS);
+        assertThat(PlatformModel.sourceNameOf("qits-landing-app")).isEqualTo("landing-app");
+        assertThat(PlatformModel.sourceNameOf("qits-ci-frontend")).isEqualTo("spa-ci");
+        assertThat(PlatformModel.sourceNameOf("qits-nowhere")).isNull();
+        assertThat(PlatformModel.repo("platform-access-cli")).isEqualTo("qits-platform-access-cli");
+        assertThat(PlatformModel.mavenModule("platform-access-cli"))
+                .isEqualTo("platform-access-cli-binary");
+    }
 }

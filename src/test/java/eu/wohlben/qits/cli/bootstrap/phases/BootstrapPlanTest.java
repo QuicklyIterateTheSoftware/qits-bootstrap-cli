@@ -54,7 +54,7 @@ class BootstrapPlanTest {
         // the landmine hangs rather than failing over.
         assertThat(ids(phases)).startsWith("preflight", "network", "ipv6-loopback", "host-oom",
                 "bootstrap-ingress-prepare", "bootstrap-ingress", "wrapper", "sources",
-                "recorded-state", "maven-seed");
+                "recorded-state", "seed-golden-masters", "seed-pacts", "maven-seed");
         assertThat(ids(phases)).containsSubsequence(
                 "git-repos", "release-train-push", "preseed");
         assertThat(ids(phases)).endsWith("deploy-deployments", "summary",
@@ -95,13 +95,60 @@ class BootstrapPlanTest {
     void theRunnerLibraryIsSeededBeforeQitsSystemAndItsRunnerAreBuilt() {
         List<String> ids = ids(plan(Map.of()));
 
-        assertThat(ids).containsSubsequence("seed-artifacts", "publish-qits-containers-driver",
-                "publish-qits-containers-client", "seed-golden-masters", "publish-qits-runner",
-                "publish-qits-system-runner-protocol", "seed-image-system", "ci-daemon",
-                "system-runner-image");
+        assertThat(ids).containsSubsequence("seed-artifacts", "publish-golden-masters",
+                "publish-qits-containers-driver", "publish-qits-containers-client",
+                "publish-qits-runner", "publish-qits-system-runner-protocol", "seed-image-system",
+                "ci-daemon", "system-runner-image");
         assertThat(ids).containsSubsequence("seed-golden-masters", "seed-image-ci");
         assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1"))))
-                .doesNotContain("seed-golden-masters", "publish-qits-runner");
+                .doesNotContain("seed-golden-masters", "publish-golden-masters",
+                        "publish-qits-runner");
+    }
+
+    /**
+     * <b>The contract jars are in the file repository before ANYTHING is built</b> (qits-889):
+     * the edge, the first image, pins fourteen pacts and qits-idp's golden masters, and maven-seed
+     * builds two contracts kits that compile against golden masters. Neither phase needs a server,
+     * so both precede everything of the platform; the store's copy of the golden masters waits for
+     * the store and precedes every library publish into it, which resolve from there.
+     */
+    @Test
+    void theContractJarsAreInTheFileRepositoryBeforeTheFirstBuild() {
+        List<String> ids = ids(plan(Map.of()));
+
+        assertThat(ids).containsSubsequence("sources", "seed-golden-masters", "seed-pacts",
+                "maven-seed", "seed-image-edge", "seed-image-mirror");
+        assertThat(ids.indexOf("seed-pacts")).isLessThan(ids.indexOf("seed-mirror"))
+                .isLessThan(ids.indexOf("seed-artifacts"));
+        assertThat(ids.get(ids.indexOf("seed-artifacts") + 1)).isEqualTo("publish-golden-masters");
+        assertThat(ids).containsSubsequence("publish-golden-masters", "publish-qits-userflows",
+                "publish-qits-eventstream", "publish-qits-containers-client");
+        // No store publish of a pact: the file repository is the one reader there is.
+        assertThat(ids).doesNotContain("publish-pacts");
+        assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1"))))
+                .doesNotContain("seed-pacts", "seed-golden-masters");
+    }
+
+    /**
+     * <b>Every compile-scoped coordinate a seed image takes from another repository's release lands
+     * before that image</b> (qits-889): qits-ci's pin of the {@code qits} binary beside its daemon
+     * contract, and qits-projects' two daemon contracts — the workspace daemon's at qits-system's
+     * pin too, in the same phase, because qits-projects is built first.
+     */
+    @Test
+    void theDaemonContractsQitsProjectsCompilesAgainstLandBeforeItsImage() {
+        List<String> ids = ids(plan(Map.of()));
+
+        assertThat(ids).containsSubsequence("seed-artifacts", "publish-qits-platform-access-cli-binary",
+                "publish-qits-ci-daemon-protocol", "seed-image-ci");
+        int projects = ids.indexOf("seed-image-projects");
+        assertThat(ids.subList(projects - 2, projects)).containsExactly(
+                "publish-qits-projects-daemon-protocol", "publish-qits-workspace-daemon-protocol");
+        assertThat(ids).containsSubsequence("publish-qits-workspace-daemon-protocol",
+                "seed-image-projects", "seed-image-system");
+        assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1")))).doesNotContain(
+                "publish-qits-projects-daemon-protocol", "publish-qits-workspace-daemon-protocol",
+                "publish-qits-platform-access-cli-binary");
     }
 
     /**

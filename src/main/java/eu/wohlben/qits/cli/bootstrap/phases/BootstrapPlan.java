@@ -53,6 +53,17 @@ public final class BootstrapPlan {
             // files carry, and the deployer refuses to boot without the database it names.
             phases.add(seed.seedPostgres());
         } else {
+            // THE CONTRACT JARS FIRST, before anything is built (qits-889). Every seed service
+            // build resolves its poms' qits coordinates from the qits-maven-seed volume and from
+            // nothing else, test scope included, and two kinds of them no build here produces:
+            // the providers' golden masters and the consumers' pacts. The edge pins fourteen pacts
+            // and qits-idp's golden masters, and it is the first image; maven-seed itself builds
+            // two contracts kits that COMPILE against golden masters. Both phases pack from the
+            // checkouts' release tags into the file repository and dial no server, which is what
+            // lets them run before any part of the platform is up. The store's copy of the golden
+            // masters is publish-golden-masters, once there is a store.
+            phases.add(seed.seedGoldenMasters());
+            phases.add(seed.seedPacts());
             phases.add(seed.mavenSeed());
             // CORE order, and the Maven bootstrap that has to happen in the middle of it:
             // qits-ci consumes qits-eventstream from the Maven repository it will use in steady
@@ -87,6 +98,10 @@ public final class BootstrapPlan {
             // not a slow publish but a failed one.
             phases.add(seed.seedMirrorStart());
             phases.add(seed.seedArtifactsStart());
+            // THE GOLDEN MASTERS INTO THE STORE, the moment there is one and before the first
+            // library publish into it: those publishes resolve their qits half from the store, and
+            // qits-eventstream's and qits-containers' contracts kits compile against golden masters.
+            phases.add(seed.publishGoldenMasters());
             // The userflows library FIRST, because it resolves nothing of ours and seventeen root
             // poms resolve IT. Its scope is test, which changes nothing: `mvn package -DskipTests`
             // still resolves test-scoped dependencies, so a store without it fails every service
@@ -135,15 +150,11 @@ public final class BootstrapPlan {
             // host ~/.m2 anywhere in this run to fall back on.
             phases.add(seed.mavenPublish("containers", "qits-containers-client",
                     "publish the qits-containers client into seed artifacts"));
-            // THE GOLDEN MASTERS AND THE RUNNER LIBRARY, after every maven publish above and
-            // before the first image that resolves either (qits-1547). Each consumer pins its
-            // providers' golden masters TEST-scoped, and a -DskipTests build resolves test scope
-            // all the same, so the seed packs them from the providers' pinned tags; and
-            // qits-runner-javalib — the protocol and toolkit qits-system and its runner compile
-            // against — is no deployable and no release publisher, so nothing else would put it
-            // in a registry. The runner build resolves containers-driver, pact-consumer and the
-            // golden masters out of the store, which is why both come here and not earlier.
-            phases.add(seed.goldenMastersSeed());
+            // THE RUNNER LIBRARY, after every maven publish above and before the first image that
+            // resolves it (qits-1547): qits-runner-javalib — the protocol and toolkit qits-system
+            // and its runner compile against — is no deployable and no release publisher, so
+            // nothing else would put it in a registry. The runner build resolves containers-driver,
+            // pact-consumer and the golden masters out of the store, which is why it comes here.
             phases.add(seed.runnerPublish());
             phases.add(seed.uiComponentsPublish());
             phases.add(seed.angularPublish());
@@ -153,6 +164,12 @@ public final class BootstrapPlan {
             // tag, so it is no checkout publish and has no order among the others — it resolves
             // Maven Central alone. qits-ci-runner-protocol was its twin until the CI runner retired
             // (qits-1547); qits-ci pins it no more.
+            // And the pin of the `qits` binary qits-ci's release steps download — one module of
+            // qits-platform-access-cli, which is no repository of this platform's pipeline and is
+            // cloned read-only for this and for its pacts (PlatformModel.READ_ONLY_REPOS). qits-ci
+            // compiles against it, so on the same terms, beside it.
+            phases.add(seed.protocolPublish("ci", "platform-access-cli",
+                    "qits-platform-access-cli-binary", "qits.platform-access-cli-binary.version"));
             phases.add(seed.protocolPublish("ci", "ci-daemon", "qits-ci-daemon-protocol",
                     "qits.ci-daemon-protocol.version"));
             phases.add(seed.seedImage("ci"));
@@ -167,6 +184,15 @@ public final class BootstrapPlan {
             // the qits-containers client out of the store the publishes above filled. It has a
             // client, so the seed places a placeholder bundle where its Dockerfile's `test -f`
             // looks — see PlatformModel.seedUiPath.
+            // ITS TWO DAEMONS' WIRE CONTRACTS, on qits-ci's terms (qits-889): qits-projects
+            // compiles against qits-projects-daemon-protocol and qits-workspace-daemon-protocol at
+            // the versions its root pom pins, built from those release tags. qits-system compiles
+            // against the workspace daemon's contract too, at its own pin, so that one phase
+            // publishes both consumers' versions, here before the first of them.
+            phases.add(seed.protocolPublish("projects", "projects-daemon",
+                    "qits-projects-daemon-protocol", "qits.projects-daemon-protocol.version"));
+            phases.add(seed.protocolPublish(List.of("projects", "system"), "workspace-daemon",
+                    "qits-workspace-daemon-protocol", "qits.workspace-daemon-protocol.version"));
             phases.add(seed.seedImage("projects"));
             // THE TARGETS' OWNER, a seed service since qits-1547 because every CI run is a lease on
             // one of its targets. Its reactor resolves qits-eventstream, qits-db-core and

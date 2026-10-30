@@ -3,6 +3,7 @@ package eu.wohlben.qits.cli.bootstrap.platform;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -36,5 +37,33 @@ class GitTest {
     void theRefreshStaysShallow() {
         assertThat(Git.submodulesShallowCommand(Path.of("/src/x")))
                 .containsSequence("--depth", "1");
+    }
+
+    /**
+     * <b>A release whose tag is gone is found by its release commit</b> — the subject the release
+     * wrote, at its START: a bump that quotes a release in passing is not that release.
+     */
+    @Test
+    void aReleaseCommitIsTheOneWhoseSubjectStartsWithIt() {
+        assertThat(Git.releaseCommitIn(List.of(
+                "0123abcd bump(qits-1): 1 dependencies after release(2026.1028.12758): x",
+                "6dbeb40a release(2026.1028.12758): qits-1690: a rolled-back deployment",
+                "9999aaaa release(2026.1028.12758): a second one is never read"),
+                "2026.1028.12758")).isEqualTo("6dbeb40a");
+        assertThat(Git.releaseCommitIn(List.of("6dbeb40a release(2026.1028.1275): near miss"),
+                "2026.1028.12758")).isNull();
+        // Fixed strings, every ref: the parentheses are no regex group, and a commit off main is
+        // still the release's.
+        assertThat(Git.releaseCommitSearch("2026.1028.12758")).containsExactly("log", "--all",
+                "--format=%H %s", "--fixed-strings", "--grep=release(2026.1028.12758):");
+    }
+
+    /** One directory of one ref, as a tar file, and no checkout: {@code git archive -o}. */
+    @Test
+    void anArchiveIsOneDirectoryAtOneRef() {
+        assertThat(Git.archiveCommand(Path.of("/src/qits-ci-frontend"), "2026.1021.191659",
+                "pacts", Path.of("/src/.exports/x.tar")))
+                .containsExactly("git", "-C", "/src/qits-ci-frontend", "archive", "--format=tar",
+                        "-o", "/src/.exports/x.tar", "2026.1021.191659", "--", "pacts");
     }
 }
