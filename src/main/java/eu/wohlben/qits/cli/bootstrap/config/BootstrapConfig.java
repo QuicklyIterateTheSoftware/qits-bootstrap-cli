@@ -38,7 +38,7 @@ public interface BootstrapConfig {
     Optional<String> wrapperDir();
 
     /**
-     * Where sources are cloned to. The clone is not ceremony: seed builds write a placeholder SPA
+     * Where sources are cloned to. The clone is not ceremony: seed builds copy each built client
      * bundle into the tree and may commit a pipeline config, and neither belongs in the user's own
      * checkout.
      */

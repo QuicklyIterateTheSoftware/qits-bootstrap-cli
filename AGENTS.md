@@ -202,6 +202,24 @@ forced. Add to that list rather than deviating quietly.
   every coordinate in ONE container, failing with the whole list. A new pin a seed image takes is
   therefore a preflight failure naming it: teach a phase to PRODUCE it — never let the build reach
   for a server, and never widen the preflight's skip list to get past it.
+- **A seed image carries its REAL client, and there is no placeholder to fall back to**
+  (qits-889). A seed service is deployed and serves browsers until the train replaces it, so the
+  bundle at `PlatformModel.seedUiPath` is its webui gitlink built with `npm ci && npm run build` —
+  in a throwaway `NpmSeed.NODE_IMAGE` container on the committed tree (`git archive HEAD`), never
+  in the checkout, whose package.json, lock and `.npmrc` stay byte-identical. Every `@qits` package
+  a seed client's lock installs is built by `seed-npm-packages` (before the first image with a
+  client) from the release its version names — a jslib's tag, whose release run refuses a manifest
+  that is not `$QITS_VERSION`; a provider's golden masters under its `$QITS_VERSION` — into the
+  `qits-npm-seed` volume, a jslib's own `@qits` pins first. **The LOCK is retargeted, not
+  package.json**: `@qits` entries to the local tarball with its digest, the npmjs cache to npmjs
+  (same path, same integrity), `tarball: file:` resolutions in a pnpm lock, so `npm ci` and
+  `--frozen-lockfile` still hold the build to the committed versions. npm `overrides` cannot do
+  it: every `@qits` pin is direct, and npm refuses to override a direct dependency (EOVERRIDE).
+  The scope's registry is an address nothing answers at, so a `@qits` package nobody built fails
+  by name instead of resolving from npmjs, where the scope is not ours; `NpmSeed.refuseServers` is
+  the generated `.npmrc`'s last word, and both lock rewrites stop on any platform host left. **A
+  pin this boot cannot build stops the boot by name** — teach `NpmSeed`/`npmClosure` to produce
+  it; never bring a placeholder back.
 - **The seed is a docker STACK, and four compose words do not survive the move.** The generated
   file carries no root `name:` and no `group_add:` — either one makes `docker stack deploy` refuse
   it outright, measured — no `container_name:` (ignored; a task's container is
@@ -220,8 +238,8 @@ forced. Add to that list rather than deviating quietly.
   leaves a deployer-managed application out of the FILE (a stack deploy takes no service list) and
   removes any seed service of it outright.
 - **A cold boot is FOUR STEPS, in the owner's order, and `BootstrapPlan` is built around them.**
-  (1) Build locally everything the platform needs, out of the `qits-maven-seed` volume and upstream
-  sources only, with the temporary bootstrap ingress serving the progress page the whole time. (2) Bring the platform up as it
+  (1) Build locally everything the platform needs, out of the `qits-maven-seed` and `qits-npm-seed`
+  volumes and upstream sources only, with the temporary bootstrap ingress serving the progress page the whole time. (2) Bring the platform up as it
   runs in steady state: `seed-images-publish` puts each `PlatformModel.SEED_DEPLOYED` application's
   seed build in the store as `qits/<application>:<real release tag>`, and `seed-deploy-*` hands the
   deployer that version at its manual door — the edge last, whose phase retires the ingress. (3)
@@ -366,8 +384,9 @@ forced. Add to that list rather than deviating quietly.
   in scope, so the qits-cd labels and the pre-rename name prefixes stay beside the current ones.
   Adding a pattern is how this changes; removing one is not.
 - **A volume is data, config or CACHE, and the three sweeps differ.** `--with-data-volumes` is a
-  cold boot of this platform's state, so it takes `qits-*-data` and `qits-maven-seed` (the run's
-  file repository of seed-built qits jars and the musl tarballs) and keeps
+  cold boot of this platform's state, so it takes `qits-*-data`, `qits-maven-seed` (the run's
+  file repository of seed-built qits jars and the musl tarballs) and `qits-npm-seed` (the `@qits`
+  tarballs and seed client bundles) and keeps
   `qits-*-config` and `qits-maven-cache`; `--with-volumes` takes every `qits-*` volume. The cache
   holds third-party jars the bootstrap's own maven containers pulled from Maven Central — one
   `/cache` mount named by `-Dmaven.repo.local`, shared by the seed, every phase-1 build and the
