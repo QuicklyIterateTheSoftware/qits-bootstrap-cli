@@ -1,8 +1,5 @@
 package eu.wohlben.qits.cli.bootstrap.platform;
 
-import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
-import eu.wohlben.qits.cli.bootstrap.config.TestConfig;
-import eu.wohlben.qits.cli.bootstrap.phases.Boot;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 import eu.wohlben.qits.cli.bootstrap.proc.ScriptedRunner;
 import org.junit.jupiter.api.Test;
@@ -27,32 +24,23 @@ import static org.assertj.core.api.Assertions.assertThat;
  * binary. Nothing about that is provable without a daemon except the command lines, and a flag
  * dropped in one of them is a bootstrap that gets minutes in before it breaks.
  * <p>
- * The build argument they all carry is asserted here for a second reason: the repositories declare
- * {@code ARG QITS_MAVEN_REPOSITORY_URL} and their maven settings read it, and the committed default
- * now names the edge vhost — the address of a platform that is RUNNING. A seed build runs minutes
- * before any edge exists, so a build that rode that default died at qits-mirror with a
- * connection refused.
+ * No build argument and no secret rides along that the caller did not name: a seed build resolves
+ * the platform's jars out of a docker volume handed in as a named context, which is asserted here
+ * too.
  */
 class DockerBuildTest {
-
-    private static final String ARG =
-            "build-arg:QITS_MAVEN_REPOSITORY_URL=http://localhost:8081/artifacts/maven/maven";
 
     private static final String IMAGE = "moby/buildkit:v0.33.0";
 
     /**
      * Where the scratch directories are made. It is a real directory rather than a name because the
-     * facade writes the Dockerfile and the secret files into it for real.
+     * facade writes the Dockerfile into it for real.
      */
     @TempDir
     Path temp;
 
-    private static BootstrapConfig config(Map<String, String> env) {
-        return TestConfig.from(env);
-    }
-
-    private Docker docker(ScriptedRunner runner, BootstrapConfig config) {
-        return new Docker(runner).withBuildArgs(Boot.imageBuildArgs(config)).withBuildScratch(temp);
+    private Docker docker(ScriptedRunner runner) {
+        return new Docker(runner).withBuildScratch(temp);
     }
 
     /** A host with no buildkitd and no legacy builders: the ordinary first build of a cold run. */
@@ -70,8 +58,7 @@ class DockerBuildTest {
         String root = Pattern.quote(temp.toString());
         return argv.stream()
                 .map(arg -> arg.replaceAll(root + "/dockerfile-[^:]+", "<dockerfiles>")
-                        .replaceAll(root + "/image-[^:/]+", "<images>")
-                        .replaceAll(root + "/secrets-[^:]+", "<secrets>"))
+                        .replaceAll(root + "/image-[^:/]+", "<images>"))
                 .toList();
     }
 
@@ -87,15 +74,14 @@ class DockerBuildTest {
      * driver to hold them any more, and a build with no cgroup around it is what takes a machine
      * down rather than a boot.
      * <p>
-     * Host network is two requirements at once: a Dockerfile's {@code ADD http://localhost:8081/…}
-     * has to resolve during a bootstrap, and the buildctl client dials the daemon on the same
-     * loopback.
+     * Host network: the buildctl client dials the daemon on the host's loopback, and a build's
+     * RUN reaches the internet through the host's own network.
      */
     @Test
     void theFirstBuildOfARunCreatesTheBuildkitd() {
         ScriptedRunner runner = coldHost();
 
-        docker(runner, config(Map.of())).buildFromStdin("qits/platform-mirror:latest",
+        docker(runner).buildFromStdin("qits/platform-mirror:latest",
                 "FROM quay.io/x\n", Path.of("/src/qits-mirror"), List.of(), null);
 
         assertThat(runner.argv).containsSubsequence(
@@ -122,7 +108,7 @@ class DockerBuildTest {
                 command.contains("{{.Names}}") ? ScriptedRunner.ok("qits-buildkitd")
                         : ScriptedRunner.ok("done"));
 
-        docker(runner, config(Map.of())).buildFromStdin("qits/platform-mirror:latest",
+        docker(runner).buildFromStdin("qits/platform-mirror:latest",
                 "FROM quay.io/x\n", Path.of("/src/qits-mirror"), List.of(), null);
 
         assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker run -d"))
@@ -134,7 +120,7 @@ class DockerBuildTest {
     void aStoppedBuildkitdIsStarted() {
         ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok("done"));
 
-        docker(runner, config(Map.of())).buildFromStdin("qits/platform-mirror:latest",
+        docker(runner).buildFromStdin("qits/platform-mirror:latest",
                 "FROM quay.io/x\n", Path.of("/src/qits-mirror"), List.of(), null);
 
         assertThat(runner.lines()).contains("docker start qits-buildkitd")
@@ -162,7 +148,7 @@ class DockerBuildTest {
                     : ScriptedRunner.ok("done");
         });
 
-        docker(runner, config(Map.of())).buildFromStdin("qits/platform-mirror:latest",
+        docker(runner).buildFromStdin("qits/platform-mirror:latest",
                 "FROM quay.io/x\n", Path.of("/src/qits-mirror"), List.of(), null);
 
         assertThat(runner.lines())
@@ -180,10 +166,10 @@ class DockerBuildTest {
      * tar the host daemon is then made to load, which is what replaces buildx's {@code --load}.
      */
     @Test
-    void aSeedBuildDrivesBuildctlAndCarriesTheSeedMavenRepository() {
+    void aSeedBuildDrivesBuildctlAndCarriesNothingItWasNotGiven() {
         ScriptedRunner runner = coldHost();
 
-        docker(runner, config(Map.of())).buildFromStdin("qits/platform-mirror:latest",
+        docker(runner).buildFromStdin("qits/platform-mirror:latest",
                 "FROM quay.io/x\n", Path.of("/src/qits-mirror"), List.of(), null);
 
         assertThat(buildArgv(runner)).containsExactly(
@@ -191,14 +177,12 @@ class DockerBuildTest {
                 "-v", "/src/qits-mirror:/ctx:ro",
                 "-v", "<dockerfiles>:/dfdir:ro",
                 "-v", "<images>:/out",
-                "-v", "<secrets>:/secrets:ro",
                 "--entrypoint", "buildctl", IMAGE,
                 "--addr", "tcp://127.0.0.1:1234",
                 "build", "--frontend", "dockerfile.v0",
                 "--local", "context=/ctx",
                 "--local", "dockerfile=/dfdir",
                 "--opt", "filename=Dockerfile",
-                "--opt", ARG,
                 "--output", "type=docker,name=qits/platform-mirror:latest,dest=/out/image.tar");
         assertThat(scrubbed(runner.argv.getLast()))
                 .containsExactly("docker", "load", "-i", "<images>/image.tar");
@@ -216,23 +200,22 @@ class DockerBuildTest {
                     : ScriptedRunner.ok("done");
         });
 
-        docker(runner, config(Map.of())).buildFromStdin("qits/platform-edge:latest",
+        docker(runner).buildFromStdin("qits/platform-edge:latest",
                 "FROM quay.io/rewritten\n", Path.of("/src/qits-edge"), List.of(), null);
 
         assertThat(written).containsExactly("FROM quay.io/rewritten\n");
     }
 
-    /** And the build argument is carried BESIDE a build's own, never instead of them. */
+    /** A build's own arguments are passed as they are given. */
     @Test
-    void anImagesOwnBuildArgsRideAlongside() {
+    void anImagesOwnBuildArgsArePassed() {
         ScriptedRunner runner = coldHost();
 
-        docker(runner, config(Map.of())).buildFromStdin("qits/platform-edge:latest",
+        docker(runner).buildFromStdin("qits/platform-edge:latest",
                 "FROM quay.io/x\n", Path.of("/src/qits-edge"),
                 List.of("QITS_VARIANT=local"), null);
 
         assertThat(buildArgv(runner)).containsSubsequence(
-                "--opt", ARG,
                 "--opt", "build-arg:QITS_VARIANT=local",
                 "--output", "type=docker,name=qits/platform-edge:latest,dest=/out/image.tar");
     }
@@ -246,7 +229,7 @@ class DockerBuildTest {
     void aStepImageBuildNamesTheDockerfileInsideItsContext() {
         ScriptedRunner runner = coldHost();
 
-        docker(runner, config(Map.of())).buildWithFile("qits/build-images/ci-base:latest",
+        docker(runner).buildWithFile("qits/build-images/ci-base:latest",
                 Path.of("/src/qits-build-images-oci/ci-base/Dockerfile"),
                 Path.of("/src/qits-build-images-oci"), List.of(), null);
 
@@ -255,14 +238,12 @@ class DockerBuildTest {
                 "-v", "/src/qits-build-images-oci:/ctx:ro",
                 "-v", "/src/qits-build-images-oci/ci-base:/dfdir:ro",
                 "-v", "<images>:/out",
-                "-v", "<secrets>:/secrets:ro",
                 "--entrypoint", "buildctl", IMAGE,
                 "--addr", "tcp://127.0.0.1:1234",
                 "build", "--frontend", "dockerfile.v0",
                 "--local", "context=/ctx",
                 "--local", "dockerfile=/dfdir",
                 "--opt", "filename=Dockerfile",
-                "--opt", ARG,
                 "--output",
                 "type=docker,name=qits/build-images/ci-base:latest,dest=/out/image.tar");
     }
@@ -278,48 +259,12 @@ class DockerBuildTest {
                     : ScriptedRunner.ok("done");
         });
 
-        ProcessResult result = docker(runner, config(Map.of())).buildFromStdin(
+        ProcessResult result = docker(runner).buildFromStdin(
                 "qits/platform-mirror:latest", "FROM quay.io/x\n",
                 Path.of("/src/qits-mirror"), List.of(), null);
 
         assertThat(result.ok()).isFalse();
         assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker load"));
-    }
-
-    // --- the credentials ----------------------------------------------------------------------
-
-    /**
-     * <b>The capability reaches the build as a FILE, and the Dockerfiles' own secret mounts are
-     * unchanged.</b> buildctl's {@code env=} form cannot be used here: the client runs in a
-     * container of its own and inherits none of this process's environment. The values are written
-     * to a directory mounted read-only, and they stay off the screen through {@code Cmd.mask}.
-     */
-    @Test
-    void bootstrapRepositoryCredentialsBecomeSecretFiles() {
-        List<String> read = new ArrayList<>();
-        ScriptedRunner runner = new ScriptedRunner(command -> {
-            if (command.contains("buildctl")) {
-                read.add(readMounted(command, "/secrets", "qits-client-id"));
-                read.add(readMounted(command, "/secrets", "qits-client-secret"));
-            }
-            return command.contains("inspect") ? ScriptedRunner.failed("No such container")
-                    : ScriptedRunner.ok("done");
-        });
-        Docker docker = new Docker(runner).withBuildScratch(temp).withBootstrapMavenRepository(
-                "https://wohlben.eu/artifacts/maven/maven", "bootstrap", "run-secret");
-
-        docker.buildFromStdin("qits/platform-edge:latest", "FROM quay.io/x\n",
-                Path.of("/src/qits-edge"), List.of(), null);
-
-        assertThat(buildArgv(runner)).containsSubsequence(
-                "--opt", "build-arg:QITS_MAVEN_REPOSITORY_URL="
-                        + "https://wohlben.eu/artifacts/maven/maven",
-                "--secret", "id=qits-client-id,src=/secrets/qits-client-id",
-                "--secret", "id=qits-client-secret,src=/secrets/qits-client-secret");
-        assertThat(read).containsExactly("bootstrap", "run-secret");
-        // The value is on no command line, and it is masked in the one that mounts it anyway.
-        assertThat(String.join(" ", buildArgv(runner))).doesNotContain("run-secret");
-        assertThat(runner.cmds.get(runner.cmds.size() - 2).maskText("run-secret")).isEqualTo("***");
     }
 
     /** Reads a file the run mounted, out of the host path the {@code -v} names. */
@@ -337,34 +282,55 @@ class DockerBuildTest {
         return "no " + at + " mount";
     }
 
-    // --- the build argument itself --------------------------------------------------------------
-
-    /** The knob moves it, because the seed containers publish whatever the knob says. */
-    @Test
-    void theSeedRegistryPortKnobMovesTheUrl() {
-        assertThat(Boot.imageBuildArgs(config(Map.of("QITS_REGISTRY_PORT", "9091"))))
-                .containsExactly(
-                        "QITS_MAVEN_REPOSITORY_URL=http://localhost:9091/artifacts/maven/maven");
-    }
+    // --- the named contexts -------------------------------------------------------------------
 
     /**
-     * <b>It is the SEED's loopback port and never the edge's vhost</b>, whatever the environment is
-     * called: an edge that does not exist yet cannot serve the build that is making it.
+     * <b>A volume becomes a named context</b>: mounted read-only into the client at
+     * {@code /named/<name>}, handed to buildctl as a local of that name, and to the frontend as
+     * {@code context:<name>=local:<name>} — which is what a Dockerfile's
+     * {@code --mount=type=bind,from=<name>} and {@code COPY --from=<name>} read.
      */
     @Test
-    void theUrlIsNeverTheEdgeVhost() {
-        BootstrapConfig config = config(Map.of("QITS_ENV_NAME", "dev"));
+    void aVolumeContextIsMountedAndNamed() {
+        ScriptedRunner runner = coldHost();
 
-        assertThat(config.seedMavenRepositoryUrl())
-                .isEqualTo("http://localhost:8081/artifacts/maven/maven")
-                .doesNotContain(config.registryVhost());
+        docker(runner).buildFromStdin("qits/ci:latest", "FROM quay.io/x\n",
+                Path.of("/src/qits-ci"), List.of(), Map.of("qits-m2", "qits-maven-seed"), null);
+
+        assertThat(buildArgv(runner)).containsExactly(
+                "docker", "run", "--rm", "--network", "host",
+                "-v", "/src/qits-ci:/ctx:ro",
+                "-v", "<dockerfiles>:/dfdir:ro",
+                "-v", "<images>:/out",
+                "-v", "qits-maven-seed:/named/qits-m2:ro",
+                "--entrypoint", "buildctl", IMAGE,
+                "--addr", "tcp://127.0.0.1:1234",
+                "build", "--frontend", "dockerfile.v0",
+                "--local", "context=/ctx",
+                "--local", "dockerfile=/dfdir",
+                "--opt", "filename=Dockerfile",
+                "--local", "qits-m2=/named/qits-m2",
+                "--opt", "context:qits-m2=local:qits-m2",
+                "--output", "type=docker,name=qits/ci:latest,dest=/out/image.tar");
+    }
+
+    /** No secret of any kind reaches a build: there is no server left to present one to. */
+    @Test
+    void noBuildCarriesASecret() {
+        ScriptedRunner runner = coldHost();
+
+        docker(runner).buildFromStdin("qits/ci:latest", "FROM quay.io/x\n",
+                Path.of("/src/qits-ci"), List.of(), Map.of("qits-m2", "qits-maven-seed"), null);
+
+        assertThat(buildArgv(runner)).doesNotContain("--secret")
+                .noneMatch(arg -> arg.contains("/secrets"))
+                .noneMatch(arg -> arg.contains("QITS_MAVEN_REPOSITORY_URL"));
     }
 
     /**
      * <b>The HOST half builds the payload image on the host daemon, and it is the one build that
      * does.</b> It makes the container the phases run in, so it happens before any phase and
-     * therefore before any buildkitd exists. It also carries none of the build arguments above: the
-     * payload is this CLI, which resolves nothing of the platform.
+     * therefore before any buildkitd exists.
      */
     @Test
     void thePayloadImageIsBuiltOnTheHostDaemon() {

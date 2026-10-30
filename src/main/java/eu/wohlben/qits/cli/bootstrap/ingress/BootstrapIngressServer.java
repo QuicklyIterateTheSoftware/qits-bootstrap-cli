@@ -6,7 +6,6 @@ import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpClient;
 import io.vertx.core.http.HttpClientRequest;
 import io.vertx.core.http.HttpClientResponse;
-import io.vertx.core.http.HttpHeaders;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServer;
 import io.vertx.core.http.HttpServerOptions;
@@ -18,7 +17,10 @@ import java.net.URI;
 import java.util.Locale;
 import java.util.Set;
 
-/** A deliberately tiny streaming reverse proxy for the bootstrap window only. */
+/**
+ * A deliberately tiny streaming reverse proxy for the bootstrap window only: the progress page,
+ * on the public door, until the edge's seed deploy takes that door over.
+ */
 public final class BootstrapIngressServer implements AutoCloseable {
 
     private static final Set<String> HOP_BY_HOP = Set.of("authorization", "host", "connection",
@@ -26,22 +28,24 @@ public final class BootstrapIngressServer implements AutoCloseable {
             "transfer-encoding", "upgrade", "forwarded", "x-forwarded-for", "x-forwarded-host",
             "x-forwarded-proto");
 
-    public record Settings(int port, String host, String password, String githostCapability,
-                           URI uiUpstream, URI mavenUpstream, URI gitUpstream, Tls tls) {
-        public Settings(int port, String host, String password, String githostCapability,
-                        URI uiUpstream, URI gitUpstream) {
-            this(port, host, password, githostCapability, uiUpstream, null, gitUpstream, null);
-        }
-        public Settings(int port, String host, String password, String githostCapability,
-                        URI uiUpstream, URI gitUpstream, Tls tls) {
-            this(port, host, password, githostCapability, uiUpstream, null, gitUpstream, tls);
+    /**
+     * @param host the name the TLS redirect sends a browser to
+     * @param uiUpstream the progress page this ingress fronts
+     * @param tls the certificate pair, or null for plain HTTP on {@code port}
+     */
+    public record Settings(int port, String host, URI uiUpstream, Tls tls) {
+        public Settings(int port, String host, URI uiUpstream) {
+            this(port, host, uiUpstream, null);
         }
         public Settings {
             if (port < 1 || port > 65535) {
                 throw new IllegalArgumentException("invalid bootstrap ingress port " + port);
             }
-            if (githostCapability == null || githostCapability.isBlank()) {
-                throw new IllegalArgumentException("a bootstrap-only githost capability is required");
+            if (host == null || host.isBlank()) {
+                throw new IllegalArgumentException("a bootstrap ingress host is required");
+            }
+            if (uiUpstream == null) {
+                throw new IllegalArgumentException("a bootstrap ingress UI upstream is required");
             }
         }
     }
@@ -66,7 +70,7 @@ public final class BootstrapIngressServer implements AutoCloseable {
     public BootstrapIngressServer(Vertx vertx, Settings settings) {
         this.vertx = vertx;
         this.client = vertx.createHttpClient();
-        this.policy = new BootstrapIngressPolicy(settings.host(), settings.password());
+        this.policy = new BootstrapIngressPolicy();
         this.settings = settings;
     }
 
@@ -85,8 +89,7 @@ public final class BootstrapIngressServer implements AutoCloseable {
     }
 
     private void redirectToTls(HttpServerRequest incoming) {
-        if (!policy.authorizeProgress(incoming.method().name(), incoming.path()).permitted()
-                && !policy.allowedRoute(incoming.method().name(), incoming.path())) {
+        if (!policy.allowedRoute(incoming.method().name(), incoming.path())) {
             incoming.response().setStatusCode(403).end();
             return;
         }
@@ -98,51 +101,29 @@ public final class BootstrapIngressServer implements AutoCloseable {
         BootstrapIngressPolicy.Decision decision = policy.authorizeProgress(incoming.method().name(),
                 incoming.path());
         if (!decision.permitted()) {
-            decision = policy.authorize(incoming.method().name(), incoming.host(), incoming.path(),
-                    incoming.getHeader(HttpHeaders.AUTHORIZATION));
-        }
-        if (!decision.permitted()) {
-            rejected(incoming.response(), decision.status());
+            incoming.response().setStatusCode(decision.status()).end();
             incoming.resume();
             return;
         }
-        URI upstream = decision.target() == BootstrapIngressPolicy.Target.UI
-                ? settings.uiUpstream() : decision.target() == BootstrapIngressPolicy.Target.MAVEN
-                ? settings.mavenUpstream() : settings.gitUpstream();
-        if (upstream == null) {
-            unavailable(incoming.response());
-            incoming.resume();
-            return;
-        }
-        String path = decision.target() == BootstrapIngressPolicy.Target.GIT
-                ? "/bootstrap-git" + decision.path().substring("/git".length())
-                : decision.path();
-        String uri = path + (incoming.query() == null ? "" : "?" + incoming.query());
-        BootstrapIngressPolicy.Target target = decision.target();
-        // Do not let Vert.x consume a zero-byte GET before the upstream connection exists. The
-        // same pause is what keeps a POST packfile streaming rather than accumulating here.
+        URI upstream = settings.uiUpstream();
+        String uri = decision.path() + (incoming.query() == null ? "" : "?" + incoming.query());
+        // Do not let Vert.x consume a zero-byte GET before the upstream connection exists.
         incoming.pause();
         client.request(incoming.method(), upstream.getPort(), upstream.getHost(), uri)
-                .onSuccess(outgoing -> stream(incoming, outgoing, target))
+                .onSuccess(outgoing -> stream(incoming, outgoing))
                 .onFailure(error -> {
                     incoming.resume();
                     unavailable(incoming.response());
                 });
     }
 
-    private void stream(HttpServerRequest incoming, HttpClientRequest outgoing,
-                        BootstrapIngressPolicy.Target target) {
+    private void stream(HttpServerRequest incoming, HttpClientRequest outgoing) {
         incoming.headers().forEach(header -> {
             String name = header.getKey();
             if (!HOP_BY_HOP.contains(name.toLowerCase(Locale.ROOT))) {
                 outgoing.putHeader(name, header.getValue());
             }
         });
-        // The incoming Basic capability never leaves this container. Git receives a distinct,
-        // per-run opaque capability accepted only on githost's disabled-by-default seed route.
-        if (target == BootstrapIngressPolicy.Target.GIT) {
-            outgoing.putHeader("X-Qits-Bootstrap-Git-Capability", settings.githostCapability());
-        }
         outgoing.setChunked(true);
         incoming.handler(outgoing::write);
         incoming.exceptionHandler(error -> outgoing.reset());
@@ -166,14 +147,6 @@ public final class BootstrapIngressServer implements AutoCloseable {
         upstream.endHandler(ignored -> downstream.end());
     }
 
-    private static void rejected(HttpServerResponse response, int status) {
-        response.setStatusCode(status);
-        if (status == 401) {
-            response.putHeader("WWW-Authenticate", "Basic realm=\"qits-bootstrap\"");
-        }
-        response.end();
-    }
-
     private static void unavailable(HttpServerResponse response) {
         if (!response.ended()) {
             response.setStatusCode(503).end();
@@ -182,7 +155,6 @@ public final class BootstrapIngressServer implements AutoCloseable {
 
     @Override
     public void close() {
-        policy.close();
         if (server != null) {
             server.close();
         }

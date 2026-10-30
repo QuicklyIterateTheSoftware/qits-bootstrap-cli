@@ -1,0 +1,258 @@
+# qits-ci as a GraalVM-native container IMAGE — the same shape as qits-artifacts', qits-gateway's
+# and qits-workspace-daemon's docker/Dockerfile: a Mandrel builder stage compiles the binary, a
+# minimal runtime stage carries only it.
+#
+# This file is not how the binary is built; it is how the binary is SHIPPED. `.sdkmanrc` names a
+# GraalVM (25.0.2-graalce), so `sdk env && ./mvnw package -Dnative` produces `service/target/qits-ci`
+# in about two minutes with no container involved. What this adds is the image around it — and a way
+# for a machine with no GraalVM to get a binary at all, since the builder stage brings its own
+# native-image.
+#
+# Build from the repo root:
+#
+#     git submodule update --init service/src/main/webui
+#     (cd service/src/main/webui && npm ci && npm run build)
+#     docker build -t qits/ci:latest -f docker/Dockerfile .
+#
+# The init is load-bearing: this image carries the ci client (service/src/main/webui), and the
+# builder stage packages a bundle that was already built.
+#
+# --- this image does NOT run with an empty environment, and that is not a packaging bug ------------
+# `docker run --rm qits/ci:latest` dies before the HTTP listener, on an unresolvable config
+# expression naming QITS_RESOURCE_DB_URL. That is the refuse-to-boot stance, and it is deliberate:
+# both stores this process opens — its own `ci` database and the qits-eventstream outbox — read a
+# QITS_RESOURCE_<NAME>_URL / _USERNAME / _PASSWORD triple with NO default behind it, so a container
+# that has not been given a database has nothing to be usefully started as.
+#
+# THIS IMAGE HAS NO STATE ON DISK AT ALL ANY MORE, and both of the things that used to make it need
+# some are gone. It kept a bare git mirror per repository under `qits.ci.data-dir` until it started
+# reading pipeline config off the git host's content routes; and it kept a file H2 under
+# `${user.home}` until the platform grew resource provisioning. That H2 is what made an empty
+# environment fail on a path rather than on a name — UID 1001 has no /etc/passwd entry in
+# ubi-minimal, a native image resolves user.home through getpwuid(2) rather than $HOME, so
+# `${user.home}` came out `?` and no exported HOME could fix it. Nothing resolves user.home now, and
+# there is no /data mount to arrange.
+#
+# What a deployment supplies instead is two triples, and it does not type them by hand: this
+# repository declares
+#
+#   resources: postgresql:db, postgresql:eventstream:qits_ci_eventstream
+#
+# in .config/qits/deployments.yml, and qits-platform-deployments creates the roles and the databases
+# on the tier's postgres before this container starts and injects the six variables into it. A
+# `docker run` by hand supplies them itself:
+#
+#   docker run \
+#     -e QITS_RESOURCE_DB_URL=jdbc:postgresql://<host>:5432/qits_ci \
+#     -e QITS_RESOURCE_DB_USERNAME=qits_ci -e QITS_RESOURCE_DB_PASSWORD=... \
+#     -e QITS_RESOURCE_EVENTSTREAM_URL=jdbc:postgresql://<host>:5432/qits_ci_eventstream \
+#     -e QITS_RESOURCE_EVENTSTREAM_USERNAME=qits_ci_eventstream \
+#     -e QITS_RESOURCE_EVENTSTREAM_PASSWORD=... \
+#     ...
+#
+# These have defaults that are wrong QUIETLY — nothing will tell you they are unset:
+#
+#   QITS_CI_GIT_HOST_URL        where ci reads the pushed commit's pipeline config. The default is
+#                               localhost:8080/artifacts, which standalone means THIS service — and
+#                               this service hosts no git, so the read 404s and every push records
+#                               "no pipeline", indistinguishable from a repository that never opted
+#                               in. Point it at qits-artifacts on qits-net.
+#   QITS_CI_CONTAINER_GIT_URL   the same base as reachable from inside a step container.
+#   QITS_CI_NETWORK             the network step containers join; it has to be the one the alias
+#                               above resolves on.
+#   QITS_AUTH_MACHINE_REQUIRED  false (the default) means the event intake — which triggers
+#                               repo-controlled code — takes any caller on the network. true demands
+#                               a qits-idp bearer, and needs a reachable idp that grants the git
+#                               host's client a project claim.
+#   QITS_EVENTS_URL             where a green run is announced. There is no deployer address here
+#                               any more: qits-ci publishes BuildSuccessful and
+#                               qits-platform-deployments subscribes, so an unset or wrong value
+#                               costs every deployment on the platform, not one call.
+#
+# See README.md, "Deploying it", for the whole surface.
+#
+# --- this image ships the binary alone -------------------------------------------------------------
+# ci spawns no process. Step containers start through qits-containers over HTTP (README.md, "How a
+# step runs"), so the runtime stage carries no docker CLI and the deployment mounts no docker socket.
+#
+# The platform's public domain; the release recipes pass `--opt build-arg:QITS_DOMAIN`. Global so
+# the FROM lines below can read it.
+ARG QITS_DOMAIN=wohlben.eu
+
+# --- stage `build`: native-compile ----------------------------------------------------------------
+# The builder JDK MUST be 25: native-image cannot read bytecode newer than its own JDK, and this
+# project targets release 25.
+#
+# `mirror.qits.$QITS_DOMAIN/quay/…` is qits-mirror's pull-through mirror of quay.io: the
+# first build fetches the image from upstream and caches it, every later build is served from local
+# disk. The tag is upstream's, unchanged — the mirror revalidates it, so `jdk-25` still moves when
+# quay moves it.
+FROM mirror.qits.${QITS_DOMAIN}/quay/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25 AS build
+USER root
+WORKDIR /src
+
+# Fetch the Maven distribution first, keyed only on the wrapper files, so a source-only change does
+# not re-download it.
+COPY mvnw .
+COPY .mvn/ .mvn/
+RUN ./mvnw --version
+
+# The whole reactor, not a module list. `-am` builds `service`'s dependency from source —
+# `qits-ci-domain` is a 1.0.0-SNAPSHOT this repo never publishes (no distributionManagement, no
+# <repositories>), so a builder container with an empty ~/.m2 has nowhere else to get it. Copying
+# module by module would mean editing this file every time one is added, and forgetting to would
+# fail the build with an unresolved dependency rather than anything that names the real cause.
+# `.dockerignore` is what keeps this cheap — without it this line drags in every target/ dir, and a
+# stale one can shadow what this stage compiles.
+COPY . .
+
+# -Dnative flips quarkus.native.enabled (the `native` profile lives in service/pom.xml, since only
+# that module is an application). Cap native-image RAM so the build is deterministic on small
+# machines.
+#
+# Tests are skipped because `./mvnw verify` on a clone is their gate (AGENTS.md) and re-running them
+# here proves the same thing more slowly. Note the profile also flips `skipITs` to false — stopping
+# at `package` rather than `verify` is what keeps `CiPackagedSurfaceIT` out of the image build; it
+# wants a free port and a writable home, neither of which this stage is the right place to arrange.
+#
+# --- the Quinoa flags, and why this stage no longer builds the client -----------------------------
+#
+# package-manager-install: the Mandrel builder image ships no node at all, so this stage installs its
+# own — from nodejs.org, which a docker build can reach. It lives here rather than in
+# application.properties on purpose: a local or CI `mvnw` build must use the node on PATH, so that no
+# build silently downloads a toolchain. 22.22.0 is the PLATFORM pin, the node every other qits
+# service's builder stage installs and the version a developer's host carries. Note it is
+# deliberately NOT the step container's node: node-docker-base is node:24-alpine, and the bundle this
+# image consumes was built there. The two do not have to agree, because this stage does not build the
+# bundle — the commands below are neutered to `--version`, so the only thing node does here is exist
+# and prove its package manager runs.
+#
+# The three command overrides are the load-bearing part, and the reason this file deviates from the
+# platform's Quinoa recipe (docs/project-setup-quinoa-angular.md in the qits monorepo, which has the
+# builder run the client's real install and build):
+#
+#   service/src/main/webui is qits-spa-ci, and it depends on @qits/ui-components. That package exists
+#   ONLY on the platform's own npm registry (qits-artifacts),
+#   https://registry.qits.$QITS_DOMAIN/artifacts/npm/npm/, which answers 401 without a credential,
+#   and this stage is handed only the Maven one. An install that "worked" here without it would have
+#   resolved the @qits scope against npmjs.org, where that name does not exist and never will.
+#
+# The bundle is therefore built BEFORE this image, by the platform's pipeline step, which holds the
+# npm credential, and arrives in the build context as service/src/main/webui/dist/ (see
+# .dockerignore). `--version` is the null command: it proves the package manager is really there and
+# does nothing else.
+#
+# THIS DOES NOT FAIL QUIETLY. The `test -f` below stops a context with no bundle before the
+# multi-minute native compile, and Quinoa's own build-dir check would stop it after. A forgotten
+# `npm run build` in the step is a red build, not a service that ships without its client. (The same
+# guard covers the case this comment used to describe on its own: a webui submodule that is NOT
+# initialised, which git leaves as an empty directory and Quinoa rejects with `No package.json found
+# in Web UI directory: 'src/main/webui'` — see AGENTS.md, "The Angular client".)
+#
+# --- and why the bundle is copied onto itself first -----------------------------------------------
+# Quinoa does not copy build-dir into target/quinoa/build, it MOVES it, and overlayfs cannot rename a
+# directory that still lives in a LOWER image layer. It answers EXDEV, the JDK falls back to its
+# cross-file-store path, and that path refuses a non-empty directory — the build dies seconds in with
+# `DirectoryNotEmptyException: …/dist/qits-spa-ci/browser`, which names the source and explains
+# nothing. A builder stage that *creates* dist itself is immune by accident; ours arrives by COPY.
+#
+# One `cp` re-materialises it in the layer that is about to move it. It has to be in THIS `RUN` and
+# not a tidier one of its own — a layer boundary is exactly what it is undoing.
+#
+# --- and where the qits jars and Maven Central come from ------------------------------------------
+# Both platform hosts are code plus one input, the public domain (qits-731):
+#
+#   https://registry.qits.$QITS_DOMAIN/artifacts/maven/maven   hosted Maven (qits-artifacts)
+#   https://mirror.qits.$QITS_DOMAIN/mirror/maven/central      Maven Central cache (qits-mirror)
+#
+# The RUN below derives both and exports them for that RUN alone; `.qits-maven-settings.xml` reads
+# them as ${env.…}, mirroring the `qits-maven` repository id onto the first and Central onto the
+# second. The CI recipe passes QITS_DOMAIN; the default is the live platform's.
+ARG QITS_DOMAIN=wohlben.eu
+#
+# --- and how Maven authenticates ------------------------------------------------------------------
+# Both hosts answer 401 anonymously, so every build that resolves through them needs a credential.
+# The two secret mounts put the CI run's commissioned client into THIS `RUN`'s environment and
+# nowhere else — not a layer, not the image history. That is why they are not build args: this image
+# is pullable, and a build arg is recorded where anyone who pulls it can read it.
+# `.qits-maven-settings.xml` presents them as the username and password of both mirrors.
+#
+# FILE FORM (`/run/secrets/<id>`, read into the command's own environment), never the `env=` mount
+# form the two lines below used to carry: `env=` needs a dockerfile frontend the BUILDER chooses,
+# while the bare file mount is served identically by every frontend version — and under the platform
+# builder (qits-buildkit-plan.md in the wrapper) the frontend is the builder's to pick, not this
+# file's. Both pipelines hand these in as `--secret id=…,src=/tmp/…`.
+#
+# Absent secrets leave both variables empty — the `|| true` — so a hand build without them still
+# starts, and fails at the first 401 with Maven naming the host. Pass your own client to build by
+# hand: `--secret id=qits-client-id,env=… --secret id=qits-client-secret,env=…`.
+RUN --mount=type=secret,id=qits-client-id \
+    --mount=type=secret,id=qits-client-secret \
+    export QITS_MAVEN_AUTH_USR="$(cat /run/secrets/qits-client-id 2>/dev/null || true)" \
+           QITS_MAVEN_AUTH_PSW="$(cat /run/secrets/qits-client-secret 2>/dev/null || true)"; \
+    export QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$QITS_DOMAIN/artifacts/maven/maven"; \
+    export QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$QITS_DOMAIN/mirror/maven/central"; \
+    d=service/src/main/webui/dist/qits-spa-ci/browser; \
+    test -f "$d/index.html" || { \
+      echo "No built client at $d." >&2; \
+      echo "The build context must carry one: run 'npm ci && npm run build'" >&2; \
+      echo "in service/src/main/webui first — this stage cannot, see the Quinoa flags above." >&2; \
+      exit 1; }; \
+    cp -a "$d" "$d.layer" && rm -rf "$d" && mv "$d.layer" "$d" && \
+    ./mvnw -B -ntp -s .qits-maven-settings.xml -pl service -am package -Dnative -DskipTests \
+      -Dqits.maven.repository.url="$QITS_MAVEN_REPOSITORY_URL" \
+      -Dquarkus.native.native-image-xmx=4g \
+      -Dquarkus.quinoa.package-manager-install=true \
+      -Dquarkus.quinoa.package-manager-install.node-version=22.22.0 \
+      -Dquarkus.quinoa.package-manager-command.install=--version \
+      -Dquarkus.quinoa.package-manager-command.ci=--version \
+      -Dquarkus.quinoa.package-manager-command.build=--version \
+      org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeBom \
+      -DoutputFormat=json -DoutputName=sbom -DschemaVersion=1.6 \
+      -Dcyclonedx.skipNotDeployed=false
+# cyclonedx.skipNotDeployed=false is LOAD-BEARING, measured on qits-artifacts' first SBOM release
+# (2026.902.45658): the service module skips maven-deploy — it ships as this image, not as a jar —
+# and the plugin SKIPS deploy-skipping modules by default, with a green build and one INFO line. The
+# sbom stage's COPY then fails on a file nothing wrote. The property spelling matters too: the bare
+# -DskipNotDeployed=false is silently ignored; only the cyclonedx.-prefixed one reaches the plugin.
+
+# --- sbom -----------------------------------------------------------------------------------------
+# The service module's CycloneDX document, exported so the release step can PUT it to the artifacts
+# store. A stage rather than a layer of the runtime image, and BEFORE the runtime stage on purpose:
+# the last stage is what a plain `docker build` builds, and that must stay the image. The release
+# step reaches this one with `--target sbom --output type=local` using the SAME args and secrets as
+# the image build, so every layer above is a cache hit and the export costs seconds. `makeBom` rides
+# on the mvnw invocation above rather than a second one, for the same cache reason — one RUN, one
+# layer, one truth.
+FROM scratch AS sbom
+COPY --from=build /src/service/target/sbom.json /sbom.json
+
+# --- runtime --------------------------------------------------------------------------------------
+# `mirror.qits.$QITS_DOMAIN/redhat/…` is the same mirror, pointed at registry.access.redhat.com.
+FROM mirror.qits.${QITS_DOMAIN}/redhat/ubi9/ubi-minimal:9.6
+WORKDIR /work
+
+# NO PACKAGES ARE INSTALLED HERE, and two used to be. A docker CLI stood here until step containers
+# started through qits-containers over HTTP; `git-core` stood beside it, for the bare mirror ci
+# fetched pipeline config into, until that config became an HTTP read off the git host's content
+# routes. Neither is kept "just in case": what a runtime image carries is what a deployment has to
+# trust, and nothing here shells anything any more.
+
+# `quarkus.package.output-name` names the binary `qits-ci` (no -runner suffix), so the process is
+# identifiable in `ps`/`docker top` while debugging a container. That name is spelled a third time in
+# service/pom.xml as failsafe's `native.image.path`; all three move together.
+COPY --from=build --chown=1001:root /src/service/target/qits-ci /work/qits-ci
+RUN chmod +x /work/qits-ci
+
+# NO /data, AND NOTHING TO OWN. This image used to create and chown a mount point for the H2 file,
+# so that a fresh named volume was seeded with the right ownership rather than landing root-owned and
+# failing the boot on an AccessDeniedException. The store is a postgres database now — see the
+# header — so there is no volume to mount, no directory to own, and this image writes nothing outside
+# its own process.
+
+EXPOSE 8080
+USER 1001
+
+# Quarkus binds 127.0.0.1 outside dev mode, which inside a container means nothing can reach it —
+# not the gateway, not a peer on qits-net.
+ENTRYPOINT ["/work/qits-ci", "-Dquarkus.http.host=0.0.0.0"]

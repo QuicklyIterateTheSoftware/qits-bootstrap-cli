@@ -55,27 +55,15 @@ import java.util.stream.Stream;
 public class SeedPhases {
 
     /**
-     * The temporary maven registry's container name — known here, not only in the run state. On
-     * qits-net it is also the name this CLI dials it by, because docker's embedded DNS answers a
-     * container's own name.
-     */
-    static final String AUTH_SEED_HTTP = "qits-maven-seed-http";
-
-    /**
-     * <b>The temporary file registry's volume, and what the whole run resolves through.</b> The
-     * nginx above serves it at {@code /artifacts/maven/maven}, and the bootstrap ingress's maven
-     * route proxies there for the WHOLE run — it is never repointed at the store. So a jar that is
-     * only in the store is a 404 to anything reaching the platform through that door, which is
-     * every seed image build and every {@code ADD} of a seed Dockerfile.
+     * <b>The run's local file repository, and what every seed build resolves the platform's own
+     * jars through.</b> {@code maven-seed} deploys every {@link #SEED_LIBRARIES} entry into it with
+     * {@code mvn deploy … file:///repo}, the protocol, golden-master and runner publishes write it
+     * beside the store, and {@code seed-toolchain} puts the musl tarballs in it. No server fronts
+     * it: a seed image build reads it as the named context {@link SeedDockerfile#SEED_M2_CONTEXT}
+     * (see {@link SeedDockerfile#localMaven}), and the probes ask the bytes with a {@code test -f}
+     * in a throwaway container.
      */
     static final String SEED_REPO_VOLUME = "qits-maven-seed";
-
-    /**
-     * The temporary registry as THIS CLI reaches it. The mount puts the repository under
-     * {@code /artifacts/maven/maven}, so it answers the same paths the real store does — which is
-     * what lets the seed builds resolve against either one without knowing which is up.
-     */
-    private static final String AUTH_SEED_URL = "http://" + AUTH_SEED_HTTP + "/artifacts";
 
     /**
      * Where the metadata of the seed's LAST published artifact lives under an artifacts base url —
@@ -728,29 +716,28 @@ public class SeedPhases {
 
     /**
      * qits-artifacts consumes qits libraries while also being the Maven registry that owns them in
-     * steady state. The cycle is broken with a temporary, bootstrap-owned file repository, served
-     * over HTTP on the registry port and removed before the real artifacts container claims it.
+     * steady state. The cycle is broken with a bootstrap-owned file repository, the
+     * {@link #SEED_REPO_VOLUME} volume: a directory in Maven's own layout, written by
+     * {@code mvn deploy … file:///repo} and read by every seed image build as a named context. No
+     * server stands in front of it.
      * <p>
      * <b>The byte-plane split made this phase carry several libraries instead of one</b>, and that
      * is not a widening for its own sake: qits-artifacts, qits-platform-mirror and qits-githost are
      * built out of qits-blobstore and qits-registries, and all three of their seed images are built
      * before anything of this platform can publish a jar. A seed build resolving a library the
-     * temporary registry does not hold fails minutes in, naming a version nobody ever pushed.
+     * file repository does not hold fails minutes in, naming a version nobody ever deployed.
      * <p>
-     * <b>The temporary registry holds every qits jar a seed image could ask for, whatever the plan's
-     * order is.</b> qits-ci's image consumes qits-githost-events and qits-containers-client, and
-     * today it is built after {@code seed-artifacts} has taken the registry port — so the copies it
-     * really resolves are the store's, published by {@link #mavenPublish}. Both lists carry those
-     * jars because the two are one port: whichever server is behind it when an image builds has to
-     * answer, and a reordering that moves an image to the other side of {@code seed-artifacts} must
-     * not be able to turn that into a failed build.
+     * <b>The file repository holds every qits jar a seed image could ask for, whatever the plan's
+     * order is.</b> Every seed image resolves from it and from nothing else of this platform, the
+     * ones built after {@code seed-artifacts} included — the store is filled for the release
+     * replays of phase 4, not for the seed builds.
      * <p>
      * <b>One container, one deploy per entry, in the order {@link #SEED_LIBRARIES} spells.</b>
      * {@code mvn deploy} installs into the local repository on its way out, so qits-registries
      * resolves the qits-db-core the line above it just built — which is the whole reason these are
      * not one container each. The other side of that: a library built before the qits jar it
-     * depends on resolves nothing local, reaches for the registry port that no server holds yet,
-     * and fails with "Connection refused". Read the poms before moving a line.
+     * depends on resolves nothing local and fails naming the jar. Read the poms before moving a
+     * line.
      * <p>
      * That local repository is now {@link #MAVEN_CACHE_VOLUME}, kept across runs so Central is not
      * re-read every bootstrap — and the script starts by deleting this platform's own group out of
@@ -768,12 +755,9 @@ public class SeedPhases {
         return new Phase("maven-seed",
                 "seed the qits libraries for the first byte-plane image builds",
                 ctx -> {
-                    // Rebuild this small file repository on every worker start. The host-side seed
-                    // image builds always resolve through localhost:REGISTRY_PORT, while the real
-                    // artifacts store deliberately publishes no host port. A previous worker's
-                    // shutdown hook removes the nginx proxy, so treating either an existing volume
-                    // or the in-network store as a reason to skip leaves localhost unserved on the
-                    // very next retry.
+                    // Deployed again on every worker start: a deploy over an existing coordinate in
+                    // a file repository simply rewrites it, and this run's bytes are the ones the
+                    // seed images have to build against.
                     boot.docker.ensureVolume(SEED_REPO_VOLUME, ctx::log);
                     boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
                     // THE PINS, READ BEFORE THE FIRST TREE IS COPIED. What the estate still asks
@@ -801,41 +785,7 @@ public class SeedPhases {
                                 "copying " + repo + " in failed");
                     }
                     startAndReap(ctx, cid, "the qits library seed failed");
-
-                    String container = AUTH_SEED_HTTP;
-                    boot.docker.removeContainer(container, null);
-                    // TWO CONSUMERS, TWO ADDRESSES, and both are needed:
-                    //
-                    //   --network qits-net  is for THIS CLI, which is on that network and can
-                    //                       reach nothing that is not. The container name is the
-                    //                       alias; AUTH_SEED_URL is what gets dialled.
-                    //   qits-bootstrap-edge is for the HOST'S DOCKER DAEMON. The seed image builds
-                    //                       run with --network host and reach this container through
-                    //                       that capability-gated edge; no seed port is published.
-                    //
-                    // THE PUBLISH IS THIS PHASE'S ALONE NOW. The platform's own store publishes no
-                    // host port at all since unify-ingress — it is reached at
-                    // registry.<env>.localhost through the edge — so nothing here is shadowing a
-                    // number the platform also binds. This container serves the seed builds that
-                    // run before any edge exists, and it goes away in seed-artifacts, minutes from
-                    // now; nothing has to close the port at the end of a boot.
-                    //
-                    // Dropping either one hangs a phase rather than failing it: without the
-                    // network the probe above never answers, without the publish the first seed
-                    // build resolves nothing.
-                    Boot.must(boot.docker.exec(ctx::log, "run", "-d", "--name", container,
-                                    "--network", Boot.NETWORK,
-                                    "-v", SEED_REPO_VOLUME + ":/usr/share/nginx/html/artifacts/maven/maven:ro",
-                                    "nginx:alpine"),
-                            "the temporary maven registry did not start");
-                    boot.state.authSeedContainer = container;
-                    // Even a failed run must not leave the registry port held by this container.
-                    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                        if (boot.state.authSeedContainer != null) {
-                            boot.docker.removeContainer(boot.state.authSeedContainer, null);
-                        }
-                    }));
-                    ctx.note("temporary maven registry up");
+                    ctx.note("file repository " + SEED_REPO_VOLUME + " filled");
                 });
     }
 
@@ -861,16 +811,27 @@ public class SeedPhases {
                 ctx.log("  placeholder client at " + seedUi);
             }
 
-            List<String> extra = new ArrayList<>();
-            String dockerfile =
-                    SeedDockerfile.read(repo.resolve(PlatformModel.dockerfilePath(name)));
-            // An image repository is its Dockerfile and nothing else, so the warning about the
-            // four-gigabyte native build would be a lie about a thirty-second pull.
-            ctx.status("Dockerfile".equals(PlatformModel.dockerfilePath(name))
+            Path dockerfilePath = repo.resolve(PlatformModel.dockerfilePath(name));
+            String origin = PlatformModel.repo(name) + "/" + PlatformModel.dockerfilePath(name);
+            // An image repository (qits-oci-postgresql) is its Dockerfile and nothing else; every
+            // other seed image is a Quarkus service whose build RUN resolves the platform's jars.
+            boolean imageRepository = "Dockerfile".equals(PlatformModel.dockerfilePath(name));
+            // THE JARS COME OUT OF THE qits-maven-seed VOLUME, never off a server. The committed
+            // build RUN derives https://registry.qits.$QITS_DOMAIN — the live platform, during a
+            // bootstrap — and the rewrite points it at the volume, mounted as a named context, and
+            // refuses to build a Dockerfile it cannot point there.
+            String dockerfile = imageRepository
+                    ? SeedDockerfile.refuseServers(SeedDockerfile.read(dockerfilePath), origin)
+                    : SeedDockerfile.localMaven(SeedDockerfile.read(dockerfilePath), origin);
+            Map<String, String> contexts = imageRepository
+                    ? Map.of() : Map.of(SeedDockerfile.SEED_M2_CONTEXT, SEED_REPO_VOLUME);
+            // The warning about the four-gigabyte native build would be a lie about a
+            // thirty-second pull.
+            ctx.status(imageRepository
                     ? "building qits/" + name + " from its Dockerfile"
                     : "cold GraalVM native build of qits/" + name + " — ~4 GB RAM, no maven cache");
             ProcessResult result = boot.docker.buildFromStdin("qits/" + name + ":latest",
-                    dockerfile, repo, extra, ctx::log);
+                    dockerfile, repo, List.of(), contexts, ctx::log);
             Boot.must(result, "build of qits/" + name + " failed");
         });
     }
@@ -939,10 +900,8 @@ public class SeedPhases {
      * mirror answers at that same alias from the same database and is strictly better than the seed
      * this phase would have started.
      * <p>
-     * <b>The loopback publish is this phase's own and nobody else's.</b> The deployed mirror
-     * publishes no host port since unify-ingress — the host reaches it at
-     * {@code mirror.<env>.localhost} through the edge — so this one exists for the seed builds that
-     * run before any edge does, and it goes away with the container the first cutover replaces.
+     * <b>It publishes no port, and no seed build reads it.</b> The publish containers below reach
+     * it on qits-net; a seed image build takes its base layers and Maven Central from upstream.
      */
     public Phase seedMirrorStart() {
         return new Phase("seed-mirror",
@@ -960,8 +919,6 @@ public class SeedPhases {
                 Boot.must(boot.docker.run(Cmd.of(List.of(
                                 "docker", "run", "-d", "--name", mirror,
                                 "--network", Boot.NETWORK,
-                                // SEED-ONLY, and the platform does not take it over: the deployed
-                                // mirror publishes nothing, and the host dials
                                 // The seed's own credential, on the same terms as the idp's and the
                                 // bus's: this container starts before any deployer exists, so the
                                 // role and the database were created by seed-postgres and handed
@@ -990,19 +947,12 @@ public class SeedPhases {
 
     /**
      * Brings up qits-artifacts alone, so the Maven and npm publishes below have somewhere to land
-     * before any pipeline exists. It STARTS one only when nothing is serving the registry port yet
+     * before any pipeline exists. It STARTS one only when nothing answers at the store's alias yet
      * — what this phase owes the ones after it is a store that answers, not a container it created.
      */
     public Phase seedArtifactsStart() {
         return new Phase("seed-artifacts",
                 "have qits-artifacts serving for the Maven bootstrap", ctx -> {
-            // Keep the temporary file registry until the bootstrap process exits. Seed images
-            // built after this phase still resolve their qits dependencies through the host-side
-            // localhost port; qits-artifacts intentionally publishes no host port. Removing nginx
-            // here therefore made every uncached later image fail with connection refused. The
-            // shutdown hook installed by mavenSeed removes it after the final build.
-            ctx.log("  keeping the temporary maven registry on host port "
-                    + boot.config.registryPort() + " for the remaining seed image builds");
             boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
             // Named after its wire alias, like every other seed container: this one is started by
             // hand rather than by the stack, and the name it takes has to be the same one the stack
@@ -1023,9 +973,9 @@ public class SeedPhases {
                     boot.docker.runningNames(), boot.docker.serviceNames())
                     .or(this::storeAlreadyServing);
             if (serving.isPresent()) {
-                ctx.log("  " + serving.get() + " already serves port " + boot.config.registryPort()
+                ctx.log("  " + serving.get() + " already serves as " + artifacts
                         + " from the same database — no seed store to start");
-                ctx.note(serving.get() + " serves :" + boot.config.registryPort());
+                ctx.note(serving.get() + " serves");
             } else {
                 boot.docker.removeContainer(artifacts, null);
                 // No git env any more, and no ci intake: this service hosts no repositories and
@@ -1059,19 +1009,15 @@ public class SeedPhases {
     }
 
     /**
-     * Who already holds the registry port, when the platform's own store does — the deployed
+     * Who already answers as the store, when the platform's own store does — the deployed
      * container's name if one is running, otherwise the service's plain name.
      * <p>
      * <b>The answer comes from the API, not from the container list.</b> A deployed store is named
      * {@code qits-pd-<env>-qits-artifacts-<id8>}, and matching that shape alone would still miss
-     * anything else the port could be behind. The artifacts API's own health is the honest
-     * question: it is asked at the store's WIRE ALIAS, which the temporary Maven registry does not
-     * answer to at all — it is an nginx under its own name — while qits-artifacts answers 200 there
-     * whether it was started by this bootstrap, by compose or by the deployer. The container list is
-     * then read only to name who it is, which is what makes the phase log readable.
-     * <p>
-     * Both phases that bind the registry port ask this before they bind it. Neither can win that
-     * bind, and neither needs to: the store on the other end reads the same database.
+     * anything else the alias could be behind. The artifacts API's own health is the honest
+     * question: it is asked at the store's WIRE ALIAS, where qits-artifacts answers 200 whether it
+     * was started by this bootstrap, by compose or by the deployer. The container list is then read
+     * only to name who it is, which is what makes the phase log readable.
      */
     private Optional<String> storeAlreadyServing() {
         if (!boot.artifacts.ready()) {
@@ -1362,10 +1308,9 @@ public class SeedPhases {
      * hold stops the boot here, with the tag named, rather than in a native build that resolves
      * nothing.
      * <p>
-     * <b>BOTH registries, and the file registry first.</b> The seed image builds resolve through
-     * the bootstrap ingress, whose maven route serves the temporary file registry for the whole
-     * run — so a jar that reached only the store is a 404 to {@code seed-image-ci}, which is the
-     * toolchain seed's own lesson of 2026-09-05. The store needs it as well: qits-ci's release
+     * <b>BOTH registries, and the file registry first.</b> The seed image builds resolve from the
+     * file repository and from nothing else of this platform, so a jar that reached only the store
+     * is unresolvable to {@code seed-image-ci}. The store needs it as well: qits-ci's release
      * build, later in this boot, resolves from there. Whatever a registry already holds is left
      * alone, one registry at a time.
      *
@@ -1623,14 +1568,14 @@ public class SeedPhases {
     static final String MUSL_BUILDER_DOCKERFILE = "docker/Dockerfile.musl-builder";
 
     /**
-     * <b>The musl toolchain and the zlib source, into the store, before the builder image asks for
-     * them.</b>
+     * <b>The musl toolchain and the zlib source, from upstream into the file repository and the
+     * store, before the builder image asks for them.</b>
      * <p>
      * qits-ci-daemon's builder image stopped fetching those two tarballs from the internet on
      * 2026-09-05 and reads them out of the platform's own Maven store instead — which is the right
      * answer for a platform that has one, and a hole in a bootstrap: nothing in the estate uploads
-     * them, so a fresh host's store has neither and the {@code ADD} fails. This phase is what makes
-     * the store's copy true on the first boot as well as the tenth.
+     * them, so a fresh host's store has neither. This phase is what makes the store's copy true on
+     * the first boot as well as the tenth, and what gives the seed's own builder build its copy.
      * <p>
      * <b>Downloaded, checked against the consuming repository's own pin, and only then published.</b>
      * {@link MuslToolchain} reads the size and the sha256 out of the Dockerfile that consumes the
@@ -1642,13 +1587,13 @@ public class SeedPhases {
      * upload left on the live platform: the tarball, its {@code .sha1} and {@code .md5}, a generated
      * pom and the metadata.
      * <p>
-     * <b>BOTH registries, because the bootstrap ingress serves the TEMPORARY one for the whole
-     * run.</b> Its maven route proxies to {@code qits-maven-seed-http} from the moment it starts and
-     * is never repointed, so a tarball that reached only the store is a 404 to the {@code ADD} two
-     * phases below — measured on 2026-09-05, where the store held both files and the builder build
-     * failed anyway. The file registry is written FIRST for the same reason the library seed writes
-     * it first: it is the copy the next build actually reads. Whatever a registry already holds is
-     * skipped, one file and one registry at a time.
+     * <b>BOTH registries, and they have different readers.</b> The file repository in
+     * {@link #SEED_REPO_VOLUME} is what the {@code ci-daemon} phase's builder build reads: its
+     * {@code ADD $MUSL_URL}/{@code ADD $ZLIB_URL} are rewritten into copies out of that volume
+     * ({@link SeedDockerfile#localToolchain}), so the build dials no server. The store's copy is
+     * for the platform's own release builds later. The file repository is written FIRST: it is the
+     * copy the next build actually reads. Whatever a registry already holds is skipped, one file
+     * and one registry at a time.
      */
     public Phase toolchainSeed() {
         return new Phase("seed-toolchain",
@@ -1723,9 +1668,9 @@ public class SeedPhases {
      * Download, verify, deploy — one block per tarball, in one container, into the registries that
      * block still needs.
      * <p>
-     * <b>The file registry comes first in every block.</b> It is what the bootstrap ingress serves
-     * for the whole run, so it is the copy the builder build two phases below reads; writing the
-     * store first would leave a window where a retry of that build still 404s.
+     * <b>The file registry comes first in every block.</b> It is the copy the builder build two
+     * phases below reads; writing the store first would leave a window where a retry of that build
+     * finds nothing to copy.
      * <p>
      * The deploy plugin is PINNED rather than resolved as {@code deploy:deploy-file} would: a
      * prefix goal asks the registry which version is newest, and a cold boot's answer to that is
@@ -1771,24 +1716,23 @@ public class SeedPhases {
     public Phase ciDaemon() {
         return new Phase("ci-daemon", "build the qits-ci-daemon binary (musl static native)", ctx -> {
             Path repo = boot.state.repoDir("ci-daemon");
-            String dockerfile = SeedDockerfile.read(repo.resolve("docker/Dockerfile.musl-builder"));
-            // THE TARBALL URLS ARE THIS RUN'S, never the Dockerfile's default. That default names
-            // the edge — registry.qits.${QITS_DOMAIN} since qits-1402, registry.dev.localhost
-            // before it — and no edge exists this early in any boot. BuildKit resolves an ADD in the BUILDER's own network
-            // context, and the bootstrap's qits-buildkitd runs on the host network, so the ingress
-            // the seed builds already resolve maven through is exactly the address that works here
-            // too.
-            List<String> tarballArgs = new ArrayList<>();
-            for (MuslToolchain.Tarball tarball : MuslToolchain.read(
-                    Files.readString(repo.resolve(MUSL_BUILDER_DOCKERFILE),
-                            StandardCharsets.UTF_8))) {
-                tarballArgs.add(tarball.arg() + "=" + boot.seedMavenFile(tarball.storePath()));
-                ctx.log("  " + tarball.arg() + " -> "
-                        + boot.seedMavenFilePublic(tarball.storePath()));
+            // THE TARBALLS ARE THE ONES seed-toolchain PUT IN THE qits-maven-seed VOLUME, never
+            // the Dockerfile's ARG default. That default names registry.qits.${QITS_DOMAIN}, which
+            // during a bootstrap is the live platform or nothing, so the rewrite turns each
+            // `ADD $<NAME>_URL` into a COPY out of the volume, handed in as a named context.
+            String committed = Files.readString(repo.resolve(MUSL_BUILDER_DOCKERFILE),
+                    StandardCharsets.UTF_8);
+            List<MuslToolchain.Tarball> tarballs = MuslToolchain.read(committed);
+            for (MuslToolchain.Tarball tarball : tarballs) {
+                ctx.log("  " + tarball.arg() + " -> " + SEED_REPO_VOLUME + ":/"
+                        + tarball.storePath());
             }
+            String dockerfile = SeedDockerfile.localToolchain(SeedDockerfile.rewrite(committed),
+                    PlatformModel.repo("ci-daemon") + "/" + MUSL_BUILDER_DOCKERFILE, tarballs);
             ctx.status("building the musl builder image");
             Boot.must(boot.docker.buildFromStdin("qits/graalvmce-musl-builder:jdk-25", dockerfile,
-                            repo.resolve("docker"), tarballArgs, ctx::log),
+                            repo.resolve("docker"), List.of(),
+                            Map.of(SeedDockerfile.SEED_M2_CONTEXT, SEED_REPO_VOLUME), ctx::log),
                     "the musl builder image failed to build");
 
             // --entrypoint: the builder image entrypoints to native-image itself.
@@ -3087,7 +3031,7 @@ public class SeedPhases {
     }
 
     /**
-     * <b>A RERUN OVER A DEPLOYED EDGE STARTS NO BOOTSTRAP INGRESS — neither its capability nor its
+     * <b>A RERUN OVER A DEPLOYED EDGE STARTS NO BOOTSTRAP INGRESS — neither its state file nor its
      * container.</b> The ingress exists for the local-build step of a cold boot, and the edge's seed
      * deploy retires it; on a rerun past that point the deployer's edge holds the public door, and a
      * second one would bind 80/443 against it. The edge's seed deploy has moved to the middle of
@@ -3104,9 +3048,9 @@ public class SeedPhases {
         }
     }
 
-    /** Generate one run's two ingress capabilities before compose needs githost's fingerprint. */
+    /** Decide the ingress's mode and expiry before the compose file names its address. */
     public Phase bootstrapIngressPrepare() {
-        return new Phase("bootstrap-ingress-prepare", "prepare the bootstrap-only ingress capability",
+        return new Phase("bootstrap-ingress-prepare", "prepare the bootstrap-only ingress",
                 ctx -> {
                     standAsideForADeployedEdge(ctx);
                     boot.ingress.prepare(ctx::log);
@@ -3742,11 +3686,9 @@ public class SeedPhases {
         values.put("COMPOSE_FILE", boot.state.composeFile == null ? "docker-compose.qits.yml"
                 : boot.state.composeFile.getFileName().toString());
         values.put("PORT", String.valueOf(boot.config.port()));
-        values.put("REGISTRY_PORT", String.valueOf(boot.config.registryPort()));
-        // Neither generated file publishes these two any more — the byte plane is behind the edge —
-        // but both are still filled, so a comment or a line that names one renders a number rather
+        // Neither generated file publishes this one any more — the byte plane is behind the edge —
+        // but it is still filled, so a comment or a line that names it renders a number rather
         // than a placeholder.
-        values.put("MIRROR_PORT", String.valueOf(boot.config.mirrorPort()));
         values.put("GIT_HOST_PORT", String.valueOf(boot.config.gitHostPort()));
         // Resolved by seed-postgres, which runs before both generated files are written.
         values.put("PG_SUPERUSER_PASSWORD", orEmpty(boot.state.pgSuperuserPassword));
@@ -3780,14 +3722,6 @@ public class SeedPhases {
         // is the ADDRESS, environment-qualified like every other. See BootstrapConfig.idpDialUrl.
         values.put("IDP_DIAL", boot.config.idpDialUrl());
         values.put("PUSH_TOKEN", boot.config.pushToken());
-        values.put("BOOTSTRAP_INGRESS_GIT_ENABLED", String.valueOf(boot.config.bootstrapIngress()));
-        values.put("BOOTSTRAP_INGRESS_GIT_CAPABILITY_HASH",
-                orEmpty(boot.state.bootstrapIngressGitCapabilityHash));
-        values.put("BOOTSTRAP_INGRESS_GIT_REPOSITORY", orEmpty(boot.state.bootstrapIngressRepository));
-        values.put("BOOTSTRAP_INGRESS_GIT_REF_PATTERN", orEmpty(boot.state.bootstrapIngressRefPattern));
-        values.put("BOOTSTRAP_INGRESS_GIT_EXPIRES_AT",
-                boot.state.bootstrapIngressExpiresAt == 0 ? "1970-01-01T00:00:00Z"
-                        : java.time.Instant.ofEpochSecond(boot.state.bootstrapIngressExpiresAt).toString());
         values.put("MACHINE_REQUIRED", String.valueOf(boot.config.machineAuth()));
         values.put("DOCKER_GID", boot.state.dockerGid);
         values.put("DAEMON_SHA", boot.state.daemonSha == null ? "" : boot.state.daemonSha);

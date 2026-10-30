@@ -88,7 +88,7 @@ public class Boot {
         this.config = config;
         this.log = log;
         this.runner = runner;
-        this.docker = new Docker(runner).withBuildArgs(imageBuildArgs(config))
+        this.docker = new Docker(runner)
                 // The buildctl client is a container, so a build's scratch directories have to sit
                 // where the HOST daemon can bind-mount them by the same name. The sources directory
                 // is mounted at its own path by the launcher and is this run's own to write in, so
@@ -107,78 +107,6 @@ public class Boot {
         this.configuration = new ConfigurationApi(http, config.configurationUrl(),
                 config.envName());
         this.projects = new ProjectsApi(http, config.projectsUrl());
-    }
-
-    /**
-     * <b>What every image this run builds is built with</b> — the seed images, the step images and
-     * the ci-daemon's musl builder alike, because they are all built by the HOST's daemon while the
-     * platform is still being made.
-     * <p>
-     * One argument today: where a build resolves the platform's own maven artifacts. It is passed
-     * to every build rather than to the ones known to read it, because an image with no matching
-     * {@code ARG} answers a build argument with a warning, and the alternative is a per-image list
-     * that a new image is added without.
-     * <p>
-     * Each entry is a bare {@code NAME=value}. The flag in front of it belongs to whoever composes
-     * the command line, and that is buildctl's {@code --opt build-arg:} now rather than docker's
-     * {@code --build-arg}.
-     * <p>
-     * See {@link BootstrapConfig#seedMavenRepositoryUrl()} for why the value cannot be left to the
-     * Dockerfile's own default any more.
-     */
-    public static List<String> imageBuildArgs(BootstrapConfig config) {
-        return List.of("QITS_MAVEN_REPOSITORY_URL=" + config.seedMavenRepositoryUrl());
-    }
-
-    /** The seed maven repository as the ingress serves it, and the capability that opens it. */
-    private String seedMavenUrl;
-    private String seedMavenCapability;
-
-    /** The edge replaces the seed port before the first seed image is built. */
-    public void useBootstrapMavenRepository(String url, String capability) {
-        this.seedMavenUrl = url;
-        this.seedMavenCapability = capability;
-        docker.withBootstrapMavenRepository(url, "bootstrap", capability);
-    }
-
-    /**
-     * <b>One file in the seed maven repository, as a url a Dockerfile's {@code ADD} can fetch —
-     * credentials and all.</b>
-     * <p>
-     * Every other build of this run reaches the repository from a {@code RUN}, which is handed the
-     * capability as a BuildKit secret. An {@code ADD <url>} cannot be: BuildKit resolves it itself,
-     * outside any step, so a secret mount never reaches it and the credential has to be in the url.
-     * The ingress's maven route demands HTTP Basic, so an anonymous url is a 401 rather than a
-     * download.
-     * <p>
-     * <b>That is not the leak it looks like.</b> The capability is masked out of the log by
-     * {@code Cmd.mask}, which every build of this run already carries, and it does not reach the
-     * image: the fetch happens in a {@code scratch} stage the final image discards, and BuildKit
-     * records no build argument in an image's config — measured, {@code docker history} and
-     * {@code docker inspect} both show nothing. It expires with the run either way.
-     */
-    public String seedMavenFile(String path) {
-        String base = seedMavenUrl == null ? config.seedMavenRepositoryUrl() : seedMavenUrl;
-        return withCredentials(base, seedMavenCapability) + "/" + path;
-    }
-
-    /** The same url without the credential, which is the one that may be printed. */
-    public String seedMavenFilePublic(String path) {
-        return (seedMavenUrl == null ? config.seedMavenRepositoryUrl() : seedMavenUrl) + "/" + path;
-    }
-
-    /**
-     * {@code http://host/x} plus {@code bootstrap:<capability>}, or the url unchanged when this run
-     * has no capability. The capability is base64url, so it carries no character a userinfo field
-     * would have to escape.
-     */
-    static String withCredentials(String url, String capability) {
-        int scheme = url.indexOf("://");
-        if (capability == null || capability.isBlank() || scheme < 0) {
-            return url;
-        }
-        return url.substring(0, scheme + 3) + "bootstrap:" + capability
-                + "@" + url.substring(scheme + 3);
     }
 
     /**

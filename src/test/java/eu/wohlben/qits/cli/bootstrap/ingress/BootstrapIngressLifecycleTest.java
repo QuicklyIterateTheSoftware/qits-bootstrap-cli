@@ -19,7 +19,6 @@ class BootstrapIngressLifecycleTest {
     private BootstrapIngressLifecycle ingress(Map<String, String> config,
                                               BootstrapIngressMode mode) {
         Boot boot = new Boot(TestConfig.from(config), new RunLog(temp.resolve("run.log")));
-        boot.state.bootstrapIngressPassword = "run-secret";
         BootstrapIngressLifecycle ingress = new BootstrapIngressLifecycle(boot);
         ingress.mode(mode);
         return ingress;
@@ -30,31 +29,26 @@ class BootstrapIngressLifecycleTest {
             "QITS_BOOTSTRAP_INGRESS_PUBLIC", "true");
 
     @Test
-    void publicSeedBuildsUseTheNormalTlsDoor() {
-        assertThat(ingress(DOMAIN, BootstrapIngressMode.PUBLIC_TLS).mavenRepositoryUrl())
-                .isEqualTo("https://wohlben.eu/artifacts/maven/maven");
+    void thePublicTlsModeIsTheDomainOverHttps() {
+        assertThat(ingress(DOMAIN, BootstrapIngressMode.PUBLIC_TLS).address())
+                .isEqualTo("https://wohlben.eu");
     }
 
     /**
-     * <b>The cold-host mode, and the address is the whole of it.</b> A fresh machine's certificate
-     * volume is empty, so the ingress serves the domain over plain HTTP — and every seed image
-     * build is built with this url. Pointing it at 443 on a box where nothing listens is how the
-     * 2026-09-05 boot died at its first seed image, with "Connection refused" rather than anything
-     * about a certificate.
+     * <b>The cold-host mode.</b> A fresh machine's certificate volume is empty, so the ingress
+     * serves the domain over plain HTTP; pointing the operator at 443 on a box where nothing
+     * listens would be a progress page nobody can open.
      */
     @Test
     void aHostWithNoCertificateServesTheSameDomainOverPlainHttp() {
-        BootstrapIngressLifecycle ingress = ingress(DOMAIN, BootstrapIngressMode.PUBLIC_HTTP);
-
-        assertThat(ingress.mavenRepositoryUrl())
-                .isEqualTo("http://wohlben.eu/artifacts/maven/maven");
-        assertThat(ingress.address()).isEqualTo("http://wohlben.eu");
+        assertThat(ingress(DOMAIN, BootstrapIngressMode.PUBLIC_HTTP).address())
+                .isEqualTo("http://wohlben.eu");
     }
 
     @Test
     void localModeKeepsTheLoopbackOnlyDoor() {
-        assertThat(ingress(Map.of(), BootstrapIngressMode.LOOPBACK).mavenRepositoryUrl())
-                .isEqualTo("http://localhost:8481/artifacts/maven/maven");
+        assertThat(ingress(Map.of(), BootstrapIngressMode.LOOPBACK).address())
+                .isEqualTo("http://localhost:8481");
     }
 
     /**
@@ -87,8 +81,8 @@ class BootstrapIngressLifecycleTest {
     }
 
     /**
-     * A retry reads the mode back out of the state file, so the seed builds it already handed a url
-     * to are not told a different one. A file written before there were three modes records none,
+     * A retry reads the mode back out of the state file, so the operator is not told a different
+     * address from the one the retained container listens on. A file written before there were three modes records none,
      * and the caller decides afresh.
      */
     @Test
@@ -101,7 +95,7 @@ class BootstrapIngressLifecycleTest {
     }
 
     @Test
-    void capabilityStateLivesBesideTheDurableProgressJournal() {
+    void theStateFileLivesBesideTheDurableProgressJournal() {
         assertThat(BootstrapIngressLifecycle.stateFile(
                 "/root/qits/.qits-bootstrap-progress.json"))
                 .isEqualTo(Path.of("/root/qits/.qits-bootstrap-edge.env"));

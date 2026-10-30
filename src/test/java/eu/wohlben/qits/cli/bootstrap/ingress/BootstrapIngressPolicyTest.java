@@ -2,43 +2,16 @@ package eu.wohlben.qits.cli.bootstrap.ingress;
 
 import org.junit.jupiter.api.Test;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
+/**
+ * The ingress serves the progress page and nothing else: no maven route (a seed build reads the
+ * {@code qits-maven-seed} volume as a named context) and no git route (every push dials the git
+ * host's wire alias from inside qits-net).
+ */
 class BootstrapIngressPolicyTest {
 
-    private static final String PASSWORD = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
-    private final BootstrapIngressPolicy policy = new BootstrapIngressPolicy("localhost", PASSWORD);
-
-    @Test
-    void admitsOnlyTheUiAndSmartHttpShapes() {
-        assertThat(decide("GET", "/").target()).isEqualTo(BootstrapIngressPolicy.Target.UI);
-        assertThat(decide("GET", "/events").target()).isEqualTo(BootstrapIngressPolicy.Target.UI);
-        assertThat(decide("GET", "/git/qits-bootstrap/info/refs").target())
-                .isEqualTo(BootstrapIngressPolicy.Target.GIT);
-        assertThat(decide("POST", "/git/qits-bootstrap/git-receive-pack").target())
-                .isEqualTo(BootstrapIngressPolicy.Target.GIT);
-        assertThat(decide("POST", "/git/qits-bootstrap/git-upload-pack").target())
-                .isEqualTo(BootstrapIngressPolicy.Target.GIT);
-        assertThat(decide("GET", "/artifacts/maven/maven/eu/wohlben/qits/example/1/example.pom")
-                .target()).isEqualTo(BootstrapIngressPolicy.Target.MAVEN);
-    }
-
-    @Test
-    void rejectsWrongAndExpiredCapabilitiesAndEveryOtherDoor() {
-        assertThat(policy.authorize("GET", "localhost", "/", basic("wrong")).status()).isEqualTo(401);
-        assertThat(policy.authorize("GET", "wrong.example", "/", basic(PASSWORD)).status()).isEqualTo(421);
-        assertThat(decide("GET", "/githost/api/repositories").status()).isEqualTo(403);
-        assertThat(decide("POST", "/artifacts/maven/maven/x").status()).isEqualTo(403);
-        assertThat(decide("CONNECT", "/").status()).isEqualTo(405);
-        assertThat(decide("GET", "/git/../idp/token").status()).isEqualTo(403);
-        assertThat(decide("GET", "/git/%2e%2e/idp/token").status()).isEqualTo(403);
-        assertThat(decide("OPTIONS", "/git/qits-bootstrap/info/refs").status()).isEqualTo(403);
-        policy.close();
-        assertThat(policy.authorize("GET", "localhost", "/", basic(PASSWORD)).status()).isEqualTo(401);
-    }
+    private final BootstrapIngressPolicy policy = new BootstrapIngressPolicy();
 
     @Test
     void publicProgressNeedsNoCredentialButHasExactlyThreeGetDoors() {
@@ -49,17 +22,40 @@ class BootstrapIngressPolicyTest {
         assertThat(policy.authorizeProgress("GET", "/events").target())
                 .isEqualTo(BootstrapIngressPolicy.Target.UI);
         assertThat(policy.authorizeProgress("HEAD", "/").status()).isEqualTo(403);
+        assertThat(policy.authorizeProgress("POST", "/").status()).isEqualTo(403);
         assertThat(policy.authorizeProgress("GET", "/idp/token").status()).isEqualTo(403);
+    }
+
+    /** The two retired routes are gone, not merely gated: no credential opens them. */
+    @Test
+    void theMavenAndGitRoutesAreGone() {
+        assertThat(policy.authorizeProgress("GET",
+                "/artifacts/maven/maven/eu/wohlben/qits/example/1/example.pom").status())
+                .isEqualTo(403);
         assertThat(policy.authorizeProgress("GET", "/git/qits-bootstrap/info/refs").status())
                 .isEqualTo(403);
+        assertThat(policy.authorizeProgress("POST", "/git/qits-bootstrap/git-receive-pack")
+                .status()).isEqualTo(403);
+        assertThat(policy.allowedRoute("GET", "/artifacts/maven/maven")).isFalse();
+        assertThat(policy.allowedRoute("GET", "/git/qits-bootstrap/info/refs")).isFalse();
     }
 
-    private BootstrapIngressPolicy.Decision decide(String method, String path) {
-        return policy.authorize(method, "localhost:8481", path, basic(PASSWORD));
+    @Test
+    void rejectsEveryOtherDoor() {
+        assertThat(policy.authorizeProgress("GET", "/githost/api/repositories").status())
+                .isEqualTo(403);
+        assertThat(policy.authorizeProgress("CONNECT", "/").status()).isEqualTo(405);
+        assertThat(policy.authorizeProgress("GET", "/../idp/token").status()).isEqualTo(403);
+        assertThat(policy.authorizeProgress("GET", "/%2e%2e/idp/token").status()).isEqualTo(403);
+        assertThat(policy.authorizeProgress("GET", "//state.json").status()).isEqualTo(403);
     }
 
-    private static String basic(String password) {
-        return "Basic " + Base64.getEncoder().encodeToString(
-                ("bootstrap:" + password).getBytes(StandardCharsets.UTF_8));
+    @Test
+    void theClearTextListenerRedirectsOnlyTheThreeDoors() {
+        assertThat(policy.allowedRoute("GET", "/")).isTrue();
+        assertThat(policy.allowedRoute("GET", "/state.json")).isTrue();
+        assertThat(policy.allowedRoute("GET", "/events")).isTrue();
+        assertThat(policy.allowedRoute("GET", "/idp/token")).isFalse();
+        assertThat(policy.allowedRoute("POST", "/")).isFalse();
     }
 }

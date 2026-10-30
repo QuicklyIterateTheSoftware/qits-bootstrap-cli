@@ -2,7 +2,6 @@ package eu.wohlben.qits.cli.bootstrap.ingress;
 
 import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
 import eu.wohlben.qits.cli.bootstrap.phases.Boot;
-import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 
@@ -11,15 +10,17 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
-import java.security.SecureRandom;
 import java.time.Instant;
-import java.util.Base64;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
 
-/** Owns the disposable ingress and the two capabilities it needs for exactly one bootstrap run. */
+/**
+ * Owns the disposable ingress for exactly one bootstrap run: the progress page on the public door
+ * until the edge's seed deploy takes the door over. It holds no credential — it serves no route
+ * that needs one.
+ */
 public final class BootstrapIngressLifecycle {
 
     public static final String CONTAINER = "qits-bootstrap-edge";
@@ -35,8 +36,8 @@ public final class BootstrapIngressLifecycle {
     private final Boot boot;
     /**
      * <b>Where this run's ingress listens, decided once and read by everything that has to agree
-     * with it</b>: the publish, the TLS environment, the address the operator is given and the
-     * maven url every seed image build is built with. It lives here rather than in the run state
+     * with it</b>: the publish, the TLS environment and the address the operator is given. It lives
+     * here rather than in the run state
      * because this class is the only thing that decides it — and because a run with no ingress at
      * all still has to answer the question, which it does with LOOPBACK.
      */
@@ -46,7 +47,7 @@ public final class BootstrapIngressLifecycle {
         this.boot = boot;
     }
 
-    /** Before compose: githost receives only the hash, never the opaque upstream capability. */
+    /** Before compose: decides the mode and the expiry a retry has to serve again. */
     public void prepare(Consumer<String> out) throws IOException {
         BootstrapConfig config = boot.config;
         if (!config.bootstrapIngress()) {
@@ -61,27 +62,14 @@ public final class BootstrapIngressLifecycle {
             boot.state.bootstrapIngressEnvFile = file;
             return;
         }
-        // BEFORE THE URL, because the url is the mode's. Every seed image build resolves the
-        // platform's jars through the address this decides, so a mode chosen after the fact would
-        // be a build argument pointing at a door nothing opened.
         mode = decide(out);
-        String password = random();
-        String capability = random();
         long expiresAt = Instant.now().plus(config.bootstrapIngressTtl()).getEpochSecond();
-        boot.state.bootstrapIngressPassword = password;
-        boot.state.bootstrapIngressGitCapability = capability;
-        boot.state.bootstrapIngressGitCapabilityHash = sha256(capability);
-        // This is intentionally one id-addressed seed repository. It makes a Git capability a
-        // capability for one repository, rather than a hidden substitute for a system token.
-        boot.state.bootstrapIngressRepository = "qits-bootstrap";
-        boot.state.bootstrapIngressRefPattern = "refs/heads/bootstrap/*";
         boot.state.bootstrapIngressExpiresAt = expiresAt;
         Files.writeString(file, "", StandardCharsets.UTF_8);
         secure(file);
         boot.state.bootstrapIngressEnvFile = file;
-        boot.useBootstrapMavenRepository(mavenRepositoryUrl(), password);
-        out.accept("  bootstrap edge capability prepared (expires " + Instant.ofEpochSecond(expiresAt)
-                + ")");
+        out.accept("  bootstrap edge prepared (" + mode() + ", expires "
+                + Instant.ofEpochSecond(expiresAt) + ")");
     }
 
     /** Before the seed stack: start independently of the normal edge and its deployment configuration. */
@@ -126,9 +114,7 @@ public final class BootstrapIngressLifecycle {
         }
         argv.addAll(List.of("--env-file", boot.state.bootstrapIngressEnvFile.toString(), image,
                 "bootstrap-edge"));
-        Cmd command = Cmd.of(argv)
-                .mask(boot.state.bootstrapIngressPassword)
-                .mask(boot.state.bootstrapIngressGitCapability);
+        Cmd command = Cmd.of(argv);
         Boot.must(boot.docker.run(command, out), "starting the bootstrap ingress failed");
         out.accept("  bootstrap ingress: " + address() + " (" + description()
                 + ", expires " + Instant.ofEpochSecond(boot.state.bootstrapIngressExpiresAt) + ")");
@@ -171,21 +157,15 @@ public final class BootstrapIngressLifecycle {
     }
 
     private void writeEnvironment() throws IOException {
-        String env = boot.config.envName();
         String text = String.join("\n",
                 "QITS_WEB_BIND=false",
                 "QITS_BOOTSTRAP_INGRESS_INTERNAL_PORT=8080",
                 "QITS_BOOTSTRAP_INGRESS_HOST=" + ingressHost(),
-                "QITS_BOOTSTRAP_INGRESS_PASSWORD=" + boot.state.bootstrapIngressPassword,
-                "QITS_BOOTSTRAP_INGRESS_GITHOST_CAPABILITY=" + boot.state.bootstrapIngressGitCapability,
                 "QITS_BOOTSTRAP_INGRESS_EXPIRES_AT=" + boot.state.bootstrapIngressExpiresAt,
                 "QITS_BOOTSTRAP_INGRESS_UI_UPSTREAM=http://qits-bootstrap-progress:" + boot.config.webPort(),
-                "QITS_BOOTSTRAP_INGRESS_MAVEN_UPSTREAM=http://qits-maven-seed-http:80",
-                "QITS_BOOTSTRAP_INGRESS_GIT_UPSTREAM=http://"
-                        + PlatformModel.wireAlias("githost", env) + ":8080",
                 // Recorded so a worker retry serves what the first attempt started: the retained
-                // container is not restarted, but the maven url a restore hands back has to be the
-                // one the seed builds were already given.
+                // container is not restarted, and the address the operator is given has to be the
+                // one it already listens on.
                 MODE_KEY + "=" + mode());
         if (mode() == BootstrapIngressMode.PUBLIC_TLS) {
             text += "\nQITS_BOOTSTRAP_INGRESS_TLS_PORT=8443"
@@ -197,25 +177,18 @@ public final class BootstrapIngressLifecycle {
         secure(boot.state.bootstrapIngressEnvFile);
     }
 
-    /** Reuses the only credential the retained edge can still present on a retry. */
+    /** Reuses what the retained edge was started with on a retry, while it has not expired. */
     private boolean restore(Path file, Consumer<String> out) throws IOException {
         java.util.Map<String, String> values = new java.util.HashMap<>();
         for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
             int equals = line.indexOf('=');
             if (equals > 0) values.put(line.substring(0, equals), line.substring(equals + 1));
         }
-        String password = values.get("QITS_BOOTSTRAP_INGRESS_PASSWORD");
-        String capability = values.get("QITS_BOOTSTRAP_INGRESS_GITHOST_CAPABILITY");
         String expiry = values.get("QITS_BOOTSTRAP_INGRESS_EXPIRES_AT");
-        if (password == null || capability == null || expiry == null) return false;
+        if (expiry == null) return false;
         long expiresAt;
         try { expiresAt = Long.parseLong(expiry); } catch (NumberFormatException bad) { return false; }
         if (expiresAt <= Instant.now().getEpochSecond()) return false;
-        boot.state.bootstrapIngressPassword = password;
-        boot.state.bootstrapIngressGitCapability = capability;
-        boot.state.bootstrapIngressGitCapabilityHash = sha256(capability);
-        boot.state.bootstrapIngressRepository = "qits-bootstrap";
-        boot.state.bootstrapIngressRefPattern = "refs/heads/bootstrap/*";
         boot.state.bootstrapIngressExpiresAt = expiresAt;
         // A state file from a run older than the three modes records none; deciding afresh is the
         // right answer there, because the certificate volume says the same thing it said then.
@@ -223,8 +196,7 @@ public final class BootstrapIngressLifecycle {
         if (mode == null) {
             mode = decide(out);
         }
-        boot.useBootstrapMavenRepository(mavenRepositoryUrl(), password);
-        out.accept("  bootstrap edge capability retained (expires " + Instant.ofEpochSecond(expiresAt) + ")");
+        out.accept("  bootstrap edge retained (expires " + Instant.ofEpochSecond(expiresAt) + ")");
         return true;
     }
 
@@ -235,8 +207,8 @@ public final class BootstrapIngressLifecycle {
      * What it cannot decide is whether the machine can serve TLS, because
      * that is a fact about the volume — a re-bootstrap keeps the pair its last run wrote, a fresh
      * host has an empty volume, and the placeholder certificate is written forty phases below this
-     * one. Asking the volume is the only honest question, and asking it wrongly costs the boot its
-     * first seed image build.
+     * one. Asking the volume is the only honest question, and asking it wrongly is a door that
+     * does not answer.
      * <p>
      * The probe runs {@code test -f} on the two paths the ingress would be CONFIGURED with, in this
      * program's own payload image, mounting the volume read-only. Where the image cannot be
@@ -310,7 +282,7 @@ public final class BootstrapIngressLifecycle {
                 ? boot.config.requiredDomain() : boot.config.bootstrapIngressHost();
     }
 
-    /** Keep the capability on the same durable host mount as the supervisor journal. */
+    /** Keep the state file on the same durable host mount as the supervisor journal. */
     private static Path stateFile() {
         return stateFile(System.getenv("QITS_PROGRESS_FILE"));
     }
@@ -326,36 +298,12 @@ public final class BootstrapIngressLifecycle {
         return Path.of(STATE_FILE).toAbsolutePath().normalize();
     }
 
-    /**
-     * <b>Where every seed image build resolves this platform's own jars.</b> One address per mode,
-     * and it is the mode's own scheme: host-networked builds use the same door an operator does,
-     * so there is no hidden 8481 publish in either public mode.
-     * <p>
-     * Plain HTTP on the domain resolves as well as TLS does, which is what makes PUBLIC_HTTP a
-     * mode rather than a compromise: every repository's {@code .qits-maven-settings.xml} mirrors
-     * the {@code qits-maven} repository id to this url by EXACT id, and an exact-id mirror wins
-     * over Maven's {@code external:http:*} blocker.
-     */
-    String mavenRepositoryUrl() {
-        return address() + "/artifacts/maven/maven";
-    }
-
     private static boolean expired(String value, long now) {
         try {
             return Long.parseLong(value) <= now;
         } catch (NumberFormatException absentOrBad) {
             return true;
         }
-    }
-
-    private static String random() {
-        byte[] bytes = new byte[32];
-        new SecureRandom().nextBytes(bytes);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-    }
-
-    private static String sha256(String value) {
-        return BootstrapIngressHash.sha256(value);
     }
 
     private static void secure(Path file) throws IOException {

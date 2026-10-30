@@ -1112,32 +1112,6 @@ class SeedPhasesTest {
     }
 
     /**
-     * <b>The builder image is told THIS RUN's address for the tarballs.</b> The Dockerfile's own
-     * default names `registry.dev.localhost`, an edge vhost — and no edge exists at phase 37 of any
-     * boot. BuildKit resolves an ADD itself, so it cannot be handed the capability as a secret the
-     * way every RUN is: the credential goes in the url, and the public spelling is what gets
-     * printed.
-     */
-    @Test
-    void theBuilderImageFetchesTheTarballsThroughThisRunsOwnDoor() {
-        Boot boot = new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log")));
-        String path = MuslToolchain.read(MUSL_DOCKERFILE).getFirst().storePath();
-
-        // With no ingress capability yet, the configured seed repository answers as it stands.
-        assertThat(boot.seedMavenFile(path)).isEqualTo("http://localhost:8081/artifacts/maven/maven/"
-                + "eu/wohlben/qits/toolchain/x86_64-linux-musl-native/11.2.1/"
-                + "x86_64-linux-musl-native-11.2.1.tgz");
-
-        boot.useBootstrapMavenRepository("http://wohlben.dev/artifacts/maven/maven", "cap-abc");
-
-        assertThat(boot.seedMavenFile(path))
-                .isEqualTo("http://bootstrap:cap-abc@wohlben.dev/artifacts/maven/maven/" + path);
-        assertThat(boot.seedMavenFilePublic(path))
-                .isEqualTo("http://wohlben.dev/artifacts/maven/maven/" + path)
-                .doesNotContain("cap-abc");
-    }
-
-    /**
      * <b>ONE VALUE, TWO SPELLINGS, and the pair is the whole credential.</b> The {@code idp-clients}
      * phase records a secret under the APPLICATION — {@code qits-edge}, which is the key
      * qits-deployments' {@code pd_resource} registry uses — and the generated files read it under

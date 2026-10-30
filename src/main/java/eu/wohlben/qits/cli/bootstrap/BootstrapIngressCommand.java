@@ -9,7 +9,7 @@ import java.util.concurrent.Callable;
 
 /** The entrypoint run by the disposable, non-Swarm bootstrap ingress container. */
 @CommandLine.Command(name = "bootstrap-edge", mixinStandardHelpOptions = true,
-        description = "Run the temporary, capability-gated bootstrap ingress.")
+        description = "Run the temporary bootstrap ingress that serves the progress page.")
 public class BootstrapIngressCommand implements Callable<Integer> {
 
     @Override
@@ -17,11 +17,7 @@ public class BootstrapIngressCommand implements Callable<Integer> {
         BootstrapIngressServer.Settings settings = new BootstrapIngressServer.Settings(
                 requiredInt("QITS_BOOTSTRAP_INGRESS_INTERNAL_PORT"),
                 required("QITS_BOOTSTRAP_INGRESS_HOST"),
-                required("QITS_BOOTSTRAP_INGRESS_PASSWORD"),
-                required("QITS_BOOTSTRAP_INGRESS_GITHOST_CAPABILITY"),
-                URI.create(required("QITS_BOOTSTRAP_INGRESS_UI_UPSTREAM")),
-                URI.create(required("QITS_BOOTSTRAP_INGRESS_MAVEN_UPSTREAM")),
-                URI.create(required("QITS_BOOTSTRAP_INGRESS_GIT_UPSTREAM")), tls());
+                URI.create(required("QITS_BOOTSTRAP_INGRESS_UI_UPSTREAM")), tls());
         Vertx vertx = Vertx.vertx();
         BootstrapIngressServer server = new BootstrapIngressServer(vertx, settings);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {

@@ -410,9 +410,9 @@ public class UnwrapPhases {
      * <p>
      * <b>Three spellings, and a pattern is added here rather than replaced</b> — the same rule the
      * container and network sweeps follow. A machine carries images from whichever topology it was
-     * last bootstrapped on: {@code localhost:<registry port>/…} and
-     * {@code 127.0.0.1:<registry port>/…} from the days the store published a host port, and
-     * {@code registry.<env>.localhost:<port>/…} since unify-ingress put it behind the edge. The
+     * last bootstrapped on: {@code localhost:8081/…} and {@code 127.0.0.1:8081/…} from the days
+     * the store published a host port, and {@code registry.<env>.localhost:<port>/…} since
+     * unify-ingress put it behind the edge. The
      * vhost test is deliberately not tied to THIS run's environment name or port: unwrap cleans a
      * machine, and the machine may carry tiers this run has never heard of.
      * <p>
@@ -424,13 +424,11 @@ public class UnwrapPhases {
      */
     private Phase images() {
         return new Phase("images", "remove the platform's images", ctx -> {
-            String registryHost = "localhost:" + boot.config.registryPort() + "/";
             List<String> refs = new ArrayList<>();
             for (String line : boot.docker.run(Cmd.of(
                     "docker", "images", "--format", "{{.Repository}}:{{.Tag}}"), null).captured()) {
                 String ref = line.trim();
-                if (ref.startsWith("qits/") || ref.startsWith(registryHost)
-                        || ref.startsWith("127.0.0.1:" + boot.config.registryPort() + "/")
+                if (ref.startsWith("qits/") || isLegacyRegistryPortRef(ref)
                         || isRegistryVhostRef(ref)) {
                     refs.add(ref);
                 }
@@ -442,6 +440,19 @@ public class UnwrapPhases {
             remove(ctx, refs, "rmi", "-f");
             ctx.note(done(refs.size()));
         });
+    }
+
+    /**
+     * The registry's old host port, as a literal. Nothing publishes it and no knob names it any
+     * more, so the sweep matches the number the store published by default: a machine carrying
+     * images from a run that moved it is rare enough to clean by hand.
+     */
+    static final String LEGACY_REGISTRY_PORT = "8081";
+
+    /** {@code localhost:8081/…} or {@code 127.0.0.1:8081/…}: see {@link #images()}. */
+    static boolean isLegacyRegistryPortRef(String ref) {
+        return ref.startsWith("localhost:" + LEGACY_REGISTRY_PORT + "/")
+                || ref.startsWith("127.0.0.1:" + LEGACY_REGISTRY_PORT + "/");
     }
 
     /**

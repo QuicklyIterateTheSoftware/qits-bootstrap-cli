@@ -59,12 +59,12 @@ public final class BootstrapPlan {
             // state, so artifacts is brought up alone and the dependencies are published before
             // the CI image builds.
             // The edge is in the first half because it needs nothing from the platform: it has no
-            // client to place a bundle for and no qits dependency to resolve, so its image builds
-            // from Maven Central alone and is the platform's direct ingress.
+            // client to place a bundle for, and the qits jars it resolves are in the file repository
+            // maven-seed has just filled, so it is the platform's direct ingress.
             phases.add(seed.seedImage("edge"));
             // THE BYTE PLANE'S THREE, together and here rather than after the publishes below: all
             // three are built out of qits-blobstore and qits-registries, which the maven-seed phase
-            // put in the temporary registry before the first image was built. There is nothing they
+            // put in the file repository before the first image was built. There is nothing they
             // could wait for — the real store does not exist until one of them is running.
             phases.add(seed.seedImage("mirror"));
             phases.add(seed.seedImage("artifacts"));
@@ -254,8 +254,8 @@ public final class BootstrapPlan {
         // door answers 202 and deploys nothing.
         phases.add(pipeline.environment());
         // STEP TWO OF FOUR: THE PLATFORM, UP AS IT RUNS IN STEADY STATE, BEFORE ANYTHING IS BUILT.
-        // Step one is everything above — the local builds, with the bootstrap ingress serving the
-        // temporary registry, git and the progress page. Here the deployer puts each seed image
+        // Step one is everything above — the local builds, out of the qits-maven-seed volume, with
+        // the bootstrap ingress serving the progress page. Here the deployer puts each seed image
         // live at its real release tag through its manual door, and the edge's deployment, last,
         // retires the ingress. The deployer itself is not among them: its self-update stays last
         // of the train, after the configuration flip.
