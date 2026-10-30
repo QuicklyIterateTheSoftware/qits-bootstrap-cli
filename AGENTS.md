@@ -48,7 +48,8 @@ forced. Add to that list rather than deviating quietly.
 - **Bootstrap progress is a public, narrow status surface.** The payload publishes `0.0.0.0:8480`
   by default and only `GET /`, `GET /state.json`, and `GET /events` may answer without credentials.
   Keep its state/event text redacted. Do not turn it into a loopback-only default or a general
-  proxy. Git remains the separate Basic/capability-gated bootstrap ingress.
+  proxy. The bootstrap ingress serves those three routes and nothing else: it holds no credential,
+  no build resolves through it and no phase pushes through it.
 
 - **Plain Language everywhere** — code comments, commit messages, documentation, and every string
   the display prints. Say only what the reader needs, in as few words as possible.
@@ -96,11 +97,9 @@ forced. Add to that list rather than deviating quietly.
   Distribution spec's Bearer dance (a 401 naming a realm, HTTP Basic to it, Bearer back); maven,
   npm and git send Basic and nothing else, and the edge validates it against the same issuer. What
   a machine presents is its own service client; what a PERSON presents is COMMISSIONED from the
-  idp per workstation, and the closing report prints the one-liner that asks for one. The 8081/8082 knobs
-  are SEED-ONLY now: a container the CLI starts for the daemon's benefit needs both a publish and a
-  network alias, the temporary Maven registry and the two seed byte services are exactly that case,
-  and all of them are gone by the first cutover. No deployed service of the byte plane publishes
-  anything.
+  idp per workstation, and the closing report prints the one-liner that asks for one. Neither the
+  seed nor a deployed service of the byte plane publishes a port, so there is no registry or mirror
+  port knob: a seed build reaches nothing of the platform over the network at all.
   **One service is dialled at its own alias rather than through the edge**, and it is not an
   inconsistency to tidy away — it is deliberately off the gateway's route table.
   `<env>-qits-containers:8080/containers` is the container orchestrator's, and it must stay unrouted:
@@ -151,28 +150,58 @@ forced. Add to that list rather than deviating quietly.
   driver-opts carried, and the named volume `qits-buildkitd-state` — and the teardown phase leaves
   it standing, because from its first deployment on it is **qits-containers'** container at the
   same name, image and cache volume. The bootstrap only makes it first: it has to build the seed
-  images before there is a platform to make it. Host network is two requirements at once — an `ADD`
-  and the seed maven url are resolved BY the builder, and the client dials the same loopback — and
-  it binds `0.0.0.0:1234` so the same container keeps working once qits-containers moves it onto
+  images before there is a platform to make it. Host network is how the client dials the daemon on
+  the loopback and how a build's `RUN` reaches the internet (upstream bases, Maven Central) — and it
+  binds `0.0.0.0:1234` so the same container keeps working once qits-containers moves it onto
   `qits-net`. Three things follow and none of them may be quietly undone: the host has no
   `buildctl`, so the client is `docker run --rm --entrypoint buildctl` of the SAME image;
   `--output type=docker,dest=…` plus `docker load` is what replaces buildx's `--load`, which is why
   every `docker tag`, `docker create` and `stack deploy --resolve-image never` after a build is
   untouched; and a build's scratch directories sit under `QITS_SRC` rather than `/tmp`, because
   those `-v` paths are the one place in the `Docker` facade a path is resolved by the DAEMON and
-  not by the client. A build secret is a FILE (`--secret id=…,src=/secrets/<id>`, 0600, mounted
-  read-only): the client is a container and inherits none of this process's environment, so the
-  `env=` form cannot work. The old `qits-bootstrap-builder*` buildx builders are swept and nothing
+  not by the client. A named context is a docker VOLUME for the same reason
+  (`-v <volume>:/named/<name>:ro`, `--local <name>=/named/<name>`,
+  `--opt context:<name>=local:<name>`). No build carries a secret or a build argument the caller did
+  not name. The old `qits-bootstrap-builder*` buildx builders are swept and nothing
   creates one again.
-- **A seed build resolves the platform's own jars from the SEED registry, and is TOLD so.** Every
-  image this run builds — the seed images, the step images, the ci-daemon's musl builder — carries
-  `--opt build-arg:QITS_MAVEN_REPOSITORY_URL=http://localhost:<registry port>/artifacts/maven/maven`,
-  set once on the `Docker` facade (`Boot.imageBuildArgs`) rather than at each call site. The
-  repositories' own `ARG` default names the edge vhost, which is the address of a platform that is
-  already up; a seed build runs before any edge exists. The default WAS this same loopback url
-  until the vhost sweep, so the bootstrap passed nothing for months and then died at the
-  qits-platform-mirror seed build with a connection refused. A build argument an image has no
-  `ARG` for is a warning, which is why every build gets it rather than a chosen list.
+- **A seed build resolves the platform's own jars from the `qits-maven-seed` VOLUME, and from no
+  server.** That volume is a file-layout Maven repository: `maven-seed` deploys every seed library
+  into it with `mvn deploy … file:///repo`, `seed-golden-masters`/`seed-pacts` pack the contract
+  jars into it, the protocol and runner seeds deploy into it, and `seed-toolchain` puts the musl
+  tarballs in it; after the idp, `store-seed` uploads its `eu/wohlben/qits` subtree into the store.
+  The phase-1 maven containers that resolve qits jars (runner, protocols, the system-runner's native
+  build) read them from the same volume through a settings `<mirror>` of `qits-maven` to
+  `file:///repo`, and Maven Central direct for the rest — no mirror runs. The buildctl client mounts
+  it read-only as the named context `qits-m2` for every seed service image and the ci-daemon's musl
+  builder. The committed Dockerfiles cannot know that: each service's build `RUN` derives
+  `https://registry.qits.$QITS_DOMAIN/artifacts/maven/maven` and
+  `https://mirror.qits.$QITS_DOMAIN/mirror/maven/central` from `ARG QITS_DOMAIN=wohlben.eu`, which
+  during a bootstrap is the LIVE platform, and the musl builder `ADD`s `$MUSL_URL`/`$ZLIB_URL` from
+  the same registry. So `SeedDockerfile.localMaven` bind-mounts the volume into that `RUN`
+  (`--mount=type=bind,from=qits-m2,target=/qits-m2`) and replaces the two urls with
+  `file:///qits-m2` and `https://repo.maven.apache.org/maven2`, and `SeedDockerfile.localToolchain`
+  turns each `ADD $<NAME>_URL <dest>` into `COPY --from=qits-m2 /<maven path> <dest>`. **Both
+  refuse rather than guess**: a Dockerfile with no line they match, or with `registry.qits.` or
+  `mirror.qits.` left in a `RUN` or `ADD` afterwards, stops the phase naming the file and the line.
+  Teach the rewrite the new shape; never let a seed build fall back to a server. A seed build
+  passes no `qits-client-*` secret: the Dockerfiles' secret mounts then mount nothing, their
+  `|| true` reads an empty credential, and a file repository asks for none.
+- **Everything a seed service's poms pin is PRODUCED into that volume before its image, and the
+  image's preflight proves it** (qits-889). `-DskipTests` resolves test scope, so that is more than
+  the libraries: `seed-golden-masters` and `seed-pacts` (before `maven-seed`, no server, no
+  network) pack every golden-masters and pact coordinate the seed builds pin from the PUBLISHING
+  repository's release — the provider's for golden masters, the consumer's for pacts, because the
+  platform publishes a contract under that repository's `$QITS_VERSION`, its release tag — by
+  `git archive` of the tag, or of its `release(<version>):` commit where the tag is gone (four pact
+  pins on 2026-10-30), in `ContractPackager`'s layout. `maven-seed` resolves what it did not build
+  from the volume too (`-Dqits.maven.repository.url=file:///repo`). Compile-scoped jars of another
+  repository's release go through `protocolSeed` (ci-daemon, system-runner, projects-daemon and
+  workspace-daemon protocols, and `qits-platform-access-cli-binary`). Three pact consumers and the
+  binary's producer are no pipeline repositories — `PlatformModel.READ_ONLY_REPOS` is cloned and
+  nothing else. Then `seedImage` reads the checkout's poms with `MavenPins` and asks the volume for
+  every coordinate in ONE container, failing with the whole list. A new pin a seed image takes is
+  therefore a preflight failure naming it: teach a phase to PRODUCE it — never let the build reach
+  for a server, and never widen the preflight's skip list to get past it.
 - **The seed is a docker STACK, and four compose words do not survive the move.** The generated
   file carries no root `name:` and no `group_add:` — either one makes `docker stack deploy` refuse
   it outright, measured — no `container_name:` (ignored; a task's container is
@@ -191,8 +220,8 @@ forced. Add to that list rather than deviating quietly.
   leaves a deployer-managed application out of the FILE (a stack deploy takes no service list) and
   removes any seed service of it outright.
 - **A cold boot is FOUR STEPS, in the owner's order, and `BootstrapPlan` is built around them.**
-  (1) Build locally everything the platform needs, with the temporary bootstrap ingress serving the
-  seed Maven repository, git and the progress page the whole time. (2) Bring the platform up as it
+  (1) Build locally everything the platform needs, out of the `qits-maven-seed` volume and upstream
+  sources only, with the temporary bootstrap ingress serving the progress page the whole time. (2) Bring the platform up as it
   runs in steady state: `seed-images-publish` puts each `PlatformModel.SEED_DEPLOYED` application's
   seed build in the store as `qits/<application>:<real release tag>`, and `seed-deploy-*` hands the
   deployer that version at its manual door — the edge last, whose phase retires the ingress. (3)
@@ -337,10 +366,11 @@ forced. Add to that list rather than deviating quietly.
   in scope, so the qits-cd labels and the pre-rename name prefixes stay beside the current ones.
   Adding a pattern is how this changes; removing one is not.
 - **A volume is data, config or CACHE, and the three sweeps differ.** `--with-data-volumes` is a
-  cold boot of this platform's state, so it takes `qits-*-data` and `qits-maven-seed` and keeps
+  cold boot of this platform's state, so it takes `qits-*-data` and `qits-maven-seed` (the run's
+  file repository of seed-built qits jars and the musl tarballs) and keeps
   `qits-*-config` and `qits-maven-cache`; `--with-volumes` takes every `qits-*` volume. The cache
   holds third-party jars the bootstrap's own maven containers pulled from Maven Central — one
-  `/cache` mount named by `-Dmaven.repo.local`, shared by the seed, every publish and the
+  `/cache` mount named by `-Dmaven.repo.local`, shared by the seed, every phase-1 build and the
   ci-daemon build — and re-fetching that world on each re-bootstrap is what throttled this host on
   2026-08-11. **Every one of those scripts deletes `eu/wohlben/qits` out of the cache first**: a
   third-party jar is immutable at its version and a seed-built qits jar is not, because seed
@@ -450,20 +480,25 @@ forced. Add to that list rather than deviating quietly.
   only role that opens it. The bootstrap publishes before any CI exists, so it commissions ITSELF
   one: `POST /idp/api/clients` with `contextKind: bootstrap-publish` and `gitRefs: []` — the idp's
   `CommissionRoles` gives that kind `qits:ci-run`, and the empty list says it may push nothing.
-  Every publish into the store carries it: the maven ones through a `<server><id>qits</id>` with an
-  `Authorization` header (Maven does NOT authenticate preemptively, so a username/password pair
-  would never be sent at all), the npm ones as `_authToken`, which npm sends as a bearer, and the
-  daemon binary on its PUT. The id `qits` is not free to choose: it is what
-  `-DaltDeploymentRepository=qits::default::…` names, and any other spelling is a credential Maven
-  holds and never sends. **The lifetime is this program's to keep and nothing else's**: the
+  **Phase 1 publishes NOTHING, and no phase before `seed-idp` talks to a store or a mirror**
+  (qits-889): every seed build resolves the platform's jars from the `qits-maven-seed` file
+  repository and the rest from upstream, and no `seed-artifacts`/`seed-mirror` is started by hand.
+  The store is filled ONCE, by `store-seed` — after `register-token`, before `images-publish` —
+  which uploads the volume's whole `eu/wohlben/qits` subtree in one container, a `curl -T` PUT per
+  file with the bearer on every request (preemptively: the maven surface answers an uncredentialed
+  PUT with a plain 401 and no challenge). It HEADs each file first and leaves what the store holds
+  alone, because a release path is immutable and a rebuilt seed jar's bytes differ (403). Then the
+  image pushes, through docker's token dance with the pair, and the daemon binary on its PUT.
+  **`Boot.publishAuthorization` never answers null**: no idp, no recorded bootstrap secret, or a
+  refused commission fails the phase; with the machine gate OFF the credential is still
+  commissioned and presented — the store ignores it, and no branch of this program knows how to
+  publish bare. **The lifetime is this program's to keep and nothing else's**: the
   `publish-credential-release` phase hands it back the moment the daemon binary is up — the last
   publish of the boot — and `Boot.runPhases` hands it back in a `finally` as well, because a
   publish that FAILED ends the run before that phase and is exactly when one would be left standing.
   READS at the store are gated too and carry the run's OWN machine token instead, because they go
   on long after the publishing credential is gone; `health` is the one call that stays bare, since
-  every wait polls it before any idp exists. Where there is no idp yet — every phase of a cold boot
-  before `seed-idp` — there is nothing to present and the publishes go bare into the seed store
-  this run started without a gate, which is the exception the ruling left standing.
+  every wait polls it before any idp exists.
 - **`QITS_ENVIRONMENT` is a statement of tier membership, and a platform service is handed none.**
   The deployer records a resource row per application under that environment, `orElse(null)`, and
   looks a platform-target service's rows up by the null key. Tell a platform service it has a tier

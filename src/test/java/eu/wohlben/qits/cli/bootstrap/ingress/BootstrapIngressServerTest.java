@@ -10,15 +10,13 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Real HTTP proxy checks: the bootstrap view streams and Git is rewritten to the seed-only route. */
+/** Real HTTP proxy checks: the bootstrap view streams, and nothing else is proxied. */
 class BootstrapIngressServerTest {
 
     private final Vertx vertx = Vertx.vertx();
@@ -33,80 +31,52 @@ class BootstrapIngressServerTest {
     }
 
     @Test
-    void streamsTheUiAndTranslatesCloneAndPushWithoutForwardingBasic() throws Exception {
+    void streamsTheUiWithoutForwardingAnAuthorizationHeader() throws Exception {
         int uiPort = port();
-        int mavenPort = port();
-        int gitPort = port();
         int edgePort = port();
+        List<String> seen = new ArrayList<>();
         HttpServer ui = vertx.createHttpServer().requestHandler(request -> {
+            seen.add(request.path() + " " + request.getHeader("Authorization"));
             request.response().setChunked(true).putHeader("Content-Type", "text/event-stream");
             request.response().write("event: live\ndata: one\n\n");
             request.response().end();
         });
         listen(ui, uiPort);
-        HttpServer maven = vertx.createHttpServer().requestHandler(request -> {
-            assertThat(request.getHeader("Authorization")).isNull();
-            request.response().end("jar");
-        });
-        listen(maven, mavenPort);
-        HttpServer git = vertx.createHttpServer().requestHandler(request -> {
-            assertThat(request.path()).isEqualTo("/bootstrap-git/qits-bootstrap/" + suffix(request.path()));
-            assertThat(request.getHeader("X-Qits-Bootstrap-Git-Capability")).isEqualTo("internal-capability");
-            assertThat(request.getHeader("Authorization")).isNull();
-            request.bodyHandler(body -> request.response().end(request.method().name() + ":" + body));
-        });
-        listen(git, gitPort);
         ingress = new BootstrapIngressServer(vertx, new BootstrapIngressServer.Settings(edgePort,
-                "127.0.0.1", password(), "internal-capability", URI.create("http://127.0.0.1:" + uiPort),
-                URI.create("http://127.0.0.1:" + mavenPort),
-                URI.create("http://127.0.0.1:" + gitPort), null));
+                "127.0.0.1", URI.create("http://127.0.0.1:" + uiPort)));
         ingress.start().toCompletionStage().toCompletableFuture().join();
 
-        HttpResponse<String> sse = send(edgePort, "GET", "/events", "");
+        HttpResponse<String> sse = send(edgePort, "GET", "/events", "Basic anything");
         assertThat(sse.statusCode()).isEqualTo(200);
         assertThat(sse.headers().firstValue("Content-Type")).contains("text/event-stream");
         assertThat(sse.body()).contains("event: live");
 
-        HttpResponse<String> publicState = send(edgePort, "GET", "/state.json", "", null);
-        assertThat(publicState.statusCode()).isEqualTo(200);
-
-        HttpResponse<String> artifact = send(edgePort, "GET",
-                "/artifacts/maven/maven/eu/wohlben/qits/example/1/example-1.pom", "");
-        assertThat(artifact.statusCode()).isEqualTo(200);
-        assertThat(artifact.body()).isEqualTo("jar");
-
-        HttpResponse<String> clone = send(edgePort, "GET", "/git/qits-bootstrap/info/refs?service=git-upload-pack", "");
-        assertThat(clone.statusCode()).isEqualTo(200);
-        assertThat(clone.body()).isEqualTo("GET:");
-
-        HttpResponse<String> push = send(edgePort, "POST", "/git/qits-bootstrap/git-receive-pack", "pack");
-        assertThat(push.statusCode()).isEqualTo(200);
-        assertThat(push.body()).isEqualTo("POST:pack");
+        assertThat(send(edgePort, "GET", "/state.json", null).statusCode()).isEqualTo(200);
+        assertThat(seen).containsExactly("/events null", "/state.json null");
     }
 
+    /** The retired maven and git routes answer 403 and reach no upstream at all. */
     @Test
-    void rejectsWrongHostCredentialsAndUnsafeRoutesBeforeAnyUpstreamIsContacted() throws Exception {
+    void rejectsEveryOtherRouteBeforeAnyUpstreamIsContacted() throws Exception {
         int edgePort = port();
         ingress = new BootstrapIngressServer(vertx, new BootstrapIngressServer.Settings(edgePort,
-                "127.0.0.1", password(), "internal-capability", URI.create("http://127.0.0.1:9"),
-                URI.create("http://127.0.0.1:9")));
+                "127.0.0.1", URI.create("http://127.0.0.1:9")));
         ingress.start().toCompletionStage().toCompletableFuture().join();
-        assertThat(send(edgePort, "GET", "/git/qits-bootstrap/info/refs", "", "Basic bad").statusCode())
-                .isEqualTo(401);
-        assertThat(send(edgePort, "GET", "/", "", null).statusCode()).isEqualTo(503); // public, bad fixed upstream
-        assertThat(send(edgePort, "GET", "/idp/token", "", basic()).statusCode()).isEqualTo(403);
+        assertThat(send(edgePort, "GET", "/", null).statusCode()).isEqualTo(503); // bad fixed upstream
+        assertThat(send(edgePort, "GET", "/idp/token", null).statusCode()).isEqualTo(403);
+        assertThat(send(edgePort, "GET",
+                "/artifacts/maven/maven/eu/wohlben/qits/example/1/example-1.pom", null)
+                .statusCode()).isEqualTo(403);
+        assertThat(send(edgePort, "GET", "/git/qits-bootstrap/info/refs", null).statusCode())
+                .isEqualTo(403);
     }
 
-    private HttpResponse<String> send(int port, String method, String path, String body) throws Exception {
-        return send(port, method, path, body, basic());
-    }
-
-    private HttpResponse<String> send(int port, String method, String path, String body, String authorization)
+    private HttpResponse<String> send(int port, String method, String path, String authorization)
             throws Exception {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + path))
                 .timeout(Duration.ofSeconds(5));
         if (authorization != null) request.header("Authorization", authorization);
-        HttpRequest built = request.method(method, HttpRequest.BodyPublishers.ofString(body)).build();
+        HttpRequest built = request.method(method, HttpRequest.BodyPublishers.noBody()).build();
         return HttpClient.newHttpClient().send(built, HttpResponse.BodyHandlers.ofString());
     }
 
@@ -117,16 +87,5 @@ class BootstrapIngressServerTest {
 
     private static int port() throws Exception {
         try (ServerSocket socket = new ServerSocket(0)) { return socket.getLocalPort(); }
-    }
-
-    private static String password() { return "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG"; }
-
-    private static String basic() {
-        return "Basic " + Base64.getEncoder().encodeToString(
-                ("bootstrap:" + password()).getBytes(StandardCharsets.UTF_8));
-    }
-
-    private static String suffix(String path) {
-        return path.substring("/bootstrap-git/qits-bootstrap/".length());
     }
 }

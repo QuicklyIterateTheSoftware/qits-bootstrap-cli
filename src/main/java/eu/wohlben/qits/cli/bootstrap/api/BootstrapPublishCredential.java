@@ -8,8 +8,9 @@ import java.util.Map;
  * <p>
  * Publishing to qits-artifacts is CI's door alone (user ruling 2026-09-13, "only CI may publish"),
  * so the store's anonymous publishing door is closed and {@code qits:ci-run} is the only role that
- * opens it. This run still has to publish once — the ci-daemon binary, the seed libraries, the two
- * npm packages — before there is any CI to do it for it. So it commissions ITSELF a credential of
+ * opens it. This run still has to publish once — the file repository's qits artifacts
+ * ({@code store-seed}), the step, runner and seed images, the ci-daemon binary — before there is
+ * any CI to do it for it. So it commissions ITSELF a credential of
  * kind {@code bootstrap-publish}, which the idp's own code map gives {@code qits:ci-run} and which
  * is commissioned with {@code gitRefs: []}: it may publish, and it may push nothing.
  * <p>

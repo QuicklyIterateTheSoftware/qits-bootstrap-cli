@@ -43,11 +43,8 @@ class BootstrapConfigTest {
         BootstrapConfig config = from(Map.of());
 
         assertThat(config.port()).isEqualTo(8080);
-        assertThat(config.registryPort()).isEqualTo(8081);
-        // The other two byte doors. 8082 is the pull-through mirror — dockerd's registry-mirrors
-        // names it, and every committed Dockerfile spells it in its FROM lines. 8083 is the git
-        // host, which needs a door of its own since it stopped riding the registry's.
-        assertThat(config.mirrorPort()).isEqualTo(8082);
+        // 8083 is the git host's old door, kept as the number to reopen by hand. The registry's
+        // and the mirror's (8081, 8082) are no knobs at all: nothing of a boot publishes them.
         assertThat(config.gitHostPort()).isEqualTo(8083);
         // NO POSTGRES PORT KNOB. The platform's postgres publishes nothing: every consumer dials
         // the wire alias on 5432, this CLI included.
@@ -88,8 +85,6 @@ class BootstrapConfigTest {
     void everyKnobIsSetByItsEnvironmentName() {
         Map<String, String> env = new LinkedHashMap<>();
         env.put("QITS_PORT", "9090");
-        env.put("QITS_REGISTRY_PORT", "9091");
-        env.put("QITS_MIRROR_PORT", "9092");
         env.put("QITS_GIT_HOST_PORT", "9093");
         env.put("QITS_DOMAIN", "qits-dev.eu");
         env.put("QITS_PUBLIC_IP", "203.0.113.7");
@@ -108,8 +103,6 @@ class BootstrapConfigTest {
         BootstrapConfig config = from(env);
 
         assertThat(config.port()).isEqualTo(9090);
-        assertThat(config.registryPort()).isEqualTo(9091);
-        assertThat(config.mirrorPort()).isEqualTo(9092);
         assertThat(config.gitHostPort()).isEqualTo(9093);
         assertThat(config.domain()).contains("qits-dev.eu");
         assertThat(config.publicIp()).contains("203.0.113.7");
@@ -134,7 +127,7 @@ class BootstrapConfigTest {
      */
     @Test
     void theDerivedAddressesAreWireAliasesWhateverThePortsAre() {
-        BootstrapConfig config = from(Map.of("QITS_PORT", "9090", "QITS_REGISTRY_PORT", "9091",
+        BootstrapConfig config = from(Map.of("QITS_PORT", "9090", "QITS_GIT_HOST_PORT", "9093",
                 "QITS_ENV_NAME", "preprod"));
 
         // THE BYTE PLANE'S THREE ADDRESSES, and all three carry the environment name now. The store

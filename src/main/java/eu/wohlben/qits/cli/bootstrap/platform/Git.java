@@ -216,6 +216,67 @@ public class Git {
     }
 
     /**
+     * <b>The commit a release VERSION was cut from: its tag, or — when the tag is gone — the
+     * {@code release(<version>): …} commit the release wrote.</b> A contract package is published
+     * under the consumer's {@code $QITS_VERSION}, which is a tag name, so the tag is the answer
+     * nearly always. Not always: measured on 2026-10-30, four pinned pact versions name no tag in
+     * their consumer's repository, local or remote (qits-projects-service 2026.1028.12758 among
+     * them), while the release commit is on main with the pact in it. The release commit is the
+     * one the tag would have named — every surviving tag points at its {@code release(<tag>):}
+     * commit — so it is the same bytes, found offline. Null when neither exists.
+     */
+    public String releaseRef(Path repo, String version) {
+        if (in(repo, null, "rev-parse", "-q", "--verify", "refs/tags/" + version + "^{commit}")
+                .ok()) {
+            return version;
+        }
+        ProcessResult log = in(repo, null, releaseCommitSearch(version).toArray(String[]::new));
+        if (!log.ok()) {
+            return null;
+        }
+        return releaseCommitIn(log.captured(), version);
+    }
+
+    /** The {@code git log} arguments {@link #releaseRef} searches with, after {@code -C <repo>}. */
+    static List<String> releaseCommitSearch(String version) {
+        return List.of("log", "--all", "--format=%H %s", "--fixed-strings",
+                "--grep=release(" + version + "):");
+    }
+
+    /**
+     * The first {@code <sha> <subject>} line whose subject BEGINS with {@code release(<version>):}
+     * — the grep matches the text anywhere in the message, and a bump that quotes a release in its
+     * body is not that release.
+     */
+    static String releaseCommitIn(List<String> lines, String version) {
+        String subject = "release(" + version + "):";
+        for (String line : lines) {
+            String[] parts = line.strip().split(" ", 2);
+            if (parts.length == 2 && parts[1].startsWith(subject)) {
+                return parts[0];
+            }
+        }
+        return null;
+    }
+
+    /**
+     * {@code git archive} of one directory at one ref into a tar file — the bytes of a tree at a
+     * commit, with no worktree and no checkout. A contract jar is packed from one directory of a
+     * tag ({@code golden-masters/}, {@code pacts/}), so a worktree of the whole repository per pin
+     * would be a full checkout for a few JSON files.
+     */
+    public ProcessResult archive(Path repo, String ref, String directory, Path into,
+                                 Consumer<String> out) {
+        return runner.run(Cmd.of(archiveCommand(repo, ref, directory, into))
+                .timeout(Duration.ofMinutes(10)), out);
+    }
+
+    static List<String> archiveCommand(Path repo, String ref, String directory, Path into) {
+        return List.of("git", "-C", repo.toString(), "archive", "--format=tar",
+                "-o", into.toString(), ref, "--", directory);
+    }
+
+    /**
      * The COMMIT a ref names, peeled. An annotated tag's ref names a tag object, and a branch has
      * to point at a commit — {@code rev-list -n 1} answers the commit for either shape.
      */

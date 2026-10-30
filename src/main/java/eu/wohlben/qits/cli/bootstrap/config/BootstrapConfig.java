@@ -14,8 +14,8 @@ import java.util.Optional;
  * <p>
  * Quarkus reads a {@code .env} file in the working directory as an environment source, so every
  * name below is set the way the script's was: {@code QITS_PORT=8080} in {@code .env} or in the
- * real environment. Both spellings reach the same property — {@code qits.registry-port} is
- * {@code QITS_REGISTRY_PORT}.
+ * real environment. Both spellings reach the same property — {@code qits.git-host-port} is
+ * {@code QITS_GIT_HOST_PORT}.
  */
 @ConfigMapping(prefix = "qits")
 public interface BootstrapConfig {
@@ -54,35 +54,6 @@ public interface BootstrapConfig {
      */
     @WithDefault("8080")
     int port();
-
-    /**
-     * <b>A SEED-ONLY port now, and the break-glass' default.</b> The temporary Maven registry of
-     * the {@code maven-seed} phase and the seed qits-artifacts container publish it on 127.0.0.1
-     * for one consumer: the seed image builds, which run {@code --network host} before any edge
-     * exists. Both containers are gone by the first cutover and nothing has to close the port.
-     * <p>
-     * <b>The PLATFORM publishes nothing here.</b> The deployed store is reached at
-     * {@link #registryVhost()} through the edge — one door, method-scoped authentication — and the
-     * only thing that binds this port on a running platform is the wrapper's
-     * {@code qits-registry-break-glass.sh}, which opens it while a wedged edge is repaired and
-     * closes it after.
-     * <p>
-     * This CLI reads the registry API by wire alias, not through here.
-     */
-    @WithDefault("8081")
-    int registryPort();
-
-    /**
-     * The same seed-only story for qits-platform-mirror, which caches everything third-party a
-     * build resolves: Docker Hub, quay.io, the Red Hat registry, npmjs and Maven Central.
-     * <p>
-     * The seed container publishes it on 127.0.0.1 so the seed image builds resolve their base
-     * layers and their Maven plugins before an edge exists. The deployed mirror publishes nothing:
-     * the host reaches it at {@link #mirrorVhost()}, which is also what every committed Dockerfile
-     * spells in its {@code FROM} lines and what dockerd's {@code registry-mirrors} names.
-     */
-    @WithDefault("8082")
-    int mirrorPort();
 
     /**
      * qits-githost's old host port. <b>Nothing publishes it any more</b> — neither the seed, which
@@ -397,7 +368,7 @@ public interface BootstrapConfig {
 
     /**
      * The browser view's port. Away from 8080, which is the edge and the whole platform's door,
-     * and away from 8081 to 8083, which the seed containers and the break-glass still use.
+     * and away from 8081 to 8083, which the wrapper's break-glass scripts open by hand.
      */
     @WithDefault("8480")
     int webPort();
@@ -445,7 +416,7 @@ public interface BootstrapConfig {
     @WithDefault("localhost")
     String bootstrapIngressHost();
 
-    /** A stale ingress cannot remain a useful capability after this run has gone away. */
+    /** How long a retained ingress counts as this run's; an expired one is swept by the next. */
     @WithDefault("8h")
     Duration bootstrapIngressTtl();
 
@@ -808,28 +779,5 @@ public interface BootstrapConfig {
      */
     default String browserSsoCookieDomain() {
         return domainAuthority();
-    }
-
-    /**
-     * <b>Where an image built by THIS BOOTSTRAP resolves {@code eu.wohlben.qits} from, and it is the
-     * seed's loopback port on purpose.</b>
-     * <p>
-     * Every seed build runs {@code --network host} against the HOST's daemon, minutes before any
-     * edge exists — the whole point of the seed is that the platform is not up yet — so the only
-     * server that can answer is the one this run publishes on 127.0.0.1: the temporary Maven
-     * registry of {@code maven-seed}, then the seed qits-artifacts that replaces it on the same
-     * port.
-     * <p>
-     * <b>A seed build must never ride a committed Dockerfile's default</b>, which is what made this
-     * a knob at all. The repositories declare
-     * {@code ARG QITS_MAVEN_REPOSITORY_URL} and their {@code .qits-maven-settings.xml} reads it, and
-     * that default now names the edge vhost — the address of a platform that is RUNNING. It happened
-     * to be this same loopback url until the unify-ingress sweep, so the bootstrap passed nothing and
-     * nobody noticed the free ride; the first boot after the sweep died at the qits-platform-mirror
-     * seed build with connection refused on the vhost. The build-arg is the lever, so this run
-     * always pulls it.
-     */
-    default String seedMavenRepositoryUrl() {
-        return "http://localhost:" + registryPort() + "/artifacts/maven/maven";
     }
 }

@@ -44,8 +44,6 @@ class ComposeTemplateTest {
         values.putAll(PlatformModel.modelTokens(ENV));
         values.put("COMPOSE_FILE", "docker-compose.qits.yml");
         values.put("PORT", "8080");
-        values.put("REGISTRY_PORT", "8081");
-        values.put("MIRROR_PORT", "8082");
         values.put("GIT_HOST_PORT", "8083");
         values.put("PG_PORT", "5433");
         values.put("PG_SUPERUSER_PASSWORD", "0123456789abcdef");
@@ -244,7 +242,8 @@ class ComposeTemplateTest {
                 .doesNotContain("${PG_PROJECTS_EVENTSTREAM_PASSWORD}")
                 .doesNotContain("${PG_CONTAINERS_PASSWORD}")
                 .doesNotContain("${PG_CONTAINERS_EVENTSTREAM_PASSWORD}");
-        assertThat(compose).doesNotContain("${MIRROR_PORT}").doesNotContain("${GIT_HOST_PORT}");
+        assertThat(compose).doesNotContain("${REGISTRY_PORT}").doesNotContain("${MIRROR_PORT}")
+                .doesNotContain("${GIT_HOST_PORT}");
         // The domain fragments are filled: a leftover placeholder would reach the file as literal
         // text and compose would refuse it.
         assertThat(compose).doesNotContain("${LETSENCRYPT_VOLUME}")

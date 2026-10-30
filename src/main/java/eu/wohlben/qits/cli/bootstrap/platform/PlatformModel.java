@@ -329,7 +329,7 @@ public final class PlatformModel {
      * <b>qits-runner-javalib joined on 2026-10-23 (qits-1547), as a library no release replays.</b>
      * qits-system and its runner compile against qits-runner-protocol and qits-runner-toolkit, and
      * nothing on a cold platform publishes them — so the boot clones it, and
-     * {@code SeedPhases.runnerPublish} builds the versions the two pin from their tags. Model name
+     * {@code SeedPhases.runnerSeed} builds the versions the two pin from their tags. Model name
      * {@code runner}, after the {@code qits.runner.version} property both pin it by.
      * <p>
      * <b>qits-system-runner-daemon joined on 2026-10-23 (qits-1535), on the same terms.</b> The
@@ -477,6 +477,52 @@ public final class PlatformModel {
         List<String> all = new ArrayList<>(DEPLOYABLES);
         all.addAll(SEEDED_REPOS);
         return List.copyOf(all);
+    }
+
+    /**
+     * <b>The repositories this run READS and never hosts, deploys or replays</b> — cloned by the
+     * {@code sources} phase beside {@link #platformRepos} and named nowhere else.
+     * <p>
+     * They exist because a seed image build resolves every qits coordinate its poms pin, test
+     * scope included, out of the run's own file repository (qits-889), and three of those
+     * coordinates are cut from repositories that are no part of the platform's pipeline:
+     * <ul>
+     *   <li>{@code qits-bootstrap-cli} and {@code qits-landing-app} are pact CONSUMERS — nine seed
+     *       services pin {@code qits-bootstrap-cli-pacts-<provider>}, qits-ci, qits-projects and
+     *       qits-system pin {@code qits-landing-app-pacts-<provider>} — so their {@code pacts/} at
+     *       the pinned release is the only source of those jars;
+     *   <li>{@code qits-platform-access-cli} is a pact consumer too, and the producer of
+     *       {@code qits-platform-access-cli-binary}, which qits-ci COMPILES against (the pin of the
+     *       {@code qits} binary its release steps download).
+     * </ul>
+     * Kept out of {@link #platformRepos} on purpose: that list is what gets a git-host repository,
+     * a main push and an inventory row, and none of these is this platform's to host.
+     */
+    public static final List<String> READ_ONLY_REPOS =
+            List.of("bootstrap-cli", "landing-app", "platform-access-cli");
+
+    /** Every repository the {@code sources} phase clones: {@link #platformRepos} then the read-only. */
+    public static List<String> sourceRepos() {
+        List<String> all = new ArrayList<>(platformRepos());
+        all.addAll(READ_ONLY_REPOS);
+        return List.copyOf(all);
+    }
+
+    /**
+     * The model name of a repository the run clones, by its repository name — {@link #nameOf} for
+     * the pipeline's and the bare name for {@link #READ_ONLY_REPOS} — or null for one it does not.
+     */
+    public static String sourceNameOf(String repository) {
+        String name = nameOf(repository);
+        if (name != null) {
+            return name;
+        }
+        for (String readOnly : READ_ONLY_REPOS) {
+            if (repo(readOnly).equals(repository)) {
+                return readOnly;
+            }
+        }
+        return null;
     }
 
     /**
@@ -695,7 +741,28 @@ public final class PlatformModel {
             case "containers" -> "client";
             case "ci-daemon" -> "ci-daemon-protocol";
             case "system-runner-daemon" -> "system-runner-protocol";
+            // qits-projects compiles against both daemons' contracts (and qits-system against the
+            // workspace daemon's), and qits-ci against the binary pin — see READ_ONLY_REPOS.
+            case "projects-daemon" -> "projects-daemon-protocol";
+            case "workspace-daemon" -> "workspace-daemon-protocol";
+            case "platform-access-cli" -> "platform-access-cli-binary";
             default -> "";
+        };
+    }
+
+    /**
+     * <b>Modules the FILE REPOSITORY seed builds beside {@link #mavenModule}, where the tree has
+     * them.</b> {@code qits-containers-client-contracts} is the consumer pact kit qits-projects pins
+     * test-scoped at the client's version; it compiles against
+     * {@code qits-containers-golden-masters}, so it can only be built where those are resolvable —
+     * the file repository, which {@code seed-golden-masters} fills before {@code maven-seed}. Each
+     * entry is guarded by its {@code pom.xml}: the module joined the reactor on 2026-10-19, and a
+     * lagging pin older than that has none.
+     */
+    public static List<String> seedOptionalModules(String name) {
+        return switch (name) {
+            case "containers" -> List.of("client-contracts");
+            default -> List.of();
         };
     }
 

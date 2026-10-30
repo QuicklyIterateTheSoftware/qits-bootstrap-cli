@@ -765,7 +765,7 @@ public final class ComposeTemplate {
               # NO PUBLISHED PORT, and the host-side git door stayed open: it is
               # http://githost.${ENV_NAME}.localhost:${PORT}/git/<projectId>/<repo>.git through the
               # edge. A person clones and pushes from the workstation, which is not on qits-net, and
-              # the url has moved three times — localhost:${REGISTRY_PORT}/artifacts/git/<repo> while
+              # the url has moved three times — localhost:8081/artifacts/git/<repo> while
               # the routes lived in the store, then a port of its own after the split, then a name,
               # and now the project-scoped pair. /git/<repoId> is the STORAGE scheme underneath it,
               # qits-projects' internal address for the same bare, and no person ever holds one.
@@ -825,14 +825,8 @@ public final class ComposeTemplate {
                   # git host's OWN deployment, out of the extras, by which time `git-repos` has
                   # given every repository a name and this run addresses nothing else.
                   # See qits.deployments.extras.qits-githost.env below.
-                  # The bootstrap ingress owns the plaintext capability. The seed githost sees
-                  # only a fingerprint, one repository/ref namespace and an expiry; deployed
-                  # githost receives none of these values through deployment extras.
-                  QITS_BOOTSTRAP_INGRESS_GIT_ENABLED: "${BOOTSTRAP_INGRESS_GIT_ENABLED}"
-                  QITS_BOOTSTRAP_INGRESS_GIT_SECRET_HASH: "${BOOTSTRAP_INGRESS_GIT_CAPABILITY_HASH}"
-                  QITS_BOOTSTRAP_INGRESS_GIT_REPOSITORY: "${BOOTSTRAP_INGRESS_GIT_REPOSITORY}"
-                  QITS_BOOTSTRAP_INGRESS_GIT_REF_PATTERN: "${BOOTSTRAP_INGRESS_GIT_REF_PATTERN}"
-                  QITS_BOOTSTRAP_INGRESS_GIT_EXPIRES_AT: "${BOOTSTRAP_INGRESS_GIT_EXPIRES_AT}"
+                  # NO QITS_BOOTSTRAP_INGRESS_GIT_*: the bootstrap ingress serves the progress page
+                  # alone, so the git host's /bootstrap-git route keeps its shipped default — off.
                   # The default branch's escape hatch: a push carrying -o qits.token=<this> is let through
                   # even when protection is on. Unset would mean no value matches and nothing overrides —
                   # which is the shipped default, and which this bootstrap cannot live with (it pushes
@@ -1488,7 +1482,7 @@ public final class ComposeTemplate {
             # starts the container before any deployer exists.
             #
             # NO PUBLISH AT ALL, and the host still pushes and pulls here. This deployment used to bind
-            # ${REGISTRY_PORT} on every interface — a swarm publish has no ip field, so it could not be
+            # 8081 on every interface — a swarm publish has no ip field, so it could not be
             # kept on loopback — and the door is the edge now: the host's daemon dials
             # registry.${ENV_NAME}.localhost:${PORT}, which resolves to the loopback address, and the edge
             # hands it to this service by name. Reads are anonymous, so a pull needs nothing; a ci publish
@@ -1546,7 +1540,7 @@ public final class ComposeTemplate {
             # workstation is not on qits-net — is
             # http://githost.${ENV_NAME}.localhost:${PORT}/git/<projectId>/<repo>.git through the
             # edge. The url has moved three times: it was
-            # localhost:${REGISTRY_PORT}/artifacts/git/<repo> while the routes lived in the artifacts
+            # localhost:8081/artifacts/git/<repo> while the routes lived in the artifacts
             # store, then a port of this service's own after the split, then a name, and now the
             # project-scoped pair that is the only public one.
             #

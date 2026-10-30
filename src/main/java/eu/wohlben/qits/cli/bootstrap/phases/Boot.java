@@ -88,7 +88,7 @@ public class Boot {
         this.config = config;
         this.log = log;
         this.runner = runner;
-        this.docker = new Docker(runner).withBuildArgs(imageBuildArgs(config))
+        this.docker = new Docker(runner)
                 // The buildctl client is a container, so a build's scratch directories have to sit
                 // where the HOST daemon can bind-mount them by the same name. The sources directory
                 // is mounted at its own path by the launcher and is this run's own to write in, so
@@ -107,78 +107,6 @@ public class Boot {
         this.configuration = new ConfigurationApi(http, config.configurationUrl(),
                 config.envName());
         this.projects = new ProjectsApi(http, config.projectsUrl());
-    }
-
-    /**
-     * <b>What every image this run builds is built with</b> — the seed images, the step images and
-     * the ci-daemon's musl builder alike, because they are all built by the HOST's daemon while the
-     * platform is still being made.
-     * <p>
-     * One argument today: where a build resolves the platform's own maven artifacts. It is passed
-     * to every build rather than to the ones known to read it, because an image with no matching
-     * {@code ARG} answers a build argument with a warning, and the alternative is a per-image list
-     * that a new image is added without.
-     * <p>
-     * Each entry is a bare {@code NAME=value}. The flag in front of it belongs to whoever composes
-     * the command line, and that is buildctl's {@code --opt build-arg:} now rather than docker's
-     * {@code --build-arg}.
-     * <p>
-     * See {@link BootstrapConfig#seedMavenRepositoryUrl()} for why the value cannot be left to the
-     * Dockerfile's own default any more.
-     */
-    public static List<String> imageBuildArgs(BootstrapConfig config) {
-        return List.of("QITS_MAVEN_REPOSITORY_URL=" + config.seedMavenRepositoryUrl());
-    }
-
-    /** The seed maven repository as the ingress serves it, and the capability that opens it. */
-    private String seedMavenUrl;
-    private String seedMavenCapability;
-
-    /** The edge replaces the seed port before the first seed image is built. */
-    public void useBootstrapMavenRepository(String url, String capability) {
-        this.seedMavenUrl = url;
-        this.seedMavenCapability = capability;
-        docker.withBootstrapMavenRepository(url, "bootstrap", capability);
-    }
-
-    /**
-     * <b>One file in the seed maven repository, as a url a Dockerfile's {@code ADD} can fetch —
-     * credentials and all.</b>
-     * <p>
-     * Every other build of this run reaches the repository from a {@code RUN}, which is handed the
-     * capability as a BuildKit secret. An {@code ADD <url>} cannot be: BuildKit resolves it itself,
-     * outside any step, so a secret mount never reaches it and the credential has to be in the url.
-     * The ingress's maven route demands HTTP Basic, so an anonymous url is a 401 rather than a
-     * download.
-     * <p>
-     * <b>That is not the leak it looks like.</b> The capability is masked out of the log by
-     * {@code Cmd.mask}, which every build of this run already carries, and it does not reach the
-     * image: the fetch happens in a {@code scratch} stage the final image discards, and BuildKit
-     * records no build argument in an image's config — measured, {@code docker history} and
-     * {@code docker inspect} both show nothing. It expires with the run either way.
-     */
-    public String seedMavenFile(String path) {
-        String base = seedMavenUrl == null ? config.seedMavenRepositoryUrl() : seedMavenUrl;
-        return withCredentials(base, seedMavenCapability) + "/" + path;
-    }
-
-    /** The same url without the credential, which is the one that may be printed. */
-    public String seedMavenFilePublic(String path) {
-        return (seedMavenUrl == null ? config.seedMavenRepositoryUrl() : seedMavenUrl) + "/" + path;
-    }
-
-    /**
-     * {@code http://host/x} plus {@code bootstrap:<capability>}, or the url unchanged when this run
-     * has no capability. The capability is base64url, so it carries no character a userinfo field
-     * would have to escape.
-     */
-    static String withCredentials(String url, String capability) {
-        int scheme = url.indexOf("://");
-        if (capability == null || capability.isBlank() || scheme < 0) {
-            return url;
-        }
-        return url.substring(0, scheme + 3) + "bootstrap:" + capability
-                + "@" + url.substring(scheme + 3);
     }
 
     /**
@@ -428,9 +356,10 @@ public class Boot {
      * <b>Null is the honest answer three times over, and none of them weakens a gated store.</b>
      * The gate is off, so nothing is being asked for; no bootstrap pair is recorded yet, which on a
      * cold boot is every phase before {@code idp-bootstrap-client}; or the idp is not up yet, which
-     * is every phase before {@code seed-idp}. In all three the store being read is the SEED store,
-     * which this run started itself and handed no gate. A store that IS gated answers an
-     * uncredentialed read with a 401, loudly, rather than quietly serving it.
+     * is every phase before {@code seed-idp}. No phase before {@code seed-idp} reads the store at
+     * all since qits-889 — there is none to read until the seed stack is up — so the last two are
+     * the answer for a caller that asks too early, and a gated store answers its uncredentialed
+     * read with a 401, loudly, rather than quietly serving it.
      * <p>
      * <b>Cached to its expiry</b>, because this is called per probe and a release replay probes
      * every few seconds for the length of a native build: minting a token per poll would be
@@ -459,27 +388,26 @@ public class Boot {
 
     /**
      * <b>What a PUBLISH into qits-artifacts presents</b> — a credential of kind
-     * {@code bootstrap-publish}, commissioned on first use — or null where the gate is off or
-     * there is no idp to commission it at yet.
+     * {@code bootstrap-publish}, commissioned on first use. <b>Never null: the bootstrap never
+     * publishes bare</b> (qits-889).
      * <p>
      * Only CI may publish (user ruling 2026-09-13), so the store's anonymous publishing door is
      * closed and {@code qits:ci-run} is the only role that opens it. This run publishes before any
-     * CI exists, so it commissions itself that role for its publish phase and hands it back when
-     * that phase ends — see {@link BootstrapPublishCredential}.
+     * CI exists, so it commissions itself that role for its publish phases and hands it back when
+     * the last of them ends — see {@link BootstrapPublishCredential}.
      * <p>
-     * <b>Null has the same three reasons as {@link #storeReadAuthorization}</b>, and the same
-     * answer to why it is safe: the publishes that meet it are the seed ones into a store this run
-     * started without a gate, which is exactly the exception the ruling left standing. A gated
-     * store refuses an anonymous PUT.
+     * <b>The machine gate being off changes nothing here.</b> A store with the gate off ignores
+     * the credential; the bootstrap commissions and presents it all the same, so a publish is the
+     * same act on every platform and no branch of this program knows how to publish without one.
+     * No idp, no recorded bootstrap secret, or a refused commission stops the phase with the reason
+     * — every publish is planned after {@code seed-idp}, so meeting one of those is a defect, not a
+     * mode.
      *
-     * @param ctx the phase that is about to publish, so the reason it is publishing bare is on the
-     *            screen rather than only in the shape of a later 401
+     * @param ctx the phase that is about to publish, so who it publishes as is on the screen
+     * @throws IllegalStateException when there is no credential to present
      */
     public String publishAuthorization(PhaseContext ctx) {
         BootstrapPublishCredential credential = publishCredential(ctx);
-        if (credential == null) {
-            return null;
-        }
         String authorization = credential.authorization();
         ctx.log("  publishing as " + credential.clientId() + " ("
                 + BootstrapPublishCredential.CONTEXT_KIND + ", may push nothing)");
@@ -488,30 +416,39 @@ public class Boot {
 
     /**
      * <b>What a {@code docker push} into the store presents</b>: the same publishing credential,
-     * as the id and secret docker's own token dance needs — or null on the terms
-     * {@link #publishAuthorization} answers null on.
+     * as the id and secret docker's own token dance needs — never null, on the terms of
+     * {@link #publishAuthorization}.
      */
     public BootstrapPublishCredential.Pair publishPair(PhaseContext ctx) {
         BootstrapPublishCredential credential = publishCredential(ctx);
-        if (credential == null) {
-            return null;
-        }
         BootstrapPublishCredential.Pair pair = credential.pair();
         ctx.log("  pushing as " + pair.clientId() + " ("
                 + BootstrapPublishCredential.CONTEXT_KIND + ", may push no git ref)");
         return pair;
     }
 
-    /** The credential both forms present, made on first use — or null, with the reason logged. */
+    /**
+     * The credential both forms present, made on first use — or the phase stops, saying why there
+     * is none. Whether the machine gate is on is not asked.
+     */
     private BootstrapPublishCredential publishCredential(PhaseContext ctx) {
-        if (!config.machineAuth()) {
-            ctx.log("  the machine gate is off — publishing into the store without a credential");
-            return null;
+        if (publishCredential != null) {
+            return publishCredential;
         }
-        if (state.bootstrapSecret == null || state.bootstrapSecret.isBlank() || !idp.ready()) {
-            ctx.log("  no idp to commission a publishing credential at yet — publishing into the "
-                    + "ungated seed store without one");
-            return null;
+        if (state.bootstrapSecret == null || state.bootstrapSecret.isBlank()) {
+            throw new IllegalStateException("no publishing credential: the "
+                    + PlatformModel.bootstrapClientId(config.envName()) + " client has no "
+                    + "recorded secret to commission one with (idp-bootstrap-client did not run, or "
+                    + ".qits-bootstrap.env lost it) — the bootstrap never publishes without one");
+        }
+        if (!idp.ready()) {
+            throw new IllegalStateException("no publishing credential: the idp at "
+                    + config.idpDialUrl() + " is not answering, so none can be commissioned — "
+                    + "the bootstrap never publishes without one");
+        }
+        if (!config.machineAuth()) {
+            ctx.log("  the machine gate is off — the store will not ask, the credential is "
+                    + "presented all the same");
         }
         if (publishCredential == null) {
             publishCredential = new BootstrapPublishCredential(http, idp, config.idpDialUrl(),

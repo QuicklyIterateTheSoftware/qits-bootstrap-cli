@@ -8,15 +8,13 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.function.Consumer;
 
 /**
@@ -98,25 +96,6 @@ public class Docker {
     private boolean buildkitdReady;
 
     /**
-     * <b>What every image build this program runs carries, whatever the image is.</b> A build
-     * argument an image has no {@code ARG} for is a warning and nothing else, so the honest place
-     * for one that MOST builds need is all of them — see {@link #withBuildArgs}.
-     * <p>
-     * Each entry is a bare {@code NAME=value}: buildctl spells a build argument
-     * {@code --opt build-arg:NAME=value}, so the flag is added where the command line is composed
-     * rather than carried in this list.
-     */
-    private List<String> buildArgs = List.of();
-    private List<String> buildArgMasks = List.of();
-
-    /**
-     * BuildKit secrets by id, as VALUES rather than as environment variable names. buildctl runs in
-     * a container of its own here, so it can read no variable of this process — each value is
-     * written to a file the run mounts read-only instead. See {@link #buildkitBuild}.
-     */
-    private Map<String, String> buildSecrets = Map.of();
-
-    /**
      * <b>Where the scratch directories of a build are made, and it cannot be this container's
      * {@code /tmp}.</b>
      * <p>
@@ -133,51 +112,6 @@ public class Docker {
 
     public Docker(ProcessRunner runner) {
         this.runner = runner;
-    }
-
-    /**
-     * <b>The arguments both build methods below carry, set once by the run that owns this facade.</b>
-     * <p>
-     * It is at this seam rather than at each call site because the requirement is per-DAEMON and not
-     * per-image: a build this bootstrap runs resolves the platform's own maven artifacts from the
-     * seed registry on the host's loopback, and there is no second answer any build of this run could
-     * want. Spelled per call site, a build added later inherits nothing and fails minutes in with a
-     * connection refused.
-     * <p>
-     * The HOST HALF's own Docker is a second instance and deliberately gets none: the payload image
-     * is this CLI and resolves nothing of the platform.
-     */
-    public Docker withBuildArgs(List<String> args) {
-        this.buildArgs = List.copyOf(args);
-        this.buildArgMasks = List.of();
-        this.buildSecrets = Map.of();
-        return this;
-    }
-
-    /** A bootstrap capability can be in a repository URL without becoming build output. */
-    public Docker withBuildArgs(List<String> args, List<String> masks) {
-        this.buildArgs = List.copyOf(args);
-        this.buildArgMasks = List.copyOf(masks);
-        this.buildSecrets = Map.of();
-        return this;
-    }
-
-    /**
-     * Supplies the capability through the secret ids already mounted by every Maven Dockerfile.
-     * <p>
-     * The values are carried here rather than put in this process's environment because buildctl
-     * runs in a container: it inherits nothing of ours, and the only way in is a file it can read.
-     * They stay off the screen and out of the log through {@link Cmd#mask}.
-     */
-    public Docker withBootstrapMavenRepository(String url, String username, String password) {
-        this.buildArgs = List.of("QITS_MAVEN_REPOSITORY_URL=" + url);
-        this.buildArgMasks = List.of(password);
-        // Ordered, because the argv it becomes is asserted whole.
-        Map<String, String> secrets = new LinkedHashMap<>();
-        secrets.put("qits-client-id", username);
-        secrets.put("qits-client-secret", password);
-        this.buildSecrets = Collections.unmodifiableMap(secrets);
-        return this;
     }
 
     /** Where a build's scratch directories go: a path the host daemon knows by the same name. */
@@ -518,12 +452,31 @@ public class Docker {
      */
     public ProcessResult buildFromStdin(String tag, String dockerfile, Path context,
                                         List<String> extraBuildArgs, Consumer<String> out) {
+        return buildFromStdin(tag, dockerfile, context, extraBuildArgs, Map.of(), out);
+    }
+
+    /**
+     * The same, with NAMED CONTEXTS read out of docker volumes — what a seed build resolves its
+     * local stores through rather than through any server.
+     * <p>
+     * Each entry is {@code name -> volume}. The buildctl client mounts the volume read-only at
+     * {@code /named/<name>} and hands it to the frontend as {@code --local <name>=…} plus
+     * {@code --opt context:<name>=local:<name>}, so a Dockerfile reads it as
+     * {@code COPY --from=<name>} or {@code RUN --mount=type=bind,from=<name>}. A volume is resolved
+     * by the DAEMON like every other {@code -v} of that container, which is why it is named here
+     * and not a path: a named volume means the same thing on both sides by construction.
+     *
+     * @param volumeContexts named contexts by name, each read from the docker volume it maps to
+     */
+    public ProcessResult buildFromStdin(String tag, String dockerfile, Path context,
+                                        List<String> extraBuildArgs,
+                                        Map<String, String> volumeContexts, Consumer<String> out) {
         Path dockerfileDir = null;
         try {
             dockerfileDir = Files.createTempDirectory(scratchRoot(), "dockerfile-");
             Files.writeString(dockerfileDir.resolve(DOCKERFILE), dockerfile, StandardCharsets.UTF_8);
-            return buildkitBuild(tag, dockerfileDir, DOCKERFILE, context, extraBuildArgs, null,
-                    out);
+            return buildkitBuild(tag, dockerfileDir, DOCKERFILE, context, extraBuildArgs,
+                    volumeContexts, null, out);
         } catch (IOException e) {
             return failed("the Dockerfile for " + tag + " could not be written: " + e.getMessage());
         } finally {
@@ -554,7 +507,7 @@ public class Docker {
                                        List<String> extraBuildArgs, String target,
                                        Consumer<String> out) {
         return buildkitBuild(tag, dockerfile.getParent(), dockerfile.getFileName().toString(),
-                context, extraBuildArgs, target, out);
+                context, extraBuildArgs, Map.of(), target, out);
     }
 
     /**
@@ -562,9 +515,12 @@ public class Docker {
      * <p>
      * The host has no {@code buildctl} binary and this program will not install one, so the client
      * is the same pinned image the daemon runs, with its entrypoint replaced. {@code --network host}
-     * on the client is how it reaches the daemon's loopback address; the daemon is host-network too,
-     * which is why a Dockerfile's {@code ADD http://localhost:8081/…} and the seed maven repository
-     * still resolve during a bootstrap.
+     * on the client is how it reaches the daemon's loopback address.
+     * <p>
+     * <b>No build argument and no secret rides along that the caller did not name.</b> A seed build
+     * resolves the platform's own jars and the musl toolchain out of the {@code qits-maven-seed}
+     * volume, handed in as a named context, so there is no server address to pass and no
+     * credential to present.
      * <p>
      * <b>{@code --output type=docker} plus {@code docker load} is what replaces buildx's
      * {@code --load}.</b> The image lands in the host daemon's store under the same tag it always
@@ -573,50 +529,51 @@ public class Docker {
      * of this.
      */
     private ProcessResult buildkitBuild(String tag, Path dockerfileDir, String dockerfileName,
-                                        Path context, List<String> extraBuildArgs, String target,
+                                        Path context, List<String> extraBuildArgs,
+                                        Map<String, String> volumeContexts, String target,
                                         Consumer<String> out) {
         ProcessResult ready = ensureBuildkitd(out);
         if (!ready.ok()) {
             return ready;
         }
         Path outDir = null;
-        Path secretsDir = null;
         try {
             outDir = Files.createTempDirectory(scratchRoot(), "image-");
-            secretsDir = writeSecrets();
+            // Sorted, so the argv is the same on every run whatever map the caller built.
+            Map<String, String> named = new TreeMap<>(volumeContexts);
             List<String> command = new ArrayList<>(List.of(
                     "docker", "run", "--rm", "--network", "host",
                     "-v", context + ":/ctx:ro",
                     "-v", dockerfileDir + ":/dfdir:ro",
-                    "-v", outDir + ":/out",
-                    "-v", secretsDir + ":/secrets:ro",
+                    "-v", outDir + ":/out"));
+            named.forEach((name, volume) -> {
+                command.add("-v");
+                command.add(volume + ":/named/" + name + ":ro");
+            });
+            command.addAll(List.of(
                     "--entrypoint", "buildctl", BUILDKIT_IMAGE,
                     "--addr", BUILDKIT_ADDR,
                     "build", "--frontend", "dockerfile.v0",
                     "--local", "context=/ctx",
                     "--local", "dockerfile=/dfdir",
                     "--opt", "filename=" + dockerfileName));
+            named.keySet().forEach(name -> {
+                command.add("--local");
+                command.add(name + "=/named/" + name);
+                command.add("--opt");
+                command.add("context:" + name + "=local:" + name);
+            });
             if (target != null) {
                 command.add("--opt");
                 command.add("target=" + target);
-            }
-            for (String arg : buildArgs) {
-                command.add("--opt");
-                command.add("build-arg:" + arg);
             }
             for (String arg : extraBuildArgs) {
                 command.add("--opt");
                 command.add("build-arg:" + arg);
             }
-            for (String id : buildSecrets.keySet()) {
-                command.add("--secret");
-                command.add("id=" + id + ",src=/secrets/" + id);
-            }
             command.add("--output");
             command.add("type=docker,name=" + tag + ",dest=/out/" + IMAGE_TAR);
             Cmd cmd = Cmd.of(command).timeout(BUILD_TIMEOUT);
-            buildArgMasks.forEach(cmd::mask);
-            buildSecrets.values().forEach(cmd::mask);
             ProcessResult built = runner.run(cmd, out);
             if (!built.ok()) {
                 return built;
@@ -629,7 +586,6 @@ public class Docker {
             return failed("the build of " + tag + " could not be set up: " + e.getMessage());
         } finally {
             deleteTree(outDir);
-            deleteTree(secretsDir);
         }
     }
 
@@ -652,9 +608,12 @@ public class Docker {
      * <b>The buildkitd container, made on the first build of a run and left standing at the end of
      * it.</b>
      * <p>
-     * It is host-network for two reasons at once: a build's {@code ADD} and the seed maven
-     * repository are on the host's loopback while the platform is being made, and the buildctl
-     * client above reaches the daemon there too. {@code --privileged} is what BuildKit's own
+     * It is host-network because the buildctl client above reaches the daemon on the host's
+     * loopback, and because a build's {@code RUN} and {@code ADD} reach the internet through the
+     * host's own network — upstream base layers, Maven Central and nodejs.org. Nothing of this
+     * platform is reached over the network by a seed build: its own jars and the musl toolchain
+     * arrive as named contexts (see {@link #buildFromStdin(String, String, Path, List, Map,
+     * Consumer)}). {@code --privileged} is what BuildKit's own
      * container needs to run builds; the memory and cpu bounds are the ones the buildx driver-opts
      * carried, spelled as docker run flags now that there is no driver to hold them.
      * <p>
@@ -701,10 +660,10 @@ public class Docker {
                     // --oci-worker-net=host puts every RUN in the container's own network
                     // namespace — the machine's, since this container is host-net — because the
                     // default sandbox namespace has no DNS and no route anywhere: a seed build's
-                    // RUN that resolves the platform's own Maven repository over localhost would
-                    // die on name resolution before its first request. Measured on the platform's
-                    // first converted release run (there against the qits-net namespace; the
-                    // failure mode is the worker's, not the network's).
+                    // RUN that resolves Maven Central would die on name resolution before its
+                    // first request. Measured on the platform's first converted release run
+                    // (there against the qits-net namespace; the failure mode is the worker's, not
+                    // the network's).
                     // The default unix socket rides beside the tcp listen: qits-containers' gc
                     // sweep prunes this cache with `docker exec buildctl`, which knows no tcp
                     // address — measured missing on the platform builder's first live dry-run.
@@ -713,26 +672,6 @@ public class Docker {
         }
         buildkitdReady = ready.ok();
         return ready;
-    }
-
-    /**
-     * Each secret as a file only its owner can read, in a directory of its own. buildctl's
-     * {@code env=} form cannot be used here: the client is a container and inherits none of this
-     * process's environment.
-     */
-    private Path writeSecrets() throws IOException {
-        Path dir = Files.createTempDirectory(scratchRoot(), "secrets-");
-        for (Map.Entry<String, String> secret : buildSecrets.entrySet()) {
-            Path file = dir.resolve(secret.getKey());
-            Files.writeString(file, secret.getValue(), StandardCharsets.UTF_8);
-            try {
-                Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"));
-            } catch (IOException | UnsupportedOperationException e) {
-                // A filesystem with no posix bits is not a reason to fail a build; the directory is
-                // this run's own and goes away with it either way.
-            }
-        }
-        return dir;
     }
 
     private Path scratchRoot() throws IOException {

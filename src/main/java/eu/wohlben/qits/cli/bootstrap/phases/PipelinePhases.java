@@ -120,17 +120,18 @@ public class PipelinePhases {
     public Phase seedStackUp() {
         return new Phase("seed-stack", "deploy the seed stack", ctx -> {
             boot.docker.ensureNetwork(Boot.NETWORK, ctx::log);
-            // The artifacts instance used while building seed images has no machine credentials:
-            // the idp did not exist yet. Replace it so the stack starts the real service with the
-            // audience it validates against; otherwise every admin write reaches it unguarded.
+            // No phase starts a store or a mirror by hand since qits-889, but a machine an earlier
+            // bootstrap ran on can still carry the hand-started, ungated store it left behind.
+            // Replace it so the stack starts the real service with the audience it validates
+            // against; otherwise every admin write reaches it unguarded.
             String artifacts = PlatformModel.wireAlias("artifacts", boot.config.envName());
             if (boot.docker.allNames().contains(artifacts)) {
                 ctx.log("  replacing the bootstrap artifact registry with the authenticated seed service");
                 boot.docker.removeContainer(artifacts, ctx::log);
             }
-            // The same hand-off for the mirror, which seed-mirror started by hand before any stack
-            // file existed. Its volume is the cache and survives the recreate; what it gains is the
-            // observability address and the deployer's adoption at the next cutover.
+            // The same for a mirror an earlier bootstrap started by hand before any stack file
+            // existed: what the stack's service gains is the observability address and the
+            // deployer's adoption at the next cutover.
             String mirror = PlatformModel.wireAlias("mirror", boot.config.envName());
             if (boot.docker.allNames().contains(mirror)) {
                 ctx.log("  handing the seed mirror over to the stack, from the same volume");
@@ -882,10 +883,10 @@ public class PipelinePhases {
             }
             ctx.status("uploading " + (Files.size(binary) / (1024 * 1024)) + " MB to "
                     + boot.artifacts.base() + "/daemons/qits-ci-daemon/" + SeedPhases.shortSha(sha));
-            // THE LAST PUBLISH OF THE BOOT, and with the image pushes just above it one of the two
-            // that meet a store which is gated by the time they run: the seed stack is up above
-            // both. It presents the publishing credential the seed publishes used — the same
-            // commission, minted afresh — and the phase below hands that credential back.
+            // THE LAST PUBLISH OF THE BOOT. Like store-seed and the image pushes above it, it meets
+            // the stack's store, gated where the machine gate is on. It presents the publishing
+            // credential store-seed commissioned — the same commission, minted afresh — and the
+            // phase below hands that credential back.
             Http.Response response = boot.artifacts.publishDaemon("qits-ci-daemon", sha, binary,
                     boot.publishAuthorization(ctx));
             if (response.status() != 201) {
@@ -1590,8 +1591,7 @@ public class PipelinePhases {
      * version before this phase looked is not recorded: it is running a release, not a seed.
      * <p>
      * <b>The edge's phase retires the bootstrap ingress</b> ({@link #restoreRelease}), and that is
-     * the owner's order: the ingress serves the temporary registry, git and the progress page for
-     * the whole local-build step, and the platform's own edge takes the door here — before the
+     * the owner's order: the ingress serves the progress page for the whole local-build step, and the platform's own edge takes the door here — before the
      * runner is started and before the first build.
      */
     public Phase seedDeploy(String name) {

@@ -76,6 +76,19 @@ class UnwrapPhasesTest {
      * An overlay releases its endpoints a moment after the containers go, so the first
      * {@code network rm} answers "has active endpoints" and the second or third takes it.
      */
+    /**
+     * The registry's old host port is matched as the literal it was published at: the knob that
+     * could move it is gone, and a machine's old images still carry the number.
+     */
+    @Test
+    void imagesUnderTheOldRegistryPortAreStillSwept() {
+        assertThat(UnwrapPhases.isLegacyRegistryPortRef("localhost:8081/qits/ci:latest")).isTrue();
+        assertThat(UnwrapPhases.isLegacyRegistryPortRef("127.0.0.1:8081/qits/ci:latest")).isTrue();
+        assertThat(UnwrapPhases.isLegacyRegistryPortRef("localhost:5000/someone/else:1")).isFalse();
+        assertThat(UnwrapPhases.isLegacyRegistryPortRef("localhost:80811/qits/ci:latest"))
+                .isFalse();
+    }
+
     @Test
     void aNetworkThatIsStillReleasingItsEndpointsIsAskedAgain() {
         AtomicInteger tries = new AtomicInteger();

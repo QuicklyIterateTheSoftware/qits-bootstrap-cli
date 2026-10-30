@@ -135,17 +135,6 @@ public class OverridableConfig implements BootstrapConfig {
         return base.port();
     }
 
-    @Override
-    public int registryPort() {
-        return base.registryPort();
-    }
-
-    /** The mirror's host door: everything third-party, cached. */
-    @Override
-    public int mirrorPort() {
-        return base.mirrorPort();
-    }
-
     /** The githost's loopback diagnostic port; user Git goes through the edge. */
     @Override
     public int gitHostPort() {
