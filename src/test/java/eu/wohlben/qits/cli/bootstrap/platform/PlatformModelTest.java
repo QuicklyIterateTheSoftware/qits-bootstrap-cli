@@ -609,7 +609,7 @@ class PlatformModelTest {
                 .isEqualTo("service/src/main/webui/dist/qits-spa-deployments/browser");
         assertThat(PlatformModel.seedUiPath("ci"))
                 .isEqualTo("service/src/main/webui/dist/qits-spa-ci/browser");
-        // The bus joined the seed on 2026-08-10 and it HAS a client, so it needs a placeholder: its
+        // The bus joined the seed on 2026-08-10 and it HAS a client, so it needs one built: its
         // Dockerfile stops the build with `test -f` on this exact path before the native compile.
         assertThat(PlatformModel.seedUiPath("events"))
                 .isEqualTo("service/src/main/webui/dist/qits-spa-events/browser");
@@ -628,7 +628,7 @@ class PlatformModelTest {
         // Dockerfile stops the build at a `test -f` on this path before the native compile.
         assertThat(PlatformModel.seedUiPath("projects"))
                 .isEqualTo("service/src/main/webui/dist/qits-spa-projects/browser");
-        // No placeholder, and empty is the answer that says so: a seed build must not be made to
+        // No client, and empty is the answer that says so: a seed build must not be made to
         // require a bundle that does not exist. Two different reasons here. qits-containers serves
         // machines and has no SPA at all. qits-orchestrator HAS one — its process pages
         // are qits-platform-spa-orchestrator — but it is not in the seed, so no seed image of it is
@@ -638,6 +638,26 @@ class PlatformModelTest {
         assertThat(PlatformModel.CORE).doesNotContain("orchestrator");
         assertThat(PlatformModel.seedUiPath("edge")).isEmpty();
         assertThat(PlatformModel.seedUiPath("oci-postgresql")).isEmpty();
+    }
+
+    /**
+     * <b>Where a seed client is built from and what of it is kept</b> (qits-889): the webui
+     * submodule is the bundle path up to its {@code dist/}, and the bundle is the rest — the same
+     * {@code dist/<project>/browser} Angular's application builder writes by default.
+     */
+    @Test
+    void aSeedClientIsBuiltFromTheWebuiAboveItsBundle() {
+        assertThat(PlatformModel.seedWebuiPath("ci")).isEqualTo("service/src/main/webui");
+        assertThat(PlatformModel.seedBundlePath("ci")).isEqualTo("dist/qits-spa-ci/browser");
+        assertThat(PlatformModel.seedWebuiPath("mirror")).isEqualTo("src/main/webui");
+        assertThat(PlatformModel.seedBundlePath("mirror"))
+                .isEqualTo("dist/qits-platform-spa-mirror/browser");
+        assertThat(PlatformModel.seedWebuiPath("edge")).isEmpty();
+        assertThat(PlatformModel.seedBundlePath("edge")).isEmpty();
+        // Nine seed images carry a client; the edge, the orchestrator's container service and the
+        // postgres image do not.
+        assertThat(PlatformModel.seedClients()).containsExactly("mirror", "artifacts", "githost",
+                "projects", "ci", "deployments", "idp", "events", "system");
     }
 
     @Test

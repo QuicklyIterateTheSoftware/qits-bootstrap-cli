@@ -52,7 +52,7 @@ public class Git {
 
     /**
      * Put the checkout back on a branch. {@code -f} because this tree is the bootstrap's own — seed
-     * builds write a placeholder client into it and the pipeline overlay commits to it — so a
+     * builds copy the client they build into it and the pipeline overlay commits to it — so a
      * modified file here is this program's leftover and never a person's work.
      */
     public ProcessResult checkoutBranch(Path repo, String branch, Consumer<String> out) {
@@ -78,8 +78,8 @@ public class Git {
      * taking {@code seed-image-githost} with it at exit 128, measured on 2026-09-05.
      * <p>
      * So {@code --checkout} overrides the declared strategy and {@code --force} discards whatever
-     * the nested tree holds. Nothing of this run's is lost by either: the seed writes its SPA
-     * placeholder into {@code dist/} AFTER this, and that path is untracked, so a forced checkout
+     * the nested tree holds. Nothing of this run's is lost by either: the seed copies the client it built
+     * into {@code dist/} AFTER this, and that path is untracked, so a forced checkout
      * leaves it alone — measured too. {@code --depth 1} still reaches a gitlink that is no longer a
      * branch tip: git asks the remote for the sha itself, which GitHub answers for any reachable
      * commit.
@@ -146,8 +146,16 @@ public class Git {
      * hundreds of lines and a truncated one would parse into a WRONG answer rather than a failure.
      */
     public String fileAt(Path repo, String ref, String path) {
+        return fileAt(repo, ref, path, 20_000);
+    }
+
+    /**
+     * The same, for a file that can outgrow twenty thousand lines — a pnpm lock is eleven thousand
+     * today. Still null rather than a truncated file.
+     */
+    public String fileAt(Path repo, String ref, String path, int lines) {
         ProcessResult result = runner.run(Cmd.of(List.of("git", "-C", repo.toString(), "show",
-                ref + ":" + path)).captureLimit(20_000), null);
+                ref + ":" + path)).captureLimit(lines), null);
         return result.ok() && !result.truncated() ? result.out() : null;
     }
 

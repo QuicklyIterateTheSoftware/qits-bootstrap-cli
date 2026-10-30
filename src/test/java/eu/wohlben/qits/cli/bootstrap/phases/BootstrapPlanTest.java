@@ -121,6 +121,25 @@ class BootstrapPlanTest {
     }
 
     /**
+     * <b>The @qits npm packages are built before the first image that carries a client</b>
+     * (qits-889): the mirror is the first, and every one of the nine builds its client against the
+     * qits-npm-seed tarballs in its own seed-image phase. A warm rerun builds no client and so no
+     * package.
+     */
+    @Test
+    void theNpmPackagesAreBuiltBeforeTheFirstSeedClient() {
+        List<String> ids = ids(plan(Map.of()));
+
+        assertThat(ids).containsSubsequence("sources", "maven-seed", "seed-npm-packages",
+                "seed-image-edge", "seed-image-mirror");
+        for (String client : eu.wohlben.qits.cli.bootstrap.platform.PlatformModel.seedClients()) {
+            assertThat(ids.indexOf("seed-npm-packages"))
+                    .isLessThan(ids.indexOf("seed-image-" + client));
+        }
+        assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1")))).doesNotContain("seed-npm-packages");
+    }
+
+    /**
      * <b>Every compile-scoped coordinate a seed image takes from another repository's release lands
      * before that image</b> (qits-889): qits-ci's pin of the {@code qits} binary beside its daemon
      * contract, and qits-projects' two daemon contracts — the workspace daemon's at qits-system's

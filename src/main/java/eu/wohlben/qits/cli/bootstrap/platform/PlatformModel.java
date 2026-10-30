@@ -210,8 +210,8 @@ public final class PlatformModel {
      * ingress's door away, so everything that still needs that door is done by then.
      * <p>
      * Each of them is deployed a SECOND time in the train, from the image its release run builds:
-     * a seed image is a placeholder in places (its SPA above all), and the train is where the real
-     * one replaces it.
+     * a seed image is the release's code built by this run rather than by the release's own run,
+     * and the train is where the release image replaces it.
      */
     public static final List<String> SEED_DEPLOYED = DEPLOYABLES.stream()
             .filter(CORE::contains)
@@ -1104,10 +1104,11 @@ public final class PlatformModel {
     }
 
     /**
-     * The placeholder SPA bundle a seed build needs, or empty when the service has no client.
-     * Seed services only need their APIs, but their Dockerfiles consume an already-built SPA — and
-     * a clean checkout has no dist directory while the hosted npm registry does not exist yet. The
-     * registry answers JSON only, so it has none.
+     * Where a seed build places the service's client bundle, or empty when the service has no
+     * client. The Dockerfiles consume an already-built SPA, and a clean checkout has no dist
+     * directory, so the seed builds the gitlinked webui itself — from the {@code @qits} tarballs
+     * phase 1 built and npmjs, never the platform's registries (qits-889, {@link NpmSeed}) — and
+     * puts {@code dist/<project>/browser} here. The service has no placeholder to fall back to.
      * <p>
      * <b>Every seed service that has one is spelled out</b>, because a bundle directory is the
      * Angular project key and moves whenever its client is renamed — it does not follow the
@@ -1115,7 +1116,7 @@ public final class PlatformModel {
      * a stale spelling fails the seed build minutes in rather than at the edit.
      * <p>
      * Empty is a real answer, not a gap: qits-platform-edge serves no paths of its own at all.
-     * {@code SeedPhases.seedImage} writes no placeholder for it. A seed service added without a
+     * {@code SeedPhases.seedImage} builds no client for it. A seed service added without a
      * line here also gets none — and the Dockerfile's own
      * {@code test -f} names the exact path it wanted, which is the clearest failure available.
      */
@@ -1132,7 +1133,7 @@ public final class PlatformModel {
             // qits-artifacts' prebuilt-dist shape in the same change: Quinoa's install and build
             // are neutered, the image STAGES a bundle built before it, and a `test -f` on the path
             // below stops the build rather than shipping a service whose own segment 404s. So a
-            // seed image of either now needs a placeholder where it needed none the week before.
+            // seed image of either now needs a client built where it needed none the week before.
             //
             // The two paths differ in their FIRST segment, not by accident: qits-githost is a
             // reactor and its application is the `service` module, while qits-platform-mirror is
@@ -1153,6 +1154,27 @@ public final class PlatformModel {
             case "system" -> "service/src/main/webui/dist/qits-platform-spa-system/browser";
             default -> "";
         };
+    }
+
+    /**
+     * The webui submodule a seed client is built from — {@link #seedUiPath} up to its
+     * {@code dist/} — or empty when the service has no client.
+     */
+    public static String seedWebuiPath(String name) {
+        String ui = seedUiPath(name);
+        int dist = ui.indexOf("/dist/");
+        return dist < 0 ? "" : ui.substring(0, dist);
+    }
+
+    /** The bundle inside that webui, {@code dist/<project>/browser}, or empty. */
+    public static String seedBundlePath(String name) {
+        String webui = seedWebuiPath(name);
+        return webui.isEmpty() ? "" : seedUiPath(name).substring(webui.length() + 1);
+    }
+
+    /** The seed images that carry a client, in {@link #CORE}'s order. */
+    public static List<String> seedClients() {
+        return CORE.stream().filter(name -> !seedUiPath(name).isEmpty()).toList();
     }
 
     /**
@@ -1309,8 +1331,8 @@ public final class PlatformModel {
      * declaring {@code user: build} — "unable to find user build: no matching entries in passwd
      * file", phase 65. Step images are consumed by bare local tag and rebuilt from source every
      * boot, so nothing pins a version of them and main is their only meaningful identity. The SPA
-     * sources are the same shape: they feed a placeholder bundle into a seed image, and the real
-     * client is built by the pipeline afterwards.
+     * checkouts are the same shape: a seed image's client is built from the service's own GITLINK
+     * of its webui (qits-889), never from the frontend checkout, so nothing reads them at a tag.
      */
     public static boolean carriesVersionIdentity(String name) {
         return DEPLOYABLES.contains(name) || RELEASE_PUBLISHERS.contains(name);

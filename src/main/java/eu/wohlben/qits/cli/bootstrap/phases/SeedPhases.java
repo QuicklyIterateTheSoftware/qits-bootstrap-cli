@@ -17,6 +17,7 @@ import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.DomainTokens;
 import eu.wohlben.qits.cli.bootstrap.platform.MavenPins;
 import eu.wohlben.qits.cli.bootstrap.platform.MuslToolchain;
+import eu.wohlben.qits.cli.bootstrap.platform.NpmSeed;
 import eu.wohlben.qits.cli.bootstrap.platform.PgAdmin;
 import eu.wohlben.qits.cli.bootstrap.platform.PinnedVersions;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
@@ -39,6 +40,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -798,17 +800,12 @@ public class SeedPhases {
             Boot.must(boot.git.submodulesShallow(repo, ctx::log),
                     "submodule checkout of qits-" + name + " failed");
 
-            String seedUi = PlatformModel.seedUiPath(name);
-            if (!seedUi.isEmpty()) {
-                // Seed services only need their APIs. Their Dockerfiles consume an already-built
-                // SPA, and a clean checkout has no dist directory while the npm registry does not
-                // exist yet. The normal pipeline builds the real client from the same commit.
-                Path ui = repo.resolve(seedUi);
-                Files.createDirectories(ui);
-                Files.writeString(ui.resolve("index.html"),
-                        "<!doctype html><html><body>qits bootstrap</body></html>\n",
-                        StandardCharsets.UTF_8);
-                ctx.log("  placeholder client at " + seedUi);
+            // THE REAL CLIENT, built from the webui gitlink the checkout just stood (qits-889). Its
+            // Dockerfile consumes an already-built SPA, and the bundle it gets is the one the
+            // release would ship — never a placeholder: a seed service is deployed and serves
+            // browsers until the train replaces it.
+            if (!PlatformModel.seedUiPath(name).isEmpty()) {
+                seedClient(ctx, name, repo);
             }
 
             Path dockerfilePath = repo.resolve(PlatformModel.dockerfilePath(name));
@@ -841,6 +838,282 @@ public class SeedPhases {
                     dockerfile, repo, List.of(), contexts, ctx::log);
             Boot.must(result, "build of qits/" + name + " failed");
         });
+    }
+
+    // --- the seed clients and the @qits packages they pin ----------------------------------------
+
+    /**
+     * <b>One {@code @qits} package this boot builds, and where its source is</b>: the release of
+     * {@code producer} at {@code ref} — its tag, or its {@code release(<version>):} commit where the
+     * tag is gone ({@link eu.wohlben.qits.cli.bootstrap.platform.Git#releaseRef}).
+     *
+     * @param needs    the {@code @qits} packages its own lock installs; none for golden masters
+     * @param npmrc    a jslib's scratch {@code .npmrc}; null for golden masters
+     * @param manifest a golden-masters package's {@code package.json}; null for a jslib
+     */
+    record NpmSource(NpmSeed.Pkg pkg, String producer, String ref, Set<NpmSeed.Pkg> needs,
+                     String npmrc, String manifest) {
+
+        NpmSeed.Build build() {
+            return new NpmSeed.Build(pkg, needs, npmrc, manifest);
+        }
+
+        /** What the source archive holds: the whole tree, or the provider's golden masters. */
+        String directory() {
+            return NpmSeed.kind(pkg.name()) == NpmSeed.Kind.JSLIB ? "." : "golden-masters";
+        }
+    }
+
+    /**
+     * <b>EVERY {@code @qits} PACKAGE A SEED CLIENT PINS, built from its release into the
+     * {@code qits-npm-seed} volume — before the first seed image with a client</b> (qits-889).
+     * <p>
+     * The pins are each seed client's committed {@code package-lock.json} at the webui gitlink its
+     * service's checkout records — what {@code npm ci} installs — closed over each jslib's own
+     * {@code pnpm-lock.yaml} at its release: {@code @qits/ui-components} builds against
+     * {@code @qits/angular} and four providers' golden masters. Every package is built at the
+     * release its VERSION names, because that is how the platform publishes them: a jslib's release
+     * step builds the tag and refuses a manifest whose version is not {@code $QITS_VERSION}
+     * (qits-ci {@code release-archetypes/npm-library.yml}), and a golden-masters package is the
+     * provider's {@code golden-masters/} published under the provider's {@code $QITS_VERSION}
+     * ({@code CiReleaseComposer.publishContractsAndDocs}).
+     * <p>
+     * <b>A pin this boot cannot build stops the phase, by name</b> — an unknown {@code @qits}
+     * package, a version with neither a tag nor a release commit, a release without the tree. A
+     * frontend built against anything else would not be the release's bundle, and the alternative
+     * the seed used to take, a placeholder page, is what this replaces.
+     * <p>
+     * <b>One container, golden masters first, each jslib after what it installs</b>, and a package
+     * the volume already holds is not built again: its source is an immutable release.
+     */
+    public Phase npmSeed() {
+        return new Phase("seed-npm-packages", "build the @qits packages the seed clients pin",
+                ctx -> {
+                    Map<NpmSeed.Pkg, String> pinnedBy = new java.util.TreeMap<>();
+                    for (String name : PlatformModel.seedClients()) {
+                        Path repo = boot.state.repoDir(name);
+                        ctx.status("reading the client lock of " + PlatformModel.repo(name));
+                        Boot.must(boot.git.submodulesShallow(repo, ctx::log),
+                                "submodule checkout of " + PlatformModel.repo(name) + " failed");
+                        for (NpmSeed.Pkg pin : clientPins(name, repo)) {
+                            pinnedBy.merge(pin, PlatformModel.repo(name), (a, b) -> a + ", " + b);
+                        }
+                    }
+                    Map<NpmSeed.Pkg, NpmSource> sources = npmClosure(pinnedBy);
+                    Map<NpmSeed.Pkg, Set<NpmSeed.Pkg>> needs = new LinkedHashMap<>();
+                    sources.forEach((pkg, source) -> needs.put(pkg, source.needs()));
+                    List<NpmSeed.Pkg> order = NpmSeed.buildOrder(needs);
+                    boot.docker.ensureVolume(NpmSeed.VOLUME, ctx::log);
+                    List<String> held = npmHolds(order.stream().map(NpmSeed.Pkg::file).toList(),
+                            false);
+                    List<NpmSource> wanted = new ArrayList<>();
+                    for (NpmSeed.Pkg pkg : order) {
+                        NpmSource source = sources.get(pkg);
+                        boolean there = held.contains(pkg.file());
+                        ctx.log("  " + pkg.id() + " (" + PlatformModel.repo(source.producer()) + " "
+                                + source.ref() + ") — " + NpmSeed.VOLUME + ": "
+                                + (there ? "held" : "to build"));
+                        if (!there) {
+                            wanted.add(source);
+                        }
+                    }
+                    if (wanted.isEmpty()) {
+                        ctx.skip(NpmSeed.VOLUME + " holds all " + order.size());
+                    }
+                    String cid = create(ctx, List.of("docker", "create", "--user", "root",
+                            "--entrypoint", "sh", "-v", NpmSeed.VOLUME + ":" + NpmSeed.MOUNT,
+                            NpmSeed.NODE_IMAGE,
+                            "-c", NpmSeed.packagesScript(wanted.stream().map(NpmSource::build)
+                                    .toList())));
+                    Path exports = Files.createDirectories(boot.state.srcDir.resolve(".exports"));
+                    for (NpmSource source : wanted) {
+                        Path tar = exports.resolve(source.pkg().file() + ".tar");
+                        try {
+                            Boot.must(boot.git.archive(boot.state.repoDir(source.producer()),
+                                            source.ref(), source.directory(), tar, ctx::log),
+                                    "archiving " + PlatformModel.repo(source.producer()) + " "
+                                            + source.ref() + " failed");
+                            Boot.must(boot.docker.exec(Duration.ofMinutes(10), ctx::log, "cp",
+                                            tar.toString(), cid + ":" + NpmSeed.archive(source.pkg())),
+                                    "copying " + source.pkg().id() + " in failed");
+                        } finally {
+                            Files.deleteIfExists(tar);
+                        }
+                    }
+                    ctx.status("building " + wanted.size() + " @qits package(s)");
+                    startAndReap(ctx, cid, "building the @qits packages failed");
+                    ctx.note(wanted.size() + " of " + order.size() + " built");
+                });
+    }
+
+    /**
+     * <b>The pins closed over the jslibs' own locks, each with its source found</b> — or the phase
+     * stops naming the first pin that cannot be built and who pins it.
+     */
+    Map<NpmSeed.Pkg, NpmSource> npmClosure(Map<NpmSeed.Pkg, String> roots) {
+        Map<NpmSeed.Pkg, String> pinnedBy = new LinkedHashMap<>(roots);
+        Map<NpmSeed.Pkg, NpmSource> found = new LinkedHashMap<>();
+        java.util.Deque<NpmSeed.Pkg> pending = new java.util.ArrayDeque<>(roots.keySet());
+        while (!pending.isEmpty()) {
+            NpmSeed.Pkg pkg = pending.removeFirst();
+            if (found.containsKey(pkg)) {
+                continue;
+            }
+            String why = pkg.id() + " (pinned by " + pinnedBy.get(pkg) + ")";
+            String producer = NpmSeed.producer(pkg.name());
+            if (producer == null) {
+                throw new IllegalStateException(why + " cannot be built: it is neither a jslib a "
+                        + "release publishes (" + String.join(", ", NpmSeed.jslibs())
+                        + ") nor the golden masters of a repository this boot clones");
+            }
+            Path repo = boot.state.repoDir(producer);
+            String ref = boot.git.releaseRef(repo, pkg.version());
+            if (ref == null) {
+                throw new IllegalStateException(why + " cannot be built: "
+                        + PlatformModel.repo(producer) + " has neither the tag " + pkg.version()
+                        + " nor a release(" + pkg.version() + "): commit in " + repo + ", and a "
+                        + "seed client is built from its release or not at all");
+            }
+            if (NpmSeed.kind(pkg.name()) == NpmSeed.Kind.JSLIB) {
+                String lock = boot.git.fileAt(repo, ref, "pnpm-lock.yaml", 200_000);
+                if (lock == null) {
+                    throw new IllegalStateException(why + " cannot be built: "
+                            + PlatformModel.repo(producer) + " at " + ref + " has no readable "
+                            + "pnpm-lock.yaml, and its build installs with --frozen-lockfile");
+                }
+                Set<NpmSeed.Pkg> needs = NpmSeed.pnpmLockPins(lock);
+                String npmrc = NpmSeed.refuseServers(NpmSeed.scratchNpmrc(
+                        boot.git.fileAt(repo, ref, ".npmrc")), PlatformModel.repo(producer) + " "
+                        + ref);
+                found.put(pkg, new NpmSource(pkg, producer, ref, needs, npmrc, null));
+                for (NpmSeed.Pkg need : needs) {
+                    pinnedBy.putIfAbsent(need, pkg.id());
+                    pending.addLast(need);
+                }
+            } else {
+                if (boot.git.namesAt(repo, ref, "golden-masters").isEmpty()) {
+                    throw new IllegalStateException(why + " cannot be built: "
+                            + PlatformModel.repo(producer) + " at " + ref + " has no "
+                            + "golden-masters/ to pack");
+                }
+                String application = contractApplication(boot.git.fileAt(repo, ref, RELEASE_YML),
+                        PlatformModel.application(producer));
+                found.put(pkg, new NpmSource(pkg, producer, ref, Set.of(), null,
+                        NpmSeed.goldenMastersManifest(pkg, application)));
+            }
+        }
+        return found;
+    }
+
+    /**
+     * The {@code @qits} packages one seed client's committed lock installs — read at the webui's
+     * HEAD, the gitlink {@code submodulesShallow} stood it at. A client with no lock cannot be
+     * built the way its Dockerfile asks ({@code npm ci}), and stops the phase.
+     */
+    Set<NpmSeed.Pkg> clientPins(String name, Path repo) {
+        Path webui = repo.resolve(PlatformModel.seedWebuiPath(name));
+        String origin = PlatformModel.repo(name) + "/" + PlatformModel.seedWebuiPath(name)
+                + "/package-lock.json";
+        String lock = boot.git.fileAt(webui, "HEAD", "package-lock.json", 200_000);
+        if (lock == null) {
+            throw new IllegalStateException(origin + " cannot be read at the webui gitlink, so "
+                    + "qits/" + name + "'s client cannot be built — `npm ci` needs it");
+        }
+        return NpmSeed.packageLockPins(lock, origin);
+    }
+
+    /**
+     * <b>Build one seed client into the place its Dockerfile reads</b>: the webui's committed tree
+     * ({@code git archive HEAD}, so nothing of a previous run rides along) in a throwaway container,
+     * against the volume's tarballs, the bundle copied out to {@link PlatformModel#seedUiPath}.
+     * The checkout is never written but for that path, which is untracked: package.json, the lock
+     * and the {@code .npmrc} are retargeted in the container's copy only.
+     */
+    void seedClient(PhaseContext ctx, String name, Path repo) throws IOException {
+        String webuiPath = PlatformModel.seedWebuiPath(name);
+        Path webui = repo.resolve(webuiPath);
+        String origin = PlatformModel.repo(name) + "/" + webuiPath;
+        Set<NpmSeed.Pkg> pins = clientPins(name, repo);
+        List<String> held = npmHolds(pins.stream().map(NpmSeed.Pkg::file).toList(), true);
+        List<String> missing = pins.stream().filter(pin -> !held.contains(pin.file()))
+                .map(NpmSeed.Pkg::id).sorted().toList();
+        if (!missing.isEmpty()) {
+            throw new IllegalStateException("qits/" + name + "'s client cannot be built: its lock "
+                    + "pins " + String.join(", ", missing) + ", which the " + NpmSeed.VOLUME
+                    + " volume does not hold. seed-npm-packages builds every @qits package a "
+                    + "seed client pins, so it did not run, or read another lock than " + origin);
+        }
+        String sha = boot.git.head(webui);
+        String npmrc = NpmSeed.refuseServers(NpmSeed.scratchNpmrc(
+                boot.git.fileAt(webui, "HEAD", ".npmrc")), origin);
+        String bundle = PlatformModel.seedBundlePath(name);
+        ctx.status("building the client of qits/" + name + " at " + shortSha(sha));
+        String cid = create(ctx, List.of("docker", "create", "--user", "root",
+                "--entrypoint", "sh", "-v", NpmSeed.VOLUME + ":" + NpmSeed.MOUNT,
+                NpmSeed.NODE_IMAGE, "-c", NpmSeed.frontendScript(
+                        PlatformModel.repo(name) + "@" + sha, bundle, pins, npmrc)));
+        try {
+            Path exports = Files.createDirectories(boot.state.srcDir.resolve(".exports"));
+            Path tar = exports.resolve(PlatformModel.repo(name) + "-webui.tar");
+            try {
+                Boot.must(boot.git.archive(webui, "HEAD", ".", tar, ctx::log),
+                        "archiving " + origin + " failed");
+                Boot.must(boot.docker.exec(Duration.ofMinutes(10), ctx::log, "cp",
+                                tar.toString(), cid + ":" + NpmSeed.FRONTEND_ARCHIVE),
+                        "copying " + origin + " in failed");
+            } finally {
+                Files.deleteIfExists(tar);
+            }
+            ProcessResult built = boot.docker.exec(Docker.BUILD_TIMEOUT, ctx::log, "start", "-a",
+                    cid);
+            if (!built.ok()) {
+                throw new IllegalStateException("building the client of qits/" + name + " ("
+                        + origin + " at " + shortSha(sha) + ") failed\n" + built.tailText(20));
+            }
+            Path ui = repo.resolve(PlatformModel.seedUiPath(name));
+            deleteTree(ui);
+            Files.createDirectories(ui);
+            Boot.must(boot.docker.exec(Duration.ofMinutes(10), ctx::log, "cp",
+                            cid + ":" + NpmSeed.FRONTEND_OUT + "/.", ui.toString()),
+                    "copying the client of qits/" + name + " out failed");
+        } finally {
+            boot.docker.removeContainer(cid, null);
+        }
+        ctx.log("  client " + origin + " @ " + shortSha(sha) + " -> " + PlatformModel.seedUiPath(name));
+    }
+
+    /**
+     * Which tarballs the npm volume holds. {@code strict}: a probe that could not run stops the
+     * phase rather than answering "none" — a client preflight that read a docker failure as every
+     * package missing would name the wrong problem; the package phase only rebuilds.
+     */
+    private List<String> npmHolds(List<String> files, boolean strict) {
+        if (files.isEmpty()) {
+            return List.of();
+        }
+        ProcessResult result = boot.docker.run(Cmd.of(NpmSeed.probeCommand(files))
+                .captureLimit(files.size() + 100), null);
+        if (!result.ok()) {
+            if (strict) {
+                throw new IllegalStateException("asking the " + NpmSeed.VOLUME + " volume for "
+                        + files.size() + " packages failed\n" + result.tailText(20));
+            }
+            return List.of();
+        }
+        return result.captured().stream().map(String::strip).filter(line -> !line.isBlank())
+                .toList();
+    }
+
+    /** A directory and everything under it, gone; nothing when it is not there. */
+    static void deleteTree(Path dir) throws IOException {
+        if (!Files.exists(dir, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            return;
+        }
+        try (Stream<Path> walk = Files.walk(dir)) {
+            for (Path path : walk.sorted(java.util.Comparator.reverseOrder()).toList()) {
+                Files.delete(path);
+            }
+        }
     }
 
     /**

@@ -65,13 +65,19 @@ public final class BootstrapPlan {
             phases.add(seed.seedGoldenMasters());
             phases.add(seed.seedPacts());
             phases.add(seed.mavenSeed());
+            // THE @qits npm PACKAGES THE SEED CLIENTS PIN, built from their releases into the
+            // qits-npm-seed volume (qits-889), before the first image that carries a client — the
+            // mirror, two lines down. Every seed client is built from its gitlinked webui against
+            // these tarballs and npmjs, in its own seed-image phase, so nothing reaches
+            // registry.qits or mirror.qits for a bundle either.
+            phases.add(seed.npmSeed());
             // PHASE 1 TALKS TO NO STORE AND NO MIRROR (qits-889). Every build below resolves the
             // platform's own jars from the qits-maven-seed file repository and everything else from
             // upstream — Maven Central, npmjs — so no qits-artifacts and no qits-platform-mirror is
             // started by hand, and nothing is published before there is an idp to commission the
             // publishing credential at. The store is filled once, by store-seed, after the seed
             // stack is up.
-            // The edge needs nothing from the platform: it has no client to place a bundle for, and
+            // The edge needs nothing from the platform: it has no client to build a bundle for, and
             // the qits jars it resolves are in the file repository maven-seed has just filled.
             phases.add(seed.seedImage("edge"));
             // THE BYTE PLANE'S THREE: all three are built out of qits-blobstore and
@@ -108,8 +114,8 @@ public final class BootstrapPlan {
             phases.add(seed.seedImage("containers"));
             // THE ALIAS TABLE'S OWNER: its reactor resolves qits-eventstream, qits-githost-events,
             // qits-auth-core and the qits-containers client out of the file repository. It has a
-            // client, so the seed places a placeholder bundle where its Dockerfile's `test -f`
-            // looks — see PlatformModel.seedUiPath.
+            // client, so the seed builds it where its Dockerfile's `test -f` looks — see
+            // PlatformModel.seedUiPath.
             // ITS TWO DAEMONS' WIRE CONTRACTS, on qits-ci's terms (qits-889): qits-projects
             // compiles against qits-projects-daemon-protocol and qits-workspace-daemon-protocol at
             // the versions its root pom pins, built from those release tags. qits-system compiles
@@ -125,7 +131,7 @@ public final class BootstrapPlan {
             // qits-auth-core out of the file repository, and the runner's wire contract, which the
             // phase before it seeds on qits-ci's daemon contract's terms —
             // at the version qits-system pins, built from that tag. It has a client, so the seed
-            // places a placeholder bundle where its Dockerfile's `test -f` looks.
+            // builds it where its Dockerfile's `test -f` looks.
             phases.add(seed.protocolSeed("system", "system-runner-daemon",
                     "qits-system-runner-protocol", "qits.system-runner-protocol.version"));
             phases.add(seed.seedImage("system"));

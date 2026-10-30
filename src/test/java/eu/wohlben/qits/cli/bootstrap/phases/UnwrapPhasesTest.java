@@ -36,6 +36,8 @@ class UnwrapPhasesTest {
         assertThat(UnwrapPhases.isData("qits-oci-postgresql-data")).isTrue();
         // The first-boot Maven repository: rebuilt by the next bootstrap.
         assertThat(UnwrapPhases.isData("qits-maven-seed")).isTrue();
+        // Its npm twin, the @qits tarballs and seed client bundles (qits-889): the same.
+        assertThat(UnwrapPhases.isData("qits-npm-seed")).isTrue();
     }
 
     @Test
