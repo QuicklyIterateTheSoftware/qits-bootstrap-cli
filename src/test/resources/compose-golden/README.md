@@ -63,24 +63,22 @@ alias is TRANSITIONAL: the live deployer and the live orchestrator hold `<env>-q
 their running environments and only take the new name at their next deploy, so the container claims
 both until the epic's cutover feature drops it.
 
-**The orchestrator holds one idp client per peer, and the AUDIENCE is what makes them four.** Its gc
-run asks the deployer and ci for the pins, hands them to qits-artifacts and tells qits-containers
-what to reclaim — four peers behind four different audiences, so one client with one audience would
-be a run whose every step but one is a 401. All four present the orchestrator's OWN id, never a
-borrowed one: a refused step has to name the service that was refused. The targets are wire aliases
-in both shapes — the environment services carry the tier, the deployer and the configuration store
-carry none — and `QITS_ORCHESTRATOR_TARGETS_CONFIGURATION_URL` is the one whose absence was silent:
-the image's own default was a name nothing on qits-net answered to while the store was a tier's, so
-every gc run's `pins.images` read failed with a connect error and the sweep was skipped rather than
-refused.
+**The orchestrator holds one idp client, and the one platform audience is what every peer accepts.**
+Its gc run asks the deployer and ci for the pins, hands them to qits-artifacts and tells
+qits-containers what to reclaim — four peers, one bearer. Every step presents the orchestrator's OWN
+id, never a borrowed one: a refused step has to name the service that was refused. The targets are
+wire aliases in both shapes — the environment services carry the tier, the deployer and the
+configuration store carry none — and `QITS_ORCHESTRATOR_TARGETS_CONFIGURATION_URL` is the one whose
+absence was silent: the image's own default was a name nothing on qits-net answered to while the
+store was a tier's, so every gc run's `pins.images` read failed with a connect error and the sweep
+was skipped rather than refused.
 
-**qits-platform-maintenance holds a client per GUARDED peer and reads both registries bare.** Three
-peers — the catalog at qits-projects, the manifests at qits-githost, the bump at qits-ci — behind
-three audiences. The registries it reads versions from are unguarded on qits-net, so it holds no
-client for them and this file emits none: enabling one would be a token nothing asks for against an
-audience nothing validates. `QITS_MAINTENANCE_ENVIRONMENT` is not `QITS_ENVIRONMENT` and must never
-be confused with it — it records which environment's CI ran a bump, on a service that belongs to no
-tier.
+**qits-platform-maintenance holds one idp client and reads both registries bare.** Three guarded
+peers — the catalog at qits-projects, the manifests at qits-githost, the bump at qits-ci — all accept
+the same platform-audience bearer. The registries it reads versions from are unguarded on qits-net,
+so it holds no client for them and this file emits none: enabling one would be a token nothing asks
+for. `QITS_MAINTENANCE_ENVIRONMENT` is not `QITS_ENVIRONMENT` and must never be confused with it —
+it records which environment's CI ran a bump, on a service that belongs to no tier.
 
 **The admin console is the THIRD holder of the host's docker socket**, after the container
 orchestrator and the deployer. The alternative was an exec endpoint on qits-containers' machine API,
@@ -93,10 +91,11 @@ docker plugin glances lists containers with.
 **qits-projects is told where to drive a release and with which credential.** It refuses to release
 at all while it cannot name a git host, and both keys ship unset — a tier that does not release never
 learns one. The ci client is what lets the release gate read qits-ci's active runs and cancel what it
-supersedes. The fourth named client is the maintenance one, and the audience is what makes it a
-fourth: the catalog refuses a bearer minted for ci or for the git host. That third address enriches
-an announcement and switches nothing on — unset, unreachable, refused or 404 and the event simply
-carries no such key — so a platform without it releases exactly as well.
+supersedes. The fourth named client is the maintenance one, spelled because it has its own catalog to
+ask, not because a bearer minted for ci or the git host would be refused there — every bearer here
+carries the one platform audience. That third address enriches an announcement and switches nothing
+on — unset, unreachable, refused or 404 and the event simply carries no such key — so a platform
+without it releases exactly as well.
 
 **The deployer's own deployment inherits ONE triple, not two.** Its config volume is the self-update
 handoff: without that mount the successor comes up with no configuration at all and every later

@@ -931,9 +931,9 @@ per-tier bus could announce to one tier only.
 processes — multi-step jobs that only send requests to peers, the first being the unified
 deletion run — and what such a run reclaims is one MACHINE's image store, volumes and build
 cache, however many tiers share it. Two per-tier copies would be two schedulers pruning the same
-docker daemon on their own clocks, each blind to what the other pinned. It holds a named idp
-client per peer (qits-artifacts, qits-containers, qits-ci, the deployer), because a bearer minted
-for one audience is refused by the rest.
+docker daemon on their own clocks, each blind to what the other pinned. It mints a bearer per
+peer (qits-artifacts, qits-containers, qits-ci, the deployer) from one idp client, built over the
+one platform audience every peer accepts.
 
 **qits-platform-maintenance joined the plane on 2026-08-22.** It holds the dependency inventory of
 every repository in the catalog — what each manifest pins, what the latest version is, which

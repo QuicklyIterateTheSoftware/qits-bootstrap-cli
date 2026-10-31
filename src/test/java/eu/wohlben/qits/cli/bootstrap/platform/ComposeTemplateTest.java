@@ -1313,10 +1313,10 @@ class ComposeTemplateTest {
         // plane's QITS_CI_CONTAINER_GIT_URL is retired (qits-515) and states nowhere in this file.
         assertThat(serviceBlock(compose, ENV + "-qits-ci"))
                 .contains("QITS_CI_GIT_HOST_URL: " + host)
-                .contains("QITS_CI_CONTAINER_GIT_AUDIENCE: prod-qits-githost")
+                .doesNotContain("QITS_CI_CONTAINER_GIT_AUDIENCE")
                 .doesNotContain("QITS_CI_CONTAINER_GIT_URL");
         assertThat(extras("qits-ci")).contains("env.QITS_CI_GIT_HOST_URL=" + host)
-                .contains("env.QITS_CI_CONTAINER_GIT_AUDIENCE=prod-qits-githost")
+                .doesNotContain("QITS_CI_CONTAINER_GIT_AUDIENCE")
                 .doesNotContain("QITS_CI_CONTAINER_GIT_URL");
         // The two services that push. Their key was renamed with the split — a deployment still
         // passing qits.artifacts.url configures nothing and silently takes the default.
@@ -2234,7 +2234,8 @@ class ComposeTemplateTest {
                 .contains("QITS_ARTIFACTS_REGISTRY_HOST: registry.preprod.localhost:8080");
         assertThat(ComposeTemplate.extras(other))
                 .contains("env.QITS_ARTIFACTS_REGISTRY_HOST=registry.preprod.localhost:8080")
-                .contains("env.QITS_CI_CONTAINER_GIT_AUDIENCE=preprod-qits-githost")
+                .contains("env.QITS_CI_GIT_HOST_URL=http://preprod-qits-githost:8080")
+                .doesNotContain("QITS_CI_CONTAINER_GIT_AUDIENCE")
                 // The bus is still a PLATFORM service — one instance for the estate — and its
                 // ADDRESS carries the tier anyway, which is the platform-service retirement seen
                 // from the only side that has landed so far. Both spellings resolve to the one

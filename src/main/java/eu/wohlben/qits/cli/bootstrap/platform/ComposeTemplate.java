@@ -267,10 +267,10 @@ public final class ComposeTemplate {
                   # alone, before any client exists to create the rest with.
                   #
                   # NOTHING SAYS ROLES, CLAIMS OR AUDIENCES HERE ANY MORE, and their absence is not
-                  # an omission. A database service client's role (qits:system), its project claim
-                  # (*) and its audience (qits-platform) are fixed in qits-idp's own code —
-                  # ClientRegistry.DATABASE_SERVICE_CLIENT_ROLES and AudienceSource.DATABASE — so a
-                  # line here could only restate them, and a restatement is what drifts.
+                  # an omission. A database service client's role (qits:system) and its project claim
+                  # (*) are fixed in qits-idp's own code — ClientRegistry.SERVICE_CLIENT_ROLES and
+                  # SERVICE_CLIENT_CLAIMS — and its audience is the one platform audience every token
+                  # carries, so a line here could only restate them, and a restatement is what drifts.
                   QITS_IDP_SEED_CLIENT_ID: "${BOOTSTRAP_CLIENT_ID}"
                   QITS_IDP_SEED_CLIENT_SECRET: "${BOOTSTRAP_CLIENT_SECRET}"
                   # NOR THE PASSKEY BINDING. The rp id and the ceremony's origins are the stated
@@ -1003,7 +1003,6 @@ public final class ComposeTemplate {
                   # /artifacts, because the routes lived inside the artifacts store; qits-githost
                   # serves /git at its own root and there is nothing in front of it.
                   QITS_CI_GIT_HOST_URL: http://${ENV_NAME}-qits-githost:8080
-                  QITS_CI_CONTAINER_GIT_AUDIENCE: ${ENV_NAME}-qits-githost
                   # THE SAME CATALOGUE THE DEPLOYED ci READS, on the seed too — since 2026-09-05.
                   # The seed used to withhold this key, on the argument that qits-projects was
                   # deployed fourteen phases after this container and a configured catalogue REPLACES
@@ -1310,7 +1309,6 @@ public final class ComposeTemplate {
                   # It REFUSES TO START without this one.
                   QITS_PROJECTS_URL: http://${ENV_NAME}-qits-projects:8080
                   QITS_GITHOST_URL: http://${ENV_NAME}-qits-githost:8080
-                  QITS_GITHOST_AUDIENCE: ${ENV_NAME}-qits-githost
                   QITS_WORKSPACE_CONTAINER_GIT_URL: http://githost.${ENV_NAME}.internal:8080
                   QITS_EVENTS_URL: http://${DIAL_EVENTS}:8080
                   # Its own name, for the daemons' control socket — see the extras block: `auto` is
@@ -1722,14 +1720,12 @@ public final class ComposeTemplate {
             # only; ci appends /projects/api/repositories itself.
             #
             # THE HOP IS FORWARD-AUTH, not a bearer, and that is qits-ci's own decision rather than
-            # an omission here: its two oidc clients are audience-bound to qits-containers and
-            # qits-githost, and a bearer cut for the wrong audience is refused harder than none at
-            # all. It presents X-Qits-User/X-Qits-Roles at the service alias on qits-net, which the
-            # edge is deliberately not on. Giving ci a third, projects-bound client is a deployment
-            # change on both sides and is left until one is wanted for its own sake.
+            # an omission here: it has one oidc client, for the one platform audience, and presents
+            # X-Qits-User/X-Qits-Roles at the service alias on qits-net instead, which the edge is
+            # deliberately not on. Giving ci a second, projects-bound client is a deployment change
+            # on both sides and is left until one is wanted for its own sake.
             qits.deployments.extras.qits-ci.env.QITS_CI_PROJECTS_URL=http://${ENV_NAME}-qits-projects:8080
             qits.deployments.extras.qits-ci.env.QITS_CI_GIT_HOST_URL=http://${ENV_NAME}-qits-githost:8080
-            qits.deployments.extras.qits-ci.env.QITS_CI_CONTAINER_GIT_AUDIENCE=${ENV_NAME}-qits-githost
             qits.deployments.extras.qits-ci.env.QITS_CI_MEMORY_LIMIT=4g
             qits.deployments.extras.qits-ci.env.QITS_CI_CPUS=4
             qits.deployments.extras.qits-ci.env.QITS_ARTIFACTS_REGISTRY_HOST=registry.${ENV_NAME}.localhost:${PORT}
@@ -1840,9 +1836,9 @@ public final class ComposeTemplate {
             # validates qits-platform out of its shipped quarkus.oidc.token.audience, one name for
             # every tier that could ask.
             #
-            # AND NO OIDC CLIENT OF ANY SPELLING, although this service MINTS more than any other
-            # here: one token per peer, because a bearer minted for the store is refused by the
-            # other peers. All of them come out of ONE credential — the `idp:client` resource it
+            # AND NO OIDC CLIENT OF ANY SPELLING, although this service calls more peers than any
+            # other here: every call carries the same qits-platform token, which comes out of ONE
+            # credential — the `idp:client` resource it
             # declares, created by the deployer and injected as QITS_RESOURCE_IDP_* — so what used
             # to be six quintets of id, secret, issuer, audience and enabled flag is now a row in
             # the deployer's registry and nothing in this file.
@@ -2097,10 +2093,10 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-projects.env.QITS_AUTH_MACHINE_REQUIRED=${MACHINE_REQUIRED}
             qits.deployments.extras.qits-projects.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
             # FIVE NAMED OIDC CLIENTS WENT FROM THIS BLOCK, AND NOT ONE CALL WITH THEM. This
-            # service mints a token per peer — qits-containers to start an agent, qits-githost for
-            # every mirror and push, qits-ci for the runs a release supersedes, the maintenance
-            # catalog for the downstream enrichment, qits-workspaces for the branch resolution —
-            # because a bearer minted for one audience is refused by the rest. What went is the
+            # service calls qits-containers to start an agent, qits-githost for every mirror and
+            # push, qits-ci for the runs a release supersedes, the maintenance catalog for the
+            # downstream enrichment and qits-workspaces for the branch resolution, all with one
+            # qits-platform token from the shared `qits` client. What went is the
             # twenty-five lines that spelled the same id and the same secret five times over: the
             # credential is the `idp:client` resource this application declares, created by the
             # deployer against the running idp and injected as QITS_RESOURCE_IDP_*, and every named
@@ -2220,7 +2216,6 @@ public final class ComposeTemplate {
             qits.deployments.extras.qits-workspaces.env.QUARKUS_OIDC_AUTH_SERVER_URL=${IDP_DIAL}
             qits.deployments.extras.qits-workspaces.env.QITS_PROJECTS_URL=http://${ENV_NAME}-qits-projects:8080
             qits.deployments.extras.qits-workspaces.env.QITS_GITHOST_URL=http://${ENV_NAME}-qits-githost:8080
-            qits.deployments.extras.qits-workspaces.env.QITS_GITHOST_AUDIENCE=${ENV_NAME}-qits-githost
             qits.deployments.extras.qits-workspaces.env.QITS_WORKSPACE_CONTAINER_GIT_URL=http://githost.${ENV_NAME}.internal:8080
             # NO HOSTED-REGISTRY ADDRESSES HERE ANY MORE (qits-731). A workspace container used to be
             # handed the internal `${ENV_NAME}-qits-artifacts:8080` wire alias for both the maven
@@ -2280,10 +2275,9 @@ public final class ComposeTemplate {
             # of its shipped quarkus.oidc.token.audience — one name, the same whichever tier is
             # asking.
             #
-            # NOR ANY OIDC CLIENT, and it mints against three guarded peers: qits-projects for the
-            # catalog, qits-githost for the manifests, qits-ci for the trigger. A bearer minted for
-            # one is refused by the other two, so the three clients are real — they are built over
-            # ONE credential, the `idp:client` resource this application declares, which the
+            # NOR ANY OIDC CLIENT, and it calls three guarded peers: qits-projects for the catalog,
+            # qits-githost for the manifests, qits-ci for the trigger, all with one qits-platform
+            # token built over ONE credential, the `idp:client` resource this application declares, which the
             # deployer creates against the running idp and injects as QITS_RESOURCE_IDP_*. The
             # registries need none of it: qits-artifacts' registry routes and the mirror's proxies
             # are unguarded on qits-net.

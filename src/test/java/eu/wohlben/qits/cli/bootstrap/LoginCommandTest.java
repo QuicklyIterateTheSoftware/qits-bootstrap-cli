@@ -53,26 +53,18 @@ class LoginCommandTest {
     }
 
     /**
-     * <b>The environment name is in the domain-arm hostname now, so a guess is a wrong platform.</b>
-     * It used not to be: {@code idp.<domain>} reached whichever tier the edge called default. A
-     * guessed {@code prod} against a platform called something else does not fail at the resolver —
-     * the zone's wildcards answer every shape — so it is refused before the browser opens.
-     * <p>
-     * There is no local arm with its own default any more either: {@code environmentName} answers
-     * null for an unset or blank name whatever the domain is.
+     * <b>An unconfigured environment name is simply absent, not refused.</b> The hostnames are flat
+     * ({@code idp.qits.<domain>}, {@code PlatformModel.PROJECT_HAS_ENVIRONMENTS} false) and the
+     * token is asked for the one platform audience rather than a per-environment one, so there is
+     * nothing left for a missing {@code QITS_ENV_NAME} to break — {@code environmentName} answers
+     * null for an unset or blank name and login proceeds anyway.
      */
     @Test
-    void anUnconfiguredEnvironmentNameIsRefusedRatherThanGuessed() {
+    void anUnconfiguredEnvironmentNameIsSimplyAbsent() {
         assertThat(LoginCommand.environmentName(null)).isNull();
         assertThat(LoginCommand.environmentName("  ")).isNull();
         assertThat(LoginCommand.environmentName("dev")).isEqualTo("dev");
         assertThat(LoginCommand.environmentName(" dev ")).isEqualTo("dev");
-        assertThat(LoginCommand.environmentRefusal("qits-dev.eu"))
-                .contains("QITS_ENV_NAME")
-                .contains("<env>-qits-githost")
-                .contains("idp.qits.qits-dev.eu")
-                .doesNotContain("idp.<env>.")
-                .contains("--platform-env");
     }
 
     /**

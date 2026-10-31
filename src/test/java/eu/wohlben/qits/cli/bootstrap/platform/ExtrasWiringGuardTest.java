@@ -53,11 +53,9 @@ import static org.assertj.core.api.Assertions.fail;
  *       name it. The list is empty today, so the family admits nothing; it is asked rather than
  *       deleted because the next pin belongs to it without an edit here.
  * </ul>
- * <b>An audience-shaped key is deliberately not a family at all any more.</b> No service is told
+ * <b>An audience-shaped key is not a family, and none is generated any more.</b> No service is told
  * which audience to validate — every image ships {@code quarkus.oidc.token.audience=qits-platform},
- * the one name the idp puts on every token it mints — and {@code QITS_GITHOST_AUDIENCE} and
- * {@code QITS_CI_CONTAINER_GIT_AUDIENCE}, which name a PEER rather than the service itself, keep
- * their application's exemption until the wave decides where they go.
+ * the one name the idp puts on every token it mints.
  *
  * @see ComposeTemplateGoldenTest the other half of the pair — a golden says what a block HOLDS,
  *      this says what a block is ALLOWED to hold
