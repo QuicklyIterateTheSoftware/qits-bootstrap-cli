@@ -43,7 +43,7 @@
              bumps them, and a changed answer the bootstrap cannot read goes red here before it
              ships. Do not hand-edit them to chase a release. -->
         <qits.projects-golden-masters.version>2026.1030.185452</qits.projects-golden-masters.version>
-        <qits.events-golden-masters.version>2026.1023.82831</qits.events-golden-masters.version>
+        <qits.events-golden-masters.version>2026.1031.124054</qits.events-golden-masters.version>
         <qits.ci-golden-masters.version>2026.1031.93847</qits.ci-golden-masters.version>
         <qits.deployments-golden-masters.version>2026.1010.145913</qits.deployments-golden-masters.version>
         <qits.idp-golden-masters.version>2026.1027.165632</qits.idp-golden-masters.version>
