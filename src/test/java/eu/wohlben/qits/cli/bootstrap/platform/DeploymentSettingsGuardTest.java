@@ -101,9 +101,10 @@ class DeploymentSettingsGuardTest {
     }
 
     /**
-     * <b>Only what applies.</b> The port and the registry names that carry it are stated only when
-     * they differ from the images' default; the DNS token only when there is one; the extra
-     * certificate names only when there are any.
+     * <b>Only what applies.</b> The port is stated only when it differs from the images' default;
+     * the DNS token only when there is one; the extra certificate names only when there are any.
+     * {@code QITS_ARTIFACTS_REGISTRY_HOST} is retired and is never written at all, whatever the
+     * port: the deployer derives its registry host from {@code QITS_DOMAIN} now.
      */
     @Test
     void aSettingARunHasNothingToSayAboutIsLeftUnwritten() {
@@ -115,10 +116,8 @@ class DeploymentSettingsGuardTest {
         List<DeploymentSettings.Setting> moved = DeploymentSettings.of(
                 inputs(9090, List.of("status.support.qits-dev.eu"), "hetzner-secret"));
         assertThat(value(moved, "qits-deployments", "QITS_PORT")).isEqualTo("9090");
-        assertThat(value(moved, "qits-deployments", "QITS_ARTIFACTS_REGISTRY_HOST"))
-                .isEqualTo("registry.prod.localhost:9090");
-        assertThat(value(moved, "qits-ci", "QITS_ARTIFACTS_REGISTRY_HOST"))
-                .isEqualTo("registry.prod.localhost:9090");
+        assertThat(keys(moved)).doesNotContain("qits-deployments QITS_ARTIFACTS_REGISTRY_HOST",
+                "qits-ci QITS_ARTIFACTS_REGISTRY_HOST");
         assertThat(value(moved, "qits-edge", "QITS_EDGE_ACME_ADDITIONAL_NAMES"))
                 .isEqualTo("status.support.qits-dev.eu");
     }

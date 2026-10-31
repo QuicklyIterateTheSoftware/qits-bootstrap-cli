@@ -15,9 +15,10 @@ import java.util.List;
  * are the same on every platform became each image's code defaults, and what is left here is what
  * only this run knows — a domain, a password it generated, the port it was told, the ACME account.
  * <p>
- * <b>Only what applies is stated.</b> {@code QITS_PORT} and the registry host names only when the
- * port is not the images' default of 8080, the daemon override only when this run built one, the DNS token only when there is one, the additional certificate names only when there
- * are any. A key a run has nothing to say about is left unwritten rather than written empty.
+ * <b>Only what applies is stated.</b> {@code QITS_PORT} names only when the port is not the
+ * images' default of 8080, the daemon override only when this run built one, the DNS token only
+ * when there is one, the additional certificate names only when there are any. A key a run has
+ * nothing to say about is left unwritten rather than written empty.
  * <p>
  * <b>Values are never printed.</b> {@link Setting#toString} names the place and the key alone,
  * because a setting is the one object here that holds a password in clear.
@@ -72,11 +73,10 @@ public final class DeploymentSettings {
         settings.add(plain(deployments, "QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH", "true"));
         // The host side of the edge's `${QITS_PORT}:8080` publish, resolved by the deployer from
         // its own QITS_PORT. Stated only when it is not the default the deployer already has.
-        // And the name its DAEMON pulls through, which the image derives with the same default
-        // port: registry.<env>.localhost:8080.
+        // NO registry-host row beside it any more: the deployer DERIVES the registry host from
+        // QITS_DOMAIN above (registry.qits.<domain>) rather than reading one stated here.
         if (in.port() != DEFAULT_PORT) {
             settings.add(plain(deployments, "QITS_PORT", String.valueOf(in.port())));
-            settings.add(plain(deployments, "QITS_ARTIFACTS_REGISTRY_HOST", registryHost(in)));
         }
 
         String edge = PlatformModel.application("edge");
@@ -114,11 +114,6 @@ public final class DeploymentSettings {
         if (present(in.daemonSha())) {
             settings.add(plain(ci, "QITS_CI_DAEMON_VERSION_OVERRIDE", in.daemonSha()));
         }
-        // A pinned step image is addressed under the registry's host name, which carries the port.
-        if (in.port() != DEFAULT_PORT) {
-            settings.add(plain(ci, "QITS_ARTIFACTS_REGISTRY_HOST", registryHost(in)));
-        }
-
         // ONE PUSH TOKEN, TWO HOLDERS: the git host checks it and qits-projects presents it.
         settings.add(secret(PlatformModel.application("githost"),
                 "QITS_REPOSITORIES_GIT_PUSH_TOKEN", in.pushToken()));
@@ -131,10 +126,6 @@ public final class DeploymentSettings {
         settings.add(secret(PlatformModel.application("oci-postgresql"), "POSTGRES_PASSWORD",
                 in.postgresPassword()));
         return List.copyOf(settings);
-    }
-
-    private static String registryHost(Inputs in) {
-        return "registry." + in.envName() + ".localhost:" + in.port();
     }
 
     private static Setting plain(String application, String key, String value) {

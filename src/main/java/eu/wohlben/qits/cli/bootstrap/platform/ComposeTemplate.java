@@ -578,11 +578,10 @@ public final class ComposeTemplate {
                   # consumer: it is what lets it create the role and the database of every application
                   # that declares one. It lives in the same trust domain as the docker socket beside it.
                   QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD: "${PG_SUPERUSER_PASSWORD}"
-                  # It pulls through the HOST daemon — same reasoning as ci's registry host, and the
-                  # same name: the daemon resolves registry.${ENV_NAME}.localhost to the loopback
-                  # address and the edge hands the pull to the store. Every pull carries a bearer
-                  # since the flip, reads included, which is what the two variables below are for.
-                  QITS_ARTIFACTS_REGISTRY_HOST: registry.${ENV_NAME}.localhost:${PORT}
+                  # It pulls through the HOST DAEMON, which resolves the reference this deployer now
+                  # DERIVES itself — registry.qits.<domain>, from the QITS_DOMAIN line below — rather
+                  # than a value stated here. There is no registry-host key left to spell: every pull
+                  # still carries a bearer, which is what the two variables below are for.
                   # WHERE THE DOCKER CLI LOOKS FOR A CREDENTIAL. This container runs as uid 1001
                   # with no home, so without this variable docker finds no ~/.docker/config.json
                   # and pulls anonymously, which the edge now refuses. The bootstrap writes
@@ -651,11 +650,13 @@ public final class ComposeTemplate {
               # what made it platform-scoped, and they left.
               #
               # NO PUBLISHED PORT, and the host still pulls and pushes here. The door is the edge:
-              # registry.${ENV_NAME}.localhost:${PORT} is what the host's docker daemon dials, and
-              # what every QITS_ARTIFACTS_REGISTRY_HOST on this platform says. It resolves to the
-              # loopback address like every *.localhost name, arrives at the edge, and the edge hands
-              # it to this service by that name — reads anonymous, writes with a bearer. The port
-              # this block used to publish was open to anything that could reach the host.
+              # registry.${ENV_NAME}.localhost:${PORT} is what the host's docker daemon dials for
+              # this bootstrap's own seed pulls. It resolves to the loopback address like every
+              # *.localhost name, arrives at the edge, and the edge hands it to this service by that
+              # name — reads anonymous, writes with a bearer. The port this block used to publish
+              # was open to anything that could reach the host. A deployment reaches this same
+              # service through a different, public name once it is live — registry.qits.<domain> —
+              # which qits-deployments now derives rather than a deployment stating it.
               #
               # The daemon needs the name in `insecure-registries` (plain HTTP), which preflight
               # warns about and the closing report spells. When the edge itself is wedged, the way
@@ -1023,12 +1024,10 @@ public final class ComposeTemplate {
                   # ${ALIAS_EVENTS} -> the deployer's durable subscriber. qits-ci reads no such key
                   # any more, and a value nothing reads is a lie waiting to age. The deployer's HTTP intake
                   # stays as the manual door — this bootstrap's own build-event replay uses it.
-                  # Injected into publish steps as QITS_REGISTRY: dialled by the HOST daemon, which
-                  # resolves this name to the loopback address and reaches the store through the
-                  # edge (see the qits-artifacts block). The HOSTED registry, never the mirror: a
-                  # publish step pushes the platform's own image, and the mirror takes no writes at
-                  # all.
-                  QITS_ARTIFACTS_REGISTRY_HOST: registry.${ENV_NAME}.localhost:${PORT}
+                  # NO registry-host key any more: a publish step's registry is the PUBLIC name
+                  # qits-ci composes itself from QITS_DOMAIN below (registry.qits.<domain>), the
+                  # same derivation qits-deployments now uses for a pull — never a value stated
+                  # here.
                   # NO QITS_CI_REGISTRY_AUTH_*, and its retirement is the commission API's dividend.
                   # A publish step still needs a credential — the edge answers a registry WRITE with
                   # a 401 Bearer challenge — but ci no longer holds a static one to lend out: it

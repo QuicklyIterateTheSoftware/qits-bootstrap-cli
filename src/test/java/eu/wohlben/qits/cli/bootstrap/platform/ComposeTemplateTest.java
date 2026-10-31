@@ -1195,23 +1195,20 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>The one address the HOST's docker daemon dials, in all four places that spell it.</b> Both
-     * the seed and the deployment of ci and of the deployer carry it, and it is a NAME behind the
-     * edge rather than a loopback port: the HOST's resolver answers {@code *.localhost} with the
-     * loopback address, the edge routes on the name, and every method carries a bearer.
+     * <b>{@code QITS_ARTIFACTS_REGISTRY_HOST} is retired, in both the seed stack and the deployer's
+     * settings.</b> Neither ci nor the deployer is told a registry host any more: each derives
+     * {@code registry.qits.<domain>} itself, from {@code QITS_DOMAIN}, which every seed service
+     * already carries and which {@code DeploymentSettings} states once for the deployer's own rows.
      */
     @Test
-    void everyRegistryHostIsTheEdgesRegistryName() {
+    void noServiceIsToldARegistryHost() {
         String compose = ComposeTemplate.compose(tokens());
-        String vhost = "registry.prod.localhost:8080";
 
         assertThat(serviceBlock(compose, ENV + "-qits-ci"))
-                .contains("QITS_ARTIFACTS_REGISTRY_HOST: " + vhost);
+                .doesNotContain("QITS_ARTIFACTS_REGISTRY_HOST");
         assertThat(serviceBlock(compose, ENV + "-qits-deployments"))
-                .contains("QITS_ARTIFACTS_REGISTRY_HOST: " + vhost);
-        // The retired spelling is nowhere in the stack file: a value still naming the closed port is a
-        // push to nothing.
-        assertThat(compose).doesNotContain("QITS_ARTIFACTS_REGISTRY_HOST: localhost:");
+                .doesNotContain("QITS_ARTIFACTS_REGISTRY_HOST");
+        assertThat(compose).doesNotContain("QITS_ARTIFACTS_REGISTRY_HOST");
     }
 
     /**
@@ -1346,9 +1343,10 @@ class ComposeTemplateTest {
      *   <li>The resource triple, on both: since qits-711 ci's one oidc client is resource-only and
      *       enabled by default, so the triple alone is what commissions it — no runner, and no
      *       per-run credential either, needs a switch beside it any more.
-     *   <li>The registry host, on both, in the spelling the HOST's daemon resolves: it is what ci
-     *       composes a runner's self-update image from, and what this boot tags and pushes the
-     *       runner image under.
+     *   <li>No {@code QITS_ARTIFACTS_REGISTRY_HOST} on either: ci derives the registry host itself
+     *       from {@code QITS_DOMAIN}, which every seed service already carries — a runner's
+     *       self-update image and the runner image this boot tags and pushes are addressed from
+     *       that derivation now, never from a value stated here.
      * </ul>
      */
     @Test
@@ -1356,7 +1354,7 @@ class ComposeTemplateTest {
         String seed = serviceBlock(ComposeTemplate.compose(tokens()),
                 PlatformModel.wireAlias("ci", ENV));
                 // What the token endpoint a runner is told is derived from.
-        assertThat(seed).contains("QITS_ARTIFACTS_REGISTRY_HOST: registry.prod.localhost:8080")
+        assertThat(seed).doesNotContain("QITS_ARTIFACTS_REGISTRY_HOST")
                 .doesNotContain("QITS_CI_RUNNER_INTERNAL_URL")
                 .doesNotContain("QUARKUS_OIDC_CLIENT_")
                 .contains("QITS_RESOURCE_IDP_URL: http://prod-qits-idp:8080/idp");
@@ -1368,7 +1366,7 @@ class ComposeTemplateTest {
         assertThat(serviceBlock(ComposeTemplate.compose(staging),
                 PlatformModel.wireAlias("ci", "staging")))
                 .doesNotContain("QITS_CI_RUNNER_INTERNAL_URL")
-                .contains("QITS_ARTIFACTS_REGISTRY_HOST: registry.staging.localhost:8080");
+                .doesNotContain("QITS_ARTIFACTS_REGISTRY_HOST");
     }
 
     /**
@@ -1554,12 +1552,15 @@ class ComposeTemplateTest {
         other.putAll(PlatformModel.modelTokens("preprod"));
 
                 // ci's own client id follows the tier, on the seed where it is spelled at all.
-                // The registry name carries the tier too: one edge, one door, a name per tier.
+                // The edge's own registry vhost alias carries the tier too: one edge, one door, a
+                // name per tier. Neither ci nor the deployer is told that name any more — each
+                // derives registry.qits.<domain> itself, from QITS_DOMAIN, which carries no tier.
         assertThat(ComposeTemplate.compose(other))
                 .contains("\n  preprod-qits-ci:\n")
                 .contains("QITS_EDGE_ENVIRONMENTS: preprod")
                 .contains("QITS_RESOURCE_IDP_CLIENT_ID: preprod-qits-ci")
-                .contains("QITS_ARTIFACTS_REGISTRY_HOST: registry.preprod.localhost:8080");
+                .contains("- registry.preprod.localhost")
+                .doesNotContain("QITS_ARTIFACTS_REGISTRY_HOST");
     }
 
     // --- the identity seam: which side of the cutover each key is delivered on ---------------------
