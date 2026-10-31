@@ -18,7 +18,7 @@
          verify` runs the tests and packages nothing. -->
     <groupId>eu.wohlben.qits</groupId>
     <artifactId>qits-cli-bootstrap</artifactId>
-    <version>2026.1030.160307</version>
+    <version>2026.1031.55757</version>
     <name>qits-cli-bootstrap</name>
 
     <properties>
@@ -42,14 +42,13 @@
              (qits-1149). One pin per provider that publishes golden masters; qits-maintenance
              bumps them, and a changed answer the bootstrap cannot read goes red here before it
              ships. Do not hand-edit them to chase a release. -->
-        <qits.projects-golden-masters.version>2026.1030.143017</qits.projects-golden-masters.version>
+        <qits.projects-golden-masters.version>2026.1030.185452</qits.projects-golden-masters.version>
         <qits.events-golden-masters.version>2026.1023.82831</qits.events-golden-masters.version>
         <qits.ci-golden-masters.version>2026.1026.163551</qits.ci-golden-masters.version>
         <qits.deployments-golden-masters.version>2026.1010.145913</qits.deployments-golden-masters.version>
         <qits.idp-golden-masters.version>2026.1027.165632</qits.idp-golden-masters.version>
         <qits.githost-golden-masters.version>2026.1020.204038</qits.githost-golden-masters.version>
         <qits.artifacts-golden-masters.version>2026.1029.125556</qits.artifacts-golden-masters.version>
-        <qits.configuration-golden-masters.version>2026.1011.84651</qits.configuration-golden-masters.version>
         <!-- qits-system's (qits-1535): the targets doors the target-* phases call. The pinned
              release predates the targets module, so every row against it is pending until a
              qits-maintenance bump brings its states. qits-workspaces has no pin any more: the
@@ -220,12 +219,6 @@
             <groupId>eu.wohlben.qits</groupId>
             <artifactId>qits-artifacts-golden-masters</artifactId>
             <version>${qits.artifacts-golden-masters.version}</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>eu.wohlben.qits</groupId>
-            <artifactId>qits-configuration-golden-masters</artifactId>
-            <version>${qits.configuration-golden-masters.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>

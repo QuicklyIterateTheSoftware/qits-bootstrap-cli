@@ -13,7 +13,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.cli.bootstrap.api.ArtifactsApi;
 import eu.wohlben.qits.cli.bootstrap.api.BootstrapPublishCredential;
 import eu.wohlben.qits.cli.bootstrap.api.CiApi;
-import eu.wohlben.qits.cli.bootstrap.api.ConfigurationApi;
 import eu.wohlben.qits.cli.bootstrap.api.EventsApi;
 import eu.wohlben.qits.cli.bootstrap.api.GitHostApi;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
@@ -102,13 +101,11 @@ final class BootstrapContract {
     static final Provider IDP = new Provider("qits-idp-service", "qits-idp");
     static final Provider GITHOST = new Provider("qits-githost-service", "qits-githost");
     static final Provider ARTIFACTS = new Provider("qits-artifacts-service", "qits-artifacts");
-    static final Provider CONFIGURATION =
-            new Provider("qits-configuration-service", "qits-configuration");
     static final Provider SYSTEM = new Provider("qits-system-service", "qits-system");
     static final Provider CONTAINERS = new Provider("qits-containers-service", "qits-containers");
 
     static final List<Provider> PROVIDERS = List.of(PROJECTS, EVENTS, CI, DEPLOYMENTS, IDP,
-            GITHOST, ARTIFACTS, CONFIGURATION, SYSTEM, CONTAINERS);
+            GITHOST, ARTIFACTS, SYSTEM, CONTAINERS);
 
     /**
      * What a row against a door that judges its caller sends: the credential the provider's state
@@ -534,6 +531,19 @@ final class BootstrapContract {
                             params.get("application"), params.get("version"), null).status())
                             .isEqualTo(202),
                     "the software-released door answers 202"),
+            // PENDING until qits-deployments records a state for its settings door: the
+            // provider's golden masters hold no putSetting recording yet.
+            new Case(DEPLOYMENTS, Trigger.phase("deployment-settings"),
+                    "an application with no setting of the key", "putSetting",
+                    Request.json("PUT",
+                            "/deployments/api/settings/{application}/{environment}/{key}",
+                            "{\"value\":\"{value}\",\"secret\":false}"),
+                    200, List.of(),
+                    (base, params, recorded, op) -> assertThat(pd(base).putSetting(
+                            params.get("application"), params.get("environment"),
+                            params.get("key"), params.get("value"), false, null).ok()).isTrue(),
+                    "params application, environment, key and value; the upsert of a plain"
+                            + " setting answers 200"),
             new Case(DEPLOYMENTS, Trigger.phase("deploy-<application>, seed-deploy-<application>"),
                     "an application deployed in an environment", "listDeployments",
                     Request.get("/deployments/api/deployments", "environmentId", "{environmentId}"),
@@ -753,15 +763,6 @@ final class BootstrapContract {
                             "jar")).isFalse(),
                     "the JAR at a version the store does not hold — .jar, never .pom — answering"
                             + " 404"),
-
-            // qits-configuration ----------------------------------------------------------------
-            new Case(CONFIGURATION, Trigger.phase("configuration-import"),
-                    "an application with no configuration", "importProperties",
-                    Request.data("POST", "/configuration/api/import", "text/plain", "env", "{env}"),
-                    200, List.of(),
-                    (base, params, recorded, op) -> assertThat(new ConfigurationApi(new Http(), base,
-                            params.get("env")).importProperties(op.body().asText()).ok()).isTrue(),
-                    "param env; the import of a properties file answers 200"),
 
             // qits-system ---------------------------------------------------------------------
             // The targets doors (qits-1535), which replaced qits-workspaces' runner doors. Every row

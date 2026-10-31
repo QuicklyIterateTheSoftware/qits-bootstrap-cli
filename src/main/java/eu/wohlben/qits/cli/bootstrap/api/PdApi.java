@@ -132,6 +132,20 @@ public class PdApi {
                 Json.object(fields.toArray(new String[0])), bearer(token));
     }
 
+    /**
+     * <b>{@code PUT /deployments/api/settings/{application}/{environment}/{key}}: one row of the
+     * settings store</b>, which is where every deployment takes its environment from. An upsert,
+     * so a rerun writes the same row again and changes nothing. {@code qits:admin} or
+     * {@code qits:system} — the bootstrap's own client holds the second. The answer echoes the row
+     * with a secret's value null; nothing here reads it.
+     */
+    public Http.Response putSetting(String application, String environment, String key,
+                                    String value, boolean secret, String token) {
+        return http.putJson(base + "/api/settings/" + application + "/" + environment + "/" + key,
+                Json.object("value", value, "secret", Json.verbatim(String.valueOf(secret))),
+                bearer(token));
+    }
+
     /** The newest deployment row of an application in an environment. */
     public Optional<JsonNode> newestDeployment(String environmentId, String applicationName) {
         Http.Response response = http.get(base + "/api/deployments?environmentId=" + environmentId,

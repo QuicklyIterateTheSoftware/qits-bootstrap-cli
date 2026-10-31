@@ -3203,7 +3203,6 @@ public class SeedPhases {
             "qits_containers", "qits_containers_eventstream",
             "qits_platform_edge", "qits_platform_edge_eventstream",
             "qits_system", "qits_system_eventstream",
-            "qits_configuration", "qits_configuration_eventstream",
             "qits_workspaces", "qits_workspaces_eventstream");
 
     /**
@@ -3213,9 +3212,9 @@ public class SeedPhases {
      * <b>Before the first container that refuses to boot without a database, whichever one that
      * is.</b> That is the idp, which {@code seed-idp} brings up alone before the compose file is
      * written. The build arm runs this among its image builds; on {@code QITS_SKIP_BUILD} there is
-     * no image build, and it runs where it always did — the passwords it resolves fill both
-     * generated files either way. That is why {@code BootstrapPlan} places it in each arm rather
-     * than once after both: one run, one placement, and the right one for each.
+     * no image build, and it runs where it always did — the passwords it resolves fill the stack
+     * file and the settings either way. That is why {@code BootstrapPlan} places it in each arm
+     * rather than once after both: one run, one placement, and the right one for each.
      * <p>
      * <b>The image's own {@code POSTGRES_PASSWORD=qits-poc} never lives on this platform.</b> The
      * value below is generated on the first boot and recorded, and initdb takes it instead.
@@ -3232,11 +3231,12 @@ public class SeedPhases {
      * the orchestrator are the newest publishers on it.
      * Every one of them runs Flyway at boot against a database that has to exist
      * already, and at that point in a cold boot no deployer exists to make one.
-     * qits-configuration and qits-workspaces joined on 2026-10-30 (qits-889) with a pair each, on
-     * the same terms. Everything else — observability, stt, docs and the rest — is
-     * pipeline-deployed only, so the deployer creates their roles and databases during their own
-     * deployments from the {@code resources:} line in each repository's deployments.yml. Adding
-     * them here would put a second authority on a credential that has exactly one.
+     * qits-workspaces joined on 2026-10-30 (qits-889) with a pair, on the same terms; so did
+     * qits-configuration, until its retirement (qits-1396) took it out of the seed again.
+     * Everything else — observability, stt, docs and the rest — is pipeline-deployed only, so the
+     * deployer creates their roles and databases during their own deployments from the
+     * {@code resources:} line in each repository's deployments.yml. Adding them here would put a
+     * second authority on a credential that has exactly one.
      */
     public Phase seedPostgres() {
         return new Phase("seed-postgres", "start postgres and provision the seed's databases",
@@ -3285,11 +3285,6 @@ public class SeedPhases {
                     "qits.pg.system-password");
             String systemEventstream = pgPassword(ctx, state, "PG_SYSTEM_EVENTSTREAM_PASSWORD",
                     "qits.pg.system-eventstream-password");
-            String configuration = pgPassword(ctx, state, "PG_CONFIGURATION_PASSWORD",
-                    "qits.pg.configuration-password");
-            String configurationEventstream = pgPassword(ctx, state,
-                    "PG_CONFIGURATION_EVENTSTREAM_PASSWORD",
-                    "qits.pg.configuration-eventstream-password");
             String workspaces = pgPassword(ctx, state, "PG_WORKSPACES_PASSWORD",
                     "qits.pg.workspaces-password");
             String workspacesEventstream = pgPassword(ctx, state,
@@ -3315,8 +3310,6 @@ public class SeedPhases {
             boot.state.pgPlatformEdgeEventstreamPassword = platformEdgeEventstream;
             boot.state.pgSystemPassword = system;
             boot.state.pgSystemEventstreamPassword = systemEventstream;
-            boot.state.pgConfigurationPassword = configuration;
-            boot.state.pgConfigurationEventstreamPassword = configurationEventstream;
             boot.state.pgWorkspacesPassword = workspaces;
             boot.state.pgWorkspacesEventstreamPassword = workspacesEventstream;
 
@@ -3349,8 +3342,6 @@ public class SeedPhases {
             state.put("PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD", platformEdgeEventstream);
             state.put("PG_SYSTEM_PASSWORD", system);
             state.put("PG_SYSTEM_EVENTSTREAM_PASSWORD", systemEventstream);
-            state.put("PG_CONFIGURATION_PASSWORD", configuration);
-            state.put("PG_CONFIGURATION_EVENTSTREAM_PASSWORD", configurationEventstream);
             state.put("PG_WORKSPACES_PASSWORD", workspaces);
             state.put("PG_WORKSPACES_EVENTSTREAM_PASSWORD", workspacesEventstream);
             state.write();
@@ -3431,9 +3422,6 @@ public class SeedPhases {
                     registry.getOrDefault("qits_platform_edge_eventstream", platformEdgeEventstream);
             system = registry.getOrDefault("qits_system", system);
             systemEventstream = registry.getOrDefault("qits_system_eventstream", systemEventstream);
-            configuration = registry.getOrDefault("qits_configuration", configuration);
-            configurationEventstream = registry.getOrDefault("qits_configuration_eventstream",
-                    configurationEventstream);
             workspaces = registry.getOrDefault("qits_workspaces", workspaces);
             workspacesEventstream = registry.getOrDefault("qits_workspaces_eventstream",
                     workspacesEventstream);
@@ -3455,8 +3443,6 @@ public class SeedPhases {
                 boot.state.pgPlatformEdgeEventstreamPassword = platformEdgeEventstream;
                 boot.state.pgSystemPassword = system;
                 boot.state.pgSystemEventstreamPassword = systemEventstream;
-                boot.state.pgConfigurationPassword = configuration;
-                boot.state.pgConfigurationEventstreamPassword = configurationEventstream;
                 boot.state.pgWorkspacesPassword = workspaces;
                 boot.state.pgWorkspacesEventstreamPassword = workspacesEventstream;
                 state.put("PG_CI_PASSWORD", ci);
@@ -3476,8 +3462,6 @@ public class SeedPhases {
                 state.put("PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD", platformEdgeEventstream);
                 state.put("PG_SYSTEM_PASSWORD", system);
                 state.put("PG_SYSTEM_EVENTSTREAM_PASSWORD", systemEventstream);
-                state.put("PG_CONFIGURATION_PASSWORD", configuration);
-                state.put("PG_CONFIGURATION_EVENTSTREAM_PASSWORD", configurationEventstream);
                 state.put("PG_WORKSPACES_PASSWORD", workspaces);
                 state.put("PG_WORKSPACES_EVENTSTREAM_PASSWORD", workspacesEventstream);
                 state.write();
@@ -3571,14 +3555,11 @@ public class SeedPhases {
                 // first pipeline deployment are the rows this creates.
                 provision(ctx, admin, "qits_system", system, false);
                 provision(ctx, admin, "qits_system_eventstream", systemEventstream, false);
-                // THE TWO SERVICES PHASE 1 GAINED IN qits-889, on the same terms: each boots from
-                // the seed stack before any deployer exists, and each declares a domain store and
-                // the eventstream outbox (`postgresql:db, postgresql:eventstream:<app>_eventstream`)
+                // THE SERVICE PHASE 1 GAINED IN qits-889, on the same terms: it boots from the
+                // seed stack before any deployer exists, and declares a domain store and the
+                // eventstream outbox (`postgresql:db, postgresql:eventstream:<app>_eventstream`)
                 // — so the rows the deployer registers at its first deployment are the rows this
                 // creates.
-                provision(ctx, admin, "qits_configuration", configuration, false);
-                provision(ctx, admin, "qits_configuration_eventstream", configurationEventstream,
-                        false);
                 provision(ctx, admin, "qits_workspaces", workspaces, false);
                 provision(ctx, admin, "qits_workspaces_eventstream", workspacesEventstream, false);
             }
@@ -3629,7 +3610,7 @@ public class SeedPhases {
         return value;
     }
 
-    // --- secrets, compose, extras ----------------------------------------------------------------
+    // --- secrets, compose, credentials ----------------------------------------------------------------
 
     /**
      * <b>THE ONE CREDENTIAL THIS PROGRAM STILL RESOLVES FOR ITSELF.</b>
@@ -4044,76 +4025,22 @@ public class SeedPhases {
     }
 
     /**
-     * The deployer's per-application extras, as a config file on a named volume: quarkus reads
-     * config/application.properties next to the binary, and a self-update's successor mounts the
-     * same volume — which is the whole reason this is a file and not compose env.
+     * <b>The three PULLERS' docker credentials</b>, as {@code config.json} on the config volume
+     * each seed service mounts at {@code /work/config} and names with {@code DOCKER_CONFIG}. They
+     * are LOAD-BEARING since the flip landed on 2026-08-14 — the edge refuses a read with no
+     * credential — so a seed deployer, orchestrator or console without one pulls nothing.
      * <p>
-     * <b>It writes the two PULLERS' docker credentials too</b>, and they are here rather than in a
-     * phase of their own because they are the same act: a file on a config volume that a container
-     * reads at a mount path. The deployer's config.json goes beside its extras on the volume it
-     * already has; qits-containers gets a volume that holds nothing else. Both are LOAD-BEARING
-     * since the flip landed on 2026-08-14 — the edge refuses a read with no credential — and both
-     * were written before it so that closing the door was a configuration change rather than a
-     * redeploy of the deployer and the orchestrator.
+     * <b>The deployer's volume used to hold its extras beside it</b>, a properties file the seed
+     * deployer read at boot and imported into qits-configuration later. Both are gone (qits-765):
+     * the deployer takes every deployment's environment from its settings store, which
+     * {@code deployment-settings} fills once it answers, and each deployed successor writes its own
+     * docker credential from the idp client it is injected — so these files only serve the seed.
      */
-    public Phase pdExtras() {
-        return new Phase("pd-extras", "write the deployer's extras config volume", ctx -> {
+    public Phase dockerConfigs() {
+        return new Phase("docker-configs", "write the seed pullers' docker credentials", ctx -> {
             boot.docker.ensureVolume("qits-deployments-config", ctx::log);
             boot.docker.ensureVolume("qits-containers-config", ctx::log);
             boot.docker.ensureVolume("qits-system-config", ctx::log);
-            String properties = ComposeTemplate.extras(tokens());
-            // What the volume held BEFORE this write, as a DIGEST rather than as text: the file
-            // carries the push token and every client secret, and reading it back would put both
-            // on the screen and in the log.
-            String before = configDigest();
-            Cmd write = Cmd.of(List.of(
-                            "docker", "run", "--rm", "-i",
-                            "-v", "qits-deployments-config:/cfg",
-                            "--entrypoint", "sh", "alpine/git",
-                            "-c", "cat > /cfg/application.properties "
-                                    + "&& chown 1001:0 /cfg/application.properties"))
-                    .stdin(properties)
-                    .mask(boot.config.pushToken())
-                    // Both postgres passwords are in this file too: the deployer's own credential
-                    // and the admin one it provisions every other application's database with.
-                    .mask(orEmpty(boot.state.pgSuperuserPassword))
-                    .mask(orEmpty(boot.state.pgDeploymentsPassword))
-                    // The seed services' credentials are NOT in this file — the deployer injects
-                    // their triples from its own registry, its own outbox included. Masked anyway:
-                    // one each, against the day one of them is pinned here by hand.
-                    .mask(orEmpty(boot.state.pgDeploymentsEventstreamPassword))
-                    .mask(orEmpty(boot.state.pgCiPassword))
-                    .mask(orEmpty(boot.state.pgCiEventstreamPassword))
-                    .mask(orEmpty(boot.state.pgPlatformIdpPassword))
-                    .mask(orEmpty(boot.state.pgEventsPassword))
-                    .mask(orEmpty(boot.state.pgArtifactsPassword))
-                    .mask(orEmpty(boot.state.pgPlatformMirrorPassword))
-                    .mask(orEmpty(boot.state.pgGithostPassword))
-                    .mask(orEmpty(boot.state.pgGithostEventstreamPassword))
-                    .mask(orEmpty(boot.state.pgSystemPassword))
-                    .mask(orEmpty(boot.state.pgSystemEventstreamPassword))
-                    .mask(orEmpty(boot.state.pgConfigurationPassword))
-                    .mask(orEmpty(boot.state.pgConfigurationEventstreamPassword))
-                    .mask(orEmpty(boot.state.pgWorkspacesPassword))
-                    .mask(orEmpty(boot.state.pgWorkspacesEventstreamPassword))
-                    // The Hetzner DNS token, which the deployed edge is handed as a VALUE: the
-                    // deployer mounts no swarm secrets, so the file form the seed uses would name
-                    // nothing on the successor. Same masking every other credential in this file
-                    // gets.
-                    .mask(orEmpty(boot.config.dnsHetznerToken().orElse(null)));
-            // EVERY IDP CLIENT SECRET THIS RUN HOLDS, and the loop is what keeps the list honest.
-            // A mask that has to be remembered per key is a secret on the screen the first time
-            // somebody adds one — so the whole map is masked whether or not the extras spell each
-            // value, and the bootstrap's own pair with it.
-            boot.state.serviceClientSecrets.values().forEach(write::mask);
-            write.mask(orEmpty(boot.state.bootstrapSecret));
-            ProcessResult result = boot.docker.run(write, ctx::log);
-            Boot.must(result, "writing the deployer's extras failed");
-            ctx.log("  " + properties.lines()
-                    .filter(l -> l.startsWith("qits.deployments.extras."))
-                    .map(l -> l.substring("qits.deployments.extras.".length()).split("\\.")[0])
-                    .distinct().count()
-                    + " applications configured on the qits-deployments-config volume");
             dockerConfig(ctx, "qits-deployments-config", "deployments",
                     boot.config.registryVhost());
             dockerConfig(ctx, "qits-containers-config", "containers",
@@ -4124,14 +4051,8 @@ public class SeedPhases {
             // here. The registry is written beside it anyway: it costs one line and the day this
             // console pulls a qits/* image of its own is not the day to discover the file names
             // one host.
-            // The volume is qits-system-config, the name the seed stack and the deployed
-            // successor's extras both mount; it was written as qits-platform-system-config, a
-            // name nothing mounted, until qits-1547 put qits-system in the seed.
             dockerConfig(ctx, "qits-system-config", "system",
                     boot.config.registryVhost(), boot.config.mirrorVhost());
-            if (!sha256(properties).equals(before)) {
-                restartSeedDeployer(ctx);
-            }
         });
     }
 
@@ -4152,8 +4073,8 @@ public class SeedPhases {
      * only the registry would be an unauthenticated pull the edge refuses. One credential covers
      * both: it is the same client at the same door, and the door routes by name.
      * <p>
-     * Rerun-safe by being a whole-file write, and not digested like the extras beside it: nothing
-     * restarts on a change, because the CLI opens this file per invocation rather than at boot.
+     * Rerun-safe by being a whole-file write: nothing restarts on a change, because the CLI opens
+     * this file per invocation rather than at boot.
      */
     private void dockerConfig(PhaseContext ctx, String volume, String app, String... hosts) {
         String client = PlatformModel.wireAlias(app, boot.config.envName());
@@ -4217,54 +4138,6 @@ public class SeedPhases {
                 .encodeToString((clientId + ":" + secret).getBytes(StandardCharsets.UTF_8));
     }
 
-    /**
-     * The digest of the config file already on the volume, or empty when there is none. Computed
-     * inside a container because the volume has no path on the host, and with the same image the
-     * write above uses so nothing extra is pulled.
-     */
-    private String configDigest() {
-        ProcessResult result = boot.docker.run(Cmd.of(List.of(
-                "docker", "run", "--rm",
-                "-v", "qits-deployments-config:/cfg",
-                "--entrypoint", "sh", "alpine/git",
-                // The redirect is the "no file yet" case, which is the ordinary cold boot.
-                "-c", "sha256sum /cfg/application.properties 2>/dev/null | cut -d' ' -f1")), null);
-        for (String line : result.captured()) {
-            String value = line.trim();
-            if (value.matches("[0-9a-f]{64}")) {
-                return value;
-            }
-        }
-        return "";
-    }
-
-    /**
-     * <b>The deployer reads its config ONCE, at its own boot.</b> A rerun that changes the file
-     * therefore changes nothing for a deployer that is already running: it goes on deploying from
-     * the previous boot's arguments, and compose will not help — the volume is unchanged as far as
-     * it is concerned, so {@code up -d} leaves the container alone. That is how a qits-ci was
-     * deployed on the first prod bootstrap without the addresses its step containers dial, and the
-     * recovery was a restart by hand.
-     * <p>
-     * Only the SEED deployer, by its wire alias. A deployed one ({@code qits-pd-…}) picked the file
-     * up when its own cutover started it, and restarting it here would interrupt whatever it is
-     * deploying. Restarting an idle seed deployer costs seconds and nothing else, which is what
-     * makes this rerun-safe.
-     */
-    private void restartSeedDeployer(PhaseContext ctx) {
-        String name = PlatformModel.wireAlias("deployments", boot.config.envName());
-        if (!boot.docker.runningNames().contains(name)) {
-            ctx.log("  the extras changed; no seed deployer is running, so none is holding "
-                    + "the old ones");
-            return;
-        }
-        ctx.log("  the extras changed and " + name + " is older than the change — restarting it "
-                + "so it deploys from the new ones");
-        Boot.must(boot.docker.exec(Duration.ofMinutes(5), ctx::log, "restart", name),
-                "restarting " + name + " after its extras changed failed");
-        ctx.note("extras changed, " + name + " restarted");
-    }
-
     // --- what a domain adds -----------------------------------------------------------------------
 
     /** Creates the immutable, content-versioned Swarm secret consumed by the edge's DNS client. */
@@ -4320,10 +4193,11 @@ public class SeedPhases {
      * platform, every time somebody reran the boot. The existence test and the write are one
      * container so nothing can happen between them.
      * <p>
-     * <b>The image is alpine/git with openssl added</b> — the same image the extras write uses one
-     * phase earlier, so the boot pulls nothing new. It carries git and not openssl (measured, on
-     * 2026-08-09), and the platform's other already-present images carry neither: nginx:alpine and
-     * the qits service images have no openssl binary either. {@code apk add} is what the two npm
+     * <b>The image is alpine/git with openssl added</b> — the same image the docker credential
+     * writes use one phase earlier, so the boot pulls nothing new. It carries git and not openssl
+     * (measured, on 2026-08-09), and the platform's other already-present images carry neither:
+     * nginx:alpine and the qits service images have no openssl binary either. {@code apk add} is
+     * what the two npm
      * publish phases already do, so it adds no dependency the boot did not have.
      * <p>
      * <b>{@code chown -R 1001:0 /cert}: the WHOLE volume, because the edge writes to it.</b> It is
@@ -4631,7 +4505,7 @@ public class SeedPhases {
             echo "qits-acme: issued a $MODE certificate for $DOMAIN"
             """;
 
-    /** The values both generated files are filled with. */
+    /** The values the seed stack file is filled with. */
     Map<String, String> tokens() {
         String env = boot.config.envName();
         Map<String, String> values = new LinkedHashMap<>();
@@ -4650,7 +4524,7 @@ public class SeedPhases {
         // but it is still filled, so a comment or a line that names it renders a number rather
         // than a placeholder.
         values.put("GIT_HOST_PORT", String.valueOf(boot.config.gitHostPort()));
-        // Resolved by seed-postgres, which runs before both generated files are written.
+        // Resolved by seed-postgres, which runs before the stack file is written.
         values.put("PG_SUPERUSER_PASSWORD", orEmpty(boot.state.pgSuperuserPassword));
         values.put("PG_DEPLOYMENTS_PASSWORD", orEmpty(boot.state.pgDeploymentsPassword));
         values.put("PG_DEPLOYMENTS_EVENTSTREAM_PASSWORD",
@@ -4677,9 +4551,6 @@ public class SeedPhases {
         values.put("PG_SYSTEM_PASSWORD", orEmpty(boot.state.pgSystemPassword));
         values.put("PG_SYSTEM_EVENTSTREAM_PASSWORD",
                 orEmpty(boot.state.pgSystemEventstreamPassword));
-        values.put("PG_CONFIGURATION_PASSWORD", orEmpty(boot.state.pgConfigurationPassword));
-        values.put("PG_CONFIGURATION_EVENTSTREAM_PASSWORD",
-                orEmpty(boot.state.pgConfigurationEventstreamPassword));
         values.put("PG_WORKSPACES_PASSWORD", orEmpty(boot.state.pgWorkspacesPassword));
         values.put("PG_WORKSPACES_EVENTSTREAM_PASSWORD",
                 orEmpty(boot.state.pgWorkspacesEventstreamPassword));
@@ -4735,7 +4606,7 @@ public class SeedPhases {
                 // knob rather than a failed order.
                 ExtraSans.of(boot.config, domain)));
         // While the disposable edge owns the public domain, the seed edge remains an internal
-        // service. The deployment extras deliberately keep 80/443 so the real edge can take them
+        // service. The edge's own deployments.yml keeps 80/443 so the real edge can take them
         // at the explicit handoff: the edge's seed deploy, the end of the local-build step.
         if (boot.config.bootstrapIngress() && boot.ingress.mode().isPublic()) {
             values.put("EDGE_SEED_TLS_PORTS", "");
@@ -4835,11 +4706,6 @@ public class SeedPhases {
 
     private static String sha256(Path file) throws Exception {
         return sha256(Files.readAllBytes(file));
-    }
-
-    /** The same digest sha256sum prints for the bytes a container's {@code cat} would write. */
-    private static String sha256(String text) throws Exception {
-        return sha256(text.getBytes(StandardCharsets.UTF_8));
     }
 
     private static String sha256(byte[] bytes) throws Exception {

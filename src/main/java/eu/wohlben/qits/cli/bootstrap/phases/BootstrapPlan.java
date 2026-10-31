@@ -49,8 +49,9 @@ public final class BootstrapPlan {
 
         if (boot.config.skipBuild()) {
             phases.add(seed.skipBuildGate());
-            // Not a build, so a warm rerun still needs it: it resolves the passwords both generated
-            // files carry, and the deployer refuses to boot without the database it names.
+            // Not a build, so a warm rerun still needs it: it resolves the passwords the stack file
+            // and the settings carry, and the deployer refuses to boot without the database it
+            // names.
             phases.add(seed.seedPostgres());
         } else {
             // THE CONTRACT JARS FIRST, before anything is built (qits-889). Every seed service
@@ -136,12 +137,12 @@ public final class BootstrapPlan {
             phases.add(seed.protocolSeed("system", "system-runner-daemon",
                     "qits-system-runner-protocol", "qits.system-runner-protocol.version"));
             phases.add(seed.seedImage("system"));
-            // THE TWO SERVICES PHASE 1 GAINED IN qits-889, built like every other seed service.
-            // qits-configuration has a client and resolves the three integration jars and the
-            // eventstream out of the file repository; qits-workspaces has no client since qits-1245
-            // and resolves, besides those, qits-coding-agents, the qits-containers client and the
-            // workspace daemon's contract the phase above seeded at its pin.
-            phases.add(seed.seedImage("configuration"));
+            // THE SERVICE PHASE 1 GAINED IN qits-889, built like every other seed service.
+            // qits-workspaces has no client since qits-1245 and resolves the integration jars, the
+            // eventstream, qits-coding-agents, the qits-containers client and the workspace
+            // daemon's contract the phase above seeded at its pin out of the file repository.
+            // qits-configuration was built beside it until its retirement (qits-1396): nothing on
+            // the platform reads it any more, so nothing here builds or deploys it.
             phases.add(seed.seedImage("workspaces"));
             for (String image : SeedPhases.STEP_IMAGES) {
                 phases.add(seed.stepImage(image));
@@ -172,13 +173,13 @@ public final class BootstrapPlan {
 
         // seed-postgres is inside BOTH arms above rather than here: the build arm starts it among
         // the image builds, where it costs nothing to wait for, and a warm rerun needs it only for
-        // the passwords both generated files carry. Either way it answers before the idp, the first
-        // container that refuses to boot without its database.
+        // the passwords the stack file and the settings carry. Either way it answers before the
+        // idp, the first container that refuses to boot without its database.
         // THE IDENTITY ORDER, AND EVERY GAP IN IT IS LOAD-BEARING. The seed services' idp clients
         // are created against a running idp rather than written into a generated file, so:
         // the bootstrap's own pair first, because the idp seeds its first database service client
         // FROM it; then the idp alone, because a client cannot be created at a service that is not
-        // up; then the five clients; and only then the two generated files, because the seed
+        // up; then the five clients; and only then the stack file, because the seed
         // services' QITS_RESOURCE_IDP_CLIENT_SECRET values are not known until the idp has issued
         // them.
         phases.add(seed.idpBootstrapClient());
@@ -187,7 +188,10 @@ public final class BootstrapPlan {
         String domain = boot.config.requiredDomain();
         phases.add(seed.dnsHetznerSecret(domain));
         phases.add(seed.composeFile());
-        phases.add(seed.pdExtras());
+        // The three pullers' docker credentials, on the config volumes the seed stack mounts.
+        // There is no extras file beside the deployer's any more: the deployer reads its
+        // deployments' environment from its settings store, written below once it answers.
+        phases.add(seed.dockerConfigs());
         // BEFORE the edge is started with a keystore, which is what the next phase does: a keystore
         // naming files that do not exist fails startup, so the volume has to hold a certificate
         // first.
@@ -243,12 +247,21 @@ public final class BootstrapPlan {
         // Before the first deployment too: without a designated platform environment the manual
         // door answers 202 and deploys nothing.
         phases.add(pipeline.environment());
+        // THE SETTINGS, BEFORE THE FIRST DEPLOYMENT THE DEPLOYER MAKES, which is the next phase.
+        // Every deployment takes its environment from the deployer's settings store and nothing
+        // else, so the per-installation values have to be rows before any seed deploy reads them:
+        // githost and projects among the seed deploys, the edge's TLS and ACME rows before the
+        // edge's (the last of them), and the deployer's own before its self-update at the end of
+        // the train. Postgres's row is for a deployer that ever redeploys it; nothing here does.
+        // After `environment`, which proves the deployer answers writes.
+        // The seed deployer itself needs none of it: it was started from the stack file.
+        phases.add(pipeline.deploymentSettings());
         // STEP TWO OF FOUR: THE PLATFORM, UP AS IT RUNS IN STEADY STATE, BEFORE ANYTHING IS BUILT.
         // Step one is everything above — the local builds, out of the qits-maven-seed volume, with
         // the bootstrap ingress serving the progress page. Here the deployer puts each seed image
         // live at its real release tag through its manual door, and the edge's deployment, last,
         // retires the ingress. The deployer itself is not among them: its self-update stays last
-        // of the train, after the configuration flip.
+        // of the train.
         for (String name : PlatformModel.SEED_DEPLOYED) {
             phases.add(pipeline.seedDeploy(name));
         }
@@ -285,18 +298,6 @@ public final class BootstrapPlan {
         // version over again once that run is green — see PipelinePhases.deploy.
         for (String deployable : PlatformModel.DEPLOYABLES) {
             phases.add(pipeline.deploy(deployable));
-            // THE TWO PHASES THAT MOVE DEPLOYMENT CONFIGURATION INTO THE PLATFORM, and they sit
-            // here rather than at the end of the train because both directions of the order are
-            // load-bearing. AFTER qits-configuration's own deployment: a deployer told to read a
-            // service that is not up refuses every deployment, that one included. BEFORE the rest
-            // of the train, and in particular before qits-deployments' own self-update, which
-            // inherits the url from its extras — a successor holding it over a service nobody
-            // imported into would refuse everything after it. Every deployable below this line is
-            // deployed from what the service serves, which is what proves the read.
-            if (PipelinePhases.CONFIGURATION.equals(deployable)) {
-                phases.add(pipeline.configurationImport());
-                phases.add(pipeline.configurationFlip());
-            }
             // THERE IS NO REGISTRATION PHASE HERE ANY MORE, and its absence is what seeding
             // qits-projects bought. Every repository's public address existed before the first
             // push — `git-repos`, forty phases above — so this deployment inherits an alias table

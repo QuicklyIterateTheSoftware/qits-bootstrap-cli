@@ -4,7 +4,6 @@ import eu.wohlben.qits.cli.bootstrap.api.ArtifactsApi;
 import eu.wohlben.qits.cli.bootstrap.api.BootstrapPublishCredential;
 import eu.wohlben.qits.cli.bootstrap.api.PdApi;
 import eu.wohlben.qits.cli.bootstrap.api.CiApi;
-import eu.wohlben.qits.cli.bootstrap.api.ConfigurationApi;
 import eu.wohlben.qits.cli.bootstrap.api.GitHostApi;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.IdpApi;
@@ -45,7 +44,7 @@ public class Boot {
     public final ProcessRunner runner;
     public final Docker docker;
     public final Git git;
-    /** The bootstrap-only sidecar; it never enters platform deployment extras. */
+    /** The bootstrap-only sidecar; it never enters the deployer's settings. */
     public final BootstrapIngressLifecycle ingress;
     public final RunState state = new RunState();
 
@@ -58,8 +57,6 @@ public class Boot {
     public final SystemApi system;
     public final PdApi pd;
     public final IdpApi idp;
-    /** Deployment configuration as platform state, seeded by this run and read by the deployer. */
-    public final ConfigurationApi configuration;
     /** The alias table's owner: what this run hands its (storage id, name) pairs to. */
     public final ProjectsApi projects;
     /** The pin closure, read once — see {@link #pinnedVersions}. */
@@ -104,8 +101,6 @@ public class Boot {
         this.system = new SystemApi(http, config.systemUrl());
         this.pd = new PdApi(http, config.platformDeploymentsUrl());
         this.idp = new IdpApi(http, config.idpDialUrl());
-        this.configuration = new ConfigurationApi(http, config.configurationUrl(),
-                config.envName());
         this.projects = new ProjectsApi(http, config.projectsUrl());
     }
 

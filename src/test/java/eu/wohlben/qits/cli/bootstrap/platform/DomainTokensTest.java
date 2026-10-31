@@ -9,7 +9,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The edge's TLS contract, in the two files it is written into. What these pin is the one thing
+ * The edge's TLS contract, on the seed stack and in the deployed edge's settings. What these pin is the one thing
  * that made a green boot end on a self-signed certificate: the DEPLOYED edge and the SEED edge read
  * their DNS-01 token from different places, and only one of the two has a swarm secret to read.
  */
@@ -23,24 +23,27 @@ class DomainTokensTest {
     }
 
     /**
-     * <b>The deployed edge is handed the token as a VALUE, and no file.</b> The extras are the whole
-     * of what the deployer starts a successor with — env, mounts, publishes, aliases — and it mounts
-     * no swarm secrets, so the file the seed reads names nothing on the successor. The edge prefers
-     * the file whenever it is set, which is why the line must be absent rather than merely wrong:
-     * with it, every reconciliation failed on {@code NoSuchFileException} once a minute and the
-     * platform kept the placeholder (measured 2026-09-05).
+     * <b>The deployed edge is handed the token as a VALUE, and no file.</b> The deployer starts a
+     * successor with its settings rows, and it mounts no swarm secrets, so the file the seed reads
+     * names nothing on the successor. The edge prefers the file whenever it is set, which is why
+     * the setting is the value form: with the file, every reconciliation failed on
+     * {@code NoSuchFileException} once a minute and the platform kept the placeholder (measured
+     * 2026-09-05).
      */
     @Test
     void theDeployedEdgeGetsTheTokenValueAndNoFile() {
-        String extras = tokens().get("EDGE_TLS_ARGS");
+        List<DeploymentSettings.Setting> settings = DeploymentSettings.of(
+                new DeploymentSettings.Inputs("prod", "wohlben.dev", 8080, true, "staging",
+                        "hostmaster@wohlben.dev", TOKEN, List.of(), "pg", "push", ""));
 
-        assertThat(extras).contains("env.QITS_EDGE_ACME_HETZNER_TOKEN=" + TOKEN);
-        assertThat(extras).doesNotContain("QITS_EDGE_ACME_HETZNER_TOKEN_FILE");
-        assertThat(extras).doesNotContain("/run/secrets/");
-        // The rest of the wiring is unchanged: without any of it a cutover takes 443 away.
-        assertThat(extras).contains("publishes[1]=443:8443")
-                .contains("mounts[0]=volume:qits-edge-letsencrypt:/work/.letsencrypt")
-                .contains("env.QITS_EDGE_ACME_MODE=staging");
+        assertThat(settings).filteredOn(s -> s.application().equals("qits-edge"))
+                .extracting(DeploymentSettings.Setting::key)
+                .contains("QITS_EDGE_ACME_HETZNER_TOKEN")
+                .doesNotContain("QITS_EDGE_ACME_HETZNER_TOKEN_FILE");
+        assertThat(settings).filteredOn(s -> s.key().equals("QITS_EDGE_ACME_HETZNER_TOKEN"))
+                .singleElement()
+                .satisfies(s -> assertThat(s.value()).isEqualTo(TOKEN))
+                .satisfies(s -> assertThat(s.secret()).isTrue());
     }
 
     /** The seed edge keeps the swarm secret and the file form: it is a stack service, and can. */
@@ -53,14 +56,6 @@ class DomainTokensTest {
         assertThat(compose).contains("target: qits-dns-hetzner-token");
         // And it never carries the value: a stack file is not the place for one.
         assertThat(compose).doesNotContain(TOKEN);
-    }
-
-    /** The note says which part was missing, because the next reader will ask. */
-    @Test
-    void theNoteExplainsWhyTheTokenIsAValueHere() {
-        assertThat(tokens().get("EDGE_TLS_NOTE"))
-                .contains("THE TOKEN IS THE PART THAT WAS MISSING")
-                .contains("FILE form");
     }
 
     /**
@@ -109,24 +104,22 @@ class DomainTokensTest {
         // from. Without it that key falls back to `localhost` and the grammar reads a tier out.
         assertThat(off.get("SEED_DOMAIN")).contains("QITS_DOMAIN: wohlben.dev");
         assertThat(off.get("EDGE_TLS")).doesNotContain("QITS_EDGE_ACME_DOMAIN");
-        assertThat(off.get("EDGE_TLS_ARGS")).doesNotContain("QITS_EDGE_ACME_DOMAIN");
         assertThat(tokens().get("EDGE_TLS")).doesNotContain("QITS_EDGE_ACME_DOMAIN");
-        assertThat(tokens().get("EDGE_TLS_ARGS")).doesNotContain("QITS_EDGE_ACME_DOMAIN");
     }
 
     /**
      * <b>ONE VARIABLE, TWO WRITERS, and this file is the second one.</b> qits-deployments writes
      * {@code QITS_DOMAIN} into every container it deploys — but the seed stack is the half where it
      * is not the deployer, this program is, so the bootstrap states it to the services it starts
-     * itself. The deployer additionally needs it in its own EXTRAS, because nothing propagates to
-     * the propagator and a self-update's successor is started from those lines alone.
+     * itself. The deployer's own successor reads it from its settings row, because nothing
+     * propagates to the propagator; the stack-file tokens carry no deployer fragment any more.
      */
     @Test
-    void theDomainIsWrittenForTheSeedServicesAndForTheDeployersOwnExtras() {
+    void theDomainIsWrittenForTheSeedServicesAndNoExtrasFragmentRemains() {
         Map<String, String> tokens = tokens();
 
         assertThat(tokens.get("SEED_DOMAIN")).contains("QITS_DOMAIN: wohlben.dev");
-        assertThat(tokens.get("DEPLOYMENTS_DOMAIN_ARGS")).contains(
-                "qits.deployments.extras.qits-deployments.env.QITS_DOMAIN=wohlben.dev");
+        assertThat(tokens).doesNotContainKeys("DEPLOYMENTS_DOMAIN_ARGS", "EDGE_TLS_ARGS",
+                "EDGE_TLS_NOTE");
     }
 }

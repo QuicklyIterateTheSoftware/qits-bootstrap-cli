@@ -8,7 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 /**
- * What {@code QITS_DOMAIN} adds to the two generated files, as template values.
+ * What {@code QITS_DOMAIN} adds to the seed stack file, as template values.
  * <p>
  * <b>Every fragment here is APPENDED to the end of a line the template already has.</b> The
  * fragment carries its own newlines, its own indentation and its own comments, so the generated
@@ -70,16 +70,9 @@ public final class DomainTokens {
         values.put("LETSENCRYPT_VOLUME", letsEncryptVolume(secret));
         values.put("EDGE_SEED_TLS_PORTS", EDGE_TLS_PORTS);
         values.put("EDGE_TLS", edgeTls(mode, email, secret, additional));
-        values.put("EDGE_TLS_NOTE", EDGE_TLS_NOTE);
-        values.put("EDGE_TLS_ARGS", edgeTlsArgs(mode, email, hetznerToken, additional));
         values.put("SEED_DOMAIN", seedDomain(domain));
-        values.put("DEPLOYMENTS_DOMAIN_ARGS", deploymentsDomain(domain));
         return values;
     }
-
-    private static final String EDGE = "qits.deployments.extras.qits-edge.";
-
-    private static final String DEPLOYMENTS = "qits.deployments.extras.qits-deployments.";
 
     /**
      * <b>THE STATED DOMAIN, ON EVERY SEED SERVICE THE BOOTSTRAP STARTS ITSELF.</b>
@@ -107,25 +100,6 @@ public final class DomainTokens {
             + "      # it into every container it deploys, and this file writes it for the seed\n"
             + "      # services, which start before any deployer exists.\n"
             + "      QITS_DOMAIN: " + domain;
-    }
-
-    /**
-     * The same fact on the deployer's EXTRAS, which is the one place it has to be restated.
-     * <p>
-     * qits-deployments reads it as {@code qits.deployments.platform-domain} and propagates it, so it
-     * is the one application whose own extras must carry it: nothing propagates to the propagator,
-     * and a self-update's successor is started from these lines alone. No other application's
-     * extras name it — being handed it by the deployer is the whole point.
-     */
-    private static String deploymentsDomain(String domain) {
-        return "\n"
-            + "# WHAT THE DEPLOYER PROPAGATES, and the one extras block that has to state it. This\n"
-            + "# service reads it as qits.deployments.platform-domain and writes QITS_DOMAIN into\n"
-            + "# every container it deploys, beside QITS_ENVIRONMENT — so every other application\n"
-            + "# is HANDED the domain and none of their blocks name it. Nothing propagates to the\n"
-            + "# propagator, and a self-update's successor is started from these lines alone, so\n"
-            + "# the deployer's own copy has to live here as well as on the seed stack.\n"
-            + DEPLOYMENTS + "env.QITS_DOMAIN=" + domain;
     }
 
     private static String letsEncryptVolume(String secretName) {
@@ -205,54 +179,11 @@ public final class DomainTokens {
     }
 
     /**
-     * The comment above the edge's first extras key. A properties line carries no comment of its
-     * own, so the note is a fragment at the START of the line rather than part of the keys.
-     */
-    private static final String EDGE_TLS_NOTE =
-            "# THE DEPLOYED EDGE KEEPS THE TLS WIRING, and every part of it belongs here: the\n"
-            + "# extras are what the deployer starts the successor container with, so a piece\n"
-            + "# missing from them is a cutover that quietly takes 443 and the certificate away\n"
-            + "# while health goes on passing on 8080. The volume is what carries the PEMs across the\n"
-            + "# cutover. DNS-01 is performed directly against Hetzner's API and needs no public\n"
-            + "# challenge or management listener.\n"
-            + "#\n"
-            + "# THE TOKEN IS THE PART THAT WAS MISSING, and it is here as a VALUE rather than as a\n"
-            + "# file. The seed block mounts it as a swarm secret and reads it through\n"
-            + "# QITS_EDGE_ACME_HETZNER_TOKEN_FILE; the deployer mounts no swarm secrets, so the\n"
-            + "# successor found no file, every reconciliation failed on NoSuchFileException, and the\n"
-            + "# platform ended on the self-signed placeholder — measured 2026-09-05. The FILE form\n"
-            + "# WINS over the value when both are set, so the deployed edge must be handed the\n"
-            + "# value and no file at all.\n";
-
-    /**
-     * <b>The deployed edge's TLS wiring, token included.</b> It carries
-     * {@code QITS_EDGE_ACME_HETZNER_TOKEN} and deliberately NOT the {@code _FILE} spelling the seed
-     * block uses: the edge prefers the file when it is set, and nothing mounts one on a deployed
-     * service — the deployer has no swarm-secret support, and the edge's own deployments.yml
-     * declares none.
-     */
-    private static String edgeTlsArgs(String mode, String email, String hetznerToken,
-            String additionalNames) {
-        return "\n" + EDGE + "publishes[1]=443:8443"
-                    + "\n" + EDGE + "mounts[0]=volume:qits-edge-letsencrypt:/work/.letsencrypt"
-                    + "\n" + EDGE
-                    + "env.QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT=/work/.letsencrypt/current/lets-encrypt.crt"
-                    + "\n" + EDGE
-                    + "env.QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY=/work/.letsencrypt/current/lets-encrypt.key"
-                    + "\n" + EDGE + "env.QUARKUS_TLS_RELOAD_PERIOD=1m"
-                    + "\n" + EDGE + "env.QITS_EDGE_ACME_ENABLED=true"
-                    + "\n" + EDGE + "env.QITS_EDGE_ACME_MODE=" + mode
-                    + "\n" + EDGE + "env.QITS_EDGE_ACME_EMAIL=" + email
-                    + "\n" + EDGE + "env.QITS_EDGE_ACME_HETZNER_TOKEN=" + hetznerToken
-                    + acmeAdditionalNames(additionalNames, EDGE + "env.", "=");
-    }
-
-    /**
      * <b>Why a swarm-secret-only configuration is refused.</b> {@code QITS_DNS_HETZNER_SECRET} names
      * a secret this program can create and the SEED edge can mount; the DEPLOYED edge cannot. The
-     * deployer starts its successor from the extras, which carry env, mounts, publishes and aliases
-     * and no swarm secrets at all — so the token has to be a value the CLI can read, and a run that
-     * holds only a secret name has nothing to hand over.
+     * deployer starts its successor with its settings, which carry env and no swarm secrets at all —
+     * so the token has to be a value the CLI can write into the settings store, and a run that holds
+     * only a secret name has nothing to hand over.
      * <p>
      * <b>Refused at preflight rather than discovered at the cutover.</b> The seed edge serves TLS
      * from the mounted secret for the whole boot; the failure arrives an hour later, as a deployed
@@ -270,8 +201,8 @@ public final class DomainTokens {
         }
         return "QITS_DNS_HETZNER_SECRET names a swarm secret and QITS_DNS_HETZNER_TOKEN is unset, "
                 + "so this run cannot hand the DEPLOYED edge its DNS-01 credential: the deployer "
-                + "starts a successor from the extras, which carry env and mounts and no swarm "
-                + "secrets, so the edge would find no token, fail every certificate order and end "
+                + "starts a successor with its settings, which carry env and no swarm secrets, "
+                + "so the edge would find no token, fail every certificate order and end "
                 + "on the self-signed placeholder. Set QITS_DNS_HETZNER_TOKEN to the token's value "
                 + "and rerun; the seed edge keeps using the secret either way.";
     }

@@ -13,8 +13,8 @@ import java.util.Map;
  * what makes the public clone url resolve, and it has to happen before the git host's own deployment
  * closes the id-addressed scheme behind it.
  * <p>
- * <b>The identity is asserted on a private hop</b>, the way this program talks to the deployer's and
- * qits-configuration's read APIs: {@code X-Qits-User} and {@code X-Qits-Roles} at the service's own
+ * <b>The identity is asserted on a private hop</b>, the way this program talks to the deployer's read
+ * API: {@code X-Qits-User} and {@code X-Qits-Roles} at the service's own
  * alias on qits-net, plus the bootstrap's own machine bearer when the gate is on. Deliberately not
  * through the edge, which strips client-supplied identity headers from what it proxies — the
  * property that makes it safe as a public door. It is the same pair of headers qits-ci presents to

@@ -680,220 +680,68 @@ class PipelinePhasesTest {
     @TempDir
     Path temp;
 
-    /** The extras exactly as a run renders them, with the deployer's own client secret resolved. */
-    private String renderedExtras() {
-        Boot boot = new Boot(TestConfig.from(Map.of("QITS_DOMAIN", "qits-dev.eu",
-                "QITS_PUBLIC_IP", "203.0.113.7")), new RunLog(temp.resolve("run.log")));
-        boot.state.serviceClientSecrets.put(PlatformModel.application("deployments"), "s3cr3t");
-        return ComposeTemplate.extras(new SeedPhases(boot).tokens());
-    }
-
     /**
-     * <b>The flip's value is READ BACK out of the rendered extras, never spelled again.</b> The
-     * running deployer is patched live and its successor is configured from the same file, so a
-     * second spelling here would be a platform whose two deployers read different services.
-     * <p>
-     * ONE VALUE, and it used to be six: the five
-     * {@code QUARKUS_OIDC_CLIENT_CONFIGURATION_*} pairs were the credential the moved read
-     * presents, and no extras block carries a credential any more. The deployer's identity is not
-     * an {@code idp:client} resource its own deployments.yml declares (D10) — it is one of the five
-     * applications this bootstrap creates an idp client for directly — and the seed stack hands
-     * this very container the triple, so the flip moves the authority and nothing else.
+     * <b>The settings go to the deployer's PUT door, one row each, under the bootstrap's own
+     * bearer — and no value reaches the screen.</b> The deployer takes every deployment's
+     * environment from these rows, so a phase that wrote them anywhere else, or printed a secret
+     * while doing it, would be the two failures this phase exists to avoid.
      */
     @Test
-    void theFlipTakesItsValueFromTheRenderedExtras() {
-        List<String> env = PipelinePhases.flipEnv(renderedExtras(), "qits-deployments");
+    void theSettingsArePutOneRowEachAndNoValueIsPrinted() throws Exception {
+        CannedHttp http = commissioning(new CannedHttp());
+        Boot boot = runnerBoot(new ScriptedRunner(command -> ScriptedRunner.ok()), http, Map.of("QITS_DOMAIN", "qits-dev.eu"));
+        boot.state.pgSuperuserPassword = "pg-superuser-secret";
+        boot.state.daemonSha = "abc123";
+        String base = boot.config.platformDeploymentsUrl() + "/api/settings/";
+        for (String row : List.of("qits-deployments/prod/QITS_DOMAIN",
+                "qits-deployments/prod/QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD",
+                "qits-deployments/prod/QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH",
+                "qits-edge/prod/QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT",
+                "qits-edge/prod/QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY",
+                "qits-edge/prod/QUARKUS_TLS_RELOAD_PERIOD",
+                "qits-edge/prod/QITS_EDGE_ACME_ENABLED",
+                "qits-edge/prod/QITS_EDGE_ACME_MODE",
+                "qits-edge/prod/QITS_EDGE_ACME_EMAIL",
+                "qits-ci/prod/QITS_CI_DAEMON_VERSION_OVERRIDE",
+                "qits-githost/prod/QITS_REPOSITORIES_GIT_PUSH_TOKEN",
+                "qits-projects/prod/QITS_REPOSITORIES_GIT_PUSH_TOKEN",
+                "qits-oci-postgresql/prod/POSTGRES_PASSWORD")) {
+            http.answer("PUT " + base + row, 200, "{}");
+        }
+        Ctx ctx = new Ctx();
 
-        assertThat(env).containsExactly(
-                "QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL=http://prod-qits-configuration:8080");
+        new PipelinePhases(boot).deploymentSettings().action().run(ctx);
+
+        List<String> puts = http.calls.stream().filter(call -> call.startsWith("PUT ")).toList();
+        assertThat(puts).hasSize(13).allMatch(call -> call.startsWith("PUT " + base));
+        assertThat(http.bodies.get("PUT " + base
+                + "qits-oci-postgresql/prod/POSTGRES_PASSWORD"))
+                .isEqualTo("{\"value\":\"pg-superuser-secret\",\"secret\":true}");
+        assertThat(http.bodies.get("PUT " + base + "qits-deployments/prod/QITS_DOMAIN"))
+                .isEqualTo("{\"value\":\"qits-dev.eu\",\"secret\":false}");
+        assertThat(http.headers.get("PUT " + base + "qits-deployments/prod/QITS_DOMAIN"))
+                .containsEntry("Authorization", "Bearer publish-token");
+        assertThat(String.join("\n", ctx.lines)).doesNotContain("pg-superuser-secret")
+                .doesNotContain(boot.config.pushToken())
+                .contains("qits-oci-postgresql POSTGRES_PASSWORD (secret)");
+        assertThat(ctx.note).isEqualTo("13 settings");
     }
 
-    /**
-     * <b>And no credential travels with it.</b> A flip that carried a client secret would be the
-     * bootstrap writing identity onto a service whose own registry row is the authority for it —
-     * the failure the extras' identity ban exists to stop, in the one place that patches a live
-     * service rather than a file.
-     */
+    /** A refused write stops the boot, naming the row and the status — never the answer's body. */
     @Test
-    void theFlipCarriesNoCredential() {
-        assertThat(PipelinePhases.flipEnv(renderedExtras(), "qits-deployments"))
-                .noneMatch(pair -> pair.contains("SECRET") || pair.contains("CLIENT_ID")
-                        || pair.startsWith("QITS_RESOURCE_IDP_"));
-    }
+    void aRefusedSettingStopsTheBootWithoutEchoingTheRow() throws Exception {
+        CannedHttp http = commissioning(new CannedHttp());
+        Boot boot = runnerBoot(new ScriptedRunner(command -> ScriptedRunner.ok()), http, Map.of("QITS_DOMAIN", "qits-dev.eu"));
+        boot.state.pgSuperuserPassword = "pg-superuser-secret";
+        String base = boot.config.platformDeploymentsUrl() + "/api/settings/";
+        http.answer("PUT " + base + "qits-deployments/prod/QITS_DOMAIN", 403,
+                "{\"value\":\"qits-dev.eu\"}");
 
-    /**
-     * And nothing else of the deployer's block rides along. The rest is already in the file the
-     * running deployer read at its own boot; re-applying it would be a live patch nobody asked for,
-     * and one of those values is this platform's postgres superuser password.
-     */
-    @Test
-    void theFlipTouchesNothingElseOnTheDeployer() {
-        List<String> env = PipelinePhases.flipEnv(renderedExtras(), "qits-deployments");
-
-        assertThat(env).noneMatch(pair -> pair.startsWith("QITS_RESOURCE_DB_"))
-                .noneMatch(pair -> pair.contains("POSTGRES_ADMIN_PASSWORD"))
-                .noneMatch(pair -> pair.startsWith("DOCKER_CONFIG="))
-                .noneMatch(pair -> pair.startsWith("QITS_AUTH_MACHINE_"));
-    }
-
-    /** One application's keys only — the extras carry sixteen applications in one file. */
-    @Test
-    void theFlipReadsOneApplicationsKeys() {
-        assertThat(PipelinePhases.flipEnv(renderedExtras(), "qits-configuration")).isEmpty();
-    }
-
-    // --- the image version seeds -------------------------------------------------------------------
-
-    private static final String AGENT_VERSION = "2026.820.154053";
-
-    private static final String WORKSPACE_VERSION = "2026.821.101530";
-
-    private static final String EDITOR_VERSION = "2026.906.34347";
-
-    /**
-     * <b>A PIN THAT IS NOT PINNED — the fixture the seeding tests below are driven with.</b>
-     * {@link PipelinePhases#IMAGE_PINS} is empty, so asserting the rendering against IT would be
-     * four assertions that pass because nothing happened. The mechanism is kept for the next
-     * consumer that cannot declare its key (see the list's own javadoc), so it is proven here
-     * against a list shaped like the rows that left: one image landing on two applications, and a
-     * second image of its own.
-     * <p>
-     * The keys and publishers are the retired ones deliberately — a name that never existed would
-     * prove the same rendering and say less about what the rendering is for. Nothing in production
-     * reads these; {@link #noPinIsAuthoredSoNothingIsSeeded} is what asserts that.
-     */
-    private static final List<PipelinePhases.ImagePin> FIXTURE_PINS = List.of(
-            new PipelinePhases.ImagePin("qits/project-agent", "projects",
-                    "QITS_PROJECTS_AGENT_IMAGE_VERSION", "projects-daemon"),
-            new PipelinePhases.ImagePin("qits/workspace", "workspaces",
-                    "QITS_WORKSPACE_IMAGE_VERSION", "workspace-daemon"),
-            new PipelinePhases.ImagePin("qits/workspace", "projects",
-                    "QITS_PROJECTS_REFINEMENT_IMAGE_VERSION", "workspace-daemon"),
-            new PipelinePhases.ImagePin("qits/workspace-editor", "workspaces",
-                    "QITS_EDITOR_IMAGE_VERSION", "oci-workspace-editor"));
-
-    /** Every publisher released, which is what a green boot hands the renderer. */
-    private static Map<String, String> allReleased() {
-        return Map.of("projects-daemon", AGENT_VERSION,
-                "workspace-daemon", WORKSPACE_VERSION,
-                "oci-workspace-editor", EDITOR_VERSION);
-    }
-
-    /**
-     * <b>THE TRIPWIRE. The master list is qits-configuration's {@code control/ImagePins.AUTHORED},
-     * and it is empty — so this copy is too.</b> The copy exists because the CLI builds cold from
-     * Maven Central before any platform exists, and because {@code GET /configuration/api/pins}
-     * omits a mapping nothing has set, so the boot can neither depend on that repository nor ask a
-     * fresh platform for the map. The two change together, and this is the assertion that fails on
-     * the day they do not.
-     * <p>
-     * <b>Empty is a state of the list, not the end of it.</b> Nothing below special-cases it, which
-     * is the same ruling {@code ImagePins} makes for itself — so this test asserts the count and
-     * the publisher rule that any future row has to satisfy, and neither is written as a claim that
-     * the seeding is gone.
-     */
-    @Test
-    void noPinIsAuthoredSoNothingIsSeeded() {
-        assertThat(PipelinePhases.IMAGE_PINS).isEmpty();
-
-        // The consequence a bootstrapped platform is actually born with: the import is the rendered
-        // extras whole, and not one of the four retired keys is written into it. Each of those
-        // services takes its image version from a maven pin now and reads a `…_OVERRIDE` key, so a
-        // seed here would be an entry nothing reads and nothing on this platform can delete.
-        String seeded = PipelinePhases.withImageVersions(renderedExtras(), allReleased());
-
-        assertThat(seeded).isEqualTo(renderedExtras());
-        assertThat(seeded).doesNotContain("QITS_PROJECTS_AGENT_IMAGE_VERSION")
-                .doesNotContain("QITS_WORKSPACE_IMAGE_VERSION")
-                .doesNotContain("QITS_PROJECTS_REFINEMENT_IMAGE_VERSION")
-                .doesNotContain("QITS_EDITOR_IMAGE_VERSION");
-
-        // And the rule a row added back would have to satisfy: every publisher named is one the
-        // plan replays a release of, or the version read would be the tag of a repository this boot
-        // never restores.
-        assertThat(PipelinePhases.IMAGE_PINS)
-                .allSatisfy(pin -> assertThat(PlatformModel.RELEASE_PUBLISHERS)
-                        .as(pin.image()).contains(pin.publisher()));
-    }
-
-    /**
-     * The seeding itself, against {@link #FIXTURE_PINS}: each pin lands on the application that
-     * reads it, so a first deploy pins the release this boot cut instead of waiting on the
-     * SoftwareRelease event. This is the mechanism the empty list keeps.
-     */
-    @Test
-    void everyPinIsSeededOntoTheApplicationThatReadsIt() {
-        String seeded = PipelinePhases.withImageVersions(renderedExtras(), allReleased(),
-                FIXTURE_PINS);
-
-        assertThat(seeded).contains(
-                "qits.deployments.extras.qits-projects.env."
-                        + "QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION);
-        assertThat(seeded).contains(
-                "qits.deployments.extras.qits-workspaces.env."
-                        + "QITS_WORKSPACE_IMAGE_VERSION=" + WORKSPACE_VERSION);
-        assertThat(seeded).contains(
-                "qits.deployments.extras.qits-projects.env."
-                        + "QITS_PROJECTS_REFINEMENT_IMAGE_VERSION=" + WORKSPACE_VERSION);
-        assertThat(seeded).contains(
-                "qits.deployments.extras.qits-workspaces.env."
-                        + "QITS_EDITOR_IMAGE_VERSION=" + EDITOR_VERSION);
-        // The whole import is still there — the seeds are appended, not a replacement.
-        assertThat(seeded).startsWith(renderedExtras().stripTrailing());
-    }
-
-    /**
-     * <b>ONE RELEASE OF ONE PUBLISHER MOVES TWO KEYS</b>, and the mechanism allows it on purpose —
-     * {@code qits/workspace} was the worked example, on qits-workspaces and qits-projects at once,
-     * because the image a refinement runs in is the image a workspace runs in. So one version read
-     * is written to both, and they cannot drift apart.
-     */
-    @Test
-    void oneReleaseSeedsEveryKeyItsImageMoves() {
-        String seeded = PipelinePhases.withImageVersions(renderedExtras(),
-                Map.of("workspace-daemon", WORKSPACE_VERSION), FIXTURE_PINS);
-
-        assertThat(seeded).contains("QITS_WORKSPACE_IMAGE_VERSION=" + WORKSPACE_VERSION)
-                .contains("QITS_PROJECTS_REFINEMENT_IMAGE_VERSION=" + WORKSPACE_VERSION);
-    }
-
-    /** The exact key the deployer injects, on the application that reads it and nothing else. */
-    @Test
-    void theSeedLineNamesTheApplicationsOwnKey() {
-        assertThat(PipelinePhases.imageVersionSeed(FIXTURE_PINS.get(0), AGENT_VERSION))
-                .isEqualTo("qits.deployments.extras.qits-projects.env."
-                        + "QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION);
-        assertThat(PipelinePhases.imageVersionSeed(FIXTURE_PINS.get(3), EDITOR_VERSION))
-                .isEqualTo("qits.deployments.extras.qits-workspaces.env."
-                        + "QITS_EDITOR_IMAGE_VERSION=" + EDITOR_VERSION);
-    }
-
-    /**
-     * A publisher that has never released seeds nothing — releaseReplay stops the boot first, and an
-     * empty value would be a worse seed than the fallback default each service carries. The guard is
-     * per PIN, so a boot that released one publisher still seeds what it can.
-     */
-    @Test
-    void aBlankVersionSeedsOnlyItsOwnPinAway() {
-        String extras = renderedExtras();
-
-        assertThat(PipelinePhases.withImageVersions(extras, Map.of(), FIXTURE_PINS))
-                .isEqualTo(extras);
-
-        String noEditor = PipelinePhases.withImageVersions(extras,
-                Map.of("projects-daemon", AGENT_VERSION,
-                        "workspace-daemon", WORKSPACE_VERSION,
-                        "oci-workspace-editor", ""), FIXTURE_PINS);
-        assertThat(noEditor).contains("QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION)
-                .contains("QITS_WORKSPACE_IMAGE_VERSION=" + WORKSPACE_VERSION)
-                .doesNotContain("QITS_EDITOR_IMAGE_VERSION");
-
-        // A blank workspace release takes BOTH of its keys with it and leaves the agent's alone.
-        String noWorkspace = PipelinePhases.withImageVersions(extras,
-                Map.of("projects-daemon", AGENT_VERSION), FIXTURE_PINS);
-        assertThat(noWorkspace).contains("QITS_PROJECTS_AGENT_IMAGE_VERSION=" + AGENT_VERSION)
-                .doesNotContain("QITS_WORKSPACE_IMAGE_VERSION")
-                .doesNotContain("QITS_PROJECTS_REFINEMENT_IMAGE_VERSION");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        new PipelinePhases(boot).deploymentSettings().action().run(new Ctx()))
+                .hasMessageContaining("qits-deployments QITS_DOMAIN")
+                .hasMessageContaining("HTTP 403")
+                .hasMessageNotContaining("qits-dev.eu\"");
     }
 
     // --- the reclaim, and what it is allowed to touch ----------------------------------------------
@@ -1761,7 +1609,6 @@ class PipelinePhasesTest {
         assertThat(runner.argv.stream().filter(command -> command.contains("push"))
                 .map(List::getLast)).containsExactly(
                 "registry.prod.localhost:8080/qits/qits-idp:" + RELEASE,
-                "registry.prod.localhost:8080/qits/qits-configuration:" + RELEASE,
                 "registry.prod.localhost:8080/qits/qits-projects:" + RELEASE,
                 "registry.prod.localhost:8080/qits/qits-workspaces:" + RELEASE,
                 "registry.prod.localhost:8080/qits/qits-events:" + RELEASE,
@@ -1801,7 +1648,7 @@ class PipelinePhasesTest {
         assertThatThrownBy(() -> new PipelinePhases(rerun).seedImagesPublish().action()
                 .run(new CiLogStreamTest.Recorder()))
                 .isInstanceOf(PhaseSkipped.class)
-                .hasMessageContaining("the registry holds all 12 seed-deployed images");
+                .hasMessageContaining("the registry holds all 11 seed-deployed images");
         assertThat(again.lines()).noneMatch(line -> line.startsWith("docker tag")
                 || line.contains(" push "));
     }

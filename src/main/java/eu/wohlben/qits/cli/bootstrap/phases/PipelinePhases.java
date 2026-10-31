@@ -14,6 +14,7 @@ import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.engine.Waiter;
 import eu.wohlben.qits.cli.bootstrap.platform.BootstrapState;
+import eu.wohlben.qits.cli.bootstrap.platform.DeploymentSettings;
 import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
@@ -83,7 +84,7 @@ public class PipelinePhases {
      * The seed services' idp clients are created against a RUNNING idp now rather than spelled into
      * the generated files, and a client that does not exist yet cannot be handed to a container. So
      * the order is: resolve the bootstrap's own pair, start the idp with it, create the five
-     * clients, and only then render the compose file and the extras that carry their secrets.
+     * clients, and only then render the compose file that carries their secrets.
      * <p>
      * It is a subset of the same generated stack the whole seed comes up from — one service, cut
      * out with {@link ComposeTemplate#only} exactly the way {@link #stackFile} cuts one for a
@@ -330,12 +331,10 @@ public class PipelinePhases {
             // refuses to boot without.
             boot.awaitHealth(ctx, PlatformModel.wireAlias("system", env) + " (the targets, on "
                     + "qits-net)", boot.system::health);
-            // THE TWO SERVICES PHASE 1 GAINED (qits-889). Nothing in the seed window calls either,
-            // but each is seed-deployed below at its release tag, and a seed-deploy waits on the
-            // deployment row — a seed service that never came up is a cutover with nothing to hand
-            // over, found here in one line rather than there in a timeout.
-            boot.awaitHealth(ctx, PlatformModel.wireAlias("configuration", env)
-                    + " (deployment configuration, on qits-net)", () -> boot.configuration.health());
+            // THE SERVICE PHASE 1 GAINED (qits-889). Nothing in the seed window calls it, but it
+            // is seed-deployed below at its release tag, and a seed-deploy waits on the deployment
+            // row — a seed service that never came up is a cutover with nothing to hand over,
+            // found here in one line rather than there in a timeout.
             boot.awaitHealth(ctx, PlatformModel.wireAlias("workspaces", env)
                     + " (the workspaces, on qits-net)",
                     () -> boot.http.get("http://" + PlatformModel.wireAlias("workspaces", env)
@@ -572,9 +571,10 @@ public class PipelinePhases {
         lines.add("           taking the names that would have worked with it.");
         if (!projectSlugs.isEmpty()) {
             // E is this platform's environment count, and the edge is configured with exactly one:
-            // QITS_EDGE_ENVIRONMENTS is ${ENV_NAME} on the seed stack and in the extras both. The
-            // P*E term is an upper bound: a project that supports no environments pays none of it,
-            // and which projects do is a live read this report does not make.
+            // QITS_EDGE_ENVIRONMENTS is ${ENV_NAME} on the seed stack, and the deployed edge serves
+            // the one environment it is deployed into. The P*E term is an upper bound: a project
+            // that supports no environments pays none of it, and which projects do is a live read
+            // this report does not make.
             int projects = projectSlugs.size();
             int total = 2 + projects + projects + extraSans.size();
             lines.add("           Here E=1 and P=" + projects + " with " + extraSans.size()
@@ -803,8 +803,8 @@ public class PipelinePhases {
      * tag.
      * <p>
      * <b>THE VERSION IS THE REAL ONE, never a stand-in.</b> The deployer reads
-     * {@code deployments.yml} and {@code configuration.yml} at {@code refs/tags/<version>}, and a
-     * tag that is not there deploys the defaults: no resources, no host labels.
+     * {@code deployments.yml} at {@code refs/tags/<version>}, and a tag that is not there deploys
+     * the defaults: no resources, no host labels.
      * <p>
      * <b>The seed content under a released tag is temporary, and the train is what replaces
      * it.</b> The release run of each of these repositories publishes {@code qits/<app>:<version>}
@@ -1478,6 +1478,57 @@ public class PipelinePhases {
                 }
             }
             throw last;
+        });
+    }
+
+    /**
+     * <b>WHAT ONLY THIS INSTALLATION KNOWS, INTO THE DEPLOYER'S SETTINGS STORE</b> (qits-765).
+     * <p>
+     * The deployer takes every deployment's environment from its {@code pd_setting} rows and
+     * nothing else — no extras file, no qits-configuration. So the values no image can ship (the
+     * domain, the passwords this run generated, the port, the ACME account) are written here, one
+     * {@code PUT /deployments/api/settings/{application}/{environment}/{key}} each, and
+     * {@link DeploymentSettings} is the list.
+     * <p>
+     * <b>Where it sits is the whole of the ordering argument.</b> After {@code seed-health} and
+     * {@code environment}, because the store is the running seed deployer's and the environment
+     * reconcile is what proves it answers writes. Before the first {@code seed-deploy-*}, because
+     * that is the first deployment the deployer makes: qits-githost and qits-projects are
+     * seed-deployed with their rows, and the edge — last of the seed
+     * deploys — needs its TLS and ACME rows or its cutover takes the certificate away. The
+     * deployer's own rows are read at its self-update, last of the train. The seed deployer itself
+     * never reads them: it was started from the stack file, before any store existed.
+     * <p>
+     * <b>Rerun-safe because a PUT is an upsert</b>: the same row written again changes nothing.
+     * <b>No value is printed</b> — each line names the place and the key alone.
+     */
+    public Phase deploymentSettings() {
+        return new Phase("deployment-settings",
+                "write this installation's settings into qits-deployments", ctx -> {
+            String env = boot.config.envName();
+            String domain = boot.config.requiredDomain();
+            Acme.Mode mode = Acme.mode(boot.config);
+            List<DeploymentSettings.Setting> settings = DeploymentSettings.of(
+                    new DeploymentSettings.Inputs(env, domain, boot.config.port(),
+                            mode != Acme.Mode.OFF, mode.word(), Acme.email(boot.config, domain),
+                            boot.config.dnsHetznerToken().map(String::strip).orElse(""),
+                            ExtraSans.of(boot.config, domain),
+                            boot.state.pgSuperuserPassword, boot.config.pushToken(),
+                            boot.state.daemonSha));
+            String token = boot.bootstrapToken();
+            for (DeploymentSettings.Setting setting : settings) {
+                ctx.status("writing " + setting + " in " + env);
+                Http.Response answer = boot.pd.putSetting(setting.application(), env,
+                        setting.key(), setting.value(), setting.secret(), token);
+                if (!answer.ok()) {
+                    // The status alone: the answer to a write echoes the row, and a plain row's
+                    // value is in it.
+                    throw new IllegalStateException("the deployer refused the setting " + setting
+                            + " in " + env + ": HTTP " + answer.status());
+                }
+                ctx.log("  " + setting);
+            }
+            ctx.note(settings.size() + " settings");
         });
     }
 
@@ -2428,14 +2479,7 @@ public class PipelinePhases {
         });
     }
 
-    // --- deployment configuration as platform state -------------------------------------------------
-
-    /**
-     * The application the two phases below hang off, and the reason its position in
-     * {@link PlatformModel#DEPLOYABLES} is not a preference: everything deployed after it is
-     * deployed from what it serves.
-     */
-    public static final String CONFIGURATION = "configuration";
+    // --- what the platform's applications are called ----------------------------------------------
 
     /**
      * The application that owns the alias table — a SEED service since 2026-08-21, which is what
@@ -2445,268 +2489,6 @@ public class PipelinePhases {
      * the successor takes the alias table over.
      */
     public static final String PROJECTS = "projects";
-
-    /**
-     * <b>The same bytes, in the service.</b> This imports the extras this boot rendered — the whole
-     * properties file, comments and all — into qits-configuration, so the deployer can be told to
-     * read its configuration from there instead of from the file on its config volume.
-     * <p>
-     * <b>The file stays exactly as it is.</b> It is the cold-boot source — the seed deployer runs
-     * from it for every deployment before this phase — and it remains the fallback for a platform
-     * that never flips. Nothing here rewrites, filters or re-spells it: what is imported is what
-     * {@code pd-extras} wrote, rendered from the same tokens, so the two cannot disagree.
-     * <p>
-     * <b>Idempotent, so a rerun costs one request.</b> A line whose value is already stored writes
-     * no revision, which is what keeps the history a record of changes rather than of boots.
-     * <p>
-     * <b>The identity is asserted on a private hop</b>, the way this program talks to the deployer's
-     * read API: {@code X-Qits-User} and {@code X-Qits-Roles} on qits-net, at the service's own alias.
-     * Deliberately not through the edge — it strips client-supplied identity headers from what it
-     * proxies, which is the property that makes it safe as a public door.
-     */
-    public Phase configurationImport() {
-        return new Phase("configuration-import",
-                "import the deployment extras into qits-configuration", ctx -> {
-            // The rendered extras, PLUS one seed per image pin: the version a service starts a
-            // sandbox from, which is a release this boot cut and not a value any image can ship.
-            // Seeded here, before the services that read them deploy a few phases below, so a first
-            // boot pins the right version instead of leaving the first sandbox waiting on the
-            // durable SoftwareRelease event to be consumed.
-            //
-            // THE PIN LIST IS EMPTY TODAY, so this seeds nothing and the import is the rendered
-            // extras whole. That is not a dead branch — see IMAGE_PINS: the next pin a consumer
-            // cannot express in its own repository lands in that list and is seeded from here with
-            // no other edit.
-            //
-            // ONE READ PER PUBLISHER, derived from the pin list rather than spelled beside it: two
-            // pins may be moved by the same publisher's release — qits/workspace was that case
-            // while it was pinned — and a second read of the same checkout is a second answer that
-            // could differ.
-            Map<String, String> released = new LinkedHashMap<>();
-            for (ImagePin pin : IMAGE_PINS) {
-                released.computeIfAbsent(pin.publisher(),
-                        publisher -> boot.git.describeTag(boot.state.repoDir(publisher), "main"));
-            }
-            String properties =
-                    withImageVersions(ComposeTemplate.extras(new SeedPhases(boot).tokens()), released);
-            boot.awaitHealth(ctx, "qits-configuration at " + boot.config.configurationUrl(),
-                    () -> boot.configuration.health());
-            Http.Response answer = boot.configuration.importProperties(properties);
-            if (!answer.ok()) {
-                // A failure here STOPS the boot rather than warning, and the flip below is why: a
-                // deployer pointed at a service that does not hold this platform's configuration
-                // refuses every deployment left in the train.
-                throw new IllegalStateException("importing the extras into qits-configuration "
-                        + "failed: " + answer.describe());
-            }
-            ctx.log("  " + answer.body());
-            ctx.note("imported");
-        });
-    }
-
-    /**
-     * <b>One image pin: which image, which application is told its version, under which key, and
-     * which publisher's release IS that version.</b>
-     *
-     * @param image       the registry coordinate, for the comment the seed line carries
-     * @param application the model name of the service the deployer injects the value into
-     * @param key         the environment variable that service reads the version from
-     * @param publisher   the model name whose newest release tag is the version
-     */
-    record ImagePin(String image, String application, String key, String publisher) {
-    }
-
-    /**
-     * <b>THE PIN LIST, and the master copy of it is qits-configuration's own
-     * {@code control/ImagePins.AUTHORED}.</b> That service owns which image moves which key on
-     * which application, and it keeps them in sync from the SoftwareRelease event for the whole
-     * life of the platform. This is a COPY, for the one window it cannot cover: the CLI builds cold
-     * from Maven Central before any platform exists, so it can depend on nothing of that repository
-     * — and {@code GET /configuration/api/pins} OMITS a mapping nothing has set, so a fresh
-     * platform cannot be asked for the map either. The test beside this list is the tripwire that
-     * fails when the two repositories disagree.
-     * <p>
-     * <b>IT IS EMPTY, AND AN EMPTY LIST IS NOT A RETIRED MECHANISM</b> — the same ruling
-     * {@code ImagePins} states for itself, and this copy must not read it differently. Nothing here
-     * is special-cased on there being no pins and nothing may become so: this is still the one
-     * place a cold boot can seed a version no image could ship, and the next consumer that needs
-     * one — a new image started per unit of work, on an application that cannot declare the key in
-     * its own {@code .config/qits/configuration.yml} — lands here and is seeded with no other edit.
-     * <p>
-     * <b>The four rows that were here left because their consumers stopped reading configuration
-     * for the version at all.</b> Each now pins a maven artifact whose own version IS the image
-     * tag, proven against the daemon it names by an integration test before it ships:
-     * <pre>
-     *   qits/project-agent     qits-projects    QITS_PROJECTS_AGENT_IMAGE_VERSION
-     *   qits/workspace         qits-workspaces  QITS_WORKSPACE_IMAGE_VERSION
-     *   qits/workspace         qits-projects    QITS_PROJECTS_REFINEMENT_IMAGE_VERSION
-     *   qits/workspace-editor  qits-workspaces  QITS_EDITOR_IMAGE_VERSION
-     * </pre>
-     * qits-workspaces pins {@code qits-workspace-daemon-protocol} (its editor image pin went with
-     * its old editor integration, qits-1152); qits-projects pins the first for its refinement containers and
-     * {@code qits-projects-daemon-protocol} for its agent containers. Each service reads a
-     * {@code …_OVERRIDE} key now — a name nothing has ever written — and WARNs at boot if it finds
-     * the old one set, so seeding these four gave a fresh platform four entries no consumer reads
-     * and nothing on this platform can delete: {@code DELETE …/entries/{key}} is
-     * {@code {qits:admin, qits:system}}, and qits-configuration reports an orphan rather than
-     * cleaning it up. Inert residue born at bootstrap, under names that look like they decide which
-     * image every sandbox starts from.
-     * <p>
-     * <b>Do not add any of them back</b>, under this key or another: the version is a pom pin now,
-     * and a seed here would write an entry the consumer never reads and say nothing about it at any
-     * log level.
-     * <p>
-     * <b>One image may still land on several applications</b>, and the list allows it — {@code
-     * qits/workspace} was the worked example, on qits-workspaces and qits-projects at once, and a
-     * fresh node with only the first seeded refused every refinement start with IMAGE_MISSING. The
-     * rule survives its instances: a pin is keyed by the released image, the read below is per
-     * PUBLISHER so one checkout is described once, and a second row naming the same image needs no
-     * change to the mechanism.
-     */
-    static final List<ImagePin> IMAGE_PINS = List.of();
-
-    /**
-     * The imported extras with every pin above seeded onto the application that deploys from it.
-     * <p>
-     * Each pin is guarded on its own — a publisher with a blank version appends nothing — so a boot
-     * that released one publisher but not another still seeds the ones it can. A blank is the
-     * honest answer for a repository that has never released: {@code releaseReplay} stops the boot
-     * before this phase in that case, and an empty value would be a worse seed than none, since
-     * each service carries a fallback default of its own.
-     * <p>
-     * One source for every version: {@code releaseReplay} restores the tag, these lines seed it,
-     * and qits-configuration's SoftwareRelease listener keeps them in sync afterwards — so the
-     * value the deployer injects tracks the pin the release train moves.
-     * <p>
-     * <b>With {@link #IMAGE_PINS} empty this answers the extras unchanged</b>, which is the whole
-     * of what a boot seeds today. The mechanism is kept rather than the four calls to it (see the
-     * list), so the overload below takes the pins it renders: that is what lets a test prove the
-     * rendering against a pin without a row having to be typed back into production state.
-     *
-     * @param released the newest release tag per PUBLISHER model name
-     */
-    static String withImageVersions(String extras, Map<String, String> released) {
-        return withImageVersions(extras, released, IMAGE_PINS);
-    }
-
-    /** The same rendering, for a named list of pins. */
-    static String withImageVersions(String extras, Map<String, String> released,
-            List<ImagePin> pins) {
-        String seeded = extras;
-        for (ImagePin pin : pins) {
-            String version = released.getOrDefault(pin.publisher(), "");
-            if (version == null || version.isBlank()) {
-                continue;
-            }
-            seeded = seeded.stripTrailing() + "\n"
-                    + "# The " + pin.image() + " version, seeded so the first deploy of "
-                    + PlatformModel.application(pin.application()) + " pins\n"
-                    + "# the release this boot cut rather than waiting on the SoftwareRelease "
-                    + "event.\n"
-                    + imageVersionSeed(pin, version) + "\n";
-        }
-        return seeded;
-    }
-
-    /** The seed line: one pin's key in the deployment extras of the application that reads it. */
-    static String imageVersionSeed(ImagePin pin, String version) {
-        return "qits.deployments.extras." + PlatformModel.application(pin.application())
-                + ".env." + pin.key() + "=" + version;
-    }
-
-    /**
-     * <b>THE FLIP, and it is deliberately its own phase after the import.</b> The deployer's
-     * {@code QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL} makes qits-configuration AUTHORITATIVE: a
-     * resolved read per deployment, and an unreachable or unpopulated service refuses the
-     * deployment rather than shipping a stale value. So the order is load-bearing in both
-     * directions — a deployer holding this url before qits-configuration is deployed and imported
-     * refuses every deployment including qits-configuration's own, and a deployer that never gets
-     * it goes on deploying from the file.
-     * <p>
-     * <b>Two halves, and only this one is live.</b> The other is in the generated extras, on the
-     * deployer's own application, so every later self-update inherits the keys — a live
-     * {@code service update} alone is exactly the fix the old model kept reverting at the next
-     * deploy. This half exists because the deployer running RIGHT NOW was started before the
-     * service existed, and the rest of this run's deploy train is what proves the read.
-     * <p>
-     * The values come out of the rendered extras rather than being spelled again here: one source,
-     * so the running deployer and its successor cannot be configured differently.
-     */
-    public Phase configurationFlip() {
-        return new Phase("configuration-flip",
-                "point the running deployer at qits-configuration", ctx -> {
-            String extras = ComposeTemplate.extras(new SeedPhases(boot).tokens());
-            List<String> env = flipEnv(extras, PlatformModel.application("deployments"));
-            String alias = PlatformModel.wireAlias("deployments", boot.config.envName());
-            List<String> services = boot.docker.serviceNames();
-            // The seed's stack-qualified name first, then the bare alias — which is what the
-            // deployer names its own service when it has already taken this application over.
-            String service = List.of(Docker.stackService(Docker.STACK, alias), alias).stream()
-                    .filter(services::contains).findFirst().orElse(null);
-            if (service == null) {
-                ctx.warn("no running qits-deployments service to point at qits-configuration. The "
-                        + "extras carry the keys, so the next deployer to start reads them — but "
-                        + "nothing in THIS run deploys from the service");
-                return;
-            }
-            // The deployer's own client secret, keyed by the APPLICATION the way the registry
-            // and the idp-clients phase key it.
-            String secret = boot.state.serviceClientSecrets
-                    .getOrDefault(PlatformModel.application("deployments"), "");
-            if (alreadyFlipped(service, env, secret)) {
-                ctx.skip(service + " already reads " + boot.config.configurationUrl());
-            }
-            ctx.log("  " + service + " is older than the flip — updating it so the rest of this "
-                    + "train deploys from qits-configuration");
-            List<String> command = new ArrayList<>(List.of("docker", "service", "update"));
-            env.forEach(pair -> {
-                command.add("--env-add");
-                command.add(pair);
-            });
-            command.add(service);
-            Boot.must(boot.docker.run(Cmd.of(command)
-                    .timeout(Duration.ofMinutes(10))
-                    .mask(secret), ctx::log),
-                    "pointing " + service + " at qits-configuration failed");
-            ctx.note(env.size() + " values on " + service);
-        });
-    }
-
-    /**
-     * The env pairs of the flip, read back out of the extras this boot rendered. Filtered by what
-     * it MEANS rather than listed: the url that moves the authority, and nothing else. The rest of
-     * the deployer's block is already in the file the running deployer read at its boot.
-     * <p>
-     * <b>It used to carry the credential too</b> — five {@code QUARKUS_OIDC_CLIENT_CONFIGURATION_*}
-     * pairs, because the guarded read qits-configuration answers needs a bearer and the extras were
-     * where the deployer's client id and secret were written. They are not: the deployer's identity
-     * is an {@code idp:client} resource now, the seed stack hands this very container its
-     * {@code QITS_RESOURCE_IDP_*} triple, and its successor is injected the same row by the running
-     * deployer. So the flip moves one value, and the credential it presents is one it already has.
-     */
-    static List<String> flipEnv(String extras, String application) {
-        String prefix = "qits.deployments.extras." + application + ".env.";
-        return extras.lines()
-                .filter(line -> line.startsWith(prefix))
-                .map(line -> line.substring(prefix.length()))
-                .filter(pair -> pair.startsWith("QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL="))
-                .toList();
-    }
-
-    /**
-     * Whether the service already carries every pair, so a rerun costs a read rather than a task
-     * restart — the same courtesy {@code pd-extras} pays with its digest. The secret is masked
-     * because this reads the whole environment back, and every line a command prints reaches the
-     * run log.
-     */
-    private boolean alreadyFlipped(String service, List<String> env, String secret) {
-        List<String> current = boot.docker.run(Cmd.of(List.of("docker", "service", "inspect",
-                        "--format",
-                        "{{range .Spec.TaskTemplate.ContainerSpec.Env}}{{println .}}{{end}}",
-                        service))
-                .mask(secret), null).captured();
-        return Set.copyOf(current.stream().map(String::trim).toList()).containsAll(env);
-    }
 
     // --- the platform's own door, before the target dials it -------------------------------------
 
@@ -3209,8 +2991,8 @@ public class PipelinePhases {
      * <p>
      * <b>Not a deployment, and never one.</b> The runner rolls ITSELF over when qits-system tells
      * it a newer version, by starting a successor container and leaving; a deployer replacing the
-     * same container would be two actors racing to remove it. So it is in no stack file, no extras
-     * block and no {@code DEPLOYABLES} entry, and the train's cutovers pass it by: the target and
+     * same container would be two actors racing to remove it. So it is in no stack file, no settings
+     * row and no {@code DEPLOYABLES} entry, and the train's cutovers pass it by: the target and
      * its client are rows of qits-system's database, which every successor of qits-system reads,
      * and the runner simply redials.
      * <p>
@@ -3528,11 +3310,10 @@ public class PipelinePhases {
     /**
      * Turns the seed qits-projects' self-seed on, or says why there was nothing to turn on.
      * <p>
-     * The seed SERVICE only: a deployed qits-projects was started by the deployer from extras that
-     * spell no such key, so its self-seed has been on since it booted and the project is already
-     * there. Asking for the stack-qualified name first and the bare alias second is the same
-     * two-step {@code configuration-flip} makes, and for the same reason — the deployer names its
-     * own service after the bare alias once it has taken the application over.
+     * The seed SERVICE only: a deployed qits-projects was started by the deployer from settings
+     * that spell no such key, so its self-seed has been on since it booted and the project is
+     * already there. The stack-qualified name is asked first and the bare alias second because the
+     * deployer names its own service after the bare alias once it has taken the application over.
      */
     private void releaseSelfSeed(PhaseContext ctx) {
         String alias = PlatformModel.wireAlias(PROJECTS, boot.config.envName());
@@ -3660,7 +3441,7 @@ public class PipelinePhases {
             report.add("apps:      EVERY SERVICE HAS A HOST OF ITS OWN: " + appHost + "/ serves");
             report.add("           that service's UI at / and its wire routes beside it — idp, "
                     + "ci, projects,");
-            report.add("           workspaces, docs, configuration, artifacts, events, "
+            report.add("           workspaces, docs, artifacts, events, "
                     + "deployments, system, and the");
             report.add("           three above.");
             report.add("           EVERY NAME CARRIES ITS PROJECT: <app>." + apex + " and "

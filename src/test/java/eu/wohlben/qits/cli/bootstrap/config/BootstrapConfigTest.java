@@ -159,11 +159,6 @@ class BootstrapConfigTest {
         assertThat(config.platformDeploymentsUrl())
                 .isEqualTo("http://preprod-qits-deployments:8080/deployments");
         assertThat(config.eventsUrl()).isEqualTo("http://preprod-qits-events:8080/events");
-        // The configuration store is the third, since 2026-09-07 — and it was the one whose
-        // concatenation cost the most: this exact string is also handed to the deployer as
-        // QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL, which REFUSES a deployment it cannot resolve
-        // rather than falling back to the file. Still no path, because that reader appends its own.
-        assertThat(config.configurationUrl()).isEqualTo("http://preprod-qits-configuration:8080");
         // THE IDP'S ADDRESS IS QUALIFIED LIKE EVERY OTHER. Its issuer is no longer this program's
         // concern at all (qits-730): the idp derives its own `iss` from QITS_DOMAIN in code and
         // there is no BootstrapConfig accessor for it any more.

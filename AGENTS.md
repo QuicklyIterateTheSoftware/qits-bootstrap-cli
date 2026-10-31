@@ -36,8 +36,8 @@ forced. Add to that list rather than deviating quietly.
                 EventFeed that follows the platform's own events beside the boot's output
     web/        the browser view's three routes and the one page they serve
     config/     BootstrapConfig (@ConfigMapping, read from .env) and its command-line overrides
-    platform/   what the platform is made of: PlatformModel, the generated stack file and extras,
-                the seed-Dockerfile rewrite, the recorded state, thin Docker and Git facades
+    platform/   what the platform is made of: PlatformModel, the generated stack file, the
+                deployer settings, the seed-Dockerfile rewrite, the recorded state, thin Docker and Git facades
     api/        the platform's HTTP, with java.net.http, at the platform's own wire aliases
     phases/     the phases themselves and the plan that orders them
     host/       the half that runs OUTSIDE the container: the payload image's content tag, the
@@ -222,8 +222,8 @@ forced. Add to that list rather than deviating quietly.
   it; never bring a placeholder back.
 - **Phase 1 builds EVERYTHING the platform runs, and what it does not is a named list**
   (qits-889). The seed is every service the platform runs in steady state — `PlatformModel.CORE`,
-  qits-configuration and qits-workspaces included — and the images it starts workspaces and
-  agents from are built too: `qits/workspace-base`, `qits/workspace`, `qits/projects-daemon`,
+  qits-workspaces included, qits-configuration not since its retirement — and the images it
+  starts workspaces and agents from are built too: `qits/workspace-base`, `qits/workspace`, `qits/projects-daemon`,
   `qits/project-agent`, and the `qits` binary and browser base the workspace base carries
   (`seed-qits-cli` … `seed-project-agent`). Their versions are READ, never chosen:
   `SeedPhases.workspaceImages` starts from the consumers' `qits.workspace-daemon-protocol.version`
@@ -253,7 +253,8 @@ forced. Add to that list rather than deviating quietly.
   `qits_<service>.<slot>.<taskid>`) and no `restart:` (it is `deploy.restart_policy`). The two
   socket-holding seed services take the socket's group as their PRIMARY group, `user:
   "1001:<gid>"`, because a stack file has no way to say a supplementary one; their deployed
-  successors get `--group-add` from the extras, which does. Two is the SEED's count: a third
+  successors get the socket's group from the deployer itself, for the socket bind their own
+  `deployments.yml` declares. Two is the SEED's count: a third
   service holds the socket among the DEPLOYED ones — see the bullet below. **Every name-based check went with
   it**: a seed service is found through `docker service ls`, under `qits_<alias>` or the bare
   `<alias>`, never through `docker ps`. A container name is still the right question for a
@@ -274,13 +275,14 @@ forced. Add to that list rather than deviating quietly.
   `edge-ready`, then this host's target. (4) Only then the first build: the release replays, then
   the train, in which the seed-deployed applications are deployed AGAIN from their release run's
   image. Three things hold it together and none may be quietly undone. **The version is the real
-  tag**, never a stand-in: the deployer reads `deployments.yml` and `configuration.yml` at it, and a
+  tag**, never a stand-in: the deployer reads `deployments.yml` at it, and a
   missing tag deploys the defaults. **`SEED_DEPLOYED_<APP>` in `.qits-bootstrap.env` is written
   BEFORE the door is posted** and emptied only when the release image's row is ACTIVE; it is the
   only thing that tells the train a healthy ACTIVE row at the right version is a placeholder. **The
-  deployer is not seed-deployed**: its self-update stays last of the train, after the flip.
-  Before the first seed deploy come `qits-project`, `git-repos` and `environment` — the spec is read
-  name-addressed, and the manual door deploys nothing without a platform environment.
+  deployer is not seed-deployed**: its self-update stays last of the train.
+  Before the first seed deploy come `qits-project`, `git-repos`, `environment` and
+  `deployment-settings` — the spec is read name-addressed, the manual door deploys nothing without
+  a platform environment, and every deployment takes its environment from the settings store.
 - **The door the target dials is proved before it dials it, and a domain boot needs a real
   certificate.** `edge-ready` polls `https://{system,ci,idp,registry}.qits.<domain>` — the public
   names the target's runner and the ci-daemon in each CI slot dial (qits-system's target install
@@ -294,39 +296,23 @@ forced. Add to that list rather than deviating quietly.
   when the edge is a service under its bare alias or a `qits-pd-` container — `seedPlan`'s own test
   — because a second door would bind 80/443 against the platform's. With the edge deployed in the
   middle of the boot, that is the common rerun.
-- **Deployment configuration is platform state, and the ORDER that moves it there can lose a boot
-  in both directions.** qits-configuration holds each application's extras, and the deployer treats
-  it as AUTHORITATIVE the moment it is given `QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL`: a read it
-  cannot answer REFUSES the deployment rather than falling back to the file, which is the whole
-  point — a stale fall-back is the failure this service exists to kill. So the plan runs
-  `deploy-configuration`, then `configuration-import`, then `configuration-flip`, and each gap is
-  load-bearing. Flip earlier and the deployer refuses every deployment left in the train, that
-  service's own included. Flip later than qits-deployments' self-update and the successor comes up
-  holding the url over a service nobody imported into. The seed stack therefore spells NONE of
-  those keys — the seed deployer has to start without them — while the generated extras spell all
-  of them, because a live `service update --env-add` alone is exactly the fix the old model kept
-  reverting. **qits-configuration being a SEED service since qits-889 moves none of this**: its
-  seed image is put live at its release tag in step two, but nothing reads it until the import and
-  the flip, which stay hung off its RELEASE image's deployment in the train.
-- **The extras file is BOOTSTRAP-ONLY, and after the flip it is unread.** It is what the seed
-  deployer runs from before qits-configuration exists and what `configuration-import` imports whole,
-  so the store and the file cannot disagree at the moment authority moves. From the flip on, the
-  deployer reads the service and NOT the file — authoritative means sole, or a key deleted from the
-  store comes back out of whatever nobody emptied on the volume. Editing it on a flipped platform
-  changes nothing. Unsetting `QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL` is the rollback, and the file it
-  falls back to may be months stale by then: re-render before leaning on it.
-- **The file holds EXTRAS and nothing else.** The deployer's own settings — the ones spelled
-  `qits.platform.deployments.<key>` rather than `...extras.<app>.<key>` — are env now,
-  `QITS_PLATFORM_DEPLOYMENTS_*`, and each is spelled **twice**: on the seed stack's deployer service,
-  which starts before any extras are read, and on the deployer's own extras block, which is what
-  every self-update's successor inherits. Twice is not belt and braces since 2026-08-17: the update
-  argv `--env-rm`s what the extras do not state, so a variable on the seed service alone would be
-  gone at the deployer's first self-deploy. **The extras family is the one thing that cannot move to
-  env**, and `ServiceExtras` says why — an underscore cannot tell `qits-ci`'s keys from
-  `qits-ci-daemon`'s, because a dash and a dot both become one. Never render extras as env.
-  The volume itself stays whatever happens: `config.json`, the credential `DOCKER_CONFIG` names, is a
-  second file on it with a phase of its own. `demotion-rollout.md` is the hand procedure for a
-  platform that is already flipped.
+- **Deployment configuration is the deployer's own settings store, and the bootstrap writes it
+  once the deployer answers** (qits-765). qits-deployments takes every deployment's environment
+  from its `pd_setting` rows and its shape — volumes, binds, publishes, aliases — from the
+  repository's own `.config/qits/deployments.yml`. There is no extras file and no
+  qits-configuration any more (retired in qits-1396): nothing here renders, imports or flips either,
+  and `DeploymentSettingsGuardTest` fails the build on any code that dials or writes
+  qits-configuration again. What the image defaults cannot know is `DeploymentSettings` — the
+  domain, the passwords this run generated, the push token, the ACME account and TLS keystore, the
+  daemon override, the port when it is not 8080 — and `deployment-settings` PUTs each row to
+  `/deployments/api/settings/{application}/{environment}/{key}` under the bootstrap's `qits:system`
+  bearer, values never printed. **Its place is the whole ordering argument**: after `environment`,
+  which proves the seed deployer answers writes, and immediately before the first `seed-deploy-*`,
+  because every deployment reads the rows — the edge's TLS and ACME rows above all, or its cutover
+  takes the certificate away. The seed deployer itself reads none: it is started from the stack
+  file, which therefore spells its own `QITS_PLATFORM_DEPLOYMENTS_*` env, and its successor reads
+  its own rows at the self-update last of the train. A PUT is an upsert, so a rerun writes the same
+  rows again. The config volumes stay, for the seed pullers' `config.json` (`docker-configs`).
 - **A DEPLOYMENT IS A RELEASE, and there is no ref that deploys.** qits-projects tags a release
   through qits-githost's primitives and publishes `SCMRelease`; the `release:` phase of the
   repository's own `.config/qits/release.yml` — which qits-ci composes into a trigger document
@@ -367,12 +353,10 @@ forced. Add to that list rather than deviating quietly.
   run ever addresses by id, and every PUSH is name-addressed — which is what puts `projectId` and
   `repoName` on each push's event. Two things hold the shape together and each is a boot that fails
   if it moves: everything after `seed-deploy-githost` MUST be name-addressed, because that deployment
-  closes the storage scheme behind it; and the guard is therefore spelled in the deployment EXTRAS
-  and never on the seed stack — seeding qits-projects did not change that and could not, because
+  closes the storage scheme behind it; and the guard is therefore the deployed git host's own
+  default and never on the seed stack — seeding qits-projects did not change that and could not, because
   the credential the PUTs present is the BOOTSTRAP's and the guard demands one other client's
-  self-role. The same rule sends `qits.ci.projects-url` to ci's extras and not to the seed:
-  configured, it replaces the git host's own listing, and a seed ci holding it would answer the
-  release replays with an empty candidate list. `README.md`'s "Two coordinates, one seam" is the
+  self-role. `README.md`'s "Two coordinates, one seam" is the
   long form, including the two switches the seed qits-projects is started with.
 - **The seed qits-projects starts with its self-seed HELD and its wrapper reconcile OFF, and both
   are load-bearing.** `QITS_STARTUP_SEED_ENABLED=false` on the stack, turned on by the
@@ -433,7 +417,7 @@ forced. Add to that list rather than deviating quietly.
   `deployments.yml`'s `application:` key pins from the repository's own side. So `repo(name)`
   answers the git-host repository, the clone url, the `.gitmodules` entry and the checkout
   directory, while `application(name)` answers everything the platform is addressed by — and
-  `wireAlias`, `pdNamePrefix` and the extras family are the only callers of the second. Getting
+  `wireAlias`, `pdNamePrefix` and the settings rows are the only callers of the second. Getting
   them the wrong way round points the boot's own database at a host nothing serves.
   **The wrapper DIRECTORY is no longer one of them, and that is deliberate.** The wrapper moved
   from six archetype directories to `components/<component>/<repo>`, and a component is not
@@ -450,13 +434,14 @@ forced. Add to that list rather than deviating quietly.
   not the spelling**: qits-deployments and qits-events joined the platform plane on 2026-08-17 and
   their APPLICATIONS still answer to a bare name that says no plane at all, while their
   repositories say it (`qits-events-platform-service`).
-- **The host's docker socket is granted to THREE services, and every grant is an extras block
+- **The host's docker socket is granted to THREE services, and every grant is a socket bind
   somebody wrote on purpose.** qits-containers starts every workload on the host, qits-deployments
   is a deployer, and qits-platform-system owns the admin console's terminals. A fourth is a
-  decision, not a mount: it needs `mounts[<i>]=bind:/var/run/docker.sock:…` AND
-  `groups[0]=${DOCKER_GID}` — the group is what makes the socket usable by a container running as
-  uid 1001 — plus a comment above the block saying why the power belongs there rather than behind
-  an endpoint on one of the three. A socket holder that also PULLS needs a `config.json` of its
+  decision, not a mount: it needs `binds: /var/run/docker.sock:/var/run/docker.sock` in that
+  repository's own `deployments.yml` — the deployer adds the socket's group itself, which is what
+  makes the socket usable by a container running as uid 1001 — plus a comment saying why the
+  power belongs there rather than behind an endpoint on one of the three. The seed stack grants
+  the same three by hand (`user: "1001:<gid>"`). A socket holder that also PULLS needs a `config.json` of its
   own: `SeedPhases.dockerConfig` writes one per holder, with the hosts that holder pulls from (the
   registry vhost for the first two, the registry AND the mirror for qits-platform-system, whose
   glances image is the mirror's).
@@ -468,7 +453,7 @@ forced. Add to that list rather than deviating quietly.
   host (`QITS_SYSTEM_RUNNER_CREDENTIAL_VOLUME=qits_shared_dot_claude`, `_M2_VOLUME`,
   `_PNPM_VOLUME`) — and the runner rolls itself over from then on. It runs before the first release
   replay, so qits-system is a seed service. It stays as the platform's own target; nothing
-  decommissions it. Do not give it an extras block, a `DEPLOYABLES` entry or a stack service: a
+  decommissions it. Do not give it a settings row, a `DEPLOYABLES` entry or a stack service: a
   deployer replacing the container would race the runner's own rollover. It replaced the CI runner
   (`runner-localhost`, `qits/qits-ci-runner`) and the workspaces runner.
   **Whose target it is decides whether anything is started**: the phase acts only when qits-system
@@ -490,11 +475,11 @@ forced. Add to that list rather than deviating quietly.
   **The idp's old issuer variable is gone (qits-730).** The idp derives its own issuer —
   `https://idp.qits.<domain>` — from `QITS_DOMAIN` in code and reads no environment variable for
   it any more, so this program writes nothing for it: no bare placeholder, no seed stack entry,
-  no extras entry.
+  no setting.
 - **Nothing outside `PlatformModel` decides a wire alias or whether a service is told its tier.**
   Both change when an application moves plane, so `wireAlias`, `pdNamePrefix` and
-  `PlatformModel.modelTokens` are the only places either is built — the generated stack and extras
-  carry `${ALIAS_<APP>}` and `${TIER_ENV_<APP>}` placeholders, and `BootstrapConfig`'s urls derive
+  `PlatformModel.modelTokens` are the only places either is built — the generated stack
+  carries `${ALIAS_<APP>}` and `${TIER_ENV_<APP>}` placeholders, and `BootstrapConfig`'s urls derive
   too. A concatenated copy is a peer dialling a name nothing answers to, or an audience the idp
   never mints, and both fail as a silent 401. **A client id is one of those aliases and not a third
   family**: the seed stack spells `QITS_RESOURCE_IDP_CLIENT_ID: ${ALIAS_<APP>}`, which is exactly
@@ -507,19 +492,18 @@ forced. Add to that list rather than deviating quietly.
   pair through `QITS_IDP_SEED_CLIENT_ID`/`_SECRET` — once per installation, gated by an `idp_seed`
   marker row rather than by the variables, so the pair stays spelled on every boot; and
   `idp-clients` creates the five seed services' clients at `POST /idp/api/service-clients`,
-  recording each secret in qits-deployments' `pd_resource` registry. Only then are the two files
+  recording each secret in qits-deployments' `pd_resource` registry. Only then is the stack file
   generated, because until then the values do not exist.
-  **The seed stack carries what this run knows and the extras carry nothing of it.** A seed block
+  **The seed stack carries what this run knows and the settings carry nothing of it.** A seed block
   gets `QITS_RESOURCE_IDP_URL` / `_CLIENT_ID` / `_CLIENT_SECRET` because it starts before anything
   could inject one; a deployed application is handed the same triple by the deployer off the same
-  registry row, and those variables are written BEFORE an application's own extras where the last
-  assignment wins — so a credential in the extras would not configure the deployment, it would
-  SHADOW the row that is kept current and outlive every rotation of it. `ExtrasWiringGuardTest`
-  fails the build on `QITS_RESOURCE_IDP_*`, `QITS_IDP_CLIENT*`, `QITS_OIDC_CLIENT_*` and
-  `QUARKUS_OIDC_CLIENT_*` in any block — with ONE exemption, spelled whole:
-  `qits-ci.env.QUARKUS_OIDC_CLIENT_CLIENT_ENABLED=true`, on the seed ci block and ci's extras. It is
-  a switch, not an identity: qits-ci ships its one client off and nothing the deployer injects turns
-  it on, so without it ci commissions nothing — no runner, no per-run credential.
+  registry row, and those variables are written BEFORE an application's own settings where the
+  last assignment wins — so a credential in the settings would not configure the deployment, it
+  would SHADOW the row that is kept current and outlive every rotation of it.
+  `DeploymentSettingsGuardTest.noSettingCarriesAnIdentity` fails the build on `QITS_RESOURCE_*`,
+  `QITS_IDP_CLIENT*`, `QITS_OIDC_CLIENT_*` and `QUARKUS_OIDC_CLIENT_*` in what this run writes.
+  The seed ci block alone carries `QUARKUS_OIDC_CLIENT_CLIENT_ENABLED: "true"` — a switch, not an
+  identity: without it the seed ci commissions nothing — no runner, no per-run credential.
   **No service is told which audience to validate either.** Every image ships
   `quarkus.oidc.token.audience=qits-platform` as one literal name, and the idp puts that name on
   every token it mints whatever the caller asked for, so there is no per-service audience for a
@@ -562,7 +546,7 @@ forced. Add to that list rather than deviating quietly.
   beside `QITS_ENVIRONMENT`. Both halves are needed because on the seed stack qits-deployments is
   not the deployer, this program is — and the failure is silent, not loud: `qits.edge.domain`
   defaults to `localhost`, so a seed edge told nothing reads every name one tier out. The deployer
-  is the only application whose EXTRAS name the variable, because nothing propagates to the
+  is the only application whose SETTINGS name the variable, because nothing propagates to the
   propagator. Every service derives its own browser names, origins, allow-lists, cookie domain and
   passkey rp id from it. **Never add a
   composed hostname to a generated file again**, whatever it is for. Eight keys used to be there —
@@ -571,8 +555,8 @@ forced. Add to that list rather than deviating quietly.
   `QITS_IDP_WEBAUTHN_RP_ID` and `_ORIGINS`, and `QITS_EDGE_ACME_DOMAIN` — every one the same
   stated domain read a different way, and each free to go stale alone. Two did: the edge's
   return-host list and the idp's drifted apart and sign-in broke on the live platform. Like the
-  tier line it is a fragment (`${SEED_DOMAIN}`, `${DEPLOYMENTS_DOMAIN_ARGS}` from
-  `DomainTokens`). The domain is REQUIRED — `BootstrapConfig.requiredDomain()` is the one place it
+  tier line it is a fragment (`${SEED_DOMAIN}` from `DomainTokens`), and a settings row
+  (`DeploymentSettings`) for the deployer. The domain is REQUIRED — `BootstrapConfig.requiredDomain()` is the one place it
   stops being an `Optional`, and a boot without it is refused up front — so the fragments are always
   filled and nothing here has a no-domain branch. What still spells a browser name is the CLOSING
   REPORT — `publicOrigin`, `idpOrigin`, `envAuthority`, `projectAuthority`, `webauthnRpId`,
@@ -659,7 +643,7 @@ alias on `qits-net`. A glibc-static payload would build clean and fail its first
 `./mvnw clean verify` must be green on a clone, with **no docker**. What is tested is what can be:
 the engine (ordering, failure, warnings, skips, timing), the process runner (streaming, bounded
 memory, exit codes, timeouts, masking), the configuration mapping from `.env` names, the plan's
-shape and order, the stack-file and extras generation, the stack and service argv, the
+shape and order, the stack-file generation and the deployer settings, the stack and service argv, the
 seed-Dockerfile rewrite, the recorded
 state file, the plain renderer's output, and **the launcher's `docker run` argv** — asserted whole,
 because a flag dropped there is a bootstrap that gets further than it should before it breaks.
