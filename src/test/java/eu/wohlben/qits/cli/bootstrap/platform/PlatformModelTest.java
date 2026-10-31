@@ -223,7 +223,6 @@ class PlatformModelTest {
         expected.put("stt", "qits-stt-service");
         expected.put("workspaces", "qits-workspaces-service");
         // The platform tier's, plane as a modifier before the role.
-        expected.put("configuration", "qits-configuration-service");
         expected.put("deployments", "qits-deployments-service");
         expected.put("events", "qits-events-service");
         expected.put("edge", "qits-edge-service");
@@ -236,7 +235,6 @@ class PlatformModelTest {
         // service's component and plane.
         expected.put("spa-artifacts", "qits-artifacts-frontend");
         expected.put("spa-ci", "qits-ci-frontend");
-        expected.put("spa-configuration", "qits-configuration-frontend");
         expected.put("spa-deployments", "qits-deployments-frontend");
         expected.put("spa-docs", "qits-docs-frontend");
         expected.put("spa-events", "qits-events-frontend");
@@ -509,10 +507,12 @@ class PlatformModelTest {
     @Test
     void everyDeployableIsAnOrdinaryServiceOfTheOneEnvironment() {
         assertThat(PlatformModel.DEPLOYABLES).containsExactlyInAnyOrder(
-                "observability", "idp", "configuration", "stt", "projects",
+                "observability", "idp", "stt", "projects",
                 "workspaces", "events", "mirror", "artifacts", "githost", "docs",
                 "containers", "ci", "orchestrator", "maintenance", "system",
                 "edge", "deployments");
+        // qits-configuration was a deployable until its retirement (qits-765, qits-1396).
+        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("configuration");
         // postgres is neither here nor a deployable: it is the seed database, a seed-only service
         // the train never deploys, so it left DEPLOYABLES for SEEDED_REPOS.
         assertThat(PlatformModel.DEPLOYABLES).doesNotContain("oci-postgresql");
@@ -544,12 +544,13 @@ class PlatformModelTest {
         // qits-system is in it since 2026-10-23 (qits-1547), because a run is a LEASE: every CI
         // run is one on a qits-system target, so the first release replay of a cold boot needs the
         // service the localhost target registers with — up, with its database and idp client.
-        // qits-configuration and qits-workspaces are in it since 2026-10-30 (qits-889), because
-        // phase 1 builds everything the platform runs in steady state.
+        // qits-workspaces is in it since 2026-10-30 (qits-889), because phase 1 builds everything
+        // the platform runs in steady state. qits-configuration joined with it and left with its
+        // retirement (qits-1396).
         assertThat(PlatformModel.CORE).containsExactlyInAnyOrder(
                 "edge", "mirror", "artifacts", "githost", "projects", "ci",
                 "containers", "deployments", "idp", "events", "system",
-                "configuration", "workspaces", "oci-postgresql");
+                "workspaces", "oci-postgresql");
         // Every seed service is also deployed through the pipeline afterwards, with ONE exception:
         // postgres stays the seed service for good, because re-reading its spec from qits-githost
         // (whose storage IS postgres) is a circular dependency that crash-loops it.
@@ -561,13 +562,13 @@ class PlatformModelTest {
     /**
      * <b>The seed images the deployer puts live before the first build</b>, in the train's order:
      * every seed service it deploys at all, less the deployer itself, whose self-update stays last
-     * of the train and after the configuration flip. The edge is last, because its cutover takes
+     * of the train. The edge is last, because its cutover takes
      * the bootstrap ingress's door away.
      */
     @Test
     void theSeedDeployedAreTheCoreLessTheDeployerInTrainOrder() {
         assertThat(PlatformModel.SEED_DEPLOYED).containsExactly(
-                "idp", "configuration", "projects", "workspaces", "events", "mirror", "artifacts",
+                "idp", "projects", "workspaces", "events", "mirror", "artifacts",
                 "githost", "containers", "ci", "system", "edge");
         assertThat(PlatformModel.SEED_DEPLOYED).doesNotContain("deployments", "oci-postgresql");
     }
@@ -656,12 +657,10 @@ class PlatformModelTest {
                 .isEqualTo("dist/qits-platform-spa-mirror/browser");
         assertThat(PlatformModel.seedWebuiPath("edge")).isEmpty();
         assertThat(PlatformModel.seedBundlePath("edge")).isEmpty();
-        // Ten seed images carry a client; the edge, the orchestrator's container service,
+        // Nine seed images carry a client; the edge, the orchestrator's container service,
         // qits-workspaces (no client since qits-1245) and the postgres image do not.
         assertThat(PlatformModel.seedClients()).containsExactly("mirror", "artifacts", "githost",
-                "projects", "ci", "deployments", "idp", "events", "system", "configuration");
-        assertThat(PlatformModel.seedUiPath("configuration"))
-                .isEqualTo("service/src/main/webui/dist/qits-spa-configuration/browser");
+                "projects", "ci", "deployments", "idp", "events", "system");
         assertThat(PlatformModel.seedUiPath("workspaces")).isEmpty();
     }
 
@@ -923,9 +922,7 @@ class PlatformModelTest {
         // The orchestrator immediately before ci: ci runs every step as a container it asks that
         // service for, so the two cutovers have to be ordered rather than overlapping.
         assertThat(PlatformModel.DEPLOYABLES).containsSubsequence("containers", "ci");
-        // docs declares serviceAddress keys on qits-artifacts and qits-observability, and
-        // qits-configuration renders an address only once its target has deployed and recorded a
-        // plane — before that the resolved read is a 422 and the deployer refuses docs.
+        // docs reads from qits-artifacts and qits-observability, so it deploys after both.
         assertThat(PlatformModel.DEPLOYABLES).containsSubsequence("artifacts", "docs");
         assertThat(PlatformModel.DEPLOYABLES).containsSubsequence("observability", "docs");
         // ...without splitting the byte plane's three or the containers-ci pair.
@@ -947,44 +944,6 @@ class PlatformModelTest {
         assertThat(PlatformModel.wireAlias("deployments", "prod")).isEqualTo("prod-qits-deployments");
         assertThat(PlatformModel.wireAlias("containers", "prod"))
                 .isEqualTo("prod-qits-containers");
-    }
-
-    /**
-     * <b>qits-configuration validates the deployer's bearer and mints nothing</b>, so it is an
-     * audience and never a client of this bootstrap's making. Nothing states that audience: the
-     * image validates qits-platform out of its shipped {@code quarkus.oidc.token.audience}, the one
-     * name the idp puts on every token it mints. What the alias below decides is the ADDRESS the
-     * deployer dials and the id the client is created under.
-     */
-    @Test
-    void theConfigurationServiceIsDialledAtItsPlatformPlaneAlias() {
-        assertThat(PlatformModel.SEED_IDP_CLIENT_APPS).doesNotContain("configuration");
-        // AND IT NO LONGER FOLLOWS THE ENVIRONMENT NAME, since the plane move on 2026-09-07: one
-        // store serves every tier, so the name is the same value whichever tier is asking. That is
-        // what makes deriving it load-bearing rather than tidy.
-        assertThat(PlatformModel.wireAlias("configuration", "prod")).isEqualTo("prod-qits-configuration");
-        assertThat(PlatformModel.wireAlias("configuration", "preprod"))
-                .isEqualTo("preprod-qits-configuration");
-        // The REPOSITORY moved one wave later, and the fallback path says both halves at once: the
-        // leaf carries the plane as a modifier now, while the directory is still the ROLE's —
-        // services/, exactly as the deployer's and the bus's are.
-        assertThat(PlatformModel.repoPath("configuration"))
-                .isEqualTo("services/qits-configuration-service");
-    }
-
-    /**
-     * <b>Where qits-configuration sits in the train, and every neighbour is load-bearing.</b> Its
-     * store is the seed postgres, already up before the train starts; after the idp, whose cutover
-     * must not fall inside the deploy window of a service that validates its tokens; and before the
-     * deployer's own self-update, which inherits the extras url the boot flips.
-     */
-    @Test
-    void configurationIsDeployedAfterTheIdpAndLongBeforeTheDeployer() {
-        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
-                "idp", "configuration", "deployments");
-        // Everything below it is deployed from what it serves, which is what proves the read.
-        assertThat(PlatformModel.DEPLOYABLES.indexOf("configuration"))
-                .isLessThan(PlatformModel.DEPLOYABLES.indexOf("ci"));
     }
 
     /**
@@ -1315,14 +1274,14 @@ class PlatformModelTest {
      * bootstrap since. A derivation asserted against itself would pass while the platform and the
      * template disagreed.
      * <p>
-     * Twenty entries: the environment, the eighteen deployables' browser labels, and the one edge
+     * Nineteen entries: the environment, the seventeen deployables' browser labels, and the one edge
      * app label no application name spells ({@code registry} is qits-artifacts). {@code idp} and {@code edge} are in it twice over — from
      * {@link PlatformModel#DEPLOYABLES} and by name — and appear once.
      */
     @Test
     void theReservedSlugsAreTheEnvironmentAndEveryServiceLabel() {
         assertThat(PlatformModel.reservedSlugs("dev")).isEqualTo("dev,"
-                + "artifacts,ci,configuration,containers,deployments,docs,edge,events,"
+                + "artifacts,ci,containers,deployments,docs,edge,events,"
                 + "githost,idp,maintenance,mirror,observability,orchestrator,projects,registry,"
                 + "stt,system,workspaces");
     }
@@ -1330,9 +1289,8 @@ class PlatformModelTest {
     /**
      * <b>A tier called after a service reserves that label once</b>, not twice — the environment is
      * always first, and the label set drops what it already says. The rerun invariant is the whole
-     * reason this value has a fixed order at all: it is imported into qits-configuration on every
-     * boot, so a list that reshuffled itself would make the store and the template disagree for
-     * nothing.
+     * reason this value has a fixed order at all: a list that reshuffled itself would change the
+     * seed stack, and restart qits-projects, for nothing.
      */
     @Test
     void anEnvironmentNamedAfterAServiceIsReservedOnce() {

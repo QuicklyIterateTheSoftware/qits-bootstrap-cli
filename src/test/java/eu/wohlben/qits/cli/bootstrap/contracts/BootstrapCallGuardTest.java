@@ -2,7 +2,6 @@ package eu.wohlben.qits.cli.bootstrap.contracts;
 
 import com.sun.net.httpserver.HttpServer;
 import eu.wohlben.qits.cli.bootstrap.api.BootstrapPublishCredential;
-import eu.wohlben.qits.cli.bootstrap.api.ConfigurationApi;
 import eu.wohlben.qits.cli.bootstrap.api.EventsApi;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.IdpApi;
@@ -90,7 +89,7 @@ class BootstrapCallGuardTest {
                             + " (:9000/q/lets-encrypt/certs), framework-owned and no API"));
 
     private static final Pattern DIRECT_CALL = Pattern.compile(
-            "\\bhttp\\.(get|head|delete|post|postForm|postJson|postText|patchJson|putJson|putFile)\\("
+            "\\bhttp\\.(get|head|delete|post|postForm|postJson|patchJson|putJson|putFile)\\("
                     + "|HttpRequest\\.newBuilder\\(");
 
     /** The body every reader in the API classes accepts as a success. */
@@ -135,7 +134,6 @@ class BootstrapCallGuardTest {
                 () -> BootstrapContract.artifacts(base));
         factories.put(eu.wohlben.qits.cli.bootstrap.api.CiApi.class,
                 () -> BootstrapContract.ci(base));
-        factories.put(ConfigurationApi.class, () -> new ConfigurationApi(new Http(), base, "dev"));
         factories.put(EventsApi.class, () -> new EventsApi(new Http(), base + "/events"));
         factories.put(eu.wohlben.qits.cli.bootstrap.api.GitHostApi.class,
                 () -> BootstrapContract.githost(base));

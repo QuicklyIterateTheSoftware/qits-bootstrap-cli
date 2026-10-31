@@ -81,7 +81,7 @@ class StackFileTest {
      * — naming a group means naming the user too.
      * <p>
      * <b>Three holders since qits-1547</b>: the deployer, the container orchestrator and
-     * qits-system. qits-system always held the socket in steady state (its extras grant it, see
+     * qits-system. qits-system always held the socket in steady state (its deployments.yml binds it, see
      * qits-system-plan.md decision 1); what changed is that it is a seed service now, because every
      * CI run is a lease on one of its targets, so its seed block carries the same grant.
      */

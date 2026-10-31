@@ -16,7 +16,6 @@ contracts:
     qits-idp-service: { packages: [maven] }
     qits-githost-service: { packages: [maven] }
     qits-artifacts-service: { packages: [maven] }
-    qits-configuration-service: { packages: [maven] }
     qits-system-service: { packages: [maven] }
     qits-containers-service: { packages: [maven] }
 

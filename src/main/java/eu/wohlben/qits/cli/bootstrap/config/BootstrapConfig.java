@@ -572,33 +572,8 @@ public interface BootstrapConfig {
     }
 
     /**
-     * qits-configuration at its fixed seed alias, with <b>no path</b> — the same shape
-     * {@link #mirrorUrl()} has and for a related reason: this exact string is also what the deployer
-     * is handed as {@code QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL}, and that reader appends
-     * {@code /configuration/api/applications/<app>/resolved} itself. A base carrying the segment
-     * would be right here and doubled there.
-     * <p>
-     * <b>Its own alias rather than the edge, and that is deliberate.</b> The bootstrap's import
-     * asserts {@code X-Qits-User} / {@code X-Qits-Roles} on a private qits-net hop, the way it does
-     * to the deployer — and the edge strips client-supplied identity headers from every request it
-     * proxies, which is exactly the property that makes it safe as a public door. Sending this
-     * through it would put the write behind a header the door is built to throw away.
-     * <p>
-     * <b>The hostname is DERIVED, and the 2026-09-07 plane move is what that cost.</b> This method
-     * spelled {@code <env>-qits-configuration} and so did not follow
-     * {@link PlatformModel#PLATFORM_SERVICES}: the moment the store moved plane, the import phase's
-     * health wait and its POST would both have gone to a name nothing answers to — and the same
-     * string is handed to the deployer as {@code QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL}, which
-     * refuses a deployment it cannot resolve rather than falling back to the file. Neither the
-     * no-path shape above nor the not-the-edge argument changed with the plane; only the host did.
-     */
-    default String configurationUrl() {
-        return "http://" + PlatformModel.wireAlias("configuration", envName()) + ":8080";
-    }
-
-    /**
-     * qits-projects at its fixed alias, with <b>no path</b> — the shape
-     * {@link #configurationUrl()} has and for the same family of reason: this string is also what
+     * qits-projects at its fixed alias, with <b>no path</b> — the shape {@link #mirrorUrl()} has
+     * and for a related reason: this string is also what
      * qits-ci is handed as {@code QITS_CI_PROJECTS_URL}, and that reader appends
      * {@code /projects/api/repositories} itself.
      * <p>

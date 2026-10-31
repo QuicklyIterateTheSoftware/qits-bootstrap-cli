@@ -136,17 +136,6 @@ public class Http {
         return postJson(url, null, headers);
     }
 
-    /**
-     * A {@code text/plain} POST, which is what qits-configuration's import takes: the body is a
-     * properties FILE — comments, blank lines and every unrelated key included — rather than a
-     * projection of one, so nothing here filters or re-spells it.
-     */
-    public Response postText(String url, String body, Map<String, String> headers) {
-        return send(request(url, headers)
-                .header("Content-Type", "text/plain")
-                .POST(HttpRequest.BodyPublishers.ofString(body)).build());
-    }
-
     public Response patchJson(String url, String json, Map<String, String> headers) {
         return send(request(url, headers)
                 .header("Content-Type", "application/json")

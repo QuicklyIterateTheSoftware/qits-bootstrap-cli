@@ -94,18 +94,19 @@ public final class PlatformModel {
      * its eventstream outbox and its idp client before it. No deployer exists yet to provision any
      * of the three, so this boot does, as it does for every seed service.
      * <p>
-     * <b>qits-configuration and qits-workspaces joined on 2026-10-30 (qits-889), because phase 1
-     * builds everything the platform needs.</b> Neither is called during the seed window — the
-     * configuration import and flip stay in the train, after its own deployment — but the platform
-     * runs both in steady state, and step two of the boot is bringing it up as it runs in steady
-     * state. Built here, a cold boot's first workspace and the deployer's flip no longer wait on two
-     * release builds of the train; deployed again in the train, from their release runs' images,
-     * like every other seed service.
+     * <b>qits-workspaces joined on 2026-10-30 (qits-889), because phase 1 builds everything the
+     * platform needs.</b> It is not called during the seed window, but the platform runs it in
+     * steady state, and step two of the boot is bringing it up as it runs in steady state. Built
+     * here, a cold boot's first workspace no longer waits on a release build of the train; deployed
+     * again in the train, from its release run's image, like every other seed service.
+     * qits-configuration joined beside it and left again with its retirement (qits-1396): the
+     * deployer reads its settings store and nothing reads qits-configuration, so the boot neither
+     * builds, clones nor deploys it.
      */
     public static final List<String> CORE = List.of(
             "edge", "mirror", "artifacts", "githost", "projects", "ci",
             "containers", "deployments", "idp", "events", "system",
-            "configuration", "workspaces", "oci-postgresql");
+            "workspaces", "oci-postgresql");
 
     /**
      * <b>THE REPOSITORIES PHASE 1 DOES NOT BUILD BECAUSE NOTHING THE BOOT BRINGS UP CALLS THEM
@@ -198,16 +199,13 @@ public final class PlatformModel {
      * and because the githost's own deployment is the one that re-hosts the repository this train
      * pushes to, the same self-referential class as the deployer.
      * <p>
-     * <b>qits-docs comes AFTER qits-artifacts, because its configuration names it.</b> Its
-     * {@code .config/qits/configuration.yml} declares {@code env.QITS_DOCS_ARTIFACTS_URL} as a
-     * {@code serviceAddress} of qits-artifacts, and qits-configuration renders that address from the
-     * TARGET's recorded plane — which a deployment records, and a seed-stack service has never had.
-     * Before it, the resolved read answers 422 and the deployer refuses the deployment: the
-     * wohlben.eu cold boot of 2026-09-10 warned at deploy-docs exactly so, two phases before
-     * qits-artifacts deployed. The rule is general — an application whose declaration addresses
-     * another deploys after it — and qits-docs is the only one this train has today; its other
-     * address, qits-observability, is first anyway. It goes after qits-githost rather than between
-     * the byte plane's three, and before qits-containers, whose place against qits-ci is forced.
+     * <b>qits-docs comes AFTER qits-artifacts, because it reads from it.</b> It used to be forced:
+     * qits-configuration rendered its {@code QITS_DOCS_ARTIFACTS_URL} from the TARGET's recorded
+     * plane, and refused the deployment before qits-artifacts had one (the wohlben.eu cold boot of
+     * 2026-09-10). That store is retired, so the order is now only the general rule — an
+     * application that addresses another deploys after it. It goes after qits-githost rather than
+     * between the byte plane's three, and before qits-containers, whose place against qits-ci is
+     * forced.
      * <p>
      * <b>qits-containers is immediately BEFORE qits-ci, and that pair's order is forced.</b> ci runs
      * every pipeline step as a container it asks this service for, so a ci cutover landing while the
@@ -215,15 +213,10 @@ public final class PlatformModel {
      * puts its window before ci's rather than inside it, and leaves the run's own remaining
      * deployments — the edge and the deployer — behind a ci that already has a working step host.
      * <p>
-     * <b>qits-configuration is FOURTH, and every neighbour of that position is load-bearing.</b> It
-     * holds deployment configuration as platform state, and the deployer READS it once the boot has
-     * flipped {@code QITS_PLATFORM_DEPLOYMENTS_EXTRAS_URL} — so it has to be deployed and imported
-     * before that flip, and the flip has to be before the deployer's own deployment, which inherits
-     * the url from its extras. It goes after postgres, because its store is provisioned from the
-     * {@code resources: postgresql:db} line in its own deployments.yml, and after the idp, whose
-     * cutover must not fall inside the deploy window of a service that validates its tokens. Every
-     * deployable BELOW it is what proves the flip: each of them is deployed from configuration the
-     * service served rather than from the file on the volume.
+     * <b>qits-configuration was FOURTH, and is gone</b> (qits-765, qits-1396). The deployer read
+     * deployment configuration from it after a flip in the middle of this train; it reads its own
+     * settings store now, which {@code deployment-settings} fills before the first deployment, so
+     * no position in this list is load-bearing for configuration any more.
      * <p>
      * <b>qits-platform-orchestrator is LATE, after every service it calls.</b> It runs technical
      * processes — multi-step jobs that only send requests to peers — so it is a caller and nothing
@@ -252,7 +245,7 @@ public final class PlatformModel {
      * deployer for the reason everything does. Not in the seed either: nothing calls it.
      */
     public static final List<String> DEPLOYABLES = List.of(
-            "observability", "idp", "configuration", "stt", "projects",
+            "observability", "idp", "stt", "projects",
             "workspaces", "events", "mirror", "artifacts", "githost", "docs",
             "containers", "ci", "orchestrator", "maintenance", "system",
             "edge", "deployments");
@@ -264,10 +257,8 @@ public final class PlatformModel {
      * <p>
      * It is {@link #CORE} in {@link #DEPLOYABLES} order, less two. qits-oci-postgresql is never
      * deployed at all (see {@link #DEPLOYABLES}). qits-deployments stays where it is, LAST of the
-     * train: its own deployment is the self-update handoff, and it has to come after the
-     * configuration flip — which stays in the train, after qits-configuration's RELEASE image is
-     * deployed and imported into, although a seed image of it is put live here since qits-889. The
-     * edge is last of these for the train's own reason: its cutover takes the bootstrap ingress's
+     * train: its own deployment is the self-update handoff, and nothing may follow it. The edge is
+     * last of these for the train's own reason: its cutover takes the bootstrap ingress's
      * door away, so everything that still needs that door is done by then.
      * <p>
      * Each of them is deployed a SECOND time in the train, from the image its release run builds:
@@ -404,7 +395,7 @@ public final class PlatformModel {
             "userflows", "coding-agents", "spa-docs", "spa-deployments",
             "integrations-angular", "integrations-quarkus", "spa-projects",
             "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events",
-            "spa-ci", "spa-githost", "spa-configuration", "spa-idp",
+            "spa-ci", "spa-githost", "spa-idp",
             "spa-mirror", "spa-orchestrator", "spa-maintenance",
             "spa-system",
             "oci-workspace", "oci-workspace-editor", "workspace-daemon", "workspaces-runner-daemon",
@@ -894,7 +885,6 @@ public final class PlatformModel {
             Map.entry("mirror", "qits-mirror-service"),
             Map.entry("orchestrator", "qits-orchestrator-service"),
             Map.entry("system", "qits-system-service"),
-            Map.entry("configuration", "qits-configuration-service"),
             Map.entry("deployments", "qits-deployments-service"),
             Map.entry("events", "qits-events-service"),
 
@@ -902,8 +892,7 @@ public final class PlatformModel {
             // SERVICE's component and plane, whether the model spelled it spa-<x> or
             // platform-spa-<x>. qits-spa-events and qits-spa-deployments are the pair that shows it
             // — their services moved plane on 2026-08-17 and the clients follow them here.
-            // qits-spa-configuration is the third, its service moved on 2026-09-07, and the model
-            // name each of them is keyed by moved for none of the three.
+            // The model name each of them is keyed by moved for neither.
             Map.entry("spa-artifacts", "qits-artifacts-frontend"),
             Map.entry("spa-ci", "qits-ci-frontend"),
             Map.entry("spa-docs", "qits-docs-frontend"),
@@ -911,7 +900,6 @@ public final class PlatformModel {
             Map.entry("spa-observability", "qits-observability-frontend"),
             Map.entry("spa-projects", "qits-projects-frontend"),
             Map.entry("spa-workspaces", "qits-workspaces-frontend"),
-            Map.entry("spa-configuration", "qits-configuration-frontend"),
             Map.entry("spa-deployments", "qits-deployments-frontend"),
             Map.entry("spa-events", "qits-events-frontend"),
             Map.entry("spa-idp", "qits-idp-frontend"),
@@ -932,7 +920,7 @@ public final class PlatformModel {
 
     /**
      * <b>The APPLICATION name: what the platform answers to</b> — the wire alias peers dial, the
-     * container the deployer manages, the extras family, the seed image tag. It is derived from the
+     * container the deployer manages, the settings rows, the seed image tag. It is derived from the
      * model name and nothing else, so a repository rename cannot move it. A renamed repository says
      * the same thing from its own side, with {@code application:} in its
      * {@code .config/qits/deployments.yml}, and the two have to agree.
@@ -1120,7 +1108,7 @@ public final class PlatformModel {
 
     /**
      * <b>The slugs no project may take</b> — {@code QITS_PROJECTS_RESERVED_SLUGS}, rendered into
-     * both generated files, and the reason a project slug is not free-form on this platform.
+     * the seed stack, and the reason a project slug is not free-form on this platform.
      * <p>
      * <b>Two collisions, one list.</b> A project slug is position 1 of
      * {@code <app>.<project>.<env>.<domain>}, and the edge asks that label whether it names an
@@ -1142,9 +1130,9 @@ public final class PlatformModel {
      * buys the guarantee.
      * <p>
      * <b>The order is the environment first and then the labels sorted</b>, and it is deterministic
-     * because a bootstrap RERUN has to write the value it wrote last time. This entry is imported
-     * into qits-configuration and re-imported on every run, so a value that reordered itself would
-     * make the store disagree with the template for no reason anybody could see.
+     * because a bootstrap RERUN has to write the value it wrote last time: a value that reordered
+     * itself would change the seed stack, and restart qits-projects, for no reason anybody could
+     * see.
      * <p>
      * The environment name is dropped from the label set rather than repeated: a platform whose tier
      * is called {@code docs} reserves {@code docs} once.
@@ -1218,10 +1206,8 @@ public final class PlatformModel {
             // qits-system joined the seed on 2026-10-23 (qits-1547) with its client in the same
             // shape; the Angular project inside it still carries the plane-era name.
             case "system" -> "service/src/main/webui/dist/qits-platform-spa-system/browser";
-            // qits-configuration joined the seed on 2026-10-30 (qits-889) with its client in the
-            // same shape. qits-workspaces, beside it, serves no client since qits-1245 — the
-            // workspace pages are qits-landing-app's — so it has no line here and needs none.
-            case "configuration" -> "service/src/main/webui/dist/qits-spa-configuration/browser";
+            // qits-workspaces serves no client since qits-1245 — the workspace pages are
+            // qits-landing-app's — so it has no line here and needs none.
             default -> "";
         };
     }
@@ -1269,7 +1255,6 @@ public final class PlatformModel {
      * {@code deployments.yml} declares {@code idp:client}, and every git-host, qits-projects,
      * qits-system and qits-containers call it makes carries a bearer minted from that client — so a
      * seed container started without one answers every workspace start with a 401 from a peer.
-     * qits-configuration, the other newcomer, mints nothing: it validates and is not a client.
      */
     public static final List<String> SEED_IDP_CLIENT_APPS =
             List.of("projects", "ci", "containers", "deployments", "edge", "system", "workspaces");
@@ -1316,8 +1301,8 @@ public final class PlatformModel {
      *       be wrong the moment they diverge again.
      *   <li>{@code SEED_NETWORKS_<APP>} — the seed service's whole {@code networks:} block. See
      *       {@link #seedNetworks}.
-     *   <li>{@code TIER_ENV_<APP>} and {@code TIER_ENV_EXTRAS_<APP>} — the {@code QITS_ENVIRONMENT}
-     *       line in the stack file's words and in the extras'. See {@link #tierEnv}.
+     *   <li>{@code TIER_ENV_<APP>} — the {@code QITS_ENVIRONMENT} line in the stack file's words.
+     *       See {@link #tierEnv}.
      * </ul>
      * <p>
      * A third family went with the idp's config-file registry: {@code CLIENT_KEY_<APP>} was the
@@ -1347,9 +1332,7 @@ public final class PlatformModel {
             tokens.put("ALIAS_" + clientKey(app), wireAlias(app, envName));
             tokens.put("DIAL_" + clientKey(app), wireAlias(app, envName));
             tokens.put("SEED_NETWORKS_" + clientKey(app), seedNetworks(app, envName, "    "));
-            tokens.put("TIER_ENV_" + clientKey(app), tierEnv(app, envName, "      ", ""));
-            tokens.put("TIER_ENV_EXTRAS_" + clientKey(app), tierEnv(app, envName, "",
-                    "qits.deployments.extras." + application(app) + ".env."));
+            tokens.put("TIER_ENV_" + clientKey(app), tierEnv(envName, "      "));
         }
         tokens.put("RESERVED_SLUGS", reservedSlugs(envName));
         return tokens;
@@ -1378,15 +1361,14 @@ public final class PlatformModel {
      * <p>It is not how a postgres HOST is resolved, which is what this comment used to claim: the
      * deployer reads the TARGET application's environment for that.
      */
-    private static String tierEnv(String app, String envName, String indent, String keyPrefix) {
+    private static String tierEnv(String envName, String indent) {
         return "\n"
                 + indent + "# WHICH TIER THIS APPLICATION BELONGS TO. Every application has one:\n"
                 + indent + "# the deployer keys each resource row by this value, and a row written\n"
                 + indent + "# without it is keyed null — which the unique index treats as ONE row\n"
                 + indent + "# however many applications share it. That was the platform plane's\n"
                 + indent + "# shape and it is gone; the line is unconditional so it cannot return.\n"
-                + indent + keyPrefix + "QITS_ENVIRONMENT" + (keyPrefix.isEmpty() ? ": " : "=")
-                + envName;
+                + indent + "QITS_ENVIRONMENT: " + envName;
     }
 
     /**

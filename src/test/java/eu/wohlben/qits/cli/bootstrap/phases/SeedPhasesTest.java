@@ -1536,18 +1536,18 @@ class SeedPhasesTest {
 
         Map<String, String> tokens = new SeedPhases(boot).tokens();
 
-        // The BARE domain, in both files. Not a door, not an origin, not an authority with a port:
-        // the derivations are the consuming services' and each needs the unqualified value.
+        // The BARE domain. Not a door, not an origin, not an authority with a port: the
+        // derivations are the consuming services' and each needs the unqualified value. The
+        // deployer's own copy is a settings row now (DeploymentSettings), not a stack token.
         assertThat(tokens.get("SEED_DOMAIN")).contains("QITS_DOMAIN: qits-dev.eu");
-        assertThat(tokens.get("DEPLOYMENTS_DOMAIN_ARGS")).contains(
-                "qits.deployments.extras.qits-deployments.env.QITS_DOMAIN=qits-dev.eu");
+        assertThat(tokens).doesNotContainKey("DEPLOYMENTS_DOMAIN_ARGS");
         // And no composed spelling beside it.
         assertThat(tokens).doesNotContainKeys("WEBAUTHN_RP_ID", "WEBAUTHN_ORIGINS",
                 "PUBLIC_ORIGIN", "IDP_ORIGIN", "BROWSER_HOSTS", "SESSION_COOKIE_DOMAIN");
     }
 
     @Test
-    void aPublicBootstrapEdgeKeepsSeedTlsPortsOutOfComposeButNotDeploymentExtras() {
+    void aPublicBootstrapEdgeKeepsSeedTlsPortsOutOfCompose() {
         Boot boot = new Boot(TestConfig.from(Map.of(
                 "QITS_DOMAIN", "wohlben.eu",
                 "QITS_BOOTSTRAP_INGRESS_PUBLIC", "true")),
@@ -1556,8 +1556,8 @@ class SeedPhasesTest {
         Map<String, String> tokens = new SeedPhases(boot).tokens();
 
         assertThat(tokens).containsEntry("EDGE_SEED_TLS_PORTS", "");
-        assertThat(tokens.get("EDGE_TLS_ARGS")).contains("publishes[1]=443:8443")
-                .doesNotContain("80:8080");
+        // The deployed edge's 443 is its own deployments.yml's publish, not a stack token.
+        assertThat(tokens).doesNotContainKey("EDGE_TLS_ARGS");
     }
 
     private static final List<String> TAGS = List.of("2026.812.153438", "2026.811.090000");

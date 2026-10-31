@@ -296,8 +296,7 @@ class BootstrapPlanTest {
 
             List<String> seedDeploys = ids.stream().filter(id -> id.startsWith("seed-deploy-"))
                     .toList();
-            assertThat(seedDeploys).containsExactly("seed-deploy-idp",
-                    "seed-deploy-configuration", "seed-deploy-projects",
+            assertThat(seedDeploys).containsExactly("seed-deploy-idp", "seed-deploy-projects",
                     "seed-deploy-workspaces", "seed-deploy-events", "seed-deploy-mirror", "seed-deploy-artifacts",
                     "seed-deploy-githost", "seed-deploy-containers", "seed-deploy-ci",
                     "seed-deploy-system", "seed-deploy-edge");
@@ -306,8 +305,13 @@ class BootstrapPlanTest {
             assertThat(ids.subList(first, first + seedDeploys.size())).isEqualTo(seedDeploys);
             assertThat(ids).containsSubsequence("seed-images-publish",
                     "publish-credential-release", "qits-project", "git-repos", "environment",
-                    "seed-deploy-idp");
-            assertThat(ids.get(first - 1)).isEqualTo("environment");
+                    "deployment-settings", "seed-deploy-idp");
+            // THE SETTINGS ARE THE LAST THING BEFORE THE FIRST DEPLOYMENT: every seed deploy — the
+            // edge's TLS and ACME rows above all — reads its environment from them, and the
+            // environment reconcile before them is what proves the deployer answers writes.
+            assertThat(ids.get(first - 1)).isEqualTo("deployment-settings");
+            assertThat(ids.get(first - 2)).isEqualTo("environment");
+            assertThat(ids.stream().filter("deployment-settings"::equals)).hasSize(1);
             assertThat(ids).containsSubsequence("seed-deploy-edge", "edge-ready", "target-localhost",
                     "target-connected", "release-train-push", "preseed",
                     "release-spa-ui-components", "deploy-observability", "deploy-idp",
@@ -342,15 +346,20 @@ class BootstrapPlanTest {
         // The edge needs nothing from the platform — no client bundle, no qits dependency — so its
         // image is built in the first half and needs no service image before it.
         assertThat(ids).containsSubsequence("seed-image-edge", "seed-image-artifacts");
-        // The daemon digest is written into the compose file and the deployer's extras, so it is
-        // measured before either is generated.
+        // The daemon digest is written into the compose file and the deployer's settings, so it
+        // is measured before either.
         // AND THE IDENTITY ORDER INSIDE IT. The seed services' clients are created against a
         // running idp, so the idp comes up alone between the bootstrap's own pair and the five it
         // makes — and compose-file is BELOW all three, because the secrets it renders do not exist
         // until the idp has issued them.
         assertThat(ids).containsSubsequence("ci-daemon", "idp-bootstrap-client", "seed-idp",
-                "idp-clients", "compose-file", "pd-extras", "seed-stack", "seed-health",
+                "idp-clients", "compose-file", "docker-configs", "seed-stack", "seed-health",
                 "register-token");
+        // The deployer's extras file and the two phases that moved it into qits-configuration are
+        // gone with that service (qits-765): the settings go to the deployer's own store.
+        assertThat(ids).doesNotContain("pd-extras", "configuration-import", "configuration-flip",
+                "seed-image-configuration", "seed-deploy-configuration", "deploy-configuration");
+        assertThat(ids).containsSubsequence("ci-daemon", "seed-health", "deployment-settings");
         // The phase that wrote a secret per client into the generated files is gone outright.
         assertThat(ids).doesNotContain("idp-secrets");
         // postgres before every file that addresses it: the deployer refuses to boot without the
@@ -359,7 +368,7 @@ class BootstrapPlanTest {
         // without its database, and idp-clients records every issued secret in the deployer's
         // registry on that same server.
         assertThat(ids).containsSubsequence("seed-image-oci-postgresql", "seed-postgres",
-                "idp-bootstrap-client", "seed-idp", "idp-clients", "compose-file", "pd-extras",
+                "idp-bootstrap-client", "seed-idp", "idp-clients", "compose-file", "docker-configs",
                 "seed-stack");
         // The git host is in the seed stack rather than started by hand: nothing needs it before
         // compose brings it up, and git-repos — the first phase that PUTs against it — is after
@@ -375,12 +384,11 @@ class BootstrapPlanTest {
         List<String> ids = ids(plan(Map.of()));
 
         assertThat(ids).containsSubsequence("environment", "deploy-observability",
-                "deploy-idp", "deploy-configuration",
+                "deploy-idp",
                 "deploy-stt", "deploy-projects", "deploy-workspaces",
                 "deploy-events",
                 "deploy-mirror", "deploy-artifacts", "deploy-githost",
-                // docs after artifacts: its declared serviceAddress key names that service, and
-                // qits-configuration renders it only once the target has deployed.
+                // docs after artifacts, which it reads from.
                 "deploy-docs",
                 // The orchestrator immediately before ci: ci runs every step as a container it asks
                 // that service for, so a ci cutover inside the orchestrator's window is a pipeline
@@ -403,40 +411,6 @@ class BootstrapPlanTest {
     }
 
     /**
-     * <b>The one ordering in this plan where BOTH directions can lose a boot.</b>
-     * <p>
-     * qits-configuration holds deployment configuration as platform state, and the deployer treats
-     * it as AUTHORITATIVE the moment it is given the url: an unreachable or unpopulated service
-     * refuses the deployment rather than shipping a stale value. So:
-     * <ul>
-     *   <li><b>The flip must be after the deployment and after the import.</b> Flipped earlier, the
-     *       deployer refuses every deployment left in the train — qits-configuration's own included,
-     *       which is a boot that cannot recover by carrying on.
-     *   <li><b>The flip must be before the deployer deploys itself.</b> The successor inherits the
-     *       url from its own extras, so a deployer that starts holding it over a service nobody
-     *       imported into refuses everything after it.
-     * </ul>
-     */
-    @Test
-    void theConfigurationServiceIsDeployedThenImportedThenFlippedAndOnlyThen() {
-        List<String> ids = ids(plan(Map.of()));
-
-        assertThat(ids).containsSubsequence("deploy-configuration", "configuration-import",
-                "configuration-flip", "deploy-deployments");
-        // Its own deployment is made by a deployer that is still reading the file — the flip is two
-        // phases later, and nothing between them deploys anything.
-        assertThat(ids.indexOf("configuration-flip"))
-                .isGreaterThan(ids.indexOf("deploy-configuration"));
-        // The issuer it validates against is already cut over, and its store is the seed postgres,
-        // up before the train starts.
-        assertThat(ids).containsSubsequence("deploy-idp", "deploy-configuration");
-        // Everything after the flip is deployed from what the service serves. The train is long
-        // enough that this is a real proof rather than one deployment's.
-        assertThat(ids).containsSubsequence("configuration-flip", "deploy-ci",
-                "deploy-edge", "deploy-deployments");
-    }
-
-    /**
      * <b>WHERE THE PUBLIC CLONE URL COMES INTO EXISTENCE, and it is before the first push rather
      * than forty phases into the deploy train.</b> qits-projects is a seed service, so the project
      * is read and every (storage id, name) pair is registered while the bares are being made — and
@@ -446,7 +420,7 @@ class BootstrapPlanTest {
      *       a project, so the project has to be there before the first one is created.
      *   <li><b>Both before every push</b>, which is what puts {@code projectId} and {@code repoName}
      *       on each push's event.
-     *   <li><b>Both long before qits-githost's own deployment</b>, whose extras close the
+     *   <li><b>Both long before qits-githost's own deployment</b>, which closes the
      *       id-addressed scheme to qits-projects' client alone. The lifecycle PUTs are the only
      *       thing this run addresses that way, and they are all above that cutover.
      * </ul>
@@ -472,12 +446,11 @@ class BootstrapPlanTest {
                 .containsSubsequence("qits-project", "git-repos", "deploy-projects");
     }
 
-    /** A warm rerun flips too: the seed stack deploy resets the env the last run added live. */
+    /** A warm rerun writes the settings too: a PUT is an upsert, and a rerun asserts them. */
     @Test
-    void aWarmRerunStillImportsAndFlips() {
+    void aWarmRerunStillWritesTheSettings() {
         assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1"))))
-                .containsSubsequence("deploy-configuration", "configuration-import",
-                        "configuration-flip");
+                .containsSubsequence("environment", "deployment-settings", "seed-deploy-idp");
     }
 
     @Test
@@ -559,7 +532,7 @@ class BootstrapPlanTest {
     void theDomainAddsThePlaceholderAndTheRunningEdgeOwnsIssuance() {
         List<String> ids = ids(plan(Map.of()));
 
-        assertThat(ids).containsSubsequence("pd-extras", "edge-cert", "seed-stack", "seed-health");
+        assertThat(ids).containsSubsequence("docker-configs", "edge-cert", "seed-stack", "seed-health");
         assertThat(ids).doesNotContain("dns-zone", "edge-acme");
     }
 
@@ -631,19 +604,21 @@ class BootstrapPlanTest {
     }
 
     /**
-     * <b>qits-configuration and qits-workspaces are built in phase 1 like every seed service</b>
-     * (qits-889): after the workspace daemon's contract, which qits-workspaces compiles against at
-     * its own pin, and before the identity order. A warm rerun builds neither.
+     * <b>qits-workspaces is built in phase 1 like every seed service</b> (qits-889): after the
+     * workspace daemon's contract, which it compiles against at its own pin, and before the
+     * identity order. A warm rerun does not build it. qits-configuration, built beside it until its
+     * retirement (qits-1396), is built by nothing.
      */
     @Test
-    void configurationAndWorkspacesAreSeedImages() {
+    void workspacesIsASeedImageAndConfigurationIsNone() {
         List<String> ids = ids(plan(Map.of()));
 
         assertThat(ids).containsSubsequence("seed-npm-packages",
                 "seed-qits-workspace-daemon-protocol", "seed-image-projects", "seed-image-system",
-                "seed-image-configuration", "seed-image-workspaces", "idp-bootstrap-client");
+                "seed-image-workspaces", "idp-bootstrap-client");
+        assertThat(ids).doesNotContain("seed-image-configuration");
         assertThat(ids(plan(Map.of("QITS_SKIP_BUILD", "1"))))
-                .doesNotContain("seed-image-configuration", "seed-image-workspaces");
+                .doesNotContain("seed-image-workspaces");
     }
 
     /**
@@ -704,8 +679,10 @@ class BootstrapPlanTest {
                 .containsExactly("landing-app");
         // Nothing not-built is also built in phase 1: that would be a stale entry too.
         assertThat(notBuilt.keySet().stream().filter(built::containsKey)).isEmpty();
-        // configuration and workspaces are among the built, with their client and their images.
-        assertThat(built).containsKeys("configuration", "workspaces", "spa-configuration",
+        // workspaces is among the built, with its images; the retired configuration store is not
+        // in the model at all.
+        assertThat(built).doesNotContainKeys("configuration", "spa-configuration");
+        assertThat(built).containsKeys("workspaces",
                 "oci-workspace", "workspace-daemon", "projects-daemon", "platform-access-cli");
     }
 }

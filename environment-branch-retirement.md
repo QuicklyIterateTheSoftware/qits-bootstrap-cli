@@ -1,5 +1,12 @@
 # Retiring `environment/*` on a platform that is already running
 
+> **qits-configuration is retired (qits-765, qits-1396).** The steps below that write or read
+> `http://dev-qits-configuration:8080/configuration/api/...` describe the platform as it was when
+> this procedure ran. On a current platform the same per-application values are rows of the
+> deployer's settings store: `PUT /deployments/api/settings/{application}/{environment}/{key}`
+> with `{"value": "...", "secret": false}` (roles `qits:admin`, `qits:system`), listed by
+> `GET /deployments/api/settings?application=&environment=`.
+
 The hand procedure for wohlben.eu, or any platform bootstrapped before deployment became
 release-driven. Nothing here is automated: a fresh bootstrap seeds no `environment/*` ref and
 generates the release-request wiring, and this file is for the machine that is already running.
