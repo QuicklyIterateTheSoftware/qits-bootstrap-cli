@@ -1084,7 +1084,7 @@ public class PipelinePhases {
                             + response.describe());
                 }
                 created += response.status() == 201 ? 1 : 0;
-                register(ctx, projectId, name, repo, id, token);
+                register(ctx, projectId, repo, id, token);
                 ctx.log("  " + repo + " -> /git/" + id
                         + (response.status() == 201 ? "  (created)" : "") + ", registered");
             }
@@ -1111,15 +1111,19 @@ public class PipelinePhases {
      * <b>A REFUSAL IS RE-ASKED AS THE QUESTION THAT MATTERS.</b> What this run owes the rest of the
      * train is that the name RESOLVES, so that is what is asked, and only an answer of no is a
      * failure. The adopt route is idempotent on the storage id, so a rerun costs one request.
+     * <p>
+     * <b>This run states no archetype (owner ruling 2026-11-03).</b> A repository's kind is never
+     * derived from its name's role suffix or its directory again, and this was the last place that
+     * derivation ran. qits-projects stores null for an adopted row with no archetype stated, and
+     * fills it in later, during its own wrapper reconcile, from the repository's own
+     * {@code .config/qits/repository.yml} — the repository's own word on what it is, not this run's
+     * guess from where the wrapper happens to put it.
      */
-    private void register(PhaseContext ctx, String projectId, String name, String repo, String id,
+    private void register(PhaseContext ctx, String projectId, String repo, String id,
                           String token) {
         ctx.status("registering " + repo + " (/git/" + id + ")");
         Http.Response answer = boot.projects.adoptRepository(projectId, id, repo,
-                boot.config.orgUrl() + "/" + repo + ".git",
-                // From where the WRAPPER puts it, so this run and qits-projects' own reconcile read
-                // one fact rather than two derivations of it.
-                PlatformModel.archetype(name, boot.state.wrapperPath(name)), token);
+                boot.config.orgUrl() + "/" + repo + ".git", token);
         if (!answer.ok() && resolvedStorageId(projectId, repo, token) == null) {
             throw new IllegalStateException("registering " + repo + " (/git/" + id
                     + ") under project " + projectId + " answered " + answer.describe()

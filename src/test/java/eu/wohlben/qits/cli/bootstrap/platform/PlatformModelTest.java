@@ -69,7 +69,6 @@ class PlatformModelTest {
         // end in -oci — the default arm would put it under services/ and clone the org's copy.
         assertThat(PlatformModel.repoPath("oci-workspace-editor"))
                 .isEqualTo("images/qits-workspace-editor-oci");
-        assertThat(PlatformModel.archetype("oci-workspace-editor")).isEqualTo("IMAGE");
         // An image repository, not a service: the default arm would clone services/ from GitHub.
         assertThat(PlatformModel.repoPath("oci-postgresql")).isEqualTo("images/qits-database-oci");
         assertThat(PlatformModel.repoPath("eventstream"))
@@ -290,9 +289,8 @@ class PlatformModelTest {
     /**
      * <b>The renames are complete, so every repository says its role in its own name.</b> There is
      * no exception left: the home page was the last one, and it is out of the model entirely since
-     * 2026-08-30. That is what lets {@code archetype} outlive the tables it still carries for the
-     * model's names, and it is the assertion a half-taught rename fails: a repository left at its
-     * old spelling ends in none of these.
+     * 2026-08-30, and it is the assertion a half-taught rename fails: a repository left at its old
+     * spelling ends in none of these.
      */
     @Test
     void noRepositoryIsLeftAtAStaleName() {
@@ -300,8 +298,6 @@ class PlatformModelTest {
                 .filteredOn(name -> !name.equals(OUT_OF_GRAMMAR))
                 .allSatisfy(name -> assertThat(PlatformModel.repo(name)).as(name)
                         .matches(".*-(service|frontend|daemon|oci|cli|javalib|jslib)$"));
-        // The exception answers LIBRARY all the same, from the table of names that say nothing.
-        assertThat(PlatformModel.archetype(OUT_OF_GRAMMAR, null)).isEqualTo("LIBRARY");
         // And the spellings the renames replaced are gone: a name that resolves to no repository on
         // the git host creates one, pushes to it, and waits an hour for a build nobody asked for.
         assertThat(PlatformModel.platformRepos().stream().map(PlatformModel::repo))
@@ -322,118 +318,6 @@ class PlatformModelTest {
                         "qits-platform-spa-orchestrator", "qits-platform-spa-maintenance",
                         "qits-platform-spa-system", "qits-platform-spa-events",
                         "qits-platform-spa-deployments");
-    }
-
-    /**
-     * <b>The repository's role suffix and the model's own table must give one answer.</b> The
-     * archetype is derived from the MODEL name — it is what every caller has — while the phase-2
-     * ruling says a repository's name decides its archetype. The two are separate derivations, so
-     * this is what keeps them from drifting apart.
-     */
-    @Test
-    void theRoleSuffixAndTheModelsTableAgreeOnEveryRepository() {
-        Map<String, String> role = Map.of(
-                "-service", "SERVICE", "-frontend", "FRONTEND", "-daemon", "DAEMON",
-                "-oci", "IMAGE", "-cli", "CLI", "-javalib", "LIBRARY", "-jslib", "LIBRARY");
-        for (String name : PlatformModel.platformRepos()) {
-            String repo = PlatformModel.repo(name);
-            role.entrySet().stream()
-                    .filter(entry -> repo.endsWith(entry.getKey()))
-                    .findFirst()
-                    .ifPresent(entry -> assertThat(PlatformModel.archetype(name))
-                            .as(name + " is " + repo)
-                            .isEqualTo(entry.getValue()));
-        }
-    }
-
-    /**
-     * <b>The archetype layout's first segment IS the archetype, and that arm stays.</b> It is the
-     * derivation qits-projects makes from the same file, so a wrapper of that shape has one answer
-     * rather than two that can drift.
-     */
-    @Test
-    void anArchetypeDirectoryStillAnswersForItself() {
-        assertThat(PlatformModel.archetype("ci", "services/qits-ci")).isEqualTo("SERVICE");
-        assertThat(PlatformModel.archetype("spa-ci", "frontends/qits-spa-ci")).isEqualTo("FRONTEND");
-        assertThat(PlatformModel.archetype("ci-daemon", "daemons/qits-ci-daemon"))
-                .isEqualTo("DAEMON");
-        assertThat(PlatformModel.archetype("eventstream", "libs/qits-eventstream"))
-                .isEqualTo("LIBRARY");
-        assertThat(PlatformModel.archetype("oci", "images/qits-oci")).isEqualTo("IMAGE");
-        assertThat(PlatformModel.archetype("cli-bootstrap", "cli/qits-cli-bootstrap"))
-                .isEqualTo("CLI");
-        // The directory beats the name, which is the point of asking it: a wrapper that puts a
-        // repository somewhere its name does not imply is followed rather than second-guessed.
-        assertThat(PlatformModel.archetype("spa-ui-components", "libs/qits-spa-ui-components"))
-                .isEqualTo("LIBRARY");
-    }
-
-    /**
-     * <b>Under {@code components/<component>/<repo>} the first segment says nothing about kind, so
-     * the NAME answers.</b> The component of a repository is not derivable from its name —
-     * qits-spa-ci belongs to qits-ci — which is why nothing here tries to read one.
-     */
-    @Test
-    void aComponentPathSendsTheQuestionToTheName() {
-        assertThat(PlatformModel.archetype("ci", "components/qits-ci/qits-ci")).isEqualTo("SERVICE");
-        assertThat(PlatformModel.archetype("spa-ci", "components/qits-ci/qits-spa-ci"))
-                .isEqualTo("FRONTEND");
-        assertThat(PlatformModel.archetype("ci-daemon", "components/qits-ci/qits-ci-daemon"))
-                .isEqualTo("DAEMON");
-        assertThat(PlatformModel.archetype("spa-mirror",
-                "components/qits-mirror/qits-platform-spa-mirror")).isEqualTo("FRONTEND");
-        // The names the tables carry, because nothing in them is spelled with its role.
-        assertThat(PlatformModel.archetype("oci-postgresql",
-                "components/qits-database/qits-oci-postgresql")).isEqualTo("IMAGE");
-        assertThat(PlatformModel.archetype("registries",
-                "components/qits-registries/qits-registries")).isEqualTo("LIBRARY");
-        assertThat(PlatformModel.archetype("userflows",
-                "components/qits-userflows/qits-userflows")).isEqualTo("LIBRARY");
-        // The lib set is asked BEFORE the spa- prefix: a component library is not a frontend.
-        assertThat(PlatformModel.archetype("spa-ui-components",
-                "components/qits-ui-components/qits-spa-ui-components")).isEqualTo("LIBRARY");
-    }
-
-    /**
-     * <b>The grammar phase 2 renames into, which is what lets this outlive the renames.</b> A
-     * repository whose name carries its role needs no entry in any table here.
-     */
-    @Test
-    void theRenamedNamesCarryTheirOwnArchetype() {
-        String components = "components/qits-ci/";
-        assertThat(PlatformModel.archetype("ci-service", components + "qits-ci-service"))
-                .isEqualTo("SERVICE");
-        assertThat(PlatformModel.archetype("ci-frontend", components + "qits-ci-frontend"))
-                .isEqualTo("FRONTEND");
-        assertThat(PlatformModel.archetype("ci-daemon", components + "qits-ci-daemon"))
-                .isEqualTo("DAEMON");
-        assertThat(PlatformModel.archetype("workspace-oci",
-                "components/qits-workspaces/qits-workspace-oci")).isEqualTo("IMAGE");
-        assertThat(PlatformModel.archetype("bootstrap-cli",
-                "components/qits-bootstrap/qits-bootstrap-cli")).isEqualTo("CLI");
-        assertThat(PlatformModel.archetype("eventstream-javalib",
-                "components/qits-eventstream/qits-eventstream-javalib")).isEqualTo("LIBRARY");
-        assertThat(PlatformModel.archetype("ui-components-jslib",
-                "components/qits-ui-components/qits-ui-components-jslib")).isEqualTo("LIBRARY");
-        // The platform tier is a modifier before the role, so the suffix still decides.
-        assertThat(PlatformModel.archetype("idp-platform-service",
-                "components/qits-idp/qits-idp-service")).isEqualTo("SERVICE");
-    }
-
-    /**
-     * Nobody has said where it sits — a repository the wrapper does not declare — so the fallback
-     * layout answers, and every name of today answers the same either way.
-     */
-    @Test
-    void anUnplacedRepositoryFallsBackToTheLayoutItsNameImplies() {
-        for (String name : PlatformModel.platformRepos()) {
-            assertThat(PlatformModel.archetype(name))
-                    .as(name)
-                    .isEqualTo(PlatformModel.archetype(name,
-                            "components/qits-x/" + PlatformModel.repo(name)));
-        }
-        assertThat(PlatformModel.archetype("ci", null)).isEqualTo("SERVICE");
-        assertThat(PlatformModel.archetype("spa-ci", null)).isEqualTo("FRONTEND");
     }
 
     @Test
@@ -730,20 +614,6 @@ class PlatformModelTest {
     }
 
     /**
-     * <b>A model name that says nothing of its kind answers from its repository's grammar</b> —
-     * and the model names that say nothing answer as they always did.
-     */
-    @Test
-    void aRepositoryIsItsGrammarsArchetype() {
-        assertThat(PlatformModel.archetype("system-runner-daemon",
-                "components/qits-system/qits-system-runner-daemon")).isEqualTo("DAEMON");
-        assertThat(PlatformModel.archetype("ci", "components/qits-ci/qits-ci-service"))
-                .isEqualTo("SERVICE");
-        assertThat(PlatformModel.archetype("eventstream",
-                "components/qits-eventstream/qits-eventstream-javalib")).isEqualTo("LIBRARY");
-    }
-
-    /**
      * The wire contracts qits-ci and qits-system compile against, each one module of a daemon's
      * reactor. The other module is a native binary, which the seed has no reason to build for a
      * jar.
@@ -777,8 +647,6 @@ class PlatformModelTest {
         assertThat(PlatformModel.RELEASE_PUBLISHERS).doesNotContain("coding-agents");
         assertThat(PlatformModel.repo("coding-agents")).isEqualTo("qits-coding-agents");
         assertThat(PlatformModel.nameOf("qits-coding-agents")).isEqualTo("coding-agents");
-        assertThat(PlatformModel.archetype("coding-agents",
-                "components/qits-agents/qits-coding-agents")).isEqualTo("LIBRARY");
         assertThat(PlatformModel.mavenModule("coding-agents")).isEmpty();
         assertThat(PlatformModel.carriesVersionIdentity("coding-agents")).isFalse();
     }
@@ -842,8 +710,6 @@ class PlatformModelTest {
                 .isEqualTo("qits-workspaces-runner-daemon");
         assertThat(PlatformModel.repoPath("workspaces-runner-daemon"))
                 .isEqualTo("daemons/qits-workspaces-runner-daemon");
-        assertThat(PlatformModel.archetype("workspaces-runner-daemon",
-                "components/qits-workspaces/qits-workspaces-runner-daemon")).isEqualTo("DAEMON");
         assertThat(PlatformModel.carriesVersionIdentity("workspaces-runner-daemon")).isTrue();
     }
 
@@ -869,8 +735,6 @@ class PlatformModelTest {
                 .isEqualTo("qits-system-runner-daemon");
         assertThat(PlatformModel.repoPath("system-runner-daemon"))
                 .isEqualTo("daemons/qits-system-runner-daemon");
-        assertThat(PlatformModel.archetype("system-runner-daemon",
-                "components/qits-system/qits-system-runner-daemon")).isEqualTo("DAEMON");
         assertThat(PlatformModel.carriesVersionIdentity("system-runner-daemon")).isTrue();
     }
 
@@ -890,8 +754,6 @@ class PlatformModelTest {
         assertThat(PlatformModel.nameOf("qits-containers-javalib")).isEqualTo("containers-driver");
         assertThat(PlatformModel.repoPath("containers-driver"))
                 .isEqualTo("libs/qits-containers-javalib");
-        assertThat(PlatformModel.archetype("containers-driver",
-                "components/qits-containers/qits-containers-javalib")).isEqualTo("LIBRARY");
         assertThat(PlatformModel.mavenModule("containers-driver")).isEmpty();
         assertThat(PlatformModel.releasePackages("containers-driver")).singleElement()
                 .isEqualTo(new PlatformModel.ReleasePackage(
@@ -1037,8 +899,6 @@ class PlatformModelTest {
                 .isEqualTo("services/qits-maintenance-service");
         assertThat(PlatformModel.repoPath("spa-maintenance"))
                 .isEqualTo("frontends/qits-maintenance-frontend");
-        assertThat(PlatformModel.archetype("maintenance")).isEqualTo("SERVICE");
-        assertThat(PlatformModel.archetype("spa-maintenance")).isEqualTo("FRONTEND");
         assertThat(PlatformModel.dockerfilePath("maintenance"))
                 .isEqualTo("docker/Dockerfile");
         // Published whole: it has no module a consumer resolves.
@@ -1104,8 +964,6 @@ class PlatformModelTest {
                 .isEqualTo("services/qits-system-service");
         assertThat(PlatformModel.repoPath("spa-system"))
                 .isEqualTo("frontends/qits-system-frontend");
-        assertThat(PlatformModel.archetype("system")).isEqualTo("SERVICE");
-        assertThat(PlatformModel.archetype("spa-system")).isEqualTo("FRONTEND");
         assertThat(PlatformModel.dockerfilePath("system")).isEqualTo("docker/Dockerfile");
         // Published whole: it has no module a consumer resolves.
         assertThat(PlatformModel.mavenModule("system")).isEmpty();

@@ -66,14 +66,12 @@ public class ProjectsApi {
      * @param repositoryId the git host's storage id — what {@code PUT /git/<id>} created
      * @param name the public coordinate, the {@code <repoName>} half of the clone url
      * @param url the forge this repository is backed up to, or null for none
-     * @param archetype the wrapper directory's kind — SERVICE, LIBRARY, FRONTEND and so on
      */
     public Http.Response adoptRepository(String projectId, String repositoryId, String name,
-            String url, String archetype, String bearer) {
+            String url, String bearer) {
         String body = url == null || url.isBlank()
-                ? Json.object("repositoryId", repositoryId, "name", name, "archetype", archetype)
-                : Json.object("repositoryId", repositoryId, "name", name, "url", url,
-                        "archetype", archetype);
+                ? Json.object("repositoryId", repositoryId, "name", name)
+                : Json.object("repositoryId", repositoryId, "name", name, "url", url);
         return http.postJson(base + "/projects/api/projects/" + projectId + "/repositories/adopt",
                 body, headers(bearer));
     }
