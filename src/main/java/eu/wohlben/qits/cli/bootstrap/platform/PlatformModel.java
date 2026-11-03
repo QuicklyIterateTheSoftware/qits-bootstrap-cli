@@ -548,7 +548,7 @@ public final class PlatformModel {
      *       services pin {@code qits-bootstrap-cli-pacts-<provider>}, qits-ci, qits-projects and
      *       qits-system pin {@code qits-landing-app-pacts-<provider>} — so their {@code pacts/} at
      *       the pinned release is the only source of those jars;
-     *   <li>{@code qits-platform-access-cli} is a pact consumer too, and the producer of
+     *   <li>{@code qits-platform-access-monorepo} is a pact consumer too, and the producer of
      *       {@code qits-platform-access-cli-binary}, which qits-ci COMPILES against (the pin of the
      *       {@code qits} binary its release steps download).
      * </ul>
@@ -556,7 +556,7 @@ public final class PlatformModel {
      * a main push and an inventory row, and none of these is this platform's to host.
      */
     public static final List<String> READ_ONLY_REPOS =
-            List.of("bootstrap-cli", "landing-app", "platform-access-cli");
+            List.of("bootstrap-cli", "landing-app", "platform-access-monorepo");
 
     /** Every repository the {@code sources} phase clones: {@link #platformRepos} then the read-only. */
     public static List<String> sourceRepos() {
@@ -717,6 +717,12 @@ public final class PlatformModel {
         if (name.endsWith("-javalib") || name.endsWith("-jslib")) {
             return "LIBRARY";
         }
+        // qits-platform-access-monorepo (qits-631) releases the qits binary, a library and a service,
+        // and `monorepo` is no role, so the grammar says nothing. It was qits-platform-access-cli,
+        // and qits-projects keeps the CLI archetype it had: a cold boot registers it the same way.
+        if (name.endsWith("-monorepo")) {
+            return "CLI";
+        }
         // The REPOSITORY's grammar next, for a model name that says nothing of its kind while its
         // repository does — as ci-runner (qits-ci-runner-daemon, retired) once did, whose model name
         // was the image's, qits/qits-ci-runner, and ended in no role at all.
@@ -802,7 +808,7 @@ public final class PlatformModel {
             // workspace daemon's), and qits-ci against the binary pin — see READ_ONLY_REPOS.
             case "projects-daemon" -> "projects-daemon-protocol";
             case "workspace-daemon" -> "workspace-daemon-protocol";
-            case "platform-access-cli" -> "platform-access-cli-binary";
+            case "platform-access-monorepo" -> "platform-access-cli-binary";
             default -> "";
         };
     }

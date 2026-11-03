@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * A provider records what it answers for each provider state — {@code golden-masters/index.json}
  * plus one JSON per (state, operation) — and publishes the tree as
  * {@code eu.wohlben.qits:<app>-golden-masters}, a test-scoped pin in the pom. Unlike the copies in
- * qits-maintenance-service and qits-platform-access-cli, this CLI reads SEVERAL providers' jars,
+ * qits-maintenance-service and qits-platform-access-monorepo, this CLI reads SEVERAL providers' jars,
  * and every jar puts its index at the same path. So the index is found with
  * {@link ClassLoader#getResources} and picked by its {@code provider} field, and each recording is
  * read relative to the index it came from — never through the class path, where another

@@ -91,7 +91,7 @@ public final class MuslToolchain {
     /**
      * <b>The same tarballs as references only</b> — the argument and the store path, with no
      * upstream, size or checksum — for a Dockerfile that CONSUMES the toolchain without being the
-     * one that pins it. qits-platform-access-cli's binary Dockerfile {@code ADD}s the two tarballs
+     * one that pins it. qits-platform-access-monorepo's binary Dockerfile {@code ADD}s the two tarballs
      * qits-ci-daemon's builder pins and records no pin of its own (qits-889), so the seed copies
      * what {@code seed-toolchain} downloaded and verified against qits-ci-daemon's, and asks the
      * volume whether it holds them.

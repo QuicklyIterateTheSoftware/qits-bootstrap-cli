@@ -70,6 +70,9 @@ class PlatformModelTest {
         assertThat(PlatformModel.repoPath("oci-workspace-editor"))
                 .isEqualTo("images/qits-workspace-editor-oci");
         assertThat(PlatformModel.archetype("oci-workspace-editor")).isEqualTo("IMAGE");
+        // Renamed from qits-platform-access-cli (qits-631): `monorepo` is no role, and it keeps CLI.
+        assertThat(PlatformModel.archetype("platform-access-monorepo",
+                "components/qits-platform-access/qits-platform-access-monorepo")).isEqualTo("CLI");
         // An image repository, not a service: the default arm would clone services/ from GitHub.
         assertThat(PlatformModel.repoPath("oci-postgresql")).isEqualTo("images/qits-database-oci");
         assertThat(PlatformModel.repoPath("eventstream"))
@@ -1346,7 +1349,7 @@ class PlatformModelTest {
     @Test
     void theReadOnlyRepositoriesAreClonedButNeverHosted() {
         assertThat(PlatformModel.READ_ONLY_REPOS)
-                .containsExactly("bootstrap-cli", "landing-app", "platform-access-cli");
+                .containsExactly("bootstrap-cli", "landing-app", "platform-access-monorepo");
         assertThat(PlatformModel.sourceRepos()).containsAll(PlatformModel.platformRepos())
                 .containsAll(PlatformModel.READ_ONLY_REPOS);
         assertThat(PlatformModel.platformRepos()).doesNotContainAnyElementsOf(
@@ -1354,8 +1357,8 @@ class PlatformModelTest {
         assertThat(PlatformModel.sourceNameOf("qits-landing-app")).isEqualTo("landing-app");
         assertThat(PlatformModel.sourceNameOf("qits-ci-frontend")).isEqualTo("spa-ci");
         assertThat(PlatformModel.sourceNameOf("qits-nowhere")).isNull();
-        assertThat(PlatformModel.repo("platform-access-cli")).isEqualTo("qits-platform-access-cli");
-        assertThat(PlatformModel.mavenModule("platform-access-cli"))
+        assertThat(PlatformModel.repo("platform-access-monorepo")).isEqualTo("qits-platform-access-monorepo");
+        assertThat(PlatformModel.mavenModule("platform-access-monorepo"))
                 .isEqualTo("platform-access-cli-binary");
     }
 

@@ -1819,7 +1819,7 @@ public class SeedPhases {
         // golden masters are pinned in their root poms like everyone else's.
         WorkspaceImages workspace = workspaceImages();
         for (String version : workspace.cli()) {
-            poms.add(boot.git.fileAt(boot.state.repoDir("platform-access-cli"), version,
+            poms.add(boot.git.fileAt(boot.state.repoDir("platform-access-monorepo"), version,
                     PinnedVersions.ROOT_POM));
         }
         for (String version : workspace.workspaces().keySet()) {
@@ -2062,7 +2062,7 @@ public class SeedPhases {
      * {@code eu.wohlben.qits:<consumer repo>-pacts-<provider repo>} — qits-platform-edge fourteen
      * frontends', qits-projects some twenty-five — and nothing on a cold platform publishes one:
      * the consumers' releases do, and none has run. So this does what each consumer's release
-     * would have ({@code ContractPackager.pacts} in qits-platform-access-cli): the top-level
+     * would have ({@code ContractPackager.pacts} in qits-platform-access-monorepo): the top-level
      * {@code pacts/*_<provider>.json} of the consumer's release, under {@code pacts/} in a jar,
      * with a pom of the coordinate and the packager's description.
      * <p>
@@ -2504,7 +2504,7 @@ public class SeedPhases {
         built.put("projects-daemon", "qits/projects-daemon, qits/project-agent and its protocol");
         built.put("workspace-daemon", "qits/workspace and qits-workspace-daemon-protocol");
         built.put("oci-workspace", "qits/workspace-base");
-        built.put("platform-access-cli", "the qits binary, qits-platform-access-cli-binary, pacts");
+        built.put("platform-access-monorepo", "the qits binary, qits-platform-access-cli-binary, pacts");
         // Contract sources only: their pacts at the pinned releases.
         for (String readOnly : PlatformModel.READ_ONLY_REPOS) {
             built.putIfAbsent(readOnly, "pacts into " + SEED_REPO_VOLUME);
@@ -2743,7 +2743,7 @@ public class SeedPhases {
 
     /**
      * <b>The {@code qits} binary at every version a workspace base bakes in, built from its release
-     * tag</b> — qits-platform-access-cli's own {@code docker/Dockerfile}, stage {@code binary}: the
+     * tag</b> — qits-platform-access-monorepo's own {@code docker/Dockerfile}, stage {@code binary}: the
      * musl toolchain on GraalVM CE and a static native compile, the qits-ci-daemon's shape.
      * <p>
      * The base's release downloads it from {@code registry.qits.<domain>/artifacts/daemons/
@@ -2763,13 +2763,13 @@ public class SeedPhases {
                     ctx.log("  qits " + version + " — " + out + ": held");
                     continue;
                 }
-                String origin = PlatformModel.repo("platform-access-cli") + "@" + version
+                String origin = PlatformModel.repo("platform-access-monorepo") + "@" + version
                         + "/docker/Dockerfile";
-                String committed = boot.git.fileAt(boot.state.repoDir("platform-access-cli"),
+                String committed = boot.git.fileAt(boot.state.repoDir("platform-access-monorepo"),
                         version, "docker/Dockerfile");
                 if (committed == null) {
                     throw new IllegalStateException("a workspace base pins the qits binary at "
-                            + version + " and the " + PlatformModel.repo("platform-access-cli")
+                            + version + " and the " + PlatformModel.repo("platform-access-monorepo")
                             + " checkout has no docker/Dockerfile at that tag. Fetch its tags "
                             + "(git fetch --tags) and rerun");
                 }
@@ -2788,17 +2788,17 @@ public class SeedPhases {
                 String dockerfile = SeedDockerfile.refusePlatformBases(SeedDockerfile.localToolchain(
                         SeedDockerfile.localMaven(SeedDockerfile.rewrite(committed), origin), origin,
                         tarballs), origin);
-                Path tree = exportTree(ctx, "platform-access-cli", version);
+                Path tree = exportTree(ctx, "platform-access-monorepo", version);
                 String tag = image("qits-seed/qits-cli", version);
                 try {
-                    mavenPreflight(ctx, "platform-access-cli@" + version, tree);
+                    mavenPreflight(ctx, "platform-access-monorepo@" + version, tree);
                     ctx.status("cold musl native build of the qits binary " + version);
                     Boot.must(boot.docker.buildSeedImage(tag, dockerfile, tree, List.of(),
                                     Map.of(SeedDockerfile.SEED_M2_CONTEXT, SEED_REPO_VOLUME),
                                     List.of(), null, "binary", ctx::log),
                             "the build of the qits binary " + version + " failed");
                 } finally {
-                    removeTree("platform-access-cli", tree);
+                    removeTree("platform-access-monorepo", tree);
                 }
                 // The binary stage is FROM scratch with the one file in it: a container of it is
                 // created, never started, and the file copied out.

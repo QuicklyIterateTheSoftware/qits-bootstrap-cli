@@ -683,6 +683,6 @@ class BootstrapPlanTest {
         // in the model at all.
         assertThat(built).doesNotContainKeys("configuration", "spa-configuration");
         assertThat(built).containsKeys("workspaces",
-                "oci-workspace", "workspace-daemon", "projects-daemon", "platform-access-cli");
+                "oci-workspace", "workspace-daemon", "projects-daemon", "platform-access-monorepo");
     }
 }

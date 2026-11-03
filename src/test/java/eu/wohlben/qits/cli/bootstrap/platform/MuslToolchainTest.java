@@ -155,7 +155,7 @@ class MuslToolchainTest {
 
     /**
      * <b>A Dockerfile that only CONSUMES the toolchain is read as references</b> (qits-889):
-     * qits-platform-access-cli's binary build ADDs the same two coordinates and records no pin of
+     * qits-platform-access-monorepo's binary build ADDs the same two coordinates and records no pin of
      * its own, so its store paths are what is asked of the volume and nothing is checked further.
      */
     @Test

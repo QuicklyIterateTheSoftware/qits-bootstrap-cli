@@ -100,9 +100,9 @@ public final class BootstrapPlan {
             // THE WIRE CONTRACT qits-ci COMPILES AGAINST, immediately before its image: one module of
             // a daemon's reactor at the version the ci checkout PINS, built from that release tag.
             // And the pin of the `qits` binary qits-ci's release steps download — one module of
-            // qits-platform-access-cli, cloned read-only for this and for its pacts
+            // qits-platform-access-monorepo, cloned read-only for this and for its pacts
             // (PlatformModel.READ_ONLY_REPOS).
-            phases.add(seed.protocolSeed("ci", "platform-access-cli",
+            phases.add(seed.protocolSeed("ci", "platform-access-monorepo",
                     "qits-platform-access-cli-binary", "qits.platform-access-cli-binary.version"));
             phases.add(seed.protocolSeed("ci", "ci-daemon", "qits-ci-daemon-protocol",
                     "qits.ci-daemon-protocol.version"));
