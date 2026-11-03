@@ -377,16 +377,19 @@ final class BootstrapContract {
                     "a project and an unadopted repository on the git host", "adoptRepository",
                     Request.json("POST", "/projects/api/projects/{projectId}/repositories/adopt",
                             "{\"repositoryId\":\"{repositoryId}\",\"name\":\"{repoName}\","
-                                    + "\"url\":\"" + ORG_URL + "/{repoName}.git\","
-                                    + "\"archetype\":\"SERVICE\"}"),
+                                    + "\"url\":\"" + ORG_URL + "/{repoName}.git\"}"),
                     200, List.of(),
                     (base, params, recorded, op) -> assertThat(new ProjectsApi(new Http(), base)
                             .adoptRepository(params.get("projectId"), params.get("repositoryId"),
                                     params.get("repoName"),
                                     ORG_URL + "/" + params.get("repoName") + ".git",
-                                    "SERVICE", null).ok()).isTrue(),
-                    "the adopt recorded with the clone url the bootstrap sends — {repositoryId,"
-                            + " name, url, archetype}, url the org's <name>.git — answering 200"),
+                                    null).ok()).isTrue(),
+                    // No archetype: owner ruling 2026-11-03. qits-projects stores null for an
+                    // adopted row with none stated, and fills it in later from the repository's own
+                    // .config/qits/repository.yml during its wrapper reconcile.
+                    "the adopt recorded with the clone url the bootstrap sends and no archetype —"
+                            + " {repositoryId, name, url}, url the org's <name>.git — answering"
+                            + " 200"),
             new Case(PROJECTS, Trigger.phase("git-repos"), "a repository exists",
                     "resolveRepositoryName",
                     Request.get("/projects/api/projects/{projectId}/repositories/by-name/{repoName}"),
