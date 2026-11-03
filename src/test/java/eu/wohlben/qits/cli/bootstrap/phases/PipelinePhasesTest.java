@@ -1966,7 +1966,8 @@ class PipelinePhasesTest {
             "GET https://system.qits.qits-dev.eu/system/api/targets/install.sh",
             "GET https://ci.qits.qits-dev.eu/ci/q/health/ready",
             "GET https://idp.qits.qits-dev.eu/idp/token",
-            "GET https://registry.qits.qits-dev.eu/v2/");
+            "GET https://registry.qits.qits-dev.eu/v2/",
+            "GET https://projects.qits.qits-dev.eu/projects/q/health/ready");
 
     private static final String UNTRUSTED =
             "javax.net.ssl.SSLHandshakeException: PKIX path building failed";
@@ -1979,12 +1980,12 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>With a domain: the four public names the target and its CI slots dial, over a
+     * <b>With a domain: the public names the target and its CI slots dial, and qits-projects', over a
      * certificate the JVM trusts.</b> A failed handshake is no answer and the wait goes on; any answer of the service's
      * own — the 401 of a guarded door, the 405 of a POST-only one — ends it.
      */
     @Test
-    void withADomainTheGateWaitsForTheFourPublicNamesOverATrustedCertificate() throws Exception {
+    void withADomainTheGateWaitsForThePublicNamesOverATrustedCertificate() throws Exception {
         int[] asked = {0};
         CannedHttp http = new CannedHttp();
         http.answer(PUBLIC_NAMES.get(0), () -> ++asked[0] < 3
@@ -1992,6 +1993,7 @@ class PipelinePhasesTest {
         http.answer(PUBLIC_NAMES.get(1), 200, "");
         http.answer(PUBLIC_NAMES.get(2), 405, "");
         http.answer(PUBLIC_NAMES.get(3), 401, "");
+        http.answer(PUBLIC_NAMES.get(4), 200, "");
         CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
 
         new PipelinePhases(edgeBoot(http, DOMAIN)).edgeReady().action().run(ctx);
@@ -2007,7 +2009,8 @@ class PipelinePhasesTest {
                 .answer(PUBLIC_NAMES.get(0), 0, UNTRUSTED)
                 .answer(PUBLIC_NAMES.get(1), 200, "")
                 .answer(PUBLIC_NAMES.get(2), 405, "")
-                .answer(PUBLIC_NAMES.get(3), 404, "");
+                .answer(PUBLIC_NAMES.get(3), 404, "")
+                .answer(PUBLIC_NAMES.get(4), 200, "");
 
         assertThatThrownBy(() -> new PipelinePhases(edgeBoot(http, DOMAIN)).edgeReady().action()
                 .run(new CiLogStreamTest.Recorder()))
@@ -2049,6 +2052,78 @@ class PipelinePhasesTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage(eu.wohlben.qits.cli.bootstrap.config.DomainName.missingRefusal(false));
         assertThat(http.calls).isEmpty();
+    }
+
+    /**
+     * <b>A pass is the run's edge-ready signal, and it is a latch</b> (qits-1430). Before it, every
+     * bearer call goes to its alias and the host's daemon pushes through the loopback vhost; after
+     * it, qits-ci, qits-projects, the idp and the store are dialled at their public names — the mint
+     * of the bootstrap's own token included — and a later failing pass changes none of it.
+     * qits-deployments was not proved, so it stays on its alias.
+     */
+    @Test
+    void aPassingEdgeReadyMovesTheBearerCallsOntoThePublicNamesForGood() throws Exception {
+        CannedHttp http = new CannedHttp();
+        PUBLIC_NAMES.forEach(name -> http.answer(name, 401, ""));
+        Map<String, String> env = new java.util.HashMap<>(DOMAIN);
+        // Off, so the store read below proves the edge alone is why it now carries a bearer.
+        env.put("QITS_MACHINE_AUTH", "0");
+        Boot boot = edgeBoot(http, env);
+        boot.state.bootstrapClientId = "prod-qits-bootstrap";
+        boot.state.bootstrapSecret = "s3cr3t";
+        http.answer("FORM " + boot.config.idpDialUrl() + "/token", 200,
+                "{\"access_token\":\"alias-token\",\"expires_in\":3600}");
+
+        boot.ci.health();
+        boot.pd.health();
+        assertThat(http.calls).contains("FORM " + boot.config.idpDialUrl() + "/token",
+                "GET " + boot.config.ciUrl() + "/q/health/ready");
+        assertThat(boot.projects.base()).isEqualTo(boot.config.projectsUrl());
+        assertThat(boot.artifacts.base()).isEqualTo(boot.config.artifactsUrl());
+        assertThat(boot.registryHost()).isEqualTo(boot.config.registryVhost());
+        assertThat(boot.storeReadAuthorization()).isNull();
+
+        new PipelinePhases(boot).edgeReady().action().run(new CiLogStreamTest.Recorder());
+
+        http.calls.clear();
+        http.answer("GET https://idp.qits.qits-dev.eu/idp/q/health/ready", 200, "");
+        http.answer("FORM https://idp.qits.qits-dev.eu/idp/token", 200,
+                "{\"access_token\":\"edge-token\",\"expires_in\":3600}");
+        boot.ci.health();
+        boot.projects.health();
+        boot.pd.health();
+        assertThat(boot.storeReadAuthorization()).isEqualTo("Bearer edge-token");
+        assertThat(http.calls).containsExactly(
+                "GET https://ci.qits.qits-dev.eu/ci/q/health/ready",
+                "GET https://projects.qits.qits-dev.eu/projects/q/health/ready",
+                "GET " + boot.config.platformDeploymentsUrl() + "/q/health/ready",
+                "GET https://idp.qits.qits-dev.eu/idp/q/health/ready",
+                "FORM https://idp.qits.qits-dev.eu/idp/token");
+        assertThat(boot.artifacts.base()).isEqualTo("https://registry.qits.qits-dev.eu/artifacts");
+        assertThat(boot.artifacts.registryBase()).isEqualTo("https://registry.qits.qits-dev.eu");
+        assertThat(boot.registryHost()).isEqualTo("registry.qits.qits-dev.eu");
+
+        // The latch holds through a later pass that fails.
+        PUBLIC_NAMES.forEach(name -> http.answer(name, 503, ""));
+        assertThatThrownBy(() -> new PipelinePhases(boot).edgeReady().action()
+                .run(new CiLogStreamTest.Recorder())).isInstanceOf(IllegalStateException.class);
+        assertThat(boot.projects.base()).isEqualTo("https://projects.qits.qits-dev.eu");
+        assertThat(boot.addresses.throughEdge(Boot.CI_LABEL)).isTrue();
+    }
+
+    /** A gate that never passes moves nothing: the run stays on its aliases. */
+    @Test
+    void aFailedEdgeReadyLeavesEveryCallOnItsAlias() throws Exception {
+        CannedHttp http = new CannedHttp();
+        PUBLIC_NAMES.forEach(name -> http.answer(name, 503, ""));
+        Boot boot = edgeBoot(http, DOMAIN);
+
+        assertThatThrownBy(() -> new PipelinePhases(boot).edgeReady().action()
+                .run(new CiLogStreamTest.Recorder())).isInstanceOf(IllegalStateException.class);
+
+        assertThat(boot.addresses.edgeReady()).isFalse();
+        assertThat(boot.projects.base()).isEqualTo(boot.config.projectsUrl());
+        assertThat(boot.registryHost()).isEqualTo(boot.config.registryVhost());
     }
 
     @Test

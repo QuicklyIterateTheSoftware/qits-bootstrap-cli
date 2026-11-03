@@ -22,7 +22,8 @@ import java.util.function.Supplier;
 public class PdApi {
 
     private final Http http;
-    private final String base;
+    /** Asked per call: the alias before the edge is ready, the public name after — {@link EdgeAddresses}. */
+    private final Supplier<String> base;
     /** The bootstrap's own bearer, read per call — see {@link #headers()}. */
     private final Supplier<String> bearer;
 
@@ -32,9 +33,19 @@ public class PdApi {
      *               identity pair, and no pair as a fallback when there is none to present.
      */
     public PdApi(Http http, String platformDeploymentsUrl, Supplier<String> bearer) {
+        this(http, () -> platformDeploymentsUrl, bearer);
+    }
+
+    /** @param platformDeploymentsUrl where to dial, asked per call — see {@link EdgeAddresses#route} */
+    public PdApi(Http http, Supplier<String> platformDeploymentsUrl, Supplier<String> bearer) {
         this.http = http;
         this.base = platformDeploymentsUrl;
         this.bearer = bearer;
+    }
+
+    /** Where this call goes: asked fresh, so the edge latch takes effect on the next one. */
+    private String base() {
+        return base.get();
     }
 
     /**
@@ -52,7 +63,7 @@ public class PdApi {
     }
 
     public Http.Response health() {
-        return http.get(base + "/q/health/ready", headers());
+        return http.get(base() + "/q/health/ready", headers());
     }
 
     public boolean ready() {
@@ -83,7 +94,7 @@ public class PdApi {
     }
 
     private java.util.List<JsonNode> environments() {
-        Http.Response response = http.get(base + "/api/environments", headers());
+        Http.Response response = http.get(base() + "/api/environments", headers());
         if (!response.ok()) {
             return java.util.List.of();
         }
@@ -105,7 +116,7 @@ public class PdApi {
      * would mean nothing.
      */
     public Http.Response createEnvironment(String name, String network) {
-        return http.postJson(base + "/api/environments",
+        return http.postJson(base() + "/api/environments",
                 Json.object("name", name, "network", network,
                         "platform", Json.verbatim("true")),
                 headers());
@@ -116,7 +127,7 @@ public class PdApi {
      * here is the whole platform, the deployer included.
      */
     public Http.Response patchEnvironment(String id, String json) {
-        return http.patchJson(base + "/api/environments/" + id, json, headers());
+        return http.patchJson(base() + "/api/environments/" + id, json, headers());
     }
 
     /**
@@ -139,7 +150,7 @@ public class PdApi {
         }
         fields.addAll(List.of("repoName", repoName, "application", application,
                 "version", version));
-        return http.postJson(base + "/api/events/software-released",
+        return http.postJson(base() + "/api/events/software-released",
                 Json.object(fields.toArray(new String[0])), headers());
     }
 
@@ -152,14 +163,14 @@ public class PdApi {
      */
     public Http.Response putSetting(String application, String environment, String key,
                                     String value, boolean secret) {
-        return http.putJson(base + "/api/settings/" + application + "/" + environment + "/" + key,
+        return http.putJson(base() + "/api/settings/" + application + "/" + environment + "/" + key,
                 Json.object("value", value, "secret", Json.verbatim(String.valueOf(secret))),
                 headers());
     }
 
     /** The newest deployment row of an application in an environment. */
     public Optional<JsonNode> newestDeployment(String environmentId, String applicationName) {
-        Http.Response response = http.get(base + "/api/deployments?environmentId=" + environmentId,
+        Http.Response response = http.get(base() + "/api/deployments?environmentId=" + environmentId,
                 headers());
         if (!response.ok()) {
             return Optional.empty();

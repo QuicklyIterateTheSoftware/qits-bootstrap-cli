@@ -83,6 +83,14 @@ forced. Add to that list rather than deviating quietly.
   reads the push back. `POST /ci/api/events/post-receive` is gone from that service; a pushed sha
   with no run is now a consumer catching up, and the wait says so in one line rather than
   re-announcing into nothing.
+- **After `edge-ready`, the bearer-only APIs go through the edge, latched** (qits-1430, epic
+  qits-428). `EdgeAddresses` (`Boot.addresses`) is the one resolver: qits-ci, qits-projects, the idp
+  and qits-artifacts are dialled at their aliases during the cold boot and at
+  `https://<label>.qits.<domain>` once `edge-ready` has proved that name, never back. qits-deployments
+  stays on its alias (its name is projected only after its own self-update), and so do qits-system's
+  forwarded-identity doors and git pushes. A new routed client is built with `addresses.route(...)`;
+  no phase picks an address for itself. The seed pullers' `config.json` names
+  `registry.qits.<domain>` and `mirror.qits.<domain>`. The bullet below describes the cold-boot half.
 - **Every address this CLI dials is a wire alias, and there is no second set.** The run joins
   `qits-net` in its second phase and reaches the platform the way every other member does:
   `<env>-qits-artifacts:8080`, `<env>-qits-platform-mirror:8080`, `<env>-qits-githost:8080`, the

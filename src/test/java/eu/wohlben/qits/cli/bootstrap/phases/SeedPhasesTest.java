@@ -1624,6 +1624,26 @@ class SeedPhasesTest {
      * docker matches the credential by the name it is dialling — so a file keyed by anything but
      * the vhost the deployer and the orchestrator pull from is a credential never offered.
      */
+    /**
+     * <b>Every seed puller's file names the two PUBLIC names</b> (qits-1430): the deployer pulls
+     * {@code registry.qits.<domain>/qits/<app>:<version>}, qits-system pulls glances from
+     * {@code mirror.qits.<domain>}, qits-containers names the same pair — and docker matches an
+     * entry by host alone, so a machine-name vhost here would be a credential never presented.
+     */
+    @Test
+    void theSeedPullersCredentialIsForThePublicRegistryAndMirror() {
+        List<String> hosts = SeedPhases.dockerConfigHosts("qits-dev.eu");
+
+        assertThat(hosts).containsExactly("registry.qits.qits-dev.eu", "mirror.qits.qits-dev.eu");
+        assertThat(hosts).noneMatch(host -> host.contains("localhost"));
+        String auth = Base64.getEncoder().encodeToString(
+                "prod-qits-deployments:s3cr3t".getBytes(StandardCharsets.UTF_8));
+        assertThat(SeedPhases.dockerConfigJson(hosts, "prod-qits-deployments", "s3cr3t"))
+                .isEqualTo("{\"auths\":{"
+                        + "\"registry.qits.qits-dev.eu\":{\"auth\":\"" + auth + "\"},"
+                        + "\"mirror.qits.qits-dev.eu\":{\"auth\":\"" + auth + "\"}}}\n");
+    }
+
     @Test
     void aPullersConfigJsonIsWhatDockerLoginWouldHaveWritten() {
         String json = SeedPhases.dockerConfigJson(

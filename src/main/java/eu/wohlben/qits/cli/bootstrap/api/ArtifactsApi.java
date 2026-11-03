@@ -18,7 +18,8 @@ import java.util.function.Supplier;
 public class ArtifactsApi {
 
     private final Http http;
-    private final String base;
+    /** Asked per call: the alias before the edge is ready, the public name after — {@link EdgeAddresses}. */
+    private final Supplier<String> base;
     private final Supplier<String> readAuthorization;
 
     /** A store this run reads without presenting anything — the shape the tests use. */
@@ -35,6 +36,12 @@ public class ArtifactsApi {
      *                          — it is a different identity, with a different lifetime
      */
     public ArtifactsApi(Http http, String artifactsUrl, Supplier<String> readAuthorization) {
+        this(http, () -> artifactsUrl, readAuthorization);
+    }
+
+    /** @param artifactsUrl where to dial, asked per call — see {@link EdgeAddresses#route} */
+    public ArtifactsApi(Http http, Supplier<String> artifactsUrl,
+                        Supplier<String> readAuthorization) {
         this.http = http;
         this.base = artifactsUrl;
         this.readAuthorization = readAuthorization;
@@ -58,12 +65,13 @@ public class ArtifactsApi {
         return headers;
     }
 
+    /** Where the next call goes: asked fresh, so the edge latch takes effect on it. */
     public String base() {
-        return base;
+        return base.get();
     }
 
     public Http.Response health() {
-        return http.get(base + "/q/health/ready", Map.of());
+        return http.get(base() + "/q/health/ready", Map.of());
     }
 
     public boolean ready() {
@@ -77,6 +85,7 @@ public class ArtifactsApi {
      * answers 200.
      */
     public String registryBase() {
+        String base = base();
         return base.endsWith("/artifacts")
                 ? base.substring(0, base.length() - "/artifacts".length()) : base;
     }
@@ -128,12 +137,12 @@ public class ArtifactsApi {
      * its own packument lists. HEAD, so a probe moves no bytes.
      */
     public boolean npmPublished(String packageName, String version) {
-        return http.head(npmTarballUrl(base, packageName, version), readHeaders()).ok();
+        return http.head(npmTarballUrl(base(), packageName, version), readHeaders()).ok();
     }
 
     /** Is this maven coordinate already published? */
     public boolean mavenPublished(String groupPath, String artifactId, String version, String extension) {
-        String url = base + "/maven/maven/" + groupPath + "/" + artifactId + "/" + version + "/"
+        String url = base() + "/maven/maven/" + groupPath + "/" + artifactId + "/" + version + "/"
                 + artifactId + "-" + version + "." + extension;
         return http.get(url, readHeaders()).ok();
     }
@@ -147,7 +156,7 @@ public class ArtifactsApi {
      * from a refusal and skip the publish the boot needs.
      */
     public boolean daemonPublished(String name, String version) {
-        return http.head(base + "/daemons/" + name + "/" + version, readHeaders()).ok();
+        return http.head(base() + "/daemons/" + name + "/" + version, readHeaders()).ok();
     }
 
     /**
@@ -166,7 +175,7 @@ public class ArtifactsApi {
                                        String authorization) {
         Map<String, String> headers = authorization == null || authorization.isBlank() ? Map.of()
                 : Map.of("Authorization", authorization);
-        return http.putFile(base + "/daemons/" + name + "/" + version, binary,
+        return http.putFile(base() + "/daemons/" + name + "/" + version, binary,
                 Duration.ofMinutes(15), headers);
     }
 }

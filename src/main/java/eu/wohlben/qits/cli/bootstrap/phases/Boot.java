@@ -4,12 +4,14 @@ import eu.wohlben.qits.cli.bootstrap.api.ArtifactsApi;
 import eu.wohlben.qits.cli.bootstrap.api.BootstrapPublishCredential;
 import eu.wohlben.qits.cli.bootstrap.api.PdApi;
 import eu.wohlben.qits.cli.bootstrap.api.CiApi;
+import eu.wohlben.qits.cli.bootstrap.api.EdgeAddresses;
 import eu.wohlben.qits.cli.bootstrap.api.GitHostApi;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.IdpApi;
 import eu.wohlben.qits.cli.bootstrap.api.ProjectsApi;
 import eu.wohlben.qits.cli.bootstrap.api.SystemApi;
 import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
+import eu.wohlben.qits.cli.bootstrap.config.DomainName;
 import eu.wohlben.qits.cli.bootstrap.ingress.BootstrapIngressLifecycle;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
@@ -39,6 +41,18 @@ public class Boot {
 
     public static final String NETWORK = "qits-net";
 
+    /**
+     * The public labels the routed clients are dialled at once the edge is ready —
+     * {@code <label>.qits.<domain>}. qits-artifacts is {@code registry}, the name a docker client
+     * understands ({@link PlatformModel#EDGE_APPS}); the others are their applications' own
+     * {@link PlatformModel#browserLabel}.
+     */
+    public static final String CI_LABEL = "ci";
+    public static final String DEPLOYMENTS_LABEL = "deployments";
+    public static final String PROJECTS_LABEL = "projects";
+    public static final String IDP_LABEL = "idp";
+    public static final String REGISTRY_LABEL = "registry";
+
     public final BootstrapConfig config;
     public final RunLog log;
     public final ProcessRunner runner;
@@ -49,6 +63,12 @@ public class Boot {
     public final RunState state = new RunState();
 
     public final Http http;
+    /**
+     * <b>Where every platform API call below is dialled</b>: the service's alias on qits-net until
+     * {@code edge-ready} has proved its public name, {@code https://<label>.qits.<domain>} from then
+     * on, latched for the rest of the run. One resolver, so no phase decides it for itself.
+     */
+    public final EdgeAddresses addresses;
     public final ArtifactsApi artifacts;
     /** The git host, a service of its own since the byte-plane split. */
     public final GitHostApi githost;
@@ -94,14 +114,25 @@ public class Boot {
                         .resolve(".buildkit"));
         this.git = new Git(runner);
         this.ingress = new BootstrapIngressLifecycle(this);
-        this.artifacts = new ArtifactsApi(http, config.artifactsUrl(),
+        this.addresses = new EdgeAddresses(() -> DomainName.of(config));
+        // EVERY CLIENT BELOW THAT SENDS ONLY THE BOOTSTRAP'S BEARER is routed: the alias before
+        // the edge is ready, its public name after. Two are not, and each for a reason the edge
+        // makes: qits-system's targets doors take a forwarded identity the edge strips (see
+        // SystemApi), and the git host is reached by the git transport, whose address Boot.gitUrl
+        // decides — neither is an API call through this resolver.
+        this.artifacts = new ArtifactsApi(http,
+                addresses.route(REGISTRY_LABEL, config.artifactsUrl()),
                 this::storeReadAuthorization);
         this.githost = new GitHostApi(http, config.gitHostUrl(), config.gitHostHealthUrl());
-        this.ci = new CiApi(http, config.ciUrl(), this::bootstrapToken);
+        this.ci = new CiApi(http, addresses.route(CI_LABEL, config.ciUrl()),
+                this::bootstrapToken);
         this.system = new SystemApi(http, config.systemUrl());
-        this.pd = new PdApi(http, config.platformDeploymentsUrl(), this::bootstrapToken);
-        this.idp = new IdpApi(http, config.idpDialUrl());
-        this.projects = new ProjectsApi(http, config.projectsUrl(), this::bootstrapToken);
+        this.pd = new PdApi(http,
+                addresses.route(DEPLOYMENTS_LABEL, config.platformDeploymentsUrl()),
+                this::bootstrapToken);
+        this.idp = new IdpApi(http, addresses.route(IDP_LABEL, config.idpDialUrl()));
+        this.projects = new ProjectsApi(http,
+                addresses.route(PROJECTS_LABEL, config.projectsUrl()), this::bootstrapToken);
     }
 
     /**
@@ -209,6 +240,22 @@ public class Boot {
             return githost.gitUrl(state.projectId, PlatformModel.repo(name));
         }
         return githost.gitUrl(storageId(name));
+    }
+
+    /**
+     * <b>The registry name the HOST's daemon pushes and pulls through</b>, and the docker
+     * credential a push writes is for this name. Before the edge is ready it is the loopback vhost
+     * {@code registry.<env>.localhost:<port>}: the seed edge answers it over plain HTTP from the
+     * moment the seed stack is up, while {@code registry.qits.<domain>} has only a placeholder
+     * certificate until the edge's own ACME order lands — and the seed images have to be in the
+     * store before the seed deploys, which come before {@code edge-ready}. Once the edge is ready
+     * it is {@code registry.qits.<domain>}, the name every puller of the platform uses.
+     */
+    public String registryHost() {
+        if (addresses.throughEdge(REGISTRY_LABEL)) {
+            return EdgeAddresses.host(REGISTRY_LABEL, config.requiredDomain());
+        }
+        return config.registryVhost();
     }
 
     /** Fails the phase, with the command's own last words attached. */
@@ -377,7 +424,9 @@ public class Boot {
      * thousands of them.
      */
     public String storeReadAuthorization() {
-        if (!config.machineAuth()) {
+        // Through the edge a read needs a bearer whatever the store's own gate says: the edge
+        // gates every method on the registry name, reads included.
+        if (!config.machineAuth() && !addresses.throughEdge(REGISTRY_LABEL)) {
             return null;
         }
         if (storeReadToken != null && Instant.now().isBefore(storeReadExpiry)) {

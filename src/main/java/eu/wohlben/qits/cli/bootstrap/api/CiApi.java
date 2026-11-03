@@ -29,7 +29,8 @@ public class CiApi {
     public static final String RELEASE_SLOTS = ".config/qits/release.yml";
 
     private final Http http;
-    private final String base;
+    /** Asked per call: the alias before the edge is ready, the public name after — {@link EdgeAddresses}. */
+    private final Supplier<String> base;
     /** The bootstrap's own bearer, read per call — see {@link #headers()}. */
     private final Supplier<String> bearer;
 
@@ -39,9 +40,19 @@ public class CiApi {
      *               identity pair, and no pair as a fallback when there is none to present.
      */
     public CiApi(Http http, String ciUrl, Supplier<String> bearer) {
+        this(http, () -> ciUrl, bearer);
+    }
+
+    /** @param ciUrl where to dial, asked per call — see {@link EdgeAddresses#route} */
+    public CiApi(Http http, Supplier<String> ciUrl, Supplier<String> bearer) {
         this.http = http;
         this.base = ciUrl;
         this.bearer = bearer;
+    }
+
+    /** Where this call goes: asked fresh, so the edge latch takes effect on the next one. */
+    private String base() {
+        return base.get();
     }
 
     /**
@@ -61,7 +72,7 @@ public class CiApi {
     }
 
     public Http.Response health() {
-        return http.get(base + "/q/health/ready", headers());
+        return http.get(base() + "/q/health/ready", headers());
     }
 
     public boolean ready() {
@@ -97,7 +108,7 @@ public class CiApi {
      * publish it.
      */
     public Http.Response trigger(String eventJson) {
-        return http.postJson(base + "/api/events/trigger", eventJson, headers());
+        return http.postJson(base() + "/api/events/trigger", eventJson, headers());
     }
 
     /** The runs a trigger answered with, so a caller can say whether any recipe selected it. */
@@ -145,7 +156,7 @@ public class CiApi {
      * IS.
      */
     public List<String[]> finishedEventRuns(String repoId) {
-        Http.Response response = http.get(base + "/api/runs/finished?limit=20", headers());
+        Http.Response response = http.get(base() + "/api/runs/finished?limit=20", headers());
         if (!response.ok()) {
             return List.of();
         }
@@ -174,7 +185,7 @@ public class CiApi {
      * dead and every replay rebuilt what the registry already held.
      */
     public boolean greenReleaseRunAt(String repoId, String commitSha) {
-        Http.Response response = http.get(base + "/api/runs?repositoryId=" + repoId + "&limit=20",
+        Http.Response response = http.get(base() + "/api/runs?repositoryId=" + repoId + "&limit=20",
                 headers());
         if (!response.ok()) {
             return false;
@@ -196,7 +207,7 @@ public class CiApi {
      * the newest one is this phase's or an earlier one's.
      */
     public Optional<JsonNode> newestRun(String repoId) {
-        Http.Response response = http.get(base + "/api/runs?repositoryId=" + repoId + "&limit=1",
+        Http.Response response = http.get(base() + "/api/runs?repositoryId=" + repoId + "&limit=1",
                 headers());
         if (!response.ok()) {
             return Optional.empty();
@@ -213,7 +224,7 @@ public class CiApi {
      * output, so following a build along is polling here, which is what its own client does.
      */
     public Optional<JsonNode> run(String runId) {
-        Http.Response response = http.get(base + "/api/runs/" + runId, headers());
+        Http.Response response = http.get(base() + "/api/runs/" + runId, headers());
         return response.ok() ? Optional.of(Json.parse(response.body())) : Optional.empty();
     }
 

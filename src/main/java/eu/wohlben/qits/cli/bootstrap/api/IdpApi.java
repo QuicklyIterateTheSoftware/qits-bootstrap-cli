@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * The address. The bootstrap presents the platform's own credentials because it IS the platform,
@@ -20,16 +21,25 @@ import java.util.Map;
 public class IdpApi {
 
     private final Http http;
-    /** The idp's ADDRESS, not its issuer string: every use below is a base URL to dial. */
-    private final String address;
+    /**
+     * The idp's ADDRESS, not its issuer string: every use below is a base URL to dial. Asked per
+     * call — the alias before the edge is ready, {@code https://idp.qits.<domain>/idp} after
+     * ({@link EdgeAddresses}).
+     */
+    private final Supplier<String> address;
 
     public IdpApi(Http http, String address) {
+        this(http, () -> address);
+    }
+
+    /** @param address where to dial, asked per call — see {@link EdgeAddresses#route} */
+    public IdpApi(Http http, Supplier<String> address) {
         this.http = http;
         this.address = address;
     }
 
     public Http.Response health() {
-        return http.get(address + "/q/health/ready", Map.of());
+        return http.get(address.get() + "/q/health/ready", Map.of());
     }
 
     public boolean ready() {
@@ -75,7 +85,7 @@ public class IdpApi {
 
     /** @see #token(String, String, String) */
     public Token minted(String clientId, String secret, String audience) {
-        Http.Response response = http.postForm(address + "/token", clientId, secret,
+        Http.Response response = http.postForm(address.get() + "/token", clientId, secret,
                 Map.of("grant_type", "client_credentials", "audience", audience));
         if (!response.ok()) {
             throw new IllegalStateException("the idp issued no token for " + clientId
@@ -111,7 +121,7 @@ public class IdpApi {
      * else in the platform waits on a person registering.
      */
     public Http.Response mintRegisterToken(String clientId, String secret) {
-        return http.post(address + "/api/register-tokens",
+        return http.post(address.get() + "/api/register-tokens",
                 Map.of("Authorization", Http.basic(clientId, secret)));
     }
 }

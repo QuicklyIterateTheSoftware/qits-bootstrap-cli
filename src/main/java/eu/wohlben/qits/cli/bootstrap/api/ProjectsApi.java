@@ -13,17 +13,18 @@ import java.util.function.Supplier;
  * what makes the public clone url resolve, and it has to happen before the git host's own deployment
  * closes the id-addressed scheme behind it.
  * <p>
- * <b>The identity is the bootstrap's own bearer</b>, presented at the service's own alias on
- * qits-net — the way this program talks to the deployer's and ci's own authorized APIs — and
- * nothing else. Deliberately not through the edge, which strips client-supplied identity headers
- * from what it proxies. Owner ruling 2026-10-18: no forwarded {@code X-Qits-User}/
- * {@code X-Qits-Roles} pair beside it, and no pair as a fallback when there is no bearer to
- * present — the call fails closed instead.
+ * <b>The identity is the bootstrap's own bearer</b> and nothing else — the way this program talks
+ * to the deployer's and ci's own authorized APIs. Owner ruling 2026-10-18: no forwarded
+ * {@code X-Qits-User}/{@code X-Qits-Roles} pair beside it, and no pair as a fallback when there is
+ * no bearer to present — the call fails closed instead. Because it carries nothing the edge strips,
+ * it goes where every other bearer call goes: the service's alias during a cold boot, and
+ * {@code https://projects.qits.<domain>} once the edge is ready ({@link EdgeAddresses}).
  */
 public class ProjectsApi {
 
     private final Http http;
-    private final String base;
+    /** Asked per call: the alias before the edge is ready, the public name after — {@link EdgeAddresses}. */
+    private final Supplier<String> base;
     /** The bootstrap's own bearer, read per call — see {@link #headers()}. */
     private final Supplier<String> bearer;
 
@@ -32,15 +33,20 @@ public class ProjectsApi {
      * @param bearer the bootstrap's own machine token, minted against the platform-wide audience
      */
     public ProjectsApi(Http http, String projectsUrl, Supplier<String> bearer) {
+        this(http, () -> projectsUrl, bearer);
+    }
+
+    /** @param projectsUrl where to dial, asked per call — see {@link EdgeAddresses#route} */
+    public ProjectsApi(Http http, Supplier<String> projectsUrl, Supplier<String> bearer) {
         this.http = http;
-        this.base = projectsUrl.endsWith("/")
-                ? projectsUrl.substring(0, projectsUrl.length() - 1)
-                : projectsUrl;
+        this.base = projectsUrl;
         this.bearer = bearer;
     }
 
+    /** Where the next call goes: asked fresh, so the edge latch takes effect on it. */
     public String base() {
-        return base;
+        String url = base.get();
+        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
     }
 
     /**
@@ -62,12 +68,12 @@ public class ProjectsApi {
      * {@code /q} a prefix-routing edge could never reach.
      */
     public Http.Response health() {
-        return http.get(base + "/projects/q/health/ready", headers());
+        return http.get(base() + "/projects/q/health/ready", headers());
     }
 
     /** Every project this service holds. The bootstrap wants exactly one of them, by name. */
     public Http.Response projects() {
-        return http.get(base + "/projects/api/projects", headers());
+        return http.get(base() + "/projects/api/projects", headers());
     }
 
     /**
@@ -84,7 +90,7 @@ public class ProjectsApi {
         String body = url == null || url.isBlank()
                 ? Json.object("repositoryId", repositoryId, "name", name)
                 : Json.object("repositoryId", repositoryId, "name", name, "url", url);
-        return http.postJson(base + "/projects/api/projects/" + projectId + "/repositories/adopt",
+        return http.postJson(base() + "/projects/api/projects/" + projectId + "/repositories/adopt",
                 body, headers());
     }
 
@@ -94,7 +100,7 @@ public class ProjectsApi {
      * proof that the public url serves, rather than an inference from a row this run wrote.
      */
     public Http.Response repositoryByName(String projectId, String name) {
-        return http.get(base + "/projects/api/projects/" + projectId + "/repositories/by-name/"
+        return http.get(base() + "/projects/api/projects/" + projectId + "/repositories/by-name/"
                 + name, headers());
     }
 }

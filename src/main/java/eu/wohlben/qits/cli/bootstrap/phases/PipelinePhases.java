@@ -3,6 +3,7 @@ package eu.wohlben.qits.cli.bootstrap.phases;
 import com.fasterxml.jackson.databind.JsonNode;
 import eu.wohlben.qits.cli.bootstrap.api.BootstrapPublishCredential;
 import eu.wohlben.qits.cli.bootstrap.api.CiApi;
+import eu.wohlben.qits.cli.bootstrap.api.EdgeAddresses;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.Json;
 import eu.wohlben.qits.cli.bootstrap.api.SystemApi;
@@ -726,7 +727,7 @@ public class PipelinePhases {
     public Phase imagesPublish() {
         return new Phase("images-publish",
                 "push the step, runner and workspace images into the registry", ctx -> {
-            String registryHost = boot.config.registryVhost();
+            String registryHost = boot.registryHost();
             List<StoreImage> images = storeImages(SeedPhases.systemRunnerVersion(boot),
                     new SeedPhases(boot).workspaceStoreImages());
             List<StoreImage> missing = new ArrayList<>();
@@ -820,7 +821,7 @@ public class PipelinePhases {
     public Phase seedImagesPublish() {
         return new Phase("seed-images-publish",
                 "push the seed images into the registry at their release tag", ctx -> {
-            String registryHost = boot.config.registryVhost();
+            String registryHost = boot.registryHost();
             Map<String, StoreImage> missing = new LinkedHashMap<>();
             int held = 0;
             for (String name : PlatformModel.SEED_DEPLOYED) {
@@ -2487,8 +2488,11 @@ public class PipelinePhases {
 
     // --- the platform's own door, before the target dials it -------------------------------------
 
-    /** One thing the edge has to answer before the target is started: what, and how to ask. */
-    record EdgeProbe(String what, java.util.function.Supplier<Http.Response> ask) {
+    /**
+     * One thing the edge has to answer before the target is started: what, the public label it is
+     * asked at, and how to ask.
+     */
+    record EdgeProbe(String what, String label, java.util.function.Supplier<Http.Response> ask) {
     }
 
     /**
@@ -2499,7 +2503,10 @@ public class PipelinePhases {
      * script (the door the target's runner registers through), the idp's token endpoint, the
      * registry's {@code /v2/} the runner and every CI slot pull from, and qits-ci's readiness,
      * which the ci-daemon inside a slot dials by the same name. The probe of qits-ci's retired
-     * runner install script went with that door (qits-1547). Over HTTPS with the JVM's own trust
+     * runner install script went with that door (qits-1547). And qits-projects' readiness, because
+     * a pass here is also what moves this run's own calls onto the edge
+     * ({@link eu.wohlben.qits.cli.bootstrap.api.EdgeAddresses}): every name this run switches to
+     * has to be one the edge was seen to serve. Over HTTPS with the JVM's own trust
      * store, so an answer at all is a certificate a machine trusts; a placeholder or a staging
      * certificate is a failed handshake, which is no answer.
      */
@@ -2507,10 +2514,10 @@ public class PipelinePhases {
         List<EdgeProbe> probes = new ArrayList<>();
         for (String[] entry : List.of(new String[] {"system", "/system/api/targets/install.sh"},
                 new String[] {"ci", "/ci/q/health/ready"},
-                new String[] {"idp", "/idp/token"}, new String[] {"registry", "/v2/"})) {
-            String url = "https://" + entry[0] + "." + PlatformModel.PROJECT + "." + domain
-                    + entry[1];
-            probes.add(new EdgeProbe(url, () -> boot.http.get(url, Map.of())));
+                new String[] {"idp", "/idp/token"}, new String[] {"registry", "/v2/"},
+                new String[] {Boot.PROJECTS_LABEL, "/projects/q/health/ready"})) {
+            String url = "https://" + EdgeAddresses.host(entry[0], domain) + entry[1];
+            probes.add(new EdgeProbe(url, entry[0], () -> boot.http.get(url, Map.of())));
         }
         return probes;
     }
@@ -2539,6 +2546,12 @@ public class PipelinePhases {
      * <p>
      * <b>No domain, or ACME off or on staging, is refused</b>, here and before the boot started
      * ({@link BootstrapConfig#requiredDomain}, {@link Acme#edgeRunnerRefusal}): none can ever pass.
+     * <p>
+     * <b>A pass is THE edge-ready signal of the run</b>: it latches {@link Boot#addresses} for the
+     * labels it proved, and from the next call on this run dials ci, projects, the idp and the
+     * store at their public names with its own bearer, and never at an alias again. The
+     * deployer is not among them — it is not seed-deployed, so its name is projected only by its
+     * own self-update at the end of the train — and stays on its alias.
      */
     public Phase edgeReady() {
         return new Phase("edge-ready", "wait for the platform's edge to serve what the target dials",
@@ -2568,6 +2581,13 @@ public class PipelinePhases {
                         + "certificate this host does not trust yet: the edge orders it over "
                         + "DNS-01, so the records have to resolve — rerun once they do.");
             }
+            List<String> labels = probes.stream().map(EdgeProbe::label).toList();
+            boot.addresses.ready(labels);
+            ctx.log("  from here on this run dials " + labels.stream()
+                    .filter(label -> !"system".equals(label))
+                    .map(label -> EdgeAddresses.host(label, domain))
+                    .collect(java.util.stream.Collectors.joining(", "))
+                    + " through the edge — never their aliases again");
             ctx.note(probes.size() + " names served");
         });
     }
@@ -3478,7 +3498,10 @@ public class PipelinePhases {
                     + PlatformModel.wireAlias("artifacts", env)
                     + ", the one that may write.");
             report.add("           The answer's clientId and secret are the credential:");
-            report.add("             docker login " + boot.config.registryVhost()
+            // The public name, over the edge's real certificate: the one every puller of the
+            // platform presents its credential for, and the one the vhosts above give way to.
+            report.add("             docker login "
+                    + publicRegistryHost(boot.config.requiredDomain())
                     + " -u <clientId> -p <secret>");
             report.add("           Hand it back when the workstation is done with it: DELETE "
                     + "/idp/api/clients/<clientId>.");

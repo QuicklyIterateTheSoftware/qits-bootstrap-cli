@@ -1,6 +1,7 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import eu.wohlben.qits.cli.bootstrap.api.EdgeAddresses;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.Json;
 import eu.wohlben.qits.cli.bootstrap.api.ServiceClientsApi;
@@ -4041,19 +4042,31 @@ public class SeedPhases {
             boot.docker.ensureVolume("qits-deployments-config", ctx::log);
             boot.docker.ensureVolume("qits-containers-config", ctx::log);
             boot.docker.ensureVolume("qits-system-config", ctx::log);
-            dockerConfig(ctx, "qits-deployments-config", "deployments",
-                    boot.config.registryVhost());
-            dockerConfig(ctx, "qits-containers-config", "containers",
-                    boot.config.registryVhost());
-            // THE THIRD PULLER, AND THE ONLY ONE WITH TWO HOSTS IN ITS FILE. The base system
-            // panels pull nothing of the platform's own — what they pull is glances, an upstream
-            // image behind qits-platform-mirror — so the mirror vhost is the host that matters
-            // here. The registry is written beside it anyway: it costs one line and the day this
-            // console pulls a qits/* image of its own is not the day to discover the file names
-            // one host.
-            dockerConfig(ctx, "qits-system-config", "system",
-                    boot.config.registryVhost(), boot.config.mirrorVhost());
+            List<String> hosts = dockerConfigHosts(boot.config.requiredDomain());
+            dockerConfig(ctx, "qits-deployments-config", "deployments", hosts);
+            dockerConfig(ctx, "qits-containers-config", "containers", hosts);
+            dockerConfig(ctx, "qits-system-config", "system", hosts);
         });
+    }
+
+    /**
+     * <b>The hosts every seed puller's {@code config.json} names: {@code registry.qits.<domain>}
+     * and {@code mirror.qits.<domain>}</b> — the public edge names, and the only ones these three
+     * pull by. The deployer qualifies every image it pulls as
+     * {@code registry.qits.<domain>/qits/<app>:<version>} (qits-757), qits-system pulls glances
+     * from {@code mirror.qits.<domain>/hub/…}, and qits-containers names exactly these two in its
+     * own {@code docker-config.hosts}; each deployed successor writes its own file for the same
+     * pair. The docker CLI matches an entry by host and nothing else, so a file that still named
+     * {@code registry.<env>.localhost:<port>} — what this wrote until qits-1430 — presented
+     * nothing to the registry those pulls actually reach, and the edge refuses an uncredentialed
+     * read.
+     * <p>
+     * <b>The machine-name vhosts are not written, though the edge still answers them</b>
+     * (qits-1434 removes them). Nothing that reads these files pulls by them.
+     */
+    static List<String> dockerConfigHosts(String domain) {
+        return List.of(EdgeAddresses.host("registry", domain),
+                EdgeAddresses.host("mirror", domain));
     }
 
     /**
@@ -4067,16 +4080,16 @@ public class SeedPhases {
      * idp's own block is handed for that client — one value, recorded once in
      * {@code .qits-bootstrap.env}, read by both sides of one credential.
      * <p>
-     * <b>The HOSTS are the caller's, because a puller's are.</b> The deployer and the container
-     * orchestrator pull {@code qits/*} and nothing else, so their file names the registry vhost
-     * alone; qits-platform-system pulls glances through the MIRROR vhost, and a file that named
-     * only the registry would be an unauthenticated pull the edge refuses. One credential covers
-     * both: it is the same client at the same door, and the door routes by name.
+     * <b>The HOSTS are the two public names</b> — {@link #dockerConfigHosts}. The deployer and the
+     * container orchestrator pull {@code qits/*} from the registry; qits-system pulls glances
+     * through the MIRROR, and a file that named only the registry would be an unauthenticated pull
+     * the edge refuses. One credential covers both: it is the same client at the same door, and
+     * the door routes by name.
      * <p>
      * Rerun-safe by being a whole-file write: nothing restarts on a change, because the CLI opens
      * this file per invocation rather than at boot.
      */
-    private void dockerConfig(PhaseContext ctx, String volume, String app, String... hosts) {
+    private void dockerConfig(PhaseContext ctx, String volume, String app, List<String> hosts) {
         String client = PlatformModel.wireAlias(app, boot.config.envName());
         // The value the idp-clients phase resolved, keyed by the APPLICATION because the registry
         // is. A puller that is not a seed client has none here and gets an empty one: its
@@ -4088,7 +4101,7 @@ public class SeedPhases {
             ctx.log("  " + client + " has no secret yet — its config.json is written empty and "
                     + "its own deployment fills it from the registry");
         }
-        List<String> auths = List.of(hosts);
+        List<String> auths = hosts;
         Cmd write = dockerConfigWrite(volume, dockerConfigJson(auths, client, secret),
                 client, secret);
         Boot.must(boot.docker.run(write, ctx::log), "writing " + client + "'s config.json failed");
