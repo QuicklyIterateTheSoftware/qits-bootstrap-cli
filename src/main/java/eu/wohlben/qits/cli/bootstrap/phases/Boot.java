@@ -97,11 +97,11 @@ public class Boot {
         this.artifacts = new ArtifactsApi(http, config.artifactsUrl(),
                 this::storeReadAuthorization);
         this.githost = new GitHostApi(http, config.gitHostUrl(), config.gitHostHealthUrl());
-        this.ci = new CiApi(http, config.ciUrl());
+        this.ci = new CiApi(http, config.ciUrl(), this::bootstrapToken);
         this.system = new SystemApi(http, config.systemUrl());
-        this.pd = new PdApi(http, config.platformDeploymentsUrl());
+        this.pd = new PdApi(http, config.platformDeploymentsUrl(), this::bootstrapToken);
         this.idp = new IdpApi(http, config.idpDialUrl());
-        this.projects = new ProjectsApi(http, config.projectsUrl());
+        this.projects = new ProjectsApi(http, config.projectsUrl(), this::bootstrapToken);
     }
 
     /**
@@ -301,37 +301,53 @@ public class Boot {
 
     /**
      * <b>The bootstrap's own machine token</b>, for every call this run makes into the platform by
-     * hand — or null when the gate is off, where the forwarded identity headers are the whole
-     * credential.
+     * hand — {@link CiApi}, {@link PdApi} and {@link ProjectsApi} all read it through this
+     * reference, and present nothing else. Owner ruling 2026-10-18: a service calling another
+     * sends ONLY its own bearer, never a forwarded-identity pair beside it and never a pair as a
+     * fallback when there is none to present — so this never answers null. A caller that cannot be
+     * given one fails closed, loudly, through {@link #platformToken}.
      * <p>
      * It presents THIS program's client rather than borrowing a service's, and that is the change
      * the seed-client work made possible: there is no borrowed pair to present any more, because
      * the seed services' secrets are the idp's and the deployer registry's rather than this run's.
      * The calls stand in for announcements a service never sent, and a token that says
      * "qits-bootstrap" is the honest one for them.
+     * <p>
+     * <b>Cached to its expiry</b>, the same reason {@link #storeReadAuthorization} is: several of
+     * the calls that read this are polled every few seconds for the length of a release build or a
+     * deployment wait, and minting one from the idp per poll would be thousands of them.
      */
     public String bootstrapToken() {
-        if (!config.machineAuth()) {
-            return null;
-        }
         return platformToken();
     }
 
     /**
-     * The same token where there is no gate to be off: qits-githost is always protected, so a push
-     * has no anonymous arm to fall back to.
+     * The same token qits-githost is always protected, so a push has no anonymous arm to fall back
+     * to either.
      */
     public String githostToken() {
         return platformToken();
     }
 
+    /** The token behind {@link #bootstrapToken} and {@link #githostToken}, and its expiry. */
+    private String platformTokenValue;
+    private Instant platformTokenExpiry;
+
     private String platformToken() {
+        if (platformTokenValue != null && Instant.now().isBefore(platformTokenExpiry)) {
+            return platformTokenValue;
+        }
         if (state.bootstrapSecret == null || state.bootstrapSecret.isBlank()) {
             throw new IllegalStateException("no secret for the "
                     + PlatformModel.bootstrapClientId(config.envName())
                     + " client — .qits-bootstrap.env and the running idp disagree");
         }
-        return idp.token(state.bootstrapClientId, state.bootstrapSecret, PLATFORM_AUDIENCE);
+        Instant minted = Instant.now();
+        IdpApi.Token token = idp.minted(state.bootstrapClientId, state.bootstrapSecret,
+                PLATFORM_AUDIENCE);
+        platformTokenValue = token.value();
+        platformTokenExpiry = token.expiryFrom(minted);
+        return platformTokenValue;
     }
 
     /** The token behind {@link #storeReadAuthorization}, and when it stops being one. */

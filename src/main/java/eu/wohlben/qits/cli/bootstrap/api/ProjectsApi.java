@@ -1,7 +1,7 @@
 package eu.wohlben.qits.cli.bootstrap.api;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * qits-projects: the one service that owns the alias table, and therefore the one that decides what
@@ -13,32 +13,30 @@ import java.util.Map;
  * what makes the public clone url resolve, and it has to happen before the git host's own deployment
  * closes the id-addressed scheme behind it.
  * <p>
- * <b>The identity is asserted on a private hop</b>, the way this program talks to the deployer's read
- * API: {@code X-Qits-User} and {@code X-Qits-Roles} at the service's own
- * alias on qits-net, plus the bootstrap's own machine bearer when the gate is on. Deliberately not
- * through the edge, which strips client-supplied identity headers from what it proxies — the
- * property that makes it safe as a public door. It is the same pair of headers qits-ci presents to
- * this service for its own catalogue read.
+ * <b>The identity is the bootstrap's own bearer</b>, presented at the service's own alias on
+ * qits-net — the way this program talks to the deployer's and ci's own authorized APIs — and
+ * nothing else. Deliberately not through the edge, which strips client-supplied identity headers
+ * from what it proxies. Owner ruling 2026-10-18: no forwarded {@code X-Qits-User}/
+ * {@code X-Qits-Roles} pair beside it, and no pair as a fallback when there is no bearer to
+ * present — the call fails closed instead.
  */
 public class ProjectsApi {
 
-    /**
-     * Who the bootstrap says it is here. {@code qits:system} rather than {@code qits:admin}: what is
-     * being registered is storage the machine minted, and the adopt route takes that role alone.
-     */
-    private static final Map<String, String> SYSTEM_HEADERS = Map.of(
-            "X-Qits-User", "qits-bootstrap",
-            "X-Qits-Roles", "qits:system");
-
     private final Http http;
     private final String base;
+    /** The bootstrap's own bearer, read per call — see {@link #headers()}. */
+    private final Supplier<String> bearer;
 
-    /** @param projectsUrl scheme, host and port with no path — qits-ci is told the same */
-    public ProjectsApi(Http http, String projectsUrl) {
+    /**
+     * @param projectsUrl scheme, host and port with no path — qits-ci is told the same
+     * @param bearer the bootstrap's own machine token, minted against the platform-wide audience
+     */
+    public ProjectsApi(Http http, String projectsUrl, Supplier<String> bearer) {
         this.http = http;
         this.base = projectsUrl.endsWith("/")
                 ? projectsUrl.substring(0, projectsUrl.length() - 1)
                 : projectsUrl;
+        this.bearer = bearer;
     }
 
     public String base() {
@@ -46,16 +44,30 @@ public class ProjectsApi {
     }
 
     /**
+     * What every call here presents: the bootstrap's own bearer.
+     *
+     * @throws IllegalStateException when there is none to present
+     */
+    private Map<String, String> headers() {
+        String token = bearer.get();
+        if (token == null || token.isBlank()) {
+            throw new IllegalStateException("no bearer to present to qits-projects — every call "
+                    + "here needs the bootstrap's own machine token, and none was minted");
+        }
+        return Map.of("Authorization", "Bearer " + token);
+    }
+
+    /**
      * Readiness at this service's own non-application root path — {@code /projects/q}, not the bare
      * {@code /q} a prefix-routing edge could never reach.
      */
-    public Http.Response health(String bearer) {
-        return http.get(base + "/projects/q/health/ready", headers(bearer));
+    public Http.Response health() {
+        return http.get(base + "/projects/q/health/ready", headers());
     }
 
     /** Every project this service holds. The bootstrap wants exactly one of them, by name. */
-    public Http.Response projects(String bearer) {
-        return http.get(base + "/projects/api/projects", headers(bearer));
+    public Http.Response projects() {
+        return http.get(base + "/projects/api/projects", headers());
     }
 
     /**
@@ -68,12 +80,12 @@ public class ProjectsApi {
      * @param url the forge this repository is backed up to, or null for none
      */
     public Http.Response adoptRepository(String projectId, String repositoryId, String name,
-            String url, String bearer) {
+            String url) {
         String body = url == null || url.isBlank()
                 ? Json.object("repositoryId", repositoryId, "name", name)
                 : Json.object("repositoryId", repositoryId, "name", name, "url", url);
         return http.postJson(base + "/projects/api/projects/" + projectId + "/repositories/adopt",
-                body, headers(bearer));
+                body, headers());
     }
 
     /**
@@ -81,22 +93,8 @@ public class ProjectsApi {
      * keeps a copy of for itself, pushed by this service on every name change — so a 200 here is
      * proof that the public url serves, rather than an inference from a row this run wrote.
      */
-    public Http.Response repositoryByName(String projectId, String name, String bearer) {
+    public Http.Response repositoryByName(String projectId, String name) {
         return http.get(base + "/projects/api/projects/" + projectId + "/repositories/by-name/"
-                + name, headers(bearer));
-    }
-
-    /**
-     * The forwarded identity, plus the machine bearer when this platform has a gate. Both, never one
-     * or the other: with the gate off there is no token to present and the headers are the identity;
-     * with it on the bearer is what the service validates and the headers still name the actor.
-     */
-    private static Map<String, String> headers(String bearer) {
-        if (bearer == null || bearer.isBlank()) {
-            return SYSTEM_HEADERS;
-        }
-        Map<String, String> headers = new LinkedHashMap<>(SYSTEM_HEADERS);
-        headers.put("Authorization", "Bearer " + bearer);
-        return Map.copyOf(headers);
+                + name, headers());
     }
 }

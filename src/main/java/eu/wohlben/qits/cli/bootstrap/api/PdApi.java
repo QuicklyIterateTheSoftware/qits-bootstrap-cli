@@ -3,10 +3,10 @@ package eu.wohlben.qits.cli.bootstrap.api;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * qits-deployments: the environments it owns and the deployment rows it records. One
@@ -21,21 +21,38 @@ import java.util.Optional;
  */
 public class PdApi {
 
-    /** Identity asserted on the private qits-net hop to the deployer's authorized read API. */
-    private static final Map<String, String> ADMIN_HEADERS = Map.of(
-            "X-Qits-User", "qits-bootstrap",
-            "X-Qits-Roles", "qits:admin");
-
     private final Http http;
     private final String base;
+    /** The bootstrap's own bearer, read per call — see {@link #headers()}. */
+    private final Supplier<String> bearer;
 
-    public PdApi(Http http, String platformDeploymentsUrl) {
+    /**
+     * @param bearer the bootstrap's own machine token, minted against the platform-wide audience.
+     *               Owner ruling 2026-10-18: every call here presents it alone — no forwarded
+     *               identity pair, and no pair as a fallback when there is none to present.
+     */
+    public PdApi(Http http, String platformDeploymentsUrl, Supplier<String> bearer) {
         this.http = http;
         this.base = platformDeploymentsUrl;
+        this.bearer = bearer;
+    }
+
+    /**
+     * What every call here presents: the bootstrap's own bearer.
+     *
+     * @throws IllegalStateException when there is none to present
+     */
+    private Map<String, String> headers() {
+        String token = bearer.get();
+        if (token == null || token.isBlank()) {
+            throw new IllegalStateException("no bearer to present to qits-deployments — every "
+                    + "call here needs the bootstrap's own machine token, and none was minted");
+        }
+        return Map.of("Authorization", "Bearer " + token);
     }
 
     public Http.Response health() {
-        return http.get(base + "/q/health/ready", ADMIN_HEADERS);
+        return http.get(base + "/q/health/ready", headers());
     }
 
     public boolean ready() {
@@ -66,7 +83,7 @@ public class PdApi {
     }
 
     private java.util.List<JsonNode> environments() {
-        Http.Response response = http.get(base + "/api/environments", ADMIN_HEADERS);
+        Http.Response response = http.get(base + "/api/environments", headers());
         if (!response.ok()) {
             return java.util.List.of();
         }
@@ -75,12 +92,6 @@ public class PdApi {
         return environments;
     }
 
-
-    /** The writes are machine-guarded on the merged deployer (cd's ancestors were not). */
-    private static Map<String, String> bearer(String token) {
-        return token == null || token.isBlank() ? Map.of()
-                : Map.of("Authorization", "Bearer " + token);
-    }
     /**
      * The standing environment, created as THE PLATFORM ENVIRONMENT. That flag is the whole of what
      * makes it deploy anything: the deployer's entry tier is the one row carrying it, and an
@@ -93,19 +104,19 @@ public class PdApi {
      * which is exactly why sending one would be invisible: the boot would look green and the value
      * would mean nothing.
      */
-    public Http.Response createEnvironment(String name, String network, String token) {
+    public Http.Response createEnvironment(String name, String network) {
         return http.postJson(base + "/api/environments",
                 Json.object("name", name, "network", network,
                         "platform", Json.verbatim("true")),
-                bearer(token));
+                headers());
     }
 
     /**
      * RECONCILE, NEVER RECREATE. A DELETE tears down every container of the environment, which
      * here is the whole platform, the deployer included.
      */
-    public Http.Response patchEnvironment(String id, String json, String token) {
-        return http.patchJson(base + "/api/environments/" + id, json, bearer(token));
+    public Http.Response patchEnvironment(String id, String json) {
+        return http.patchJson(base + "/api/environments/" + id, json, headers());
     }
 
     /**
@@ -121,7 +132,7 @@ public class PdApi {
      * the bootstrap's own client holds that role. 202 whether or not anything deploys.
      */
     public Http.Response softwareReleased(String repoId, String projectId, String repoName,
-                                          String application, String version, String token) {
+                                          String application, String version) {
         List<String> fields = new ArrayList<>(List.of("repoId", repoId));
         if (projectId != null && !projectId.isBlank()) {
             fields.addAll(List.of("projectId", projectId));
@@ -129,7 +140,7 @@ public class PdApi {
         fields.addAll(List.of("repoName", repoName, "application", application,
                 "version", version));
         return http.postJson(base + "/api/events/software-released",
-                Json.object(fields.toArray(new String[0])), bearer(token));
+                Json.object(fields.toArray(new String[0])), headers());
     }
 
     /**
@@ -140,16 +151,16 @@ public class PdApi {
      * with a secret's value null; nothing here reads it.
      */
     public Http.Response putSetting(String application, String environment, String key,
-                                    String value, boolean secret, String token) {
+                                    String value, boolean secret) {
         return http.putJson(base + "/api/settings/" + application + "/" + environment + "/" + key,
                 Json.object("value", value, "secret", Json.verbatim(String.valueOf(secret))),
-                bearer(token));
+                headers());
     }
 
     /** The newest deployment row of an application in an environment. */
     public Optional<JsonNode> newestDeployment(String environmentId, String applicationName) {
         Http.Response response = http.get(base + "/api/deployments?environmentId=" + environmentId,
-                ADMIN_HEADERS);
+                headers());
         if (!response.ok()) {
             return Optional.empty();
         }

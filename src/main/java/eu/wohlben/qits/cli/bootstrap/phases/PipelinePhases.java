@@ -292,9 +292,8 @@ public class PipelinePhases {
             // is its three databases, which is exactly what the two phases below need: one asks it
             // for the qits project, the other registers every (storage id, name) pair against it
             // before a single push. A name resolves through this service or nowhere.
-            String projectsToken = projectsToken();
             boot.awaitHealth(ctx, env + "-qits-projects (the alias table, on qits-net)",
-                    () -> boot.projects.health(projectsToken));
+                    boot.projects::health);
             boot.awaitHealth(ctx, env + "-qits-ci (on qits-net)", boot.ci::health);
             boot.awaitHealth(ctx, PlatformModel.wireAlias("deployments", env) + " (on qits-net)",
                     boot.pd::health);
@@ -1033,7 +1032,6 @@ public class PipelinePhases {
             // gap between Swarm tasks.
             boot.awaitHealth(ctx, boot.config.envName() + "-qits-githost before repository PUTs",
                     boot.githost::health);
-            String token = projectsToken();
             String projectId = boot.state.projectId;
             if (projectId == null || projectId.isBlank()) {
                 throw new IllegalStateException("the " + PlatformModel.PROJECT + " project has no "
@@ -1048,7 +1046,7 @@ public class PipelinePhases {
             for (String name : PlatformModel.platformRepos()) {
                 String repo = PlatformModel.repo(name);
                 String known = boot.state.repositoryIds.get(repo);
-                String resolved = resolvedStorageId(projectId, repo, token);
+                String resolved = resolvedStorageId(projectId, repo);
                 if (resolved != null) {
                     // qits-projects already answers for this name, so the bare it points at exists
                     // and this run must not ask the storage scheme about it. The id it names wins
@@ -1084,7 +1082,7 @@ public class PipelinePhases {
                             + response.describe());
                 }
                 created += response.status() == 201 ? 1 : 0;
-                register(ctx, projectId, repo, id, token);
+                register(ctx, projectId, repo, id);
                 ctx.log("  " + repo + " -> /git/" + id
                         + (response.status() == 201 ? "  (created)" : "") + ", registered");
             }
@@ -1119,12 +1117,11 @@ public class PipelinePhases {
      * {@code .config/qits/repository.yml} — the repository's own word on what it is, not this run's
      * guess from where the wrapper happens to put it.
      */
-    private void register(PhaseContext ctx, String projectId, String repo, String id,
-                          String token) {
+    private void register(PhaseContext ctx, String projectId, String repo, String id) {
         ctx.status("registering " + repo + " (/git/" + id + ")");
         Http.Response answer = boot.projects.adoptRepository(projectId, id, repo,
-                boot.config.orgUrl() + "/" + repo + ".git", token);
-        if (!answer.ok() && resolvedStorageId(projectId, repo, token) == null) {
+                boot.config.orgUrl() + "/" + repo + ".git");
+        if (!answer.ok() && resolvedStorageId(projectId, repo) == null) {
             throw new IllegalStateException("registering " + repo + " (/git/" + id
                     + ") under project " + projectId + " answered " + answer.describe()
                     + ". Without it /git/" + projectId + "/" + repo + " resolves nowhere, and "
@@ -1141,9 +1138,9 @@ public class PipelinePhases {
      * Every failure answers null — including a service that is not there. A name that cannot be
      * resolved is a name this run is about to register anyway.
      */
-    private String resolvedStorageId(String projectId, String repo, String token) {
+    private String resolvedStorageId(String projectId, String repo) {
         try {
-            return storageIdIn(boot.projects.repositoryByName(projectId, repo, token));
+            return storageIdIn(boot.projects.repositoryByName(projectId, repo));
         } catch (RuntimeException unreachable) {
             return null;
         }
@@ -1519,11 +1516,10 @@ public class PipelinePhases {
                             ExtraSans.of(boot.config, domain),
                             boot.state.pgSuperuserPassword, boot.config.pushToken(),
                             boot.state.daemonSha));
-            String token = boot.bootstrapToken();
             for (DeploymentSettings.Setting setting : settings) {
                 ctx.status("writing " + setting + " in " + env);
                 Http.Response answer = boot.pd.putSetting(setting.application(), env,
-                        setting.key(), setting.value(), setting.secret(), token);
+                        setting.key(), setting.value(), setting.secret());
                 if (!answer.ok()) {
                     // The status alone: the answer to a write echoes the row, and a plain row's
                     // value is in it.
@@ -1549,8 +1545,7 @@ public class PipelinePhases {
             } else {
                 refuseIfAnotherEnvironmentIsThePlatformOne(name);
                 refuseIfAProjectAlreadyHasThisName(ctx, name);
-                Http.Response created = boot.pd.createEnvironment(name, Boot.NETWORK,
-                        boot.bootstrapToken());
+                Http.Response created = boot.pd.createEnvironment(name, Boot.NETWORK);
                 if (created.status() == 201) {
                     boot.state.environmentId = Json.text(
                             Json.parse(created.body()).path("environment"), "id");
@@ -1676,7 +1671,7 @@ public class PipelinePhases {
     }
 
     private void patch(String id, String json) {
-        Http.Response response = boot.pd.patchEnvironment(id, json, boot.bootstrapToken());
+        Http.Response response = boot.pd.patchEnvironment(id, json);
         if (!response.ok()) {
             throw new IllegalStateException("environment " + id + " reconcile failed: "
                     + response.describe());
@@ -1740,7 +1735,7 @@ public class PipelinePhases {
             recorded.write();
             ctx.status("handing " + application + " " + version + " to the deployer");
             Http.Response answer = boot.pd.softwareReleased(boot.storageId(name),
-                    boot.state.projectId, repo, application, version, boot.bootstrapToken());
+                    boot.state.projectId, repo, application, version);
             if (!answer.ok()) {
                 throw new IllegalStateException("the deployer refused " + application + " "
                         + version + " at its manual door: " + answer.describe());
@@ -1985,14 +1980,10 @@ public class PipelinePhases {
         // of the git host — the tag was pushed from here moments ago.
         String event = releaseEvent(boot.state.projectId, boot.storageId(name), repo, version,
                 boot.git.commitOf(src, version));
-        // The bootstrap's own identity, on the platform-wide audience: this stands in for an
-        // announcement the platform makes itself, and the run says so rather than borrowing a
-        // service's client to say it.
-        String token = boot.bootstrapToken();
         ctx.status("announcing " + repo + " " + version + " to qits-ci");
         Http.Response answer = null;
         for (int attempt = 1; attempt <= 3; attempt++) {
-            answer = boot.ci.trigger(event, token);
+            answer = boot.ci.trigger(event);
             if (answer.ok()) {
                 break;
             }
@@ -2018,7 +2009,7 @@ public class PipelinePhases {
             ctx.log("  " + repo + " declares a release phase but qits-ci started no run — "
                     + "asking again (" + again + "/5)");
             sleep(10_000);
-            answer = boot.ci.trigger(event, token);
+            answer = boot.ci.trigger(event);
             if (answer.ok()) {
                 runs = CiApi.triggeredRunIds(answer);
             } else {
@@ -2374,7 +2365,7 @@ public class PipelinePhases {
                             handedOver[0] = true;
                             Http.Response answer = boot.pd.softwareReleased(boot.storageId(name),
                                     boot.state.projectId, PlatformModel.repo(name), application,
-                                    version, boot.bootstrapToken());
+                                    version);
                             if (!answer.ok()) {
                                 return Waiter.Poll.done("REDEPLOY REFUSED: the deployer's manual "
                                         + "door answered " + answer.describe(), "refused");
@@ -3291,14 +3282,13 @@ public class PipelinePhases {
     public Phase qitsProject() {
         return new Phase("qits-project", "the '" + PlatformModel.PROJECT
                 + "' project qits-projects seeds itself", ctx -> {
-            String token = projectsToken();
             boot.awaitHealth(ctx, "qits-projects at " + boot.projects.base(),
-                    () -> boot.projects.health(token));
+                    boot.projects::health);
             releaseSelfSeed(ctx);
             String projectId = Waiter.await(ctx, "the '" + PlatformModel.PROJECT + "' project in "
                             + boot.projects.base(), boot.config.healthTimeout(),
                     boot.config.pollInterval(),
-                    () -> qitsProjectId(boot.projects.projects(token))
+                    () -> qitsProjectId(boot.projects.projects())
                             .map(id -> Waiter.Poll.done(id, id))
                             .orElseGet(() -> Waiter.Poll.pending(
                                     "the self-seed has not created it yet")));
@@ -3366,7 +3356,7 @@ public class PipelinePhases {
      */
     private List<String> projectSlugs() {
         try {
-            return projectSlugs(boot.projects.projects(projectsToken()));
+            return projectSlugs(boot.projects.projects());
         } catch (RuntimeException unavailable) {
             return List.of();
         }
@@ -3391,15 +3381,6 @@ public class PipelinePhases {
             }
         }
         return List.copyOf(slugs);
-    }
-
-    /**
-     * The bootstrap's own bearer as qits-projects reads it — or null with the gate off, where the
-     * forwarded identity headers are the whole credential. It carries the platform-wide audience
-     * like every other token of this run; see {@link Boot#PLATFORM_AUDIENCE}.
-     */
-    private String projectsToken() {
-        return boot.bootstrapToken();
     }
 
     // --- the closing report ------------------------------------------------------------------------

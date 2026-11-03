@@ -7,6 +7,7 @@ import java.util.List;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /** qits-ci: the manual event door the bring-up starts release builds with, and the run listings the
  * waits poll. */
@@ -27,21 +28,40 @@ public class CiApi {
      */
     public static final String RELEASE_SLOTS = ".config/qits/release.yml";
 
-    /** Identity asserted on the private qits-net hop to CI's now-authorized read API. */
-    private static final Map<String, String> SYSTEM_HEADERS = Map.of(
-            "X-Qits-User", "qits-bootstrap",
-            "X-Qits-Roles", "qits:admin");
-
     private final Http http;
     private final String base;
+    /** The bootstrap's own bearer, read per call — see {@link #headers()}. */
+    private final Supplier<String> bearer;
 
-    public CiApi(Http http, String ciUrl) {
+    /**
+     * @param bearer the bootstrap's own machine token, minted against the platform-wide audience.
+     *               Owner ruling 2026-10-18: every call here presents it alone — no forwarded
+     *               identity pair, and no pair as a fallback when there is none to present.
+     */
+    public CiApi(Http http, String ciUrl, Supplier<String> bearer) {
         this.http = http;
         this.base = ciUrl;
+        this.bearer = bearer;
+    }
+
+    /**
+     * What every call here presents: the bootstrap's own bearer, asked fresh per call so a holder
+     * that caches and re-mints near its expiry (as {@code Boot} does) is never handed a stale one.
+     *
+     * @throws IllegalStateException when there is none — a clear failure beats a silent anonymous
+     *                                call or a forwarded-identity pair nothing here sends any more
+     */
+    private Map<String, String> headers() {
+        String token = bearer.get();
+        if (token == null || token.isBlank()) {
+            throw new IllegalStateException("no bearer to present to qits-ci — every call here "
+                    + "needs the bootstrap's own machine token, and none was minted");
+        }
+        return Map.of("Authorization", "Bearer " + token);
     }
 
     public Http.Response health() {
-        return http.get(base + "/q/health/ready", SYSTEM_HEADERS);
+        return http.get(base + "/q/health/ready", headers());
     }
 
     public boolean ready() {
@@ -76,8 +96,8 @@ public class CiApi {
      * rebuild, so a boot that wants a version deployed replays the release and lets the build
      * publish it.
      */
-    public Http.Response trigger(String eventJson, String token) {
-        return http.postJson(base + "/api/events/trigger", eventJson, bearer(token));
+    public Http.Response trigger(String eventJson) {
+        return http.postJson(base + "/api/events/trigger", eventJson, headers());
     }
 
     /** The runs a trigger answered with, so a caller can say whether any recipe selected it. */
@@ -88,11 +108,6 @@ public class CiApi {
         }
         Json.parse(answer.body()).path("runIds").forEach(id -> runs.add(id.asText()));
         return runs;
-    }
-
-    private static Map<String, String> bearer(String token) {
-        return token == null || token.isBlank() ? Map.of()
-                : Map.of("Authorization", "Bearer " + token);
     }
 
     // THERE IS NO postReceive REPLAY EITHER, and its absence is the byte-plane split's dividend.
@@ -130,7 +145,7 @@ public class CiApi {
      * IS.
      */
     public List<String[]> finishedEventRuns(String repoId) {
-        Http.Response response = http.get(base + "/api/runs/finished?limit=20", SYSTEM_HEADERS);
+        Http.Response response = http.get(base + "/api/runs/finished?limit=20", headers());
         if (!response.ok()) {
             return List.of();
         }
@@ -160,7 +175,7 @@ public class CiApi {
      */
     public boolean greenReleaseRunAt(String repoId, String commitSha) {
         Http.Response response = http.get(base + "/api/runs?repositoryId=" + repoId + "&limit=20",
-                SYSTEM_HEADERS);
+                headers());
         if (!response.ok()) {
             return false;
         }
@@ -182,7 +197,7 @@ public class CiApi {
      */
     public Optional<JsonNode> newestRun(String repoId) {
         Http.Response response = http.get(base + "/api/runs?repositoryId=" + repoId + "&limit=1",
-                SYSTEM_HEADERS);
+                headers());
         if (!response.ok()) {
             return Optional.empty();
         }
@@ -198,7 +213,7 @@ public class CiApi {
      * output, so following a build along is polling here, which is what its own client does.
      */
     public Optional<JsonNode> run(String runId) {
-        Http.Response response = http.get(base + "/api/runs/" + runId, SYSTEM_HEADERS);
+        Http.Response response = http.get(base + "/api/runs/" + runId, headers());
         return response.ok() ? Optional.of(Json.parse(response.body())) : Optional.empty();
     }
 

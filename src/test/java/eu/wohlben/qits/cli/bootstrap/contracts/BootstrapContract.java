@@ -356,7 +356,7 @@ final class BootstrapContract {
                     List.of("$.entries[*].project.id", "$.entries[*].project.name",
                             "$.entries[*].project.slug"),
                     (base, params, recorded, op) -> {
-                        Http.Response listing = new ProjectsApi(new Http(), base).projects(null);
+                        Http.Response listing = projects(base).projects();
                         assertThat(listing.ok()).isTrue();
                         JsonNode project = recorded.path("entries").path(0).path("project");
                         boolean qits = "qits".equals(project.path("name").asText())
@@ -379,11 +379,11 @@ final class BootstrapContract {
                             "{\"repositoryId\":\"{repositoryId}\",\"name\":\"{repoName}\","
                                     + "\"url\":\"" + ORG_URL + "/{repoName}.git\"}"),
                     200, List.of(),
-                    (base, params, recorded, op) -> assertThat(new ProjectsApi(new Http(), base)
+                    (base, params, recorded, op) -> assertThat(projects(base)
                             .adoptRepository(params.get("projectId"), params.get("repositoryId"),
                                     params.get("repoName"),
-                                    ORG_URL + "/" + params.get("repoName") + ".git",
-                                    null).ok()).isTrue(),
+                                    ORG_URL + "/" + params.get("repoName") + ".git")
+                            .ok()).isTrue(),
                     // No archetype: owner ruling 2026-11-03. qits-projects stores null for an
                     // adopted row with none stated, and fills it in later from the repository's own
                     // .config/qits/repository.yml during its wrapper reconcile.
@@ -395,8 +395,8 @@ final class BootstrapContract {
                     Request.get("/projects/api/projects/{projectId}/repositories/by-name/{repoName}"),
                     200, List.of("$.repositoryId"),
                     (base, params, recorded, op) -> assertThat(PhaseReads.storageIdIn(
-                            new ProjectsApi(new Http(), base).repositoryByName(
-                                    params.get("projectId"), params.get("repoName"), null)))
+                            projects(base).repositoryByName(
+                                    params.get("projectId"), params.get("repoName"))))
                             .isEqualTo(recorded.path("repositoryId").asText()),
                     "params projectId and repoName; the by-name read answers {repositoryId}"),
 
@@ -443,7 +443,7 @@ final class BootstrapContract {
                         String event = PhaseReads.releaseEvent(params.get("projectId"),
                                 params.get("repositoryId"), params.get("repositoryName"),
                                 params.get("version"), params.get("commitSha"));
-                        assertThat(CiApi.triggeredRunIds(ci(base).trigger(event, null)))
+                        assertThat(CiApi.triggeredRunIds(ci(base).trigger(event)))
                                 .hasSameSizeAs(recorded.path("runIds"));
                     },
                     "the replayed SCMRelease answers 200 with runIds naming the run it recorded"),
@@ -507,7 +507,7 @@ final class BootstrapContract {
                     201, List.of("$.environment.id"),
                     (base, params, recorded, op) -> {
                         Http.Response created = pd(base).createEnvironment(
-                                params.get("environmentName"), params.get("network"), null);
+                                params.get("environmentName"), params.get("network"));
                         assertThat(created.status()).isEqualTo(201);
                         assertThat(eu.wohlben.qits.cli.bootstrap.api.Json.parse(created.body())
                                 .path("environment").path("id").asText()).isNotBlank();
@@ -520,7 +520,7 @@ final class BootstrapContract {
                             "{\"platform\":true}"),
                     200, List.of(),
                     (base, params, recorded, op) -> assertThat(pd(base).patchEnvironment(
-                            params.get("environmentId"), "{\"platform\":true}", null).ok()).isTrue(),
+                            params.get("environmentId"), "{\"platform\":true}").ok()).isTrue(),
                     "param environmentId; the PATCH {platform: true} answers 200"),
             new Case(DEPLOYMENTS, Trigger.phase("seed-deploy-<application>"),
                     "a released version of a deployable repository", "softwareReleased",
@@ -531,7 +531,7 @@ final class BootstrapContract {
                     202, List.of(),
                     (base, params, recorded, op) -> assertThat(pd(base).softwareReleased(
                             params.get("repoId"), params.get("projectId"), params.get("repoName"),
-                            params.get("application"), params.get("version"), null).status())
+                            params.get("application"), params.get("version")).status())
                             .isEqualTo(202),
                     "the software-released door answers 202"),
             // PENDING until qits-deployments records a state for its settings door: the
@@ -544,7 +544,7 @@ final class BootstrapContract {
                     200, List.of(),
                     (base, params, recorded, op) -> assertThat(pd(base).putSetting(
                             params.get("application"), params.get("environment"),
-                            params.get("key"), params.get("value"), false, null).ok()).isTrue(),
+                            params.get("key"), params.get("value"), false).ok()).isTrue(),
                     "params application, environment, key and value; the upsert of a plain"
                             + " setting answers 200"),
             new Case(DEPLOYMENTS, Trigger.phase("deploy-<application>, seed-deploy-<application>"),
@@ -845,8 +845,7 @@ final class BootstrapContract {
     /** {@code environment} and {@code summary}: the slugs of a listing, as the phase reads them. */
     private static Call projectSlugs() {
         return (base, params, recorded, op) -> {
-            List<String> slugs = PhaseReads.projectSlugs(
-                    new ProjectsApi(new Http(), base).projects(null));
+            List<String> slugs = PhaseReads.projectSlugs(projects(base).projects());
             List<String> expected = new ArrayList<>();
             recorded.path("entries").forEach(e -> expected.add(e.path("project").path("slug").asText()));
             assertThat(slugs).containsExactlyElementsOf(expected);
@@ -858,11 +857,15 @@ final class BootstrapContract {
     // so that what the guard records is in the rows' own coordinates.
 
     static CiApi ci(String base) {
-        return new CiApi(new Http(), base + "/ci");
+        return new CiApi(new Http(), base + "/ci", () -> "Bearer pact");
     }
 
     static PdApi pd(String base) {
-        return new PdApi(new Http(), base + "/deployments");
+        return new PdApi(new Http(), base + "/deployments", () -> "Bearer pact");
+    }
+
+    static ProjectsApi projects(String base) {
+        return new ProjectsApi(new Http(), base, () -> "Bearer pact");
     }
 
     static GitHostApi githost(String base) {

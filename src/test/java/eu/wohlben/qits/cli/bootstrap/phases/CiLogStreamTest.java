@@ -180,7 +180,7 @@ class CiLogStreamTest {
         int reads;
 
         FakeCi() {
-            super(new Http(), "http://127.0.0.1:1/ci");
+            super(new Http(), "http://127.0.0.1:1/ci", () -> "Bearer fake");
         }
 
         @Override

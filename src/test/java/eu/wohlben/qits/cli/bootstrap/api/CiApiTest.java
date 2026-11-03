@@ -57,7 +57,7 @@ class CiApiTest {
                 {"runs":[
                   {"id":"r1","triggerType":"EVENT","status":"SUCCESS",
                    "configPath":".config/qits/release.yml","commitSha":"abc123"}
-                ]}"""), "http://ci");
+                ]}"""), "http://ci", () -> "Bearer t");
 
         assertThat(ci.greenReleaseRunAt("repo-1", "abc123")).isTrue();
     }
@@ -79,7 +79,7 @@ class CiApiTest {
                    "configPath":".config/qits/release.yml","commitSha":"abc123"},
                   {"id":"r3","triggerType":"EVENT","status":"SUCCESS",
                    "configPath":".config/qits/release.yml","commitSha":"def456"}
-                ]}"""), "http://ci");
+                ]}"""), "http://ci", () -> "Bearer t");
 
         assertThat(ci.greenReleaseRunAt("repo-1", "abc123")).isFalse();
     }
@@ -87,7 +87,8 @@ class CiApiTest {
     /** A read that did not answer says nothing about the registry, so it is not a skip. */
     @Test
     void anUnreadableListingIsNotAGreenRun() {
-        CiApi ci = new CiApi(new CannedRuns(new Http.Response(503, "mid cutover")), "http://ci");
+        CiApi ci = new CiApi(new CannedRuns(new Http.Response(503, "mid cutover")), "http://ci",
+                () -> "Bearer t");
 
         assertThat(ci.greenReleaseRunAt("repo-1", "abc123")).isFalse();
     }

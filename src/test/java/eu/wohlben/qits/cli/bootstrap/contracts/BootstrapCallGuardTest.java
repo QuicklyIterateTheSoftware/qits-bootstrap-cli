@@ -140,7 +140,7 @@ class BootstrapCallGuardTest {
         factories.put(IdpApi.class, () -> new IdpApi(new Http(), base + "/idp"));
         factories.put(eu.wohlben.qits.cli.bootstrap.api.PdApi.class,
                 () -> BootstrapContract.pd(base));
-        factories.put(ProjectsApi.class, () -> new ProjectsApi(new Http(), base));
+        factories.put(ProjectsApi.class, () -> BootstrapContract.projects(base));
         factories.put(eu.wohlben.qits.cli.bootstrap.api.ServiceClientsApi.class,
                 () -> BootstrapContract.serviceClients(base));
         factories.put(eu.wohlben.qits.cli.bootstrap.api.SystemApi.class,
