@@ -517,10 +517,9 @@ public interface BootstrapConfig {
     }
 
     /**
-     * qits-system at its own alias, for the reason {@link #ciUrl()} gives and one more: the
-     * targets doors' greenlight takes {@code qits:admin} alone, asserted as {@code X-Qits-User}/
-     * {@code X-Qits-Roles}, which the edge strips. It is not a seed service, so it answers only once
-     * the train has deployed it — which is why the {@code target-*} phases come after the train.
+     * qits-system at its own alias, for the reason {@link #ciUrl()} gives. Every call presents the
+     * bootstrap's own bearer (qits-1333). It is not a seed service, so it answers only once the
+     * train has deployed it — which is why the {@code target-*} phases come after the train.
      */
     default String systemUrl() {
         return "http://" + PlatformModel.wireAlias("system", envName()) + ":8080/system";
@@ -577,9 +576,8 @@ public interface BootstrapConfig {
      * qits-ci is handed as {@code QITS_CI_PROJECTS_URL}, and that reader appends
      * {@code /projects/api/repositories} itself.
      * <p>
-     * <b>Its own alias rather than the edge</b>, because this program asserts
-     * {@code X-Qits-User}/{@code X-Qits-Roles} on the hop and the edge strips exactly those headers
-     * from what it proxies.
+     * <b>Its own alias until the edge is ready</b>, then its public name ({@code EdgeAddresses});
+     * every call presents the bootstrap's own bearer alone.
      * <p>
      * It is dialled from {@code seed-health} on, because qits-projects is a seed service: the
      * alias table has to answer before this run creates the first repository, not after that

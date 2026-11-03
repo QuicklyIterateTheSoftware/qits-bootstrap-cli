@@ -782,7 +782,7 @@ final class BootstrapContract {
                         JsonNode answer = eu.wohlben.qits.cli.bootstrap.api.Json.parse(
                                 system(base).createTarget(PhaseReads.LOCALHOST_RUNNER,
                                         "this platform's own host, declared by qits-bootstrap",
-                                        0, 1, 1, null).body());
+                                        0, 1, 1).body());
                         assertThat(SystemApi.targetOf(answer).path("id").asText()).isNotBlank();
                         assertThat(SystemApi.registrationToken(answer)).isPresent();
                         assertThat(SystemApi.runnerUrl(answer.path("installLine").asText()))
@@ -813,7 +813,7 @@ final class BootstrapContract {
                     200, List.of("$.registrationToken", "$.installLine"),
                     (base, params, recorded, op) -> assertThat(SystemApi.registrationToken(
                             eu.wohlben.qits.cli.bootstrap.api.Json.parse(system(base)
-                                    .rotateRegistrationToken(params.get("runnerId"), null).body())))
+                                    .rotateRegistrationToken(params.get("runnerId")).body())))
                             .isPresent(),
                     "param runnerId; the body-less rotation answers 200 with registrationToken"
                             + " and installLine"),
@@ -877,7 +877,7 @@ final class BootstrapContract {
     }
 
     static SystemApi system(String base) {
-        return new SystemApi(new Http(), base + "/system");
+        return new SystemApi(new Http(), base + "/system", () -> "Bearer pact");
     }
 
     static ServiceClientsApi serviceClients(String base) {

@@ -116,17 +116,16 @@ public class Boot {
         this.ingress = new BootstrapIngressLifecycle(this);
         this.addresses = new EdgeAddresses(() -> DomainName.of(config));
         // EVERY CLIENT BELOW THAT SENDS ONLY THE BOOTSTRAP'S BEARER is routed: the alias before
-        // the edge is ready, its public name after. Two are not, and each for a reason the edge
-        // makes: qits-system's targets doors take a forwarded identity the edge strips (see
-        // SystemApi), and the git host is reached by the git transport, whose address Boot.gitUrl
-        // decides — neither is an API call through this resolver.
+        // the edge is ready, its public name after. Two are not: qits-system, which is not
+        // seed-deployed and so has no public name edge-ready proves (see SystemApi), and the git
+        // host, reached by the git transport, whose address Boot.gitUrl decides.
         this.artifacts = new ArtifactsApi(http,
                 addresses.route(REGISTRY_LABEL, config.artifactsUrl()),
                 this::storeReadAuthorization);
         this.githost = new GitHostApi(http, config.gitHostUrl(), config.gitHostHealthUrl());
         this.ci = new CiApi(http, addresses.route(CI_LABEL, config.ciUrl()),
                 this::bootstrapToken);
-        this.system = new SystemApi(http, config.systemUrl());
+        this.system = new SystemApi(http, config.systemUrl(), this::bootstrapToken);
         this.pd = new PdApi(http,
                 addresses.route(DEPLOYMENTS_LABEL, config.platformDeploymentsUrl()),
                 this::bootstrapToken);

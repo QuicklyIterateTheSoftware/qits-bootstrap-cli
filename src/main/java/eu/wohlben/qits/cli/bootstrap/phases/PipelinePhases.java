@@ -2971,7 +2971,7 @@ public class PipelinePhases {
         return new RunnerKind("target", TARGET_PROCESS_LABEL, TARGET_STATE_DIR,
                 PipelinePhases::targetStateVolume, PipelinePhases::targetContainerName,
                 PipelinePhases::targetUrl,
-                id -> boot.system.rotateRegistrationToken(id, boot.bootstrapToken()),
+                boot.system::rotateRegistrationToken,
                 PipelinePhases::targetIssued,
                 id -> "delete the target in qits-system (DELETE /system/api/targets/" + id
                         + ", or the System UI's Targets page)",
@@ -3082,8 +3082,7 @@ public class PipelinePhases {
             boolean registered = false;
             if (decision.claim() == RunnerClaim.DECLARE) {
                 Http.Response created = boot.system.createTarget(LOCALHOST_RUNNER,
-                        TARGET_DESCRIPTION, minCi, TARGET_MIN_WORKSPACE, TARGET_MIN_DESK,
-                        boot.bootstrapToken());
+                        TARGET_DESCRIPTION, minCi, TARGET_MIN_WORKSPACE, TARGET_MIN_DESK);
                 if (created.status() != 201) {
                     // Only a refusal is described: a 2xx body carries the token.
                     throw new IllegalStateException("declaring target " + LOCALHOST_RUNNER
@@ -3172,9 +3171,9 @@ public class PipelinePhases {
      * depends on, so this asks it, with the patience every other health wait here has. A new target
      * starts quarantined until its first health check passes, and the bootstrap does not wait on
      * that check — the first release replay is the proof it would have been; it lifts it through
-     * the operator's door (the forwarded {@code qits:admin}
-     * identity — the greenlight takes the two admin roles and nothing a machine holds), and a
-     * target already in service is not greenlit again.
+     * the greenlight with this run's own bearer ({@code qits:system}, which the door admits since
+     * qits-1333 — no forwarded identity pair), and a target already in service is not greenlit
+     * again.
      * <p>
      * <b>Connected and greenlit is all it needs — never a sign-in.</b> A target's {@code login}
      * (and {@code slots}) checks are reported and never quarantine it, and CI leases are not

@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -15,10 +16,14 @@ import java.util.regex.Pattern;
  * {@code WorkspacesApi}, whose runner doors were the same four, door for door, when this host's
  * target replaced its workspaces runner (qits-1535).
  * <p>
- * <b>At the service's own alias on qits-net, as qits-ci is dialled.</b> The greenlight takes
- * {@code qits:admin} or {@code qits:admin-agent} and nothing a machine holds, so it goes as the
- * forwarded identity — {@code X-Qits-User}/{@code X-Qits-Roles}, which the edge strips from what it
- * proxies — and has to reach the service directly. The reads go the same way.
+ * <b>Every call presents the bootstrap's own bearer, and nothing else.</b> Owner ruling (epic
+ * qits-543): {@code qits:system} opens every service door — the greenlight included since
+ * qits-1333 — and no service sends the forwarded {@code X-Qits-User}/{@code X-Qits-Roles} pair, so
+ * there is no pair here beside the bearer and none as a fallback when there is no bearer to present:
+ * the call then fails closed, as {@link CiApi}'s do.
+ * <p>
+ * <b>At the service's own alias on qits-net</b>, because qits-system is not seed-deployed and
+ * {@code edge-ready} proves no public name for it.
  * <p>
  * <b>The shapes are qits-system's own.</b> The listing is a bare JSON array of targets. A create
  * or a rotation answers {@code {target, registrationToken, installLine}}: the token is a field of
@@ -26,21 +31,38 @@ import java.util.regex.Pattern;
  */
 public class SystemApi {
 
-    /** Identity asserted on the private qits-net hop, as {@link CiApi} asserts it to qits-ci. */
-    private static final Map<String, String> SYSTEM_HEADERS = Map.of(
-            "X-Qits-User", "qits-bootstrap",
-            "X-Qits-Roles", "qits:admin");
-
     private final Http http;
     private final String base;
+    /** The bootstrap's own bearer, read per call — see {@link #headers()}. */
+    private final Supplier<String> bearer;
 
-    public SystemApi(Http http, String systemUrl) {
+    /**
+     * @param bearer the bootstrap's own machine token ({@code qits:system}), minted against the
+     *               platform-wide audience and asked fresh per call
+     */
+    public SystemApi(Http http, String systemUrl, Supplier<String> bearer) {
         this.http = http;
         this.base = systemUrl;
+        this.bearer = bearer;
+    }
+
+    /**
+     * What every call here presents: the bootstrap's own bearer.
+     *
+     * @throws IllegalStateException when there is none — a clear failure beats a silent anonymous
+     *                               call or a forwarded-identity pair nothing here sends any more
+     */
+    private Map<String, String> headers() {
+        String token = bearer.get();
+        if (token == null || token.isBlank()) {
+            throw new IllegalStateException("no bearer to present to qits-system — every call here "
+                    + "needs the bootstrap's own machine token, and none was minted");
+        }
+        return Map.of("Authorization", "Bearer " + token);
     }
 
     public Http.Response health() {
-        return http.get(base + "/q/health/ready", SYSTEM_HEADERS);
+        return http.get(base + "/q/health/ready", headers());
     }
 
     /**
@@ -49,42 +71,41 @@ public class SystemApi {
      * only time either value is ever answered. 409 is a name already taken; 503 a qits-system that
      * commissions nothing, knows no public domain to address a runner by, or pins no runner.
      * <p>
-     * <b>A machine write, with this run's own token</b> — the create and the rotation take
-     * {@code qits:system} beside the two admin roles.
+     * <b>A machine write, with this run's own token</b> — the create takes {@code qits:system}.
      * <p>
      * <b>Never {@link Http.Response#describe()} a successful answer</b>: its body carries the token.
      */
     public Http.Response createTarget(String name, String description, int ci, int workspace,
-                                      int desk, String token) {
+                                      int desk) {
         String reservations = "{\"ci\":" + ci + ",\"workspace\":" + workspace + ",\"desk\":" + desk
                 + "}";
         return http.postJson(base + "/api/targets",
                 Json.object("name", name, "description", description,
                         "reservations", Json.verbatim(reservations)),
-                writer(token));
+                headers());
     }
 
     /** {@code GET /system/api/targets}: every target, with whether it is registered and connected. */
     public Http.Response targets() {
-        return http.get(base + "/api/targets", SYSTEM_HEADERS);
+        return http.get(base + "/api/targets", headers());
     }
 
     /**
      * {@code POST /system/api/targets/{id}/registration-token}: a fresh token for a target whose
      * runner has not registered, in the create's shape. A registered one is 409.
      */
-    public Http.Response rotateRegistrationToken(String targetId, String token) {
+    public Http.Response rotateRegistrationToken(String targetId) {
         return http.post(base + "/api/targets/" + targetId + "/registration-token",
-                writer(token));
+                headers());
     }
 
     /**
-     * <b>{@code POST /system/api/targets/{id}/greenlight}: lift a target's quarantine.</b> The two
-     * admin roles alone, so it goes as the forwarded identity on the qits-net hop, as
-     * {@link CiApi#greenlight} does. A target already in service is answered as it is.
+     * <b>{@code POST /system/api/targets/{id}/greenlight}: lift a target's quarantine.</b> With this
+     * run's own bearer: the door admits {@code qits:system} since qits-1333. A target already in
+     * service is answered as it is.
      */
     public Http.Response greenlight(String targetId) {
-        return http.post(base + "/api/targets/" + targetId + "/greenlight", SYSTEM_HEADERS);
+        return http.post(base + "/api/targets/" + targetId + "/greenlight", headers());
     }
 
     /** Every target of a {@link #targets()} answer — a bare array — or none when it did not answer. */
@@ -137,10 +158,4 @@ public class SystemApi {
 
     private static final Pattern RUNNER_URL =
             Pattern.compile("QITS_SYSTEM_RUNNER_URL='([^']+)'");
-
-    /** A write's credential: the bearer when there is one, the forwarded identity otherwise. */
-    private static Map<String, String> writer(String token) {
-        return token == null || token.isBlank() ? SYSTEM_HEADERS
-                : Map.of("Authorization", "Bearer " + token);
-    }
 }

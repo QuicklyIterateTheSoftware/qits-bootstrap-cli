@@ -2360,6 +2360,15 @@ class PipelinePhasesTest {
         return boot;
     }
 
+    /**
+     * Every call but the bootstrap's own token mint: qits-system is dialled with that bearer alone
+     * (qits-1333), so minting it is the one call besides the targets doors' own.
+     */
+    private static List<String> beyondTheBearer(CannedHttp http) {
+        return http.calls.stream()
+                .filter(call -> !call.equals("FORM http://prod-qits-idp:8080/idp/token")).toList();
+    }
+
     private static List<String> tgCalls(CannedHttp http) {
         return http.calls.stream().filter(call -> call.contains("-qits-system:")).toList();
     }
@@ -2468,7 +2477,7 @@ class PipelinePhasesTest {
                 .run(new CiLogStreamTest.Recorder()))
                 .isInstanceOf(PhaseSkipped.class)
                 .hasMessageContaining("somebody's");
-        assertThat(http.calls).containsExactly("GET " + TARGETS);
+        assertThat(beyondTheBearer(http)).containsExactly("GET " + TARGETS);
         assertThat(runner.argv).isEmpty();
         assertThat(boot.state.targetId).isNull();
         assertThat(temp.resolve(".qits-bootstrap.env")).doesNotExist();
@@ -2477,7 +2486,7 @@ class PipelinePhasesTest {
                 .action().run(new CiLogStreamTest.Recorder()))
                 .isInstanceOf(PhaseSkipped.class)
                 .hasMessageContaining("started no runner");
-        assertThat(http.calls).containsExactly("GET " + TARGETS);
+        assertThat(beyondTheBearer(http)).containsExactly("GET " + TARGETS);
     }
 
     /** A listing that does not answer starts nothing: not knowing whose targets there are. */
@@ -2718,7 +2727,10 @@ class PipelinePhasesTest {
         assertThat(runner.lines()).noneMatch(line -> line.contains("qits_tok_rotated789"));
     }
 
-    /** Connected, quarantined, greenlit as the forwarded admin, then proven in service. */
+    /**
+     * Connected, quarantined, greenlit with the bootstrap's own bearer — no forwarded identity
+     * pair (qits-1333) — then proven in service.
+     */
     @Test
     void aConnectedQuarantinedTargetIsGreenlit() throws Exception {
         List<String> listings = new ArrayList<>(List.of(
@@ -2737,10 +2749,12 @@ class PipelinePhasesTest {
         new PipelinePhases(boot).localhostTargetConnected().action()
                 .run(new CiLogStreamTest.Recorder());
 
-        assertThat(http.calls).containsExactly("GET " + TARGETS, greenlight, "GET " + TARGETS);
+        assertThat(beyondTheBearer(http)).containsExactly("GET " + TARGETS, greenlight,
+                "GET " + TARGETS);
         assertThat(http.headers.get(greenlight))
-                .containsEntry("X-Qits-Roles", "qits:admin")
-                .doesNotContainKey("Authorization");
+                .containsEntry("Authorization", "Bearer bootstrap-bearer")
+                .doesNotContainKey("X-Qits-User")
+                .doesNotContainKey("X-Qits-Roles");
     }
 
     /** A target already in service is not greenlit again: its health is qits-system's to keep. */
@@ -2754,7 +2768,7 @@ class PipelinePhasesTest {
         new PipelinePhases(boot).localhostTargetConnected().action()
                 .run(new CiLogStreamTest.Recorder());
 
-        assertThat(http.calls).containsExactly("GET " + TARGETS);
+        assertThat(beyondTheBearer(http)).containsExactly("GET " + TARGETS);
     }
 
     /** Still quarantined after the greenlight: the boot stops, naming the target's own reason. */
