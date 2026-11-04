@@ -105,8 +105,8 @@ public final class ComposeTemplate {
             # githost.${ENV_NAME}.localhost:${PORT}. systemd-resolved answers every *.localhost name
             # with the loopback address, so the host's docker daemon and a person's git both arrive
             # at the edge, which is where this platform's authentication lives: since 2026-08-14
-            # EVERY method on all three names needs a bearer, reads included. On qits-net the same
-            # three names are aliases of the edge — see its networks block, which says why.
+            # EVERY method on all three names needs a bearer, reads included. On qits-net they are
+            # no longer aliases of the edge (qits-1434): a container dials the public names.
             #
             # The daemon needs `insecure-registries` for the two names it dials — they are HTTP —
             # and preflight asks the DAEMON what it allows, warning when they are missing. The way in
@@ -417,35 +417,15 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_EVENTSTREAM_PASSWORD: "${PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD}"
                   QITS_EVENTS_URL: http://${DIAL_EVENTS}:8080
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}${EDGE_TLS}
-                networks:
-                  # THE THREE VHOSTS ARE ALIASES OF THIS SERVICE, and the long form is here for
-                  # nothing else. Docker's embedded DNS answers only the names it holds and
-                  # synthesizes no wildcard, so *.localhost resolves for nobody ON qits-net unless
-                  # a container claims each name. An alias is how a container claims one.
-                  #
-                  # WHO ASKS. Everything on this network that dials a vhost rather than a wire
-                  # alias, and BuildKit is the case that found it: a step container fetches its
-                  # own registry token CLIENT-SIDE, so the step resolves
-                  # registry.${ENV_NAME}.localhost itself instead of leaving it to the host's
-                  # daemon. Without the aliases that lookup is NXDOMAIN and the push never starts.
-                  #
-                  # CURL IS A MISLEADING PROBE HERE. It resolves *.localhost to the loopback
-                  # address ITSELF — RFC 6761 says the name is special — and asks no resolver, so
-                  # a curl from inside a container answers 127.0.0.1 and proves nothing about DNS,
-                  # while libc's and Go's resolvers do ask and were getting NXDOMAIN. Ask with
-                  # `getent hosts` or `nslookup` instead.
-                  #
-                  # THESE FOUR ARE VHOSTS, not the service's own name. It carried a fifth for the
-                  # platform-service retirement — its own qualified address — because the service's
-                  # NAME was then the bare qits-edge while every generated file had already moved to
-                  # dialling the qualified one, so the seed had to answer to both. The name IS the
-                  # qualified address now, and an alias repeating it would be the same name twice.
-                  qits-net:
-                    aliases:
-                      - registry.${ENV_NAME}.localhost
-                      - mirror.${ENV_NAME}.localhost
-                      - githost.${ENV_NAME}.localhost
-                      - githost.${ENV_NAME}.internal
+                # NO qits-net ALIASES (qits-1434). The edge used to claim registry/mirror/githost
+                # .<env>.localhost and githost.<env>.internal on this network, for containers that
+                # dialled a machine name rather than a wire alias. Nothing on qits-net does now:
+                # ci steps, the seed pullers, workspace and agent containers all dial
+                # https://<label>.qits.<domain>, and the seed's own calls use wire aliases. The
+                # host daemon's pre-edge-ready push to registry.<env>.localhost:<port> resolves on
+                # the HOST (systemd-resolved, *.localhost -> loopback) and arrives on the published
+                # port, so it never needed a qits-net alias.
+                networks: [qits-net]
                 deploy:
                   replicas: 1
                   restart_policy:
@@ -926,7 +906,6 @@ public final class ComposeTemplate {
                   # pushing, and the default branch is protected here.
                   QITS_REPOSITORIES_GIT_PUSH_TOKEN: "${PUSH_TOKEN}"
                   QITS_PROJECTS_OWN_HOST: ${ENV_NAME}-qits-projects
-                  QITS_PROJECTS_CONTAINER_GIT_URL: http://githost.${ENV_NAME}.internal:8080
                   QITS_CONTAINERS_URL: http://${ENV_NAME}-qits-containers:8080
                   QITS_EVENTS_URL: http://${DIAL_EVENTS}:8080
                   # Inbound: the bootstrap's own calls carry a bearer addressed to this service.
@@ -1265,7 +1244,6 @@ public final class ComposeTemplate {
                   # It REFUSES TO START without this one.
                   QITS_PROJECTS_URL: http://${ENV_NAME}-qits-projects:8080
                   QITS_GITHOST_URL: http://${ENV_NAME}-qits-githost:8080
-                  QITS_WORKSPACE_CONTAINER_GIT_URL: http://githost.${ENV_NAME}.internal:8080
                   QITS_EVENTS_URL: http://${DIAL_EVENTS}:8080
                   # Its own name, for the daemons' control socket: `auto` is wrong in a container,
                   # silently.

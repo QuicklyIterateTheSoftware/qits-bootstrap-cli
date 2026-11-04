@@ -335,10 +335,9 @@ class ComposeTemplateTest {
                     .as("%s declaring its own name as an alias", name)
                     .isEmpty();
         }
-        // And the only long networks: form left is the edge's, whose aliases are VHOSTS rather than
-        // its own name — the *.localhost names a docker client and a git remote reach it at.
-        assertThat(serviceBlock(compose, ENV + "-qits-edge"))
-                .contains("registry." + ENV + ".localhost");
+        // And no long networks: form is left at all — the edge's machine-name aliases went with
+        // qits-1434, so it joins qits-net under its own name like every other seed service.
+        assertThat(serviceBlock(compose, ENV + "-qits-edge")).contains("networks: [qits-net]");
         assertThat(serviceBlock(compose, ENV + "-qits-ci")).contains("networks: [qits-net]");
     }
 
@@ -947,29 +946,30 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>THE THREE VHOSTS ARE ALIASES OF THE EDGE ON qits-net.</b> The deployed edge declares the
-     * same four in its own deployments.yml. Docker's embedded
-     * DNS holds no wildcard, so nothing ON the network resolves a {@code *.localhost} name unless a
-     * container claims it — and BuildKit inside a ci step fetches its registry token client-side,
-     * which is a lookup made on this network. curl is a misleading probe: it resolves
-     * {@code *.localhost} to loopback itself and asks no resolver at all.
+     * <b>THE EDGE CLAIMS NO MACHINE NAME ON qits-net</b> (qits-1434). It used to alias
+     * {@code registry/mirror/githost.<env>.localhost} and {@code githost.<env>.internal} for
+     * containers that dialled a vhost on this network; every such container dials
+     * {@code https://<label>.qits.<domain>} now. The host daemon's pre-{@code edge-ready} push to
+     * {@code registry.<env>.localhost:<port>} resolves on the host and arrives on the published
+     * port, which no alias was ever part of.
      */
     @Test
-    void theEdgeAnswersTheThreeVhostsOnTheNetworkToo() {
-        String edge = serviceBlock(ComposeTemplate.compose(tokens()), ENV + "-qits-edge");
+    void theEdgeClaimsNoMachineNameOnTheNetwork() {
+        String compose = ComposeTemplate.compose(tokens());
+        String edge = serviceBlock(compose, ENV + "-qits-edge");
 
-        // The long form, whole: the short `networks: [qits-net]` carries no aliases at all.
-        assertThat(edge).contains("""
-                    networks:
-                """.stripTrailing());
-        assertThat(edge).contains("""
-                      qits-net:
-                        aliases:
-                          - registry.prod.localhost
-                          - mirror.prod.localhost
-                          - githost.prod.localhost
-                """.stripTrailing());
-        assertThat(edge).doesNotContain("networks: [qits-net]");
+        assertThat(edge).contains("networks: [qits-net]").doesNotContain("aliases:");
+        assertThat(compose)
+                .doesNotContain("- registry.prod.localhost")
+                .doesNotContain("- mirror.prod.localhost")
+                .doesNotContain("- githost.prod.localhost")
+                .doesNotContain("githost.prod.internal")
+                .doesNotContain("-qits-configuration");
+        // The two container git keys that named the internal alias: qits-projects' is retired
+        // (qits-1415) and qits-workspaces' defaults to https://githost.qits.<domain>.
+        assertThat(compose)
+                .doesNotContain("QITS_PROJECTS_CONTAINER_GIT_URL")
+                .doesNotContain("QITS_WORKSPACE_CONTAINER_GIT_URL");
     }
 
     /**
@@ -1552,14 +1552,12 @@ class ComposeTemplateTest {
         other.putAll(PlatformModel.modelTokens("preprod"));
 
                 // ci's own client id follows the tier, on the seed where it is spelled at all.
-                // The edge's own registry vhost alias carries the tier too: one edge, one door, a
-                // name per tier. Neither ci nor the deployer is told that name any more — each
-                // derives registry.qits.<domain> itself, from QITS_DOMAIN, which carries no tier.
+                // Neither ci nor the deployer is told a registry vhost any more — each derives
+                // registry.qits.<domain> itself, from QITS_DOMAIN, which carries no tier.
         assertThat(ComposeTemplate.compose(other))
                 .contains("\n  preprod-qits-ci:\n")
                 .contains("QITS_EDGE_ENVIRONMENTS: preprod")
                 .contains("QITS_RESOURCE_IDP_CLIENT_ID: preprod-qits-ci")
-                .contains("- registry.preprod.localhost")
                 .doesNotContain("QITS_ARTIFACTS_REGISTRY_HOST");
     }
 

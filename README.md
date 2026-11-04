@@ -128,6 +128,14 @@ deploys need the images in the store first. The bootstrap configures no registry
 credential in `qits-buildkitd` at all — a seed build resolves nothing from a registry — and from its
 first deployment qits-containers configures that container's mirrors for the public names.
 
+**The seed edge claims no machine name on `qits-net`** (qits-1434). It used to alias
+`registry.<env>.localhost`, `mirror.<env>.localhost`, `githost.<env>.localhost` and
+`githost.<env>.internal` there, for containers that dialled a vhost on the network; none does now,
+and the seed's qits-projects and qits-workspaces are no longer told
+`http://githost.<env>.internal:8080` (the first key is retired, the second defaults to
+`https://githost.qits.<domain>`). The host daemon's pre-`edge-ready` push is unaffected: it
+resolves `registry.<env>.localhost` on the HOST and arrives on the edge's published port.
+
 **You still run it on the host, and it puts itself in there.** See
 [Two halves, one binary](#two-halves-one-binary): started outside a container it preflights docker,
 builds `docker/Dockerfile.bootstrap` into a payload image tagged by its own content, runs itself
