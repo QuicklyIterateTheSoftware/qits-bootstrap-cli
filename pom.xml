@@ -29,7 +29,7 @@
         <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
         <!-- The platform's Quarkus. Moves with the platform, not ahead of it. -->
-        <quarkus.platform.version>3.34.6</quarkus.platform.version>
+        <quarkus.platform.version>3.40.1</quarkus.platform.version>
 
         <!-- The terminal library. In NO BOM, so it is pinned here. 3.30.x is the current 3.x
              line. `jline-terminal`, not the aggregate `jline`: see the dependency below. -->
