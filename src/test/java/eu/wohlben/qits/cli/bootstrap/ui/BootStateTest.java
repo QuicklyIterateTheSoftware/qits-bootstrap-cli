@@ -39,6 +39,26 @@ class BootStateTest {
         assertThat(json).contains("done: 1 phases, 1 skipped");
     }
 
+    /** A phase that plans more of the run grows the browser's plan; what already ran keeps its outcome. */
+    @Test
+    void aPlanThatGrowsMidRunKeepsWhatRanAndCountsWhatWasAdded() {
+        WebUi ui = webUi();
+
+        new PhaseEngine(ui).run(List.of(
+                new Phase("a", "first", ctx -> ctx.note("kept")),
+                new Phase("plan-train", "plan the train", ctx -> ctx.then(List.of(
+                        new Phase("push-x", "push x", c -> { }),
+                        new Phase("deploy-y", "deploy y", c -> { })))),
+                new Phase("summary", "summary", ctx -> { })));
+
+        String json = ui.state().snapshotJson();
+        assertThat(json).contains("\"total\":5");
+        assertThat(json).contains("\"id\":\"a\",\"title\":\"first\",\"state\":\"DONE\"");
+        assertThat(json).contains("\"note\":\"kept\"");
+        assertThat(json).contains("\"id\":\"push-x\",\"title\":\"push x\",\"state\":\"DONE\"");
+        assertThat(json).contains("\"id\":\"summary\",\"title\":\"summary\",\"state\":\"DONE\"");
+    }
+
     @Test
     void aFailureIsNamedInTheStateTheBrowserReads() {
         WebUi ui = webUi();

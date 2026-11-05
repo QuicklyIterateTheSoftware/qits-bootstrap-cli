@@ -24,6 +24,19 @@ public interface PhaseContext {
      */
     void warn(String message);
 
+    /**
+     * <b>Phases this one has worked out, to run immediately after it</b>, in this order. A plan is
+     * built before anything runs, and some steps can only be named once an earlier phase has read
+     * what they are — the train is one per repository the checkouts declare, and the checkouts do
+     * not exist until {@code sources} has cloned them. The phases are inserted only when this one
+     * ends DONE or WARNED; a phase that is skipped or fails adds nothing.
+     *
+     * @throws UnsupportedOperationException from a context that runs no follow-up phases
+     */
+    default void then(java.util.List<Phase> followUps) {
+        throw new UnsupportedOperationException("this context runs no follow-up phases");
+    }
+
     /** Nothing to do. Ends the phase as SKIPPED with the reason on its header line. */
     default void skip(String reason) {
         throw new PhaseSkipped(reason);

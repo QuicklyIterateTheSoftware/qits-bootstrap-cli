@@ -116,6 +116,29 @@ public final class BootState {
         emit("snapshot", snapshotJson());
     }
 
+    /**
+     * The plan grew mid-run. Every phase up to the running one keeps its state, time and note —
+     * follow-ups are only ever inserted after the phase that asked — and the rest is the new plan,
+     * pending. Unlike {@link #started} the run's clock and summary are left alone.
+     */
+    public synchronized void planChanged(List<Phase> plan) {
+        int kept = Math.min(Math.max(currentIndex + 1, 0), phases.size());
+        while (phases.size() > kept) {
+            int last = phases.size() - 1;
+            phases.remove(last);
+            states.remove(last);
+            tookMillis.remove(last);
+            notes.remove(last);
+        }
+        for (int i = kept; i < plan.size(); i++) {
+            phases.add(plan.get(i));
+            states.add(PhaseState.PENDING);
+            tookMillis.add(0L);
+            notes.add("");
+        }
+        emit("snapshot", snapshotJson());
+    }
+
     public synchronized void phaseStarted(int index, Phase phase) {
         grow(index, phase);
         states.set(index, PhaseState.RUNNING);

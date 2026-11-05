@@ -41,6 +41,11 @@ public class CompositeUi implements Ui {
     }
 
     @Override
+    public void planChanged(List<Phase> phases) {
+        each(ui -> ui.planChanged(phases));
+    }
+
+    @Override
     public void phaseStarted(int index, Phase phase) {
         each(ui -> ui.phaseStarted(index, phase));
     }

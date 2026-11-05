@@ -39,6 +39,11 @@ public class WebUi implements Ui {
     }
 
     @Override
+    public void planChanged(List<Phase> phases) {
+        state.planChanged(phases);
+    }
+
+    @Override
     public void phaseStarted(int index, Phase phase) {
         state.phaseStarted(index, phase);
     }

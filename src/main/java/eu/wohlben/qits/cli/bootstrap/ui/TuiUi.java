@@ -120,6 +120,12 @@ public class TuiUi implements Ui {
     }
 
     @Override
+    public synchronized void planChanged(List<Phase> phases) {
+        this.phases = List.copyOf(phases);
+        render();
+    }
+
+    @Override
     public synchronized void phaseStarted(int index, Phase phase) {
         this.currentIndex = index;
         this.current = phase;

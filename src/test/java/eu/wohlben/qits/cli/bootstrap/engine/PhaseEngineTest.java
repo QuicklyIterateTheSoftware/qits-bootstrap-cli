@@ -25,6 +25,10 @@ class PhaseEngineTest {
         }
 
         @Override
+        public void planChanged(List<Phase> phases) {
+            events.add("plan:" + phases.stream().map(Phase::id).toList());
+        }
+        @Override
         public void phaseStarted(int index, Phase phase) {
             events.add("start:" + phase.id());
         }
@@ -142,5 +146,59 @@ class PhaseEngineTest {
         assertThat(ui.outcomes.get(0).took()).isEqualTo(Duration.ofMinutes(2));
         assertThat(ui.outcomes.get(1).took()).isEqualTo(Duration.ofSeconds(3));
         assertThat(result.took()).isEqualTo(Duration.ofSeconds(123));
+    }
+
+    private static Phase ok(String id) {
+        return new Phase(id, id, ctx -> { });
+    }
+
+    @Test
+    void aPhaseHandsBackFollowUpsThatRunImmediatelyAfterIt() {
+        RecordingUi ui = new RecordingUi();
+        Phase plan = new Phase("plan", "plan", ctx -> ctx.then(List.of(ok("a"), ok("b"))));
+
+        RunResult result = new PhaseEngine(ui).run(List.of(ok("first"), plan, ok("last")));
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(ui.events).containsSubsequence("started:3", "start:first", "start:plan",
+                "plan:[first, plan, a, b, last]", "end:plan:DONE", "start:a", "start:b",
+                "start:last");
+        assertThat(result.outcomes()).extracting(o -> o.phase().id())
+                .containsExactly("first", "plan", "a", "b", "last");
+        assertThat(result.outcomes()).extracting(PhaseOutcome::index)
+                .containsExactly(0, 1, 2, 3, 4);
+    }
+
+    @Test
+    void aFailingOrSkippedPhaseAddsNothing() {
+        RecordingUi ui = new RecordingUi();
+        Phase failing = new Phase("plan", "plan", ctx -> {
+            ctx.then(List.of(ok("a")));
+            throw new IllegalStateException("dependency cycle: x, y");
+        });
+        Phase skipping = new Phase("skip", "skip", ctx -> {
+            ctx.then(List.of(ok("b")));
+            ctx.skip("nothing to plan");
+        });
+
+        assertThat(new PhaseEngine(ui).run(List.of(skipping, ok("c"))).outcomes())
+                .extracting(o -> o.phase().id()).containsExactly("skip", "c");
+        RunResult result = new PhaseEngine(ui).run(List.of(failing, ok("c")));
+        assertThat(result.exitCode()).isEqualTo(2);
+        assertThat(result.outcomes()).singleElement()
+                .satisfies(o -> assertThat(o.note()).isEqualTo("dependency cycle: x, y"));
+        assertThat(ui.events).noneMatch(event -> event.startsWith("plan:"));
+    }
+
+    @Test
+    void aFollowUpWhoseIdIsAlreadyPlannedFailsThePhaseThatAskedForIt() {
+        RecordingUi ui = new RecordingUi();
+        Phase plan = new Phase("plan", "plan", ctx -> ctx.then(List.of(ok("last"))));
+
+        RunResult result = new PhaseEngine(ui).run(List.of(plan, ok("last")));
+
+        assertThat(result.exitCode()).isEqualTo(2);
+        assertThat(result.outcomes()).singleElement()
+                .satisfies(o -> assertThat(o.note()).contains("phase id last is already in the plan"));
     }
 }

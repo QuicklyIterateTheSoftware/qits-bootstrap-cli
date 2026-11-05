@@ -15,6 +15,14 @@ public interface Ui extends AutoCloseable {
     /** The plan, before anything runs. This is where the "of 47" comes from. */
     void started(List<Phase> phases);
 
+    /**
+     * The plan grew while the run was going: a phase handed back follow-up phases, and this is the
+     * whole plan now, every phase already run unchanged at its index. A display that cannot do
+     * better ignores it, and its total stays the one {@link #started} announced.
+     */
+    default void planChanged(List<Phase> phases) {
+    }
+
     void phaseStarted(int index, Phase phase);
 
     /** One line of the running phase's output. */

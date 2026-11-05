@@ -24,6 +24,7 @@ public final class JournalUi implements Ui {
     }
 
     @Override public void started(List<Phase> phases) { delegate.started(phases); save(); }
+    @Override public void planChanged(List<Phase> phases) { delegate.planChanged(phases); save(); }
     @Override public void phaseStarted(int index, Phase phase) { delegate.phaseStarted(index, phase); save(); }
     @Override public void output(String line) { delegate.output(line); save(); }
     @Override public void status(String status) { delegate.status(status); save(); }

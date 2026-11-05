@@ -48,6 +48,13 @@ public class PlainUi implements Ui {
     }
 
     @Override
+    public void planChanged(List<Phase> phases) {
+        int grown = phases.size() - total;
+        total = phases.size();
+        out.println("qits-bootstrap: " + grown + " phases planned, " + total + " in all");
+    }
+
+    @Override
     public void phaseStarted(int index, Phase phase) {
         this.index = index + 1;
         lastStatus = "";

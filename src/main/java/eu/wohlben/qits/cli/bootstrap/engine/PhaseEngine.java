@@ -29,8 +29,14 @@ public class PhaseEngine {
         this.nanoClock = nanoClock;
     }
 
-    public RunResult run(List<Phase> phases) {
-        ui.started(phases);
+    /**
+     * Runs {@code plan} in order. A phase may hand back follow-up phases ({@link PhaseContext#then});
+     * they are inserted immediately after it, and the displays are told the plan changed — so the
+     * header's total grows when they arrive, and is provisional until then.
+     */
+    public RunResult run(List<Phase> plan) {
+        List<Phase> phases = new ArrayList<>(plan);
+        ui.started(List.copyOf(phases));
         List<PhaseOutcome> outcomes = new ArrayList<>();
         long runStart = nanoClock.getAsLong();
         int exit = 0;
@@ -47,6 +53,10 @@ public class PhaseEngine {
                 phase.action().run(recorder);
                 state = recorder.warning == null ? PhaseState.DONE : PhaseState.WARNED;
                 note = recorder.warning != null ? recorder.warning : recorder.note;
+                if (!recorder.followUps.isEmpty()) {
+                    insert(phases, i + 1, recorder.followUps);
+                    ui.planChanged(List.copyOf(phases));
+                }
             } catch (PhaseSkipped skipped) {
                 state = PhaseState.SKIPPED;
                 note = skipped.getMessage();
@@ -75,11 +85,30 @@ public class PhaseEngine {
         return result;
     }
 
+    /** Follow-ups go in at {@code at}; an id the plan already holds fails the phase that asked. */
+    private static void insert(List<Phase> phases, int at, List<Phase> followUps) {
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        phases.forEach(phase -> ids.add(phase.id()));
+        for (Phase followUp : followUps) {
+            if (!ids.add(followUp.id())) {
+                throw new IllegalStateException("phase id " + followUp.id()
+                        + " is already in the plan; a follow-up phase needs an id of its own");
+            }
+        }
+        phases.addAll(at, followUps);
+    }
+
     /** The context handed to a phase: everything it says goes straight to the display. */
     private static final class Recorder implements PhaseContext {
         private final Ui ui;
         private String note = "";
         private String warning;
+        private final List<Phase> followUps = new ArrayList<>();
+
+        @Override
+        public void then(List<Phase> phases) {
+            followUps.addAll(phases);
+        }
 
         private Recorder(Ui ui) {
             this.ui = ui;
