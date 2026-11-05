@@ -1109,16 +1109,67 @@ class PipelinePhasesTest {
         new PipelinePhases(boot).summary().action().run(ctx);
 
         assertThat(ctx.lines).anyMatch(line -> line.startsWith(
-                "git host:  http://githost.dev.localhost:8080/git/qits/<repo>.git"));
+                "git host:  https://githost.qits.qits-dev.eu/git/qits/<repo>.git"));
         assertThat(ctx.lines).anyMatch(line -> line.contains(
-                "http://githost.dev.localhost:8080/git/qits/qits-qits.git"));
+                "https://githost.qits.qits-dev.eu/git/qits/qits-qits.git"));
         // The machine form keeps the id, which is always valid whatever a slug is renamed to.
         assertThat(ctx.lines).anyMatch(line -> line.contains(
                 "http://dev-qits-githost:8080/git/1f0a-project/<repo>"));
         // And nowhere does it hand a person a storage-scheme address to dial. The line that names
         // /git/<repoId> says what it is; no url printed here is one.
-        assertThat(ctx.lines).noneMatch(line -> line.contains("localhost:8080/git/<repoId>"));
+        assertThat(ctx.lines).noneMatch(line -> line.contains("qits-dev.eu/git/<repoId>"));
         assertThat(ctx.lines).noneMatch(line -> line.contains("qits-githost:8080/git/<repoId>"));
+    }
+
+    /**
+     * <b>The closing report names only PUBLIC hosts for the byte plane</b> (owner ruling
+     * 2026-11-05): the registry, the mirror and the git host at {@code <label>.qits.<domain>}, and
+     * dockerd's advice is one {@code registry-mirrors} line naming {@code https://mirror.qits.<domain>}
+     * — with no {@code insecure-registries} entry, and no machine name anywhere.
+     */
+    @Test
+    void theReportNamesOnlyPublicHostsAndNoInsecureRegistries(@TempDir Path temp)
+            throws Exception {
+        ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
+        Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev", "QITS_PORT", "8080",
+                "QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7")),
+                new RunLog(temp.resolve("run.log")), runner);
+        boot.state.wrapperDir = temp;
+        Ctx ctx = new Ctx();
+
+        new PipelinePhases(boot).summary().action().run(ctx);
+
+        assertThat(ctx.lines).anyMatch(line -> line.startsWith("registry:  registry.qits.qits-dev.eu"));
+        assertThat(ctx.lines).anyMatch(line -> line.startsWith("mirror:    mirror.qits.qits-dev.eu"));
+        assertThat(ctx.lines).anyMatch(line -> line.contains(
+                "\"registry-mirrors\": [\"https://mirror.qits.qits-dev.eu\"]"));
+        assertThat(ctx.lines).noneMatch(line -> line.contains("\"insecure-registries\""));
+        assertThat(ctx.lines).noneMatch(line -> line.matches(
+                ".*\\b(registry|mirror|githost)\\.[a-z0-9-]+\\.(localhost|internal)\\b.*"));
+        assertThat(ctx.lines).noneMatch(line -> line.contains("http://mirror.")
+                || line.contains("http://registry.") || line.contains("http://githost."));
+    }
+
+    /**
+     * <b>The preflight checks the new advice</b>: a daemon whose {@code registry-mirrors} names
+     * {@code https://mirror.qits.<domain>} (docker answers it with a trailing slash) gets no
+     * warning; any other daemon is told the one line to add, and told that no
+     * {@code insecure-registries} entry is needed.
+     */
+    @Test
+    void thePreflightAdvisesThePublicMirrorAndNoInsecureRegistries() {
+        assertThat(SeedPhases.registryMirrorWarning(
+                List.of("https://mirror.qits.qits-dev.eu/"), "qits-dev.eu")).isEmpty();
+        assertThat(SeedPhases.registryMirrorWarning(
+                List.of("https://mirror.qits.qits-dev.eu"), "qits-dev.eu")).isEmpty();
+        for (List<String> mirrors : List.of(List.<String>of(),
+                List.of("http://mirror.dev.localhost:8080/"), List.of("https://mirror.gcr.io/"))) {
+            assertThat(SeedPhases.registryMirrorWarning(mirrors, "qits-dev.eu")).get()
+                    .asString()
+                    .contains("\"registry-mirrors\": [\"https://mirror.qits.qits-dev.eu\"]")
+                    .contains("no insecure-registries entry is needed")
+                    .doesNotContain("localhost");
+        }
     }
 
     /**
@@ -1394,7 +1445,7 @@ class PipelinePhasesTest {
 
     private static final String PIN = "2026.930.132340";
 
-    private static final String MANIFESTS = "GET http://prod-qits-artifacts:8080/v2/";
+    private static final String MANIFESTS = "GET https://registry.qits.qits-dev.eu/v2/";
 
     private static final List<String> STORE_IMAGES = List.of(
             "qits/build-images/ci-base/manifests/latest",
@@ -1429,6 +1480,20 @@ class PipelinePhasesTest {
         // credential with it, gate on or off.
         boot.state.bootstrapClientId = "prod-qits-bootstrap";
         boot.state.bootstrapSecret = "boot";
+        return boot;
+    }
+
+    /**
+     * A boot that has passed {@code registry-ready}: the domain is set and the {@code registry}
+     * label is latched, so the store is read at {@code registry.qits.<domain>} and a push is
+     * allowed — which is the only state a push phase ever runs in.
+     */
+    private Boot pushBoot(ScriptedRunner runner, CannedHttp http, Map<String, String> env)
+            throws Exception {
+        Map<String, String> config = new java.util.HashMap<>(env);
+        config.putAll(DOMAIN);
+        Boot boot = runnerBoot(runner, http, config);
+        boot.addresses.ready(List.of(Boot.REGISTRY_LABEL));
         return boot;
     }
 
@@ -1475,7 +1540,7 @@ class PipelinePhasesTest {
                         "{\"access_token\":\"read-token\",\"expires_in\":3600}")
                 .answer("POST http://prod-qits-idp:8080/idp/api/clients", 201,
                         "{\"clientId\":\"dyn-bootstrap-publish-1\",\"secret\":\"s3cr3t-pair\"}");
-        Boot boot = runnerBoot(runner, http, Map.of());
+        Boot boot = pushBoot(runner, http, Map.of());
         boot.state.bootstrapClientId = "prod-qits-bootstrap";
         boot.state.bootstrapSecret = "boot";
         CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
@@ -1490,18 +1555,18 @@ class PipelinePhasesTest {
             assertThat(command.get(3)).isEqualTo("push");
         });
         assertThat(pushes.stream().map(List::getLast)).containsExactly(
-                "registry.prod.localhost:8080/qits/build-images/ci-base:latest",
-                "registry.prod.localhost:8080/qits/build-images/maven-base:latest",
-                "registry.prod.localhost:8080/qits/build-images/userflows-base:latest",
-                "registry.prod.localhost:8080/qits/build-images/node-base:latest",
-                "registry.prod.localhost:8080/qits/build-images/node-docker-base:latest",
-                "registry.prod.localhost:8080/qits/build-images/ci-slot:latest",
-                "registry.prod.localhost:8080/qits/qits-system-runner:" + PIN);
+                "registry.qits.qits-dev.eu/qits/build-images/ci-base:latest",
+                "registry.qits.qits-dev.eu/qits/build-images/maven-base:latest",
+                "registry.qits.qits-dev.eu/qits/build-images/userflows-base:latest",
+                "registry.qits.qits-dev.eu/qits/build-images/node-base:latest",
+                "registry.qits.qits-dev.eu/qits/build-images/node-docker-base:latest",
+                "registry.qits.qits-dev.eu/qits/build-images/ci-slot:latest",
+                "registry.qits.qits-dev.eu/qits/qits-system-runner:" + PIN);
         // The config names the registry host and carries the pair as docker login would.
         String auth = java.util.Base64.getEncoder().encodeToString(
                 "dyn-bootstrap-publish-1:s3cr3t-pair".getBytes(StandardCharsets.UTF_8));
         assertThat(configs).hasSize(7).allSatisfy(config -> assertThat(config)
-                .contains("\"registry.prod.localhost:8080\"").contains(auth));
+                .contains("\"registry.qits.qits-dev.eu\"").contains(auth));
         // Neither the secret nor its base64 is on a command line or in the log.
         assertThat(runner.lines()).noneMatch(line -> line.contains("s3cr3t-pair")
                 || line.contains(auth));
@@ -1519,7 +1584,7 @@ class PipelinePhasesTest {
     @Test
     void aStoreThatHoldsEveryImageIsPushedNothing() throws Exception {
         ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
-        Boot boot = runnerBoot(runner, store(STORE_IMAGES), Map.of());
+        Boot boot = pushBoot(runner, store(STORE_IMAGES), Map.of());
 
         assertThatThrownBy(() -> new PipelinePhases(boot).imagesPublish().action()
                 .run(new CiLogStreamTest.Recorder()))
@@ -1532,14 +1597,14 @@ class PipelinePhasesTest {
     @Test
     void onlyTheImagesTheStoreLacksArePushed() throws Exception {
         ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
-        Boot boot = runnerBoot(runner, store(STORE_IMAGES.subList(0, 6)),
+        Boot boot = pushBoot(runner, store(STORE_IMAGES.subList(0, 6)),
                 Map.of("QITS_MACHINE_AUTH", "0"));
 
         new PipelinePhases(boot).imagesPublish().action().run(new CiLogStreamTest.Recorder());
 
         assertThat(runner.argv.stream().filter(command -> command.contains("push"))
                 .map(List::getLast))
-                .containsExactly("registry.prod.localhost:8080/qits/qits-system-runner:" + PIN);
+                .containsExactly("registry.qits.qits-dev.eu/qits/qits-system-runner:" + PIN);
     }
 
     /** An image that is nowhere stops the boot and says which flag hid its build. */
@@ -1548,12 +1613,12 @@ class PipelinePhasesTest {
         ScriptedRunner runner = new ScriptedRunner(command ->
                 command.contains("inspect") ? ScriptedRunner.failed("No such image")
                         : ScriptedRunner.ok());
-        Boot boot = runnerBoot(runner, store(List.of()), Map.of("QITS_MACHINE_AUTH", "0"));
+        Boot boot = pushBoot(runner, store(List.of()), Map.of("QITS_MACHINE_AUTH", "0"));
 
         assertThatThrownBy(() -> new PipelinePhases(boot).imagesPublish().action()
                 .run(new CiLogStreamTest.Recorder()))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("registry.prod.localhost:8080/qits/build-images/ci-base:latest")
+                .hasMessageContaining("registry.qits.qits-dev.eu/qits/build-images/ci-base:latest")
                 .hasMessageContaining("rerun without QITS_SKIP_BUILD");
         assertThat(runner.argv).noneMatch(command -> command.contains("push"));
     }
@@ -1598,27 +1663,27 @@ class PipelinePhasesTest {
     @Test
     void aColdStoreIsPushedEverySeedDeployedImageAtItsReleaseTag() throws Exception {
         ScriptedRunner runner = seedImagesDocker(true);
-        Boot boot = runnerBoot(runner, seedStore(Map.of()), Map.of("QITS_MACHINE_AUTH", "0"));
+        Boot boot = pushBoot(runner, seedStore(Map.of()), Map.of("QITS_MACHINE_AUTH", "0"));
 
         new PipelinePhases(boot).seedImagesPublish().action().run(new CiLogStreamTest.Recorder());
 
         assertThat(runner.lines()).contains(
-                "docker tag qits/idp:latest registry.prod.localhost:8080/qits/qits-idp:" + RELEASE,
-                "docker tag qits/edge:latest registry.prod.localhost:8080/qits/qits-edge:"
+                "docker tag qits/idp:latest registry.qits.qits-dev.eu/qits/qits-idp:" + RELEASE,
+                "docker tag qits/edge:latest registry.qits.qits-dev.eu/qits/qits-edge:"
                         + RELEASE);
         assertThat(runner.argv.stream().filter(command -> command.contains("push"))
                 .map(List::getLast)).containsExactly(
-                "registry.prod.localhost:8080/qits/qits-idp:" + RELEASE,
-                "registry.prod.localhost:8080/qits/qits-projects:" + RELEASE,
-                "registry.prod.localhost:8080/qits/qits-workspaces:" + RELEASE,
-                "registry.prod.localhost:8080/qits/qits-events:" + RELEASE,
-                "registry.prod.localhost:8080/qits/qits-mirror:" + RELEASE,
-                "registry.prod.localhost:8080/qits/qits-artifacts:" + RELEASE,
-                "registry.prod.localhost:8080/qits/qits-githost:" + RELEASE,
-                "registry.prod.localhost:8080/qits/qits-containers:" + RELEASE,
-                "registry.prod.localhost:8080/qits/qits-ci:" + RELEASE,
-                "registry.prod.localhost:8080/qits/qits-system:" + RELEASE,
-                "registry.prod.localhost:8080/qits/qits-edge:" + RELEASE);
+                "registry.qits.qits-dev.eu/qits/qits-idp:" + RELEASE,
+                "registry.qits.qits-dev.eu/qits/qits-projects:" + RELEASE,
+                "registry.qits.qits-dev.eu/qits/qits-workspaces:" + RELEASE,
+                "registry.qits.qits-dev.eu/qits/qits-events:" + RELEASE,
+                "registry.qits.qits-dev.eu/qits/qits-mirror:" + RELEASE,
+                "registry.qits.qits-dev.eu/qits/qits-artifacts:" + RELEASE,
+                "registry.qits.qits-dev.eu/qits/qits-githost:" + RELEASE,
+                "registry.qits.qits-dev.eu/qits/qits-containers:" + RELEASE,
+                "registry.qits.qits-dev.eu/qits/qits-ci:" + RELEASE,
+                "registry.qits.qits-dev.eu/qits/qits-system:" + RELEASE,
+                "registry.qits.qits-dev.eu/qits/qits-edge:" + RELEASE);
         // The deployer's own image is not among them: its deployment stays last of the train.
         assertThat(runner.lines()).noneMatch(line -> line.contains("qits-deployments:"));
     }
@@ -1633,18 +1698,18 @@ class PipelinePhasesTest {
         Map<String, Integer> held = new java.util.HashMap<>();
         eu.wohlben.qits.cli.bootstrap.platform.PlatformModel.SEED_DEPLOYED.stream()
                 .filter(name -> !name.equals("ci")).forEach(name -> held.put(name, 200));
-        Boot boot = runnerBoot(runner, seedStore(held), Map.of("QITS_MACHINE_AUTH", "0"));
+        Boot boot = pushBoot(runner, seedStore(held), Map.of("QITS_MACHINE_AUTH", "0"));
 
         new PipelinePhases(boot).seedImagesPublish().action().run(new CiLogStreamTest.Recorder());
 
         assertThat(runner.argv.stream().filter(command -> command.contains("push"))
                 .map(List::getLast))
-                .containsExactly("registry.prod.localhost:8080/qits/qits-ci:" + RELEASE);
+                .containsExactly("registry.qits.qits-dev.eu/qits/qits-ci:" + RELEASE);
 
         ScriptedRunner again = seedImagesDocker(true);
         eu.wohlben.qits.cli.bootstrap.platform.PlatformModel.SEED_DEPLOYED
                 .forEach(name -> held.put(name, 200));
-        Boot rerun = runnerBoot(again, seedStore(held), Map.of("QITS_MACHINE_AUTH", "0"));
+        Boot rerun = pushBoot(again, seedStore(held), Map.of("QITS_MACHINE_AUTH", "0"));
         assertThatThrownBy(() -> new PipelinePhases(rerun).seedImagesPublish().action()
                 .run(new CiLogStreamTest.Recorder()))
                 .isInstanceOf(PhaseSkipped.class)
@@ -1660,7 +1725,7 @@ class PipelinePhasesTest {
     @Test
     void aStoreThatDoesNotAnswerIsPushedNothing() throws Exception {
         ScriptedRunner runner = seedImagesDocker(true);
-        Boot boot = runnerBoot(runner, seedStore(Map.of("projects", 503)),
+        Boot boot = pushBoot(runner, seedStore(Map.of("projects", 503)),
                 Map.of("QITS_MACHINE_AUTH", "0"));
 
         assertThatThrownBy(() -> new PipelinePhases(boot).seedImagesPublish().action()
@@ -1676,7 +1741,7 @@ class PipelinePhasesTest {
     @Test
     void aSeedImageThatIsNeitherStoredNorBuiltStopsTheBoot() throws Exception {
         ScriptedRunner runner = seedImagesDocker(false);
-        Boot boot = runnerBoot(runner, seedStore(Map.of()), Map.of("QITS_MACHINE_AUTH", "0"));
+        Boot boot = pushBoot(runner, seedStore(Map.of()), Map.of("QITS_MACHINE_AUTH", "0"));
 
         assertThatThrownBy(() -> new PipelinePhases(boot).seedImagesPublish().action()
                 .run(new CiLogStreamTest.Recorder()))
@@ -2056,7 +2121,7 @@ class PipelinePhasesTest {
 
     /**
      * <b>A pass is the run's edge-ready signal, and it is a latch</b> (qits-1430). Before it, every
-     * bearer call goes to its alias and the host's daemon pushes through the loopback vhost; after
+     * bearer call goes to its alias and no push is allowed; after
      * it, qits-ci, qits-projects, the idp and the store are dialled at their public names — the mint
      * of the bootstrap's own token included — and a later failing pass changes none of it.
      * qits-deployments was not proved, so it stays on its alias.
@@ -2080,7 +2145,10 @@ class PipelinePhasesTest {
                 "GET " + boot.config.ciUrl() + "/q/health/ready");
         assertThat(boot.projects.base()).isEqualTo(boot.config.projectsUrl());
         assertThat(boot.artifacts.base()).isEqualTo(boot.config.artifactsUrl());
-        assertThat(boot.registryHost()).isEqualTo(boot.config.registryVhost());
+        // The push host is the public name before the latch too — there is no other — and it is
+        // simply not proven yet.
+        assertThat(boot.registryHost()).isEqualTo("registry.qits.qits-dev.eu");
+        assertThat(boot.registryCertificateProven()).isFalse();
         assertThat(boot.storeReadAuthorization()).isNull();
 
         new PipelinePhases(boot).edgeReady().action().run(new CiLogStreamTest.Recorder());
@@ -2123,7 +2191,119 @@ class PipelinePhasesTest {
 
         assertThat(boot.addresses.edgeReady()).isFalse();
         assertThat(boot.projects.base()).isEqualTo(boot.config.projectsUrl());
-        assertThat(boot.registryHost()).isEqualTo(boot.config.registryVhost());
+        assertThat(boot.registryHost()).isEqualTo("registry.qits.qits-dev.eu");
+        assertThat(boot.registryCertificateProven()).isFalse();
+    }
+
+    // --- registry-ready: the certificate every push waits for (owner ruling 2026-11-05) ----------
+
+    private static final String REGISTRY_V2 = "GET https://registry.qits.qits-dev.eu/v2/";
+
+    /**
+     * <b>registry-ready waits for {@code registry.qits.<domain>} over a TRUSTED certificate and
+     * latches that label alone.</b> A failed handshake — the placeholder — is no answer and the wait
+     * goes on; the 401 of the token dance is the door. Only the registry is asked, and only the
+     * registry moves to its public name: ci, projects and the idp wait for edge-ready.
+     */
+    @Test
+    void registryReadyWaitsForATrustedCertificateAndLatchesTheRegistryAlone() throws Exception {
+        int[] asked = {0};
+        CannedHttp http = new CannedHttp().answer(REGISTRY_V2, () -> ++asked[0] < 3
+                ? new Http.Response(0, UNTRUSTED) : new Http.Response(401, ""));
+        Boot boot = edgeBoot(http, DOMAIN);
+        assertThat(boot.registryCertificateProven()).isFalse();
+
+        new PipelinePhases(boot).registryReady().action().run(new CiLogStreamTest.Recorder());
+
+        assertThat(asked[0]).isEqualTo(3);
+        assertThat(http.calls).containsOnly(REGISTRY_V2);
+        assertThat(boot.registryCertificateProven()).isTrue();
+        assertThat(boot.registryHost()).isEqualTo("registry.qits.qits-dev.eu");
+        assertThat(boot.artifacts.base()).isEqualTo("https://registry.qits.qits-dev.eu/artifacts");
+        assertThat(boot.addresses.throughEdge(Boot.CI_LABEL)).isFalse();
+        assertThat(boot.projects.base()).isEqualTo(boot.config.projectsUrl());
+    }
+
+    /**
+     * <b>A placeholder certificate that never becomes real HOLDS the pushes</b>: the phase fails
+     * naming the host and the reason, the latch stays unset, and a push phase run anyway is refused
+     * before a single {@code docker push}.
+     */
+    @Test
+    void aPlaceholderCertificateHoldsEveryPush() throws Exception {
+        CannedHttp http = commissioning(new CannedHttp()).answer(REGISTRY_V2, 0, UNTRUSTED);
+        ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok("sha256:abc"));
+        Map<String, String> env = new java.util.HashMap<>(DOMAIN);
+        env.put("QITS_POLL_INTERVAL", "PT0.001S");
+        env.put("QITS_EDGE_READY_TIMEOUT", "PT0.2S");
+        Boot boot = runnerBoot(runner, http, env);
+
+        assertThatThrownBy(() -> new PipelinePhases(boot).registryReady().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("https://registry.qits.qits-dev.eu/v2/: no answer ("
+                        + UNTRUSTED)
+                .hasMessageContaining("DNS-01");
+        assertThat(boot.registryCertificateProven()).isFalse();
+
+        for (Phase push : List.of(new PipelinePhases(boot).imagesPublish(),
+                new PipelinePhases(boot).seedImagesPublish())) {
+            assertThatThrownBy(() -> push.action().run(new CiLogStreamTest.Recorder()))
+                    .as(push.id())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("no push before registry.qits.qits-dev.eu serves a "
+                            + "certificate this host trusts");
+        }
+        assertThat(runner.argv).noneMatch(command -> command.contains("push"));
+    }
+
+    /** Staging or no issuance can never give the registry a trusted certificate: refused at once. */
+    @Test
+    void registryReadyRefusesADomainWithoutAProductionCertificate() throws Exception {
+        for (String mode : List.of("staging", "off")) {
+            Map<String, String> env = new java.util.HashMap<>(DOMAIN);
+            env.put("QITS_ACME_MODE", mode);
+            CannedHttp http = new CannedHttp();
+            Boot boot = edgeBoot(http, env);
+
+            assertThatThrownBy(() -> new PipelinePhases(boot).registryReady().action()
+                    .run(new CiLogStreamTest.Recorder()))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("'" + mode + "'")
+                    .hasMessageContaining("production");
+            assertThat(http.calls).isEmpty();
+            assertThat(boot.registryCertificateProven()).isFalse();
+        }
+    }
+
+    /** A registry edge-ready already proved is not asked again. */
+    @Test
+    void registryReadyIsSkippedOnceTheRegistryIsProven() throws Exception {
+        CannedHttp http = new CannedHttp();
+        Boot boot = edgeBoot(http, DOMAIN);
+        boot.addresses.ready(List.of(Boot.REGISTRY_LABEL));
+
+        assertThatThrownBy(() -> new PipelinePhases(boot).registryReady().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(PhaseSkipped.class)
+                .hasMessageContaining("registry.qits.qits-dev.eu is already proven");
+        assertThat(http.calls).isEmpty();
+    }
+
+    /**
+     * <b>The push host is always {@code registry.qits.<domain>}</b> — before and after either gate,
+     * in every environment: there is no machine-name branch left to take.
+     */
+    @Test
+    void thePushHostIsAlwaysThePublicRegistryName() throws Exception {
+        for (String env : List.of("prod", "dev", "staging")) {
+            Map<String, String> config = new java.util.HashMap<>(DOMAIN);
+            config.put("QITS_ENV_NAME", env);
+            Boot boot = edgeBoot(new CannedHttp(), config);
+            assertThat(boot.registryHost()).isEqualTo("registry.qits.qits-dev.eu");
+            boot.addresses.ready(List.of(Boot.REGISTRY_LABEL));
+            assertThat(boot.registryHost()).isEqualTo("registry.qits.qits-dev.eu");
+        }
     }
 
     @Test

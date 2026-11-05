@@ -47,9 +47,9 @@ public interface BootstrapConfig {
 
     /**
      * <b>The host's one HTTP port, bound by qits-platform-edge, and now the door of the whole
-     * platform.</b> It is what a PERSON types into a browser, what the host's docker daemon dials
-     * at {@link #registryVhost()} and {@link #mirrorVhost()}, and what a clone of
-     * {@link #gitHostVhost()} arrives on. Seed calls use their fixed service aliases on qits-net;
+     * platform.</b> The edge publishes it beside 443, where every public name —
+     * {@code registry.qits.<domain>}, {@code mirror.qits.<domain>}, {@code githost.qits.<domain>}
+     * included — is served over TLS. Seed calls use their fixed service aliases on qits-net;
      * neither those services nor the byte plane publishes another host port.
      */
     @WithDefault("8080")
@@ -62,8 +62,8 @@ public interface BootstrapConfig {
      * The url a person clones has moved twice: it was
      * {@code localhost:8081/artifacts/git/<repo>} while the git routes lived inside
      * qits-platform-artifacts, then this port after the byte-plane split gave the git host a
-     * service of its own, and it is {@link #gitHostVhost()} through the edge now — where every
-     * method, reads included, needs a bearer.
+     * service of its own, and it is {@code https://githost.qits.<domain>} through the edge now —
+     * where every method, reads included, needs a bearer.
      * <p>
      * The knob stays because the number is the one to reopen by hand while an edge is being
      * repaired, and because nothing else names it. Nothing in this CLI dials it: every phase that
@@ -585,40 +585,6 @@ public interface BootstrapConfig {
      */
     default String projectsUrl() {
         return "http://" + envName() + "-qits-projects:8080";
-    }
-
-    /**
-     * <b>The three names the HOST reaches this platform's byte plane by.</b> Each is
-     * {@code <app>.<env>.localhost:<edge port>}: every {@code *.localhost} name resolves to the
-     * loopback address (systemd-resolved synthesises it), so a client on the workstation arrives at
-     * the edge, which routes by the NAME rather than by a path — a docker client and a git client
-     * own their own roots ({@code /v2}, {@code /git}) and cannot be given a prefix.
-     * <p>
-     * <b>These three are the MACHINE plane's names and they have not moved with the browser
-     * ones.</b> A browser name is now {@code <app>[.<env>].<project>.<domain>} — see
-     * {@link #envAuthority()} — while these stay {@code <app>.<env>.localhost:<port>}, because
-     * moving them moves dockerd's configuration on every workstation, the {@code FROM} line of
-     * every committed Dockerfile and every clone url at once. They are named here because they are
-     * the ones a person has to configure by hand: dockerd's insecure registries and mirror list,
-     * and a clone url.
-     * <p>
-     * <b>Nothing in this CLI dials them.</b> The run is a container on qits-net and reaches all
-     * three at their aliases. They are here for the two things that speak to a person: the
-     * preflight warning about the docker daemon's {@code insecure-registries}, and the closing
-     * report's host-side steps.
-     */
-    default String registryVhost() {
-        return "registry." + envName() + ".localhost:" + port();
-    }
-
-    /** The pull-through caches, at the name dockerd's {@code registry-mirrors} points to. */
-    default String mirrorVhost() {
-        return "mirror." + envName() + ".localhost:" + port();
-    }
-
-    /** The git host, where a clone needs a bearer for every method — there is no anonymous half. */
-    default String gitHostVhost() {
-        return "githost." + envName() + ".localhost:" + port();
     }
 
     /**

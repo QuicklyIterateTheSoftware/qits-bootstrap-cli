@@ -196,6 +196,12 @@ public final class BootstrapPlan {
         // naming files that do not exist fails startup, so the volume has to hold a certificate
         // first.
         phases.add(seed.placeholderCertificate(domain));
+        // PORT 443 IS THE SEED EDGE'S FROM ITS FIRST START (owner ruling 2026-11-05): every image
+        // push below goes to registry.qits.<domain>, which arrives on this host's 443, so a
+        // bootstrap ingress that held it for the progress page gives it up here and keeps port 80.
+        // No cycle: the seed edge starts from its local build and orders its certificate over
+        // DNS-01, so nothing it needs to serve that name comes out of the registry.
+        phases.add(seed.edgeTlsHandoff());
         phases.add(pipeline.seedStackUp());
         phases.add(pipeline.seedHealth());
         // The earliest point the idp answers, which is all this needs: the token is a row in
@@ -213,6 +219,13 @@ public final class BootstrapPlan {
         // the boot, so it is where the bootstrap-publish credential is commissioned: the idp is up
         // and healthy by now, which is the one thing a commission needs.
         phases.add(seed.storeSeed());
+        // THE PUBLIC REGISTRY NAME HAS ITS REAL CERTIFICATE BEFORE THE FIRST PUSH, and every push
+        // below is held until it does (owner ruling 2026-11-05): edge-ready's proof, for the
+        // registry label alone — https://registry.qits.<domain>/v2/ answered over the JVM's trust
+        // store, so a placeholder or staging certificate is a failed handshake and no pass. There
+        // is no loopback vhost to push through instead. Nothing before this needs a pushed image:
+        // the first pull is the first seed deploy's, through this same name, further down.
+        phases.add(pipeline.registryReady());
         //
         // THE IMAGES A RUN IS STARTED FROM, into the store — and the workspace and agent images and
         // their bases beside them (qits-889) — and it has to be a PUSH, through the

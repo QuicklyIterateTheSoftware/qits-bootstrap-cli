@@ -98,19 +98,19 @@ public final class ComposeTemplate {
             # NO `name:` KEY. The stack name is the argument of `docker stack deploy`, and the loader
             # refuses the key outright — measured: "(root) Additional property name is not allowed".
             #
-            # ONE HOST PORT IN THE WHOLE FILE: the edge's ${PORT}.
+            # THE EDGE'S PORTS ARE THE ONLY HOST PORTS IN THE WHOLE FILE: ${PORT}, and 443.
             # The byte plane — qits-artifacts, qits-mirror, qits-githost — publishes nothing
-            # at all. All three are reached from the host THROUGH THE EDGE, under names of their own:
-            # registry.${ENV_NAME}.localhost:${PORT}, mirror.${ENV_NAME}.localhost:${PORT} and
-            # githost.${ENV_NAME}.localhost:${PORT}. systemd-resolved answers every *.localhost name
-            # with the loopback address, so the host's docker daemon and a person's git both arrive
-            # at the edge, which is where this platform's authentication lives: since 2026-08-14
-            # EVERY method on all three names needs a bearer, reads included. On qits-net they are
-            # no longer aliases of the edge (qits-1434): a container dials the public names.
+            # at all. All three are reached from the host THROUGH THE EDGE, at their public names
+            # over its real certificate: registry.qits.<domain>, mirror.qits.<domain> and
+            # githost.qits.<domain>. There is no machine name for any of them any more (qits-1433):
+            # the host's docker daemon and a person's git both arrive at the edge on 443, which is
+            # where this platform's authentication lives: since 2026-08-14 EVERY method on all
+            # three names needs a bearer, reads included. On qits-net they are not aliases of the
+            # edge (qits-1434): a container dials the public names too.
             #
-            # The daemon needs `insecure-registries` for the two names it dials — they are HTTP —
-            # and preflight asks the DAEMON what it allows, warning when they are missing. The way in
-            # when the edge itself is wedged is the break-glass script in the wrapper
+            # TLS, so the daemon needs no `insecure-registries` entry; preflight asks the DAEMON
+            # whether its registry-mirrors names https://mirror.qits.<domain>. The way in when the
+            # edge itself is wedged is the break-glass script in the wrapper
             # (qits-registry-break-glass.sh), which publishes the registry's port directly for as
             # long as the repair takes. A standing publish is not that path.
             #
@@ -319,9 +319,9 @@ public final class ComposeTemplate {
                   QITS_EDGE_ENVIRONMENTS: ${ENV_NAME}
                   QITS_EDGE_DEFAULT_ENVIRONMENT: ${ENV_NAME}
                   # THE THREE APPS THAT ARE REACHED BY NAME RATHER THAN BY PATH, and this block is
-                  # what closed three host ports. A request for registry.<env>.localhost goes to the
-                  # first pattern, mirror.<env>.localhost to the second, githost.<env>.localhost to
-                  # the third — each straight to the service,
+                  # what closed three host ports. A request for registry.qits.<domain> goes to the
+                  # store, mirror.qits.<domain> to the caches, githost.qits.<domain> to the git
+                  # host — each straight to the service,
                   # because a docker client and a git client own their own root paths (/v2, /git) and
                   # cannot be given a prefix.
                   #
@@ -417,14 +417,12 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_EVENTSTREAM_PASSWORD: "${PG_PLATFORM_EDGE_EVENTSTREAM_PASSWORD}"
                   QITS_EVENTS_URL: http://${DIAL_EVENTS}:8080
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}${EDGE_TLS}
-                # NO qits-net ALIASES (qits-1434). The edge used to claim registry/mirror/githost
-                # .<env>.localhost and githost.<env>.internal on this network, for containers that
-                # dialled a machine name rather than a wire alias. Nothing on qits-net does now:
-                # ci steps, the seed pullers, workspace and agent containers all dial
-                # https://<label>.qits.<domain>, and the seed's own calls use wire aliases. The
-                # host daemon's pre-edge-ready push to registry.<env>.localhost:<port> resolves on
-                # the HOST (systemd-resolved, *.localhost -> loopback) and arrives on the published
-                # port, so it never needed a qits-net alias.
+                # NO qits-net ALIASES (qits-1434). The edge used to claim machine names on this
+                # network, for containers that dialled one rather than a wire alias. Nothing on
+                # qits-net does now: ci steps, the seed pullers, workspace and agent containers all
+                # dial https://<label>.qits.<domain>, and the seed's own calls use wire aliases. The
+                # host daemon's pushes go to registry.qits.<domain> too, once registry-ready has
+                # proved its certificate (qits-1433), and arrive on 443.
                 networks: [qits-net]
                 deploy:
                   replicas: 1
@@ -629,19 +627,15 @@ public final class ComposeTemplate {
               # ENVIRONMENT service again since the byte-plane split — the pull-through caches below are
               # what made it platform-scoped, and they left.
               #
-              # NO PUBLISHED PORT, and the host still pulls and pushes here. The door is the edge:
-              # registry.${ENV_NAME}.localhost:${PORT} is what the host's docker daemon dials for
-              # this bootstrap's own seed pulls. It resolves to the loopback address like every
-              # *.localhost name, arrives at the edge, and the edge hands it to this service by that
-              # name — reads anonymous, writes with a bearer. The port this block used to publish
-              # was open to anything that could reach the host. A deployment reaches this same
-              # service through a different, public name once it is live — registry.qits.<domain> —
-              # which qits-deployments now derives rather than a deployment stating it.
-              #
-              # The daemon needs the name in `insecure-registries` (plain HTTP), which preflight
-              # warns about and the closing report spells. When the edge itself is wedged, the way
-              # back in is the wrapper's qits-registry-break-glass.sh, which opens a direct port for
-              # as long as the repair takes and closes it again.
+              # NO PUBLISHED PORT, and the host still pulls and pushes here. The door is the edge,
+              # at the one name this registry has: registry.qits.<domain>, over the edge's real
+              # certificate. The bootstrap pushes its seed images there only once that certificate
+              # is proven (registry-ready), and the deployer, the target and every CI slot pull by
+              # the same name, which qits-deployments derives rather than a deployment stating it.
+              # Every method needs a bearer. The port this block used to publish was open to
+              # anything that could reach the host. When the edge itself is wedged, the way back
+              # in is the wrapper's qits-registry-break-glass.sh, which opens a direct port for as
+              # long as the repair takes and closes it again.
               ${ENV_NAME}-qits-artifacts:
                 image: qits/artifacts:latest
                 environment:
@@ -690,14 +684,14 @@ public final class ComposeTemplate {
               # that is not up yet is not a slow build but a failed one. It starts COLD and warms up: the
               # first of each fetch pays the upstream, and nothing has to be pre-loaded.
               #
-              # NO PUBLISHED PORT EITHER, and the third-party door is a NAME now:
-              # mirror.${ENV_NAME}.localhost:${PORT}, through the edge. It used to be a second host
-              # port rather than a path for a reason that has not changed — this service and the
-              # store both answer the literal prefixes /artifacts/npm, /artifacts/maven and /v2, so
-              # the client's configuration is what picks between them. What picks now is the NAME:
-              # every committed Dockerfile spells mirror.<env>.localhost in its FROM lines, and
-              # dockerd's registry-mirrors names the same host. The name needs an
-              # `insecure-registries` entry of its own; the registry's is not enough.
+              # NO PUBLISHED PORT EITHER, and the third-party door is a NAME:
+              # mirror.qits.<domain>, through the edge over its real certificate. It used to be a
+              # second host port rather than a path for a reason that has not changed — this
+              # service and the store both answer the literal prefixes /artifacts/npm,
+              # /artifacts/maven and /v2, so the client's configuration is what picks between them.
+              # What picks now is the NAME: every committed Dockerfile spells
+              # mirror.qits.${QITS_DOMAIN} in its FROM lines, and dockerd's registry-mirrors names
+              # https://mirror.qits.<domain>. TLS, so no insecure-registries entry at all.
               ${ALIAS_MIRROR}:
                 image: qits/mirror:latest
                 environment:
@@ -734,8 +728,7 @@ public final class ComposeTemplate {
               # from now.
               #
               # NO PUBLISHED PORT, and the host-side git door stayed open: it is
-              # http://githost.${ENV_NAME}.localhost:${PORT}/git/<projectId>/<repo>.git through the
-              # edge. A person clones and pushes from the workstation, which is not on qits-net, and
+              # https://githost.qits.<domain>/git/<projectId>/<repo>.git through the edge. A person clones and pushes from the workstation, which is not on qits-net, and
               # the url has moved three times — localhost:8081/artifacts/git/<repo> while
               # the routes lived in the store, then a port of its own after the split, then a name,
               # and now the project-scoped pair. /git/<repoId> is the STORAGE scheme underneath it,

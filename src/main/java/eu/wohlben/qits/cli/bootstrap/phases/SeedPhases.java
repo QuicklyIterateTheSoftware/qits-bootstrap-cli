@@ -198,7 +198,7 @@ public class SeedPhases {
                             : "") + TargetSlots.describe(TargetSlots.hostMemoryBytes()) + ")");
             boot.state.swarm = ensureSwarm(boot.docker, ctx::log);
             ctx.log("  swarm: " + boot.state.swarm);
-            warnAboutInsecureRegistries(ctx);
+            warnAboutRegistryMirror(ctx);
             if (!boot.git.available()) {
                 throw new IllegalStateException("no git on PATH");
             }
@@ -259,41 +259,52 @@ public class SeedPhases {
     }
 
     /**
-     * <b>A WARNING, never a refusal: the docker daemon's own list of registries it will speak plain
-     * HTTP to.</b>
+     * <b>A WARNING, never a refusal: the docker daemon's own {@code registry-mirrors}.</b>
      * <p>
-     * The platform's registry and its mirror are reached from the host at
-     * {@code <app>.<env>.localhost:<edge port>} now, and both speak HTTP. Docker's built-in
-     * exemption is for the loopback ADDRESSES and not for names that resolve to them, so a daemon
-     * without these two entries fails every push and every pull with "http: server gave HTTP
-     * response to HTTPS client" — a message about TLS, several phases into a boot, for a
-     * configuration line on the host.
+     * The platform's mirror is reached from the host at its PUBLIC name,
+     * {@code https://mirror.qits.<domain>}, over the edge's real certificate — the same name every
+     * other puller uses — so the advice is one {@code daemon.json} line and no
+     * {@code insecure-registries} entry at all. There are no machine-name vhosts left to list
+     * there. A daemon without the line still works; it just pulls Docker Hub directly rather than
+     * through the platform's cache.
      * <p>
-     * It does not stop the boot, and that is deliberate twice over. The failure is repairable while
-     * the run is going (edit {@code /etc/docker/daemon.json}, restart the daemon), and a bootstrap
-     * that refused to start over a host setting it can neither read nor write would be refusing the
-     * cold start it exists for. The closing report prints the same two entries as a host-side step.
-     * <p>
-     * The DAEMON is asked rather than the file, because the daemon is the thing that decides — and
-     * a daemon that has not been restarted since the file was edited is exactly the case a file
-     * read would call configured.
+     * It does not stop the boot: the line is a host step that can be made while the run is going,
+     * and the closing report prints the same line. The DAEMON is asked rather than the file,
+     * because the daemon is the thing that decides — and a daemon that has not been restarted
+     * since the file was edited is exactly the case a file read would call configured.
      */
-    private void warnAboutInsecureRegistries(PhaseContext ctx) {
-        List<String> insecure = boot.docker.insecureRegistries();
-        List<String> missing = Stream.of(boot.config.registryVhost(), boot.config.mirrorVhost())
-                .filter(name -> !insecure.contains(name))
-                .toList();
-        if (missing.isEmpty()) {
-            ctx.log("  insecure registries: " + boot.config.registryVhost() + ", "
-                    + boot.config.mirrorVhost());
+    private void warnAboutRegistryMirror(PhaseContext ctx) {
+        String domain = boot.config.requiredDomain();
+        List<String> mirrors = boot.docker.registryMirrors();
+        Optional<String> warning = registryMirrorWarning(mirrors, domain);
+        if (warning.isEmpty()) {
+            ctx.log("  registry-mirrors: " + PipelinePhases.registryMirrorUrl(domain));
             return;
         }
-        ctx.warn("the docker daemon does not allow plain HTTP to " + String.join(" or ", missing)
-                + " — every push and pull through the edge will fail with \"server gave HTTP "
-                + "response to HTTPS client\". Add both names to insecure-registries in "
-                + "/etc/docker/daemon.json and restart the daemon; the closing report spells the "
-                + "line. The boot goes on: the fix is a host step and it can be made while this "
-                + "runs");
+        ctx.warn(warning.get());
+    }
+
+    /**
+     * What the preflight says about the daemon's mirrors: nothing when they name
+     * {@code https://mirror.qits.<domain>}, and the one line to add otherwise. Pure, so the advice
+     * is provable without a daemon. Docker answers a mirror with a trailing slash; either spelling
+     * counts.
+     */
+    static Optional<String> registryMirrorWarning(List<String> mirrors, String domain) {
+        String wanted = PipelinePhases.registryMirrorUrl(domain);
+        boolean configured = mirrors.stream().map(String::strip)
+                .map(mirror -> mirror.endsWith("/") ? mirror.substring(0, mirror.length() - 1)
+                        : mirror)
+                .anyMatch(wanted::equals);
+        if (configured) {
+            return Optional.empty();
+        }
+        return Optional.of("the docker daemon's registry-mirrors does not name " + wanted
+                + " — an unqualified Docker Hub pull on this host goes upstream rather than "
+                + "through the platform's cache. Add " + PipelinePhases.registryMirrorsLine(domain)
+                + " to /etc/docker/daemon.json and restart the daemon; it is the edge's public "
+                + "name over its real certificate, so no insecure-registries entry is needed. The "
+                + "boot goes on: the fix is a host step and it can be made while this runs");
     }
 
     /**
@@ -1233,14 +1244,14 @@ public class SeedPhases {
                     stepImageTarget(name), ctx::log);
             Boot.must(result, "build of qits/build-images/" + name + " failed");
             // qits-ci resolves an unqualified qits/* step image against the registry host, so a run
-            // pulls registry.<env>.localhost/qits/build-images/<name>. The seed loads it into the
+            // pulls registry.qits.<domain>/qits/build-images/<name>. The seed loads it into the
             // host daemon under the bare tag and the fresh registry has not got it, so tag it under
             // the registry host too: docker run then finds it locally, before any pull. This is the
             // seed's pull+retag — and the tag the images-publish phase pushes, because a run is
-            // refused until the STORE answers for the image too.
+            // refused until the STORE answers for the image too. A tag is a local name, not a dial.
             Boot.must(boot.docker.exec(ctx::log, "tag",
                     "qits/build-images/" + name + ":latest",
-                    boot.config.registryVhost() + "/qits/build-images/" + name + ":latest"),
+                    boot.registryHost() + "/qits/build-images/" + name + ":latest"),
                     "tagging qits/build-images/" + name + " under the registry host failed");
         });
     }
@@ -2302,14 +2313,6 @@ public class SeedPhases {
     }
 
     /**
-     * The same image under the registry host — the spelling {@code images-publish} pushes it
-     * under.
-     */
-    static String systemRunnerRegistryImage(Boot boot, String version) {
-        return boot.config.registryVhost() + "/" + systemRunnerImage(version);
-    }
-
-    /**
      * <b>The {@code image} stage of the runner's Dockerfile, fed a binary that is already built.</b>
      * <p>
      * The repository's Dockerfile compiles and packages in one file: a {@code build} stage on the
@@ -2394,11 +2397,11 @@ public class SeedPhases {
      * <b>From the TAG, and the tag is qits-system's pin</b> — see {@link #systemRunnerVersion}.
      * The checkout stands on main and is not what is built.
      * <p>
-     * <b>Tagged three times</b>: under the bare name the build loads it as; under the registry
-     * vhost, which is how the {@code images-publish} phase pushes it; and under the PUBLIC registry
-     * name {@code registry.qits.<domain>}, which is how {@code target-localhost} starts it and how
-     * qits-system names every runner's image — so the container this boot starts is already named
-     * the way its successor will be, and the host pulls nothing.
+     * <b>Tagged twice</b>: under the bare name the build loads it as, and under the registry name
+     * {@code registry.qits.<domain>} — how the {@code images-publish} phase pushes it, how
+     * {@code target-localhost} starts it and how qits-system names every runner's image — so the
+     * container this boot starts is already named the way its successor will be, and the host
+     * pulls nothing.
      * <p>
      * <b>An image this daemon already holds is not built again</b>: the tag carries the version,
      * and a version names one commit. That is every rerun, and it is what makes this phase cost a
@@ -2409,7 +2412,7 @@ public class SeedPhases {
                 ctx -> {
             String version = systemRunnerVersion(boot);
             String image = systemRunnerImage(version);
-            List<String> tags = List.of(systemRunnerRegistryImage(boot, version),
+            List<String> tags = List.of(
                     PipelinePhases.targetRunnerImage(boot.config.requiredDomain(), version));
             if (boot.docker.imageExists(image)) {
                 tag(ctx, image, tags);
@@ -2731,12 +2734,10 @@ public class SeedPhases {
                 && boot.docker.layoutDigest(layout(repository, version)) != null;
     }
 
-    /** The registry-vhost spelling, which {@code images-publish} pushes. */
-    private String vhost(String repository, String version) {
-        return boot.config.registryVhost() + "/" + image(repository, version);
-    }
-
-    /** The public spelling a consumer starts the image under, so a target pulls nothing. */
+    /**
+     * The registry spelling — {@code registry.qits.<domain>/<image>} — which {@code images-publish}
+     * pushes and a consumer starts the image under, so a target pulls nothing.
+     */
     private String publicName(String repository, String version) {
         return PipelinePhases.publicRegistryHost(boot.config.requiredDomain()) + "/"
                 + image(repository, version);
@@ -2836,7 +2837,7 @@ public class SeedPhases {
             List<String> built = new ArrayList<>();
             for (String version : closure.browserBases()) {
                 if (baseHeld(BROWSER_BASE_IMAGE, version)) {
-                    tag(ctx, image(BROWSER_BASE_IMAGE, version), List.of(vhost(BROWSER_BASE_IMAGE, version)));
+                    tag(ctx, image(BROWSER_BASE_IMAGE, version), List.of(publicName(BROWSER_BASE_IMAGE, version)));
                     ctx.log("  " + image(BROWSER_BASE_IMAGE, version) + ": held");
                     continue;
                 }
@@ -2862,7 +2863,7 @@ public class SeedPhases {
                 } finally {
                     removeTree("oci", tree);
                 }
-                tag(ctx, image(BROWSER_BASE_IMAGE, version), List.of(vhost(BROWSER_BASE_IMAGE, version)));
+                tag(ctx, image(BROWSER_BASE_IMAGE, version), List.of(publicName(BROWSER_BASE_IMAGE, version)));
                 built.add(version);
             }
             if (built.isEmpty()) {
@@ -2889,7 +2890,7 @@ public class SeedPhases {
                 String version = entry.getKey();
                 if (baseHeld(WORKSPACE_BASE_IMAGE, version)) {
                     tag(ctx, image(WORKSPACE_BASE_IMAGE, version),
-                            List.of(vhost(WORKSPACE_BASE_IMAGE, version)));
+                            List.of(publicName(WORKSPACE_BASE_IMAGE, version)));
                     ctx.log("  " + image(WORKSPACE_BASE_IMAGE, version) + ": held");
                     continue;
                 }
@@ -2926,7 +2927,7 @@ public class SeedPhases {
                     removeTree("oci-workspace", tree);
                 }
                 tag(ctx, image(WORKSPACE_BASE_IMAGE, version),
-                        List.of(vhost(WORKSPACE_BASE_IMAGE, version)));
+                        List.of(publicName(WORKSPACE_BASE_IMAGE, version)));
                 built.add(version);
             }
             if (built.isEmpty()) {
@@ -2939,9 +2940,9 @@ public class SeedPhases {
     /**
      * <b>{@code qits/workspace} at every version a consumer pins, from qits-workspace-daemon's
      * tag</b>: the daemon's native compile out of the {@code qits-maven-seed} volume, on the
-     * workspace base this run exported. Tagged under the public registry name the consumers start
-     * it by, so a target finds it on this host and pulls nothing, and under the registry vhost for
-     * {@code images-publish}.
+     * workspace base this run exported. Tagged under the registry name the consumers start it by —
+     * {@code registry.qits.<domain>}, the one {@code images-publish} pushes too — so a target finds
+     * it on this host and pulls nothing.
      */
     public Phase workspaceImageSeed() {
         return new Phase("seed-workspace", "build the workspace images the platform starts", ctx -> {
@@ -2951,8 +2952,7 @@ public class SeedPhases {
                     .entrySet()) {
                 String version = entry.getKey();
                 String image = image(WORKSPACE_IMAGE, version);
-                List<String> tags = List.of(vhost(WORKSPACE_IMAGE, version),
-                        publicName(WORKSPACE_IMAGE, version));
+                List<String> tags = List.of(publicName(WORKSPACE_IMAGE, version));
                 if (boot.docker.imageExists(image)) {
                     tag(ctx, image, tags);
                     ctx.log("  " + image + ": held");
@@ -3003,11 +3003,10 @@ public class SeedPhases {
                     .entrySet()) {
                 String version = entry.getKey();
                 String agent = image(AGENT_IMAGE, version);
-                List<String> agentTags = List.of(vhost(AGENT_IMAGE, version),
-                        publicName(AGENT_IMAGE, version));
+                List<String> agentTags = List.of(publicName(AGENT_IMAGE, version));
                 if (baseHeld(PROJECTS_DAEMON_IMAGE, version) && boot.docker.imageExists(agent)) {
                     tag(ctx, image(PROJECTS_DAEMON_IMAGE, version),
-                            List.of(vhost(PROJECTS_DAEMON_IMAGE, version)));
+                            List.of(publicName(PROJECTS_DAEMON_IMAGE, version)));
                     tag(ctx, agent, agentTags);
                     ctx.log("  " + agent + ": held");
                     continue;
@@ -3049,7 +3048,7 @@ public class SeedPhases {
                 } finally {
                     removeTree("projects-daemon", tree);
                 }
-                tag(ctx, daemon, List.of(vhost(PROJECTS_DAEMON_IMAGE, version)));
+                tag(ctx, daemon, List.of(publicName(PROJECTS_DAEMON_IMAGE, version)));
                 tag(ctx, agent, agentTags);
                 built.add(version);
             }
@@ -3801,15 +3800,17 @@ public class SeedPhases {
      * <b>The edge's port must REFUSE an IPv6 connection on this host's loopback, and this phase
      * makes it refuse.</b>
      * <p>
-     * The byte plane is reached at {@code <app>.<env>.localhost}, and a resolver answers
-     * {@code ::1} for such a name FIRST. The edge publishes its port in swarm INGRESS mode and the
+     * A client on this host that reaches the edge's port by a {@code *.localhost} name —
+     * {@code localhost:<port>} itself, the door a person types — gets {@code ::1} from the
+     * resolver FIRST. (The byte plane used to be reached at such names; it is at its public names
+     * over 443 now, qits-1433, so this guards the door rather than every pull.) The edge publishes its port in swarm INGRESS mode and the
      * routing mesh is IPv4-only: the v6 listener accepts the connection and then serves nothing, so
      * curl, docker, git, maven and npm all HANG instead of failing over to IPv4. A host-mode
      * publish never showed this — docker-proxy bound both families — which is why it arrives with
      * the mode.
      * <p>
      * <b>It hangs with no error, and that is what makes it expensive.</b> On 2026-09-02 a release
-     * run's SBOM upload — one {@code curl -X PUT} to {@code registry.<env>.localhost} from a CI
+     * run's SBOM upload — one {@code curl -X PUT} to the registry's old machine-name vhost from a CI
      * step on the host network — sat on {@code [::1]:<port>} for over forty minutes and blocked the
      * whole CI queue behind it. On 2026-09-05 the same landmine timed out a CI step's
      * {@code docker push} on a cold node, an hour into a boot. Nothing timed out early and nothing
@@ -4009,6 +4010,35 @@ public class SeedPhases {
         });
     }
 
+    /**
+     * <b>PORT 443 GOES TO THE SEED EDGE, before the seed stack starts it.</b>
+     * <p>
+     * The cold boot pushes every image to {@code registry.qits.<domain>} and nothing else, and only
+     * once that name serves its real certificate ({@code registry-ready}). The name resolves to
+     * this host, so it has to arrive at an edge — and before the edge's seed deploy the only edge
+     * is the seed one. A bootstrap ingress in {@code PUBLIC_TLS} mode holds 443
+     * for the progress page, so it gives that port up here and keeps serving the page on 80 in
+     * plain HTTP; in the other modes it never held 443 and this phase has nothing to do.
+     * <p>
+     * <b>Not a cycle, and that is the point of putting it here.</b> The seed edge starts from the
+     * local {@code qits/edge:latest} build ({@code --resolve-image never}), orders its certificate
+     * over DNS-01, which needs no listener, and routes {@code registry.qits.<domain>} to the seed
+     * qits-artifacts in code — so nothing it needs to serve that name comes out of the registry.
+     */
+    public Phase edgeTlsHandoff() {
+        return new Phase("edge-tls-handoff", "hand port 443 from the bootstrap ingress to the edge",
+                ctx -> {
+                    if (!boot.config.bootstrapIngress()) {
+                        ctx.skip("QITS_BOOTSTRAP_INGRESS=0");
+                    }
+                    if (!boot.ingress.releaseTls(ctx::log)) {
+                        ctx.skip("the bootstrap ingress holds no 443 ("
+                                + boot.ingress.mode() + ")");
+                    }
+                    ctx.note("443 is the seed edge's; the progress page stays on 80");
+                });
+    }
+
     public Phase composeFile() {
         return new Phase("compose-file", "generate the seed compose file", ctx -> {
             try {
@@ -4057,12 +4087,11 @@ public class SeedPhases {
      * from {@code mirror.qits.<domain>/hub/…}, and qits-containers names exactly these two in its
      * own {@code docker-config.hosts}; each deployed successor writes its own file for the same
      * pair. The docker CLI matches an entry by host and nothing else, so a file that still named
-     * {@code registry.<env>.localhost:<port>} — what this wrote until qits-1430 — presented
-     * nothing to the registry those pulls actually reach, and the edge refuses an uncredentialed
-     * read.
+     * the machine-name vhost this wrote until qits-1430 presented nothing to the registry those
+     * pulls actually reach, and the edge refuses an uncredentialed read.
      * <p>
-     * <b>The machine-name vhosts are not written, though the edge still answers them</b>
-     * (qits-1434 removes them). Nothing that reads these files pulls by them.
+     * <b>No machine name is written</b>: the edge answers none any more (qits-1433), and nothing
+     * that reads these files ever pulled by one.
      */
     static List<String> dockerConfigHosts(String domain) {
         return List.of(EdgeAddresses.host("registry", domain),
@@ -4618,12 +4647,12 @@ public class SeedPhases {
                 // this is ad-hoc names only. Checked here, where a refusal is a message about a
                 // knob rather than a failed order.
                 ExtraSans.of(boot.config, domain)));
-        // While the disposable edge owns the public domain, the seed edge remains an internal
-        // service. The edge's own deployments.yml keeps 80/443 so the real edge can take them
-        // at the explicit handoff: the edge's seed deploy, the end of the local-build step.
-        if (boot.config.bootstrapIngress() && boot.ingress.mode().isPublic()) {
-            values.put("EDGE_SEED_TLS_PORTS", "");
-        }
+        // THE SEED EDGE ALWAYS HOLDS 443 (owner ruling 2026-11-05). Every image push of the boot
+        // goes to registry.qits.<domain> once that name serves its real certificate, and the
+        // seed deploys pull through the same name, so the edge has to answer it on 443 from the
+        // moment the seed stack is up — it orders the certificate over DNS-01 itself and needs no
+        // registry to start. The bootstrap ingress keeps port 80 (the progress page) and hands
+        // 443 over in edge-tls-handoff; the edge's seed deploy retires it altogether.
         return values;
     }
 

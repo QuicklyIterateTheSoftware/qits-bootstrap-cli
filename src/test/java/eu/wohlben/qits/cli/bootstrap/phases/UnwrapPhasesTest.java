@@ -267,4 +267,16 @@ class UnwrapPhasesTest {
         assertThat(UnwrapPhases.isPlatformName("qits_prod-qits-events")).isTrue();
         assertThat(UnwrapPhases.isPlatformName("postgres")).isFalse();
     }
+
+    /** The sweep knows the registry's public name too: every image a bootstrap tags is under it. */
+    @Test
+    void theImageSweepRecognisesThePublicRegistryName() {
+        assertThat(UnwrapPhases.isPublicRegistryRef("registry.qits.qits-dev.eu/qits/qits-edge:1"))
+                .isTrue();
+        assertThat(UnwrapPhases.isPublicRegistryRef("registry.qits.wohlben.eu/qits/build-images/"
+                + "ci-slot:latest")).isTrue();
+        assertThat(UnwrapPhases.isPublicRegistryRef("registry.example.com/qits/x:1")).isFalse();
+        assertThat(UnwrapPhases.isPublicRegistryRef("docker.io/library/alpine:3")).isFalse();
+        assertThat(UnwrapPhases.isPublicRegistryRef("registry.qits.")).isFalse();
+    }
 }

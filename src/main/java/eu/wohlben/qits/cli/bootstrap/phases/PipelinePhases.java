@@ -710,13 +710,17 @@ public class PipelinePhases {
      * {@code qits/build-images/node-browser-base}, which phase 4's release builds of those images
      * start {@code FROM} through the registry.
      * <p>
-     * <b>Pushed by the HOST's daemon, through the edge</b>, under the registry host's name — the
-     * path a release step's own push takes. That is why this phase sits after the seed stack is
-     * healthy, and why a push leaves the local image knowing the digest the store will answer:
-     * the target finds the pinned reference on the host and pulls nothing.
+     * <b>Pushed by the HOST's daemon, through the edge</b>, to {@code registry.qits.<domain>} — the
+     * path a release step's own push takes, and the only registry name there is. That is why this
+     * phase sits after {@code registry-ready}, which proves that name serves its real certificate
+     * (a push before it is refused, {@link #requireRegistryCertificate}), and why a push leaves the
+     * local image knowing the digest the store will answer: the target finds the pinned reference
+     * on the host and pulls nothing.
      * <p>
-     * <b>The credential is the publishing one</b>, as the pair docker's token dance needs, in a
-     * {@code config.json} in a directory of this phase's own — 0700, named with {@code --config}
+     * <b>The credential is the publishing one</b> — the {@code bootstrap-publish} client this boot
+     * commissioned at the idp — as the client id and secret docker's token dance presents to the
+     * edge in HTTP Basic (the edge validates that pair at the idp and hands docker a bearer), in a
+     * {@code config.json} for {@code registry.qits.<domain>} in a directory of this phase's own — 0700, named with {@code --config}
      * and gone before the phase ends. The daemon's own config is nobody's to write: a login there
      * would outlive the boot and serve every docker user of the host.
      * <p>
@@ -727,6 +731,7 @@ public class PipelinePhases {
     public Phase imagesPublish() {
         return new Phase("images-publish",
                 "push the step, runner and workspace images into the registry", ctx -> {
+            requireRegistryCertificate(boot);
             String registryHost = boot.registryHost();
             List<StoreImage> images = storeImages(SeedPhases.systemRunnerVersion(boot),
                     new SeedPhases(boot).workspaceStoreImages());
@@ -761,6 +766,7 @@ public class PipelinePhases {
      */
     private void push(PhaseContext ctx, String registryHost, List<String> references)
             throws IOException {
+        requireRegistryCertificate(boot);
         BootstrapPublishCredential.Pair pair = boot.publishPair(ctx);
         // createTempDirectory is 0700: the file it holds is a credential.
         Path config = Files.createTempDirectory("qits-docker-push-");
@@ -786,6 +792,20 @@ public class PipelinePhases {
      * the release tag — qits-deployments' {@code ImageRefs} convention, which a release run meets
      * by publishing exactly that, and which this phase meets by tagging the seed build so.
      */
+    /**
+     * <b>The hold every push passes through.</b> No push is made until {@code registry-ready} has
+     * proved {@code registry.qits.<domain>} over a trusted certificate; a phase that got here
+     * without it — a plan reordered, a placeholder still served — stops rather than pushing.
+     */
+    static void requireRegistryCertificate(Boot boot) {
+        if (!boot.registryCertificateProven()) {
+            throw new IllegalStateException("no push before " + boot.registryHost()
+                    + " serves a certificate this host trusts: registry-ready has not passed, so "
+                    + "the edge holds only its placeholder (or nothing) for that name. The push "
+                    + "waits for the real certificate — rerun once registry-ready passes");
+        }
+    }
+
     static StoreImage seedStoreImage(String name, String version) {
         return new StoreImage("qits/" + PlatformModel.application(name), version);
     }
@@ -821,6 +841,7 @@ public class PipelinePhases {
     public Phase seedImagesPublish() {
         return new Phase("seed-images-publish",
                 "push the seed images into the registry at their release tag", ctx -> {
+            requireRegistryCertificate(boot);
             String registryHost = boot.registryHost();
             Map<String, StoreImage> missing = new LinkedHashMap<>();
             int held = 0;
@@ -2562,25 +2583,7 @@ public class PipelinePhases {
                 throw new IllegalStateException(refusal);
             }
             List<EdgeProbe> probes = edgeProbes(domain);
-            probes.forEach(probe -> ctx.log("  " + probe.what()));
-            try {
-                Waiter.await(ctx, "the platform's edge", boot.config.edgeReadyTimeout(),
-                        boot.config.pollInterval(), () -> {
-                            List<String> waiting = new ArrayList<>();
-                            for (EdgeProbe probe : probes) {
-                                Http.Response answer = probe.ask().get();
-                                if (!edgeServes(answer)) {
-                                    waiting.add(probe.what() + ": " + answer.describe());
-                                }
-                            }
-                            return waiting.isEmpty() ? Waiter.Poll.done("served", "served")
-                                    : Waiter.Poll.pending(String.join("; ", waiting));
-                        });
-            } catch (TimeoutException gaveUp) {
-                throw new IllegalStateException(gaveUp.getMessage() + "\nA failed handshake is a "
-                        + "certificate this host does not trust yet: the edge orders it over "
-                        + "DNS-01, so the records have to resolve — rerun once they do.");
-            }
+            awaitServed(ctx, "the platform's edge", probes);
             List<String> labels = probes.stream().map(EdgeProbe::label).toList();
             boot.addresses.ready(labels);
             ctx.log("  from here on this run dials " + labels.stream()
@@ -2589,6 +2592,83 @@ public class PipelinePhases {
                     .collect(java.util.stream.Collectors.joining(", "))
                     + " through the edge — never their aliases again");
             ctx.note(probes.size() + " names served");
+        });
+    }
+
+    /**
+     * Waits, bounded by {@code QITS_EDGE_READY_TIMEOUT}, until the edge serves every probe over a
+     * certificate the JVM trusts — the one wait {@code registry-ready} and {@code edge-ready} share,
+     * so "served" means the same thing in both.
+     */
+    private void awaitServed(PhaseContext ctx, String what, List<EdgeProbe> probes)
+            throws Exception {
+        probes.forEach(probe -> ctx.log("  " + probe.what()));
+        try {
+            Waiter.await(ctx, what, boot.config.edgeReadyTimeout(), boot.config.pollInterval(),
+                    () -> {
+                        List<String> waiting = new ArrayList<>();
+                        for (EdgeProbe probe : probes) {
+                            Http.Response answer = probe.ask().get();
+                            if (!edgeServes(answer)) {
+                                waiting.add(probe.what() + ": " + answer.describe());
+                            }
+                        }
+                        return waiting.isEmpty() ? Waiter.Poll.done("served", "served")
+                                : Waiter.Poll.pending(String.join("; ", waiting));
+                    });
+        } catch (TimeoutException gaveUp) {
+            throw new IllegalStateException(gaveUp.getMessage() + "\nA failed handshake is a "
+                    + "certificate this host does not trust yet: the edge orders it over "
+                    + "DNS-01, so the records have to resolve — rerun once they do.");
+        }
+    }
+
+    /** The registry's own probe: {@code https://registry.qits.<domain>/v2/}, edge-ready's entry. */
+    List<EdgeProbe> registryProbes(String domain) {
+        return edgeProbes(domain).stream()
+                .filter(probe -> Boot.REGISTRY_LABEL.equals(probe.label())).toList();
+    }
+
+    /**
+     * <b>THE PUBLIC REGISTRY NAME HAS ITS REAL CERTIFICATE — and not one image is pushed before
+     * this passes</b> (owner ruling 2026-11-05).
+     * <p>
+     * Every image this boot pushes — the step, runner and workspace images, and the seed images at
+     * their release tag — goes to {@code registry.qits.<domain>}, the name the deployer, the target
+     * and every CI slot pull by. So the push waits for exactly what those pulls need: the edge
+     * serving that name over a certificate the JVM's own trust store accepts. It is
+     * {@code edge-ready}'s proof, narrowed to the {@code registry} label: the same probe
+     * ({@code /v2/}, where any answer of the service's own — the 401 of the token dance — is the
+     * door), the same bounded wait and the same refusals. A placeholder or staging certificate is a
+     * failed handshake, so it never passes, and ACME off or on staging is refused before a poll.
+     * <p>
+     * <b>Why nothing needs an earlier push.</b> The seed edge serves 443 from the moment the seed
+     * stack is up ({@code edge-tls-handoff}) and orders its certificate over DNS-01 itself; it is
+     * started from a local image, so it needs nothing from the registry to get there. Every seed
+     * deploy pulls {@code registry.qits.<domain>/qits/<app>:<version>} through this same name, so
+     * a push that reached the store any earlier would only have waited here for its puller.
+     * <p>
+     * A pass latches the {@code registry} label in {@link Boot#addresses}: from here on the store
+     * is read at its public name with the bootstrap's bearer, and {@link Boot#registryHost()}'s
+     * pushes are allowed.
+     */
+    public Phase registryReady() {
+        return new Phase("registry-ready",
+                "wait for registry.qits.<domain> to serve its real certificate", ctx -> {
+            String domain = boot.config.requiredDomain();
+            String refusal = Acme.edgeRunnerRefusal(Acme.mode(boot.config));
+            if (refusal != null) {
+                throw new IllegalStateException(refusal);
+            }
+            if (boot.registryCertificateProven()) {
+                ctx.skip(EdgeAddresses.host(Boot.REGISTRY_LABEL, domain) + " is already proven");
+            }
+            awaitServed(ctx, EdgeAddresses.host(Boot.REGISTRY_LABEL, domain),
+                    registryProbes(domain));
+            boot.addresses.ready(List.of(Boot.REGISTRY_LABEL));
+            ctx.log("  every push of this run goes to " + boot.registryHost()
+                    + ", and the store is read there with the bootstrap's bearer");
+            ctx.note(boot.registryHost() + " served");
         });
     }
 
@@ -2916,7 +2996,27 @@ public class PipelinePhases {
 
     /** {@code registry.qits.<domain>}: the registry every runner pulls from. */
     static String publicRegistryHost(String domain) {
-        return "registry." + PlatformModel.PROJECT + "." + domain;
+        return EdgeAddresses.host(Boot.REGISTRY_LABEL, domain);
+    }
+
+    /** {@code mirror.qits.<domain>}: the pull-through caches, at the edge's public name. */
+    static String publicMirrorHost(String domain) {
+        return EdgeAddresses.host("mirror", domain);
+    }
+
+    /**
+     * The URL dockerd's {@code registry-mirrors} names: the mirror at its public name, at the ROOT.
+     * qits-platform-mirror answers a bare Hub name there ({@code /v2/library/alpine/…}, the
+     * {@code registry-mirrors} remap in qits-registries' {@code OciRegistryService}), which is the
+     * only path a daemon-configured mirror asks for. Over HTTPS: the edge's real certificate.
+     */
+    public static String registryMirrorUrl(String domain) {
+        return "https://" + publicMirrorHost(domain);
+    }
+
+    /** The {@code daemon.json} line the closing report and the preflight both name. */
+    static String registryMirrorsLine(String domain) {
+        return "\"registry-mirrors\": [\"" + registryMirrorUrl(domain) + "\"]";
     }
 
     /**
@@ -3438,10 +3538,11 @@ public class PipelinePhases {
                     + "host, and every");
             report.add("           other path on it is a 404 — each service answers on a name of "
                     + "its own below.");
-            report.add("           It is the byte plane's port too: the registry, the mirror and "
-                    + "the git host publish");
-            report.add("           none of their own. EVERY method on those three names needs a "
-                    + "bearer, reads included.");
+            report.add("           The registry, the mirror and the git host publish no port of "
+                    + "their own: each is");
+            report.add("           reached at its public name below, through the edge over TLS. "
+                    + "EVERY method on");
+            report.add("           those three names needs a bearer, reads included.");
             report.add("apps:      EVERY SERVICE HAS A HOST OF ITS OWN: " + appHost + "/ serves");
             report.add("           that service's UI at / and its wire routes beside it — idp, "
                     + "ci, projects,");
@@ -3466,19 +3567,19 @@ public class PipelinePhases {
                     + "idp accepts one");
             report.add("           from. Any service host sends an anonymous browser here and "
                     + "takes it back after.");
-            report.add("registry:  " + boot.config.registryVhost()
+            String registry = publicRegistryHost(apex);
+            String mirror = publicMirrorHost(apex);
+            report.add("registry:  " + registry
                     + " — the platform's OWN images and packages (" + env + "-qits-artifacts)");
-            report.add("mirror:    " + boot.config.mirrorVhost()
+            report.add("mirror:    " + mirror
                     + " — everything third-party, cached (qits-platform-mirror).");
-            report.add("           Point dockerd's registry-mirrors at it: "
-                    + "\"registry-mirrors\": [\"http://" + boot.config.mirrorVhost() + "\"]");
-            report.add("daemon:    BOTH names are plain HTTP, so /etc/docker/daemon.json needs "
-                    + "them listed or every");
-            report.add("           push and pull fails on TLS. Add, then restart the daemon:");
-            report.add("             \"insecure-registries\": [\"" + boot.config.registryVhost()
-                    + "\", \"" + boot.config.mirrorVhost() + "\"]");
-            report.add("           Both names resolve by themselves, as every *.localhost name "
-                    + "does.");
+            report.add("daemon:    Point dockerd's registry-mirrors at it, in /etc/docker/daemon.json,"
+                    + " then restart");
+            report.add("           the daemon:");
+            report.add("             " + registryMirrorsLine(apex));
+            report.add("           Both names are the edge's public names over its real "
+                    + "certificate, so no");
+            report.add("           insecure-registries entry is needed — or wanted.");
             report.add("login:     a PULL needs a credential now as much as a PUSH, and a person's "
                     + "is COMMISSIONED —");
             report.add("           the idp issues one per context, so no static pair is handed "
@@ -3498,7 +3599,7 @@ public class PipelinePhases {
                     + ", the one that may write.");
             report.add("           The answer's clientId and secret are the credential:");
             // The public name, over the edge's real certificate: the one every puller of the
-            // platform presents its credential for, and the one the vhosts above give way to.
+            // platform presents its credential for.
             report.add("             docker login "
                     + publicRegistryHost(boot.config.requiredDomain())
                     + " -u <clientId> -p <secret>");
@@ -3579,7 +3680,8 @@ public class PipelinePhases {
             // below, because that is what every service on qits-net dials.
             String project = boot.state.projectId == null || boot.state.projectId.isBlank()
                     ? "<projectId>" : boot.state.projectId;
-            report.add("git host:  http://" + boot.config.gitHostVhost() + "/git/"
+            String githost = "https://" + EdgeAddresses.host("githost", apex);
+            report.add("git host:  " + githost + "/git/"
                     + PlatformModel.PROJECT + "/<repo>.git — qits-githost, through the edge.");
             report.add("           The first segment is the PROJECT (" + PlatformModel.PROJECT
                     + " holds every repository this run seeded)");
@@ -3590,12 +3692,11 @@ public class PipelinePhases {
             report.add("           EVERY method needs a bearer here, reads included — as on the "
                     + "two registry names");
             report.add("           since the flip. Mint one and clone with it:");
-            report.add("             curl -u <client>:<secret> http://"
-                    + boot.config.gitHostVhost() + "/token        (the access_token is in the "
-                    + "answer)");
+            report.add("             curl -u <client>:<secret> " + githost
+                    + "/token        (the access_token is in the answer)");
             report.add("             git -c http.extraHeader=\"Authorization: Bearer <token>\" "
                     + "clone \\");
-            report.add("               http://" + boot.config.gitHostVhost() + "/git/"
+            report.add("               " + githost + "/git/"
                     + PlatformModel.PROJECT + "/qits-qits.git");
             report.add("           The clients and where their secrets are recorded are on the "
                     + "machines: line below.");

@@ -242,19 +242,26 @@ public class Boot {
     }
 
     /**
-     * <b>The registry name the HOST's daemon pushes and pulls through</b>, and the docker
-     * credential a push writes is for this name. Before the edge is ready it is the loopback vhost
-     * {@code registry.<env>.localhost:<port>}: the seed edge answers it over plain HTTP from the
-     * moment the seed stack is up, while {@code registry.qits.<domain>} has only a placeholder
-     * certificate until the edge's own ACME order lands — and the seed images have to be in the
-     * store before the seed deploys, which come before {@code edge-ready}. Once the edge is ready
-     * it is {@code registry.qits.<domain>}, the name every puller of the platform uses.
+     * <b>The registry name the HOST's daemon pushes and pulls through, and there is one:
+     * {@code registry.qits.<domain>}</b> — the name every puller of the platform uses, and the
+     * name the docker credential a push writes is for. There is no loopback vhost any more (owner
+     * ruling 2026-11-05): a cold boot WAITS until the edge serves this name over a certificate the
+     * JVM trusts — {@code registry-ready}, see {@link #registryCertificateProven()} — and pushes
+     * nothing before that. The seed deploys that pull these images dial the same name, so they
+     * never needed anything earlier.
      */
     public String registryHost() {
-        if (addresses.throughEdge(REGISTRY_LABEL)) {
-            return EdgeAddresses.host(REGISTRY_LABEL, config.requiredDomain());
-        }
-        return config.registryVhost();
+        return EdgeAddresses.host(REGISTRY_LABEL, config.requiredDomain());
+    }
+
+    /**
+     * <b>Has {@code registry-ready} (or {@code edge-ready}) proved {@code registry.qits.<domain>}
+     * over a trusted certificate?</b> The one condition every image push of this run is gated on:
+     * a placeholder or staging certificate is a failed handshake, which proves nothing, so the
+     * latch is not set and every push is held.
+     */
+    public boolean registryCertificateProven() {
+        return addresses.throughEdge(REGISTRY_LABEL);
     }
 
     /** Fails the phase, with the command's own last words attached. */

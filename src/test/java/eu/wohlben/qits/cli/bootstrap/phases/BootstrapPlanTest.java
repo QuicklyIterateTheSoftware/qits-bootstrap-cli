@@ -199,9 +199,41 @@ class BootstrapPlanTest {
             List<String> ids = ids(plan(env));
 
             assertThat(ids).containsSubsequence("seed-idp", "seed-stack", "seed-health",
-                    "register-token", "store-seed", "images-publish", "seed-images-publish",
-                    "daemon-publish", "publish-credential-release");
-            assertThat(ids.get(ids.indexOf("images-publish") - 1)).isEqualTo("store-seed");
+                    "register-token", "store-seed", "registry-ready", "images-publish",
+                    "seed-images-publish", "daemon-publish", "publish-credential-release");
+            assertThat(ids.get(ids.indexOf("images-publish") - 1)).isEqualTo("registry-ready");
+            assertThat(ids.get(ids.indexOf("registry-ready") - 1)).isEqualTo("store-seed");
+        }
+    }
+
+    /**
+     * <b>NO IMAGE IS PUSHED BEFORE THE PUBLIC REGISTRY NAME HAS ITS REAL CERTIFICATE — in both
+     * arms</b> (owner ruling 2026-11-05). Both pushing phases sit after {@code registry-ready},
+     * which proves {@code registry.qits.<domain>} over a trusted certificate; so does every seed
+     * deploy, whose pull goes through the same name. And the seed edge holds 443 from its first
+     * start: the handoff is the phase straight before the seed stack, so the name the pushes dial
+     * arrives at an edge.
+     */
+    @Test
+    void noPushPhaseRunsBeforeTheRegistryCertificateIsProven() {
+        for (Map<String, String> env : List.of(Map.<String, String>of(),
+                Map.of("QITS_SKIP_BUILD", "1"))) {
+            List<String> ids = ids(plan(env));
+
+            assertThat(ids.stream().filter("registry-ready"::equals)).hasSize(1);
+            int proven = ids.indexOf("registry-ready");
+            for (String push : List.of("images-publish", "seed-images-publish")) {
+                assertThat(ids.indexOf(push)).as(push).isGreaterThan(proven);
+            }
+            assertThat(ids.stream().filter(id -> id.startsWith("seed-deploy-")))
+                    .allSatisfy(id -> assertThat(ids.indexOf(id)).as(id).isGreaterThan(proven));
+            assertThat(ids).containsSubsequence("edge-tls-handoff", "seed-stack", "seed-health",
+                    "registry-ready", "images-publish", "seed-images-publish", "seed-deploy-idp",
+                    "seed-deploy-edge", "edge-ready");
+            assertThat(ids.get(ids.indexOf("seed-stack") - 1)).isEqualTo("edge-tls-handoff");
+            // The registry's proof is edge-ready's, narrowed: it comes before every push, and the
+            // full gate stays where the target needs it.
+            assertThat(proven).isLessThan(ids.indexOf("edge-ready"));
         }
     }
 
@@ -234,7 +266,7 @@ class BootstrapPlanTest {
             List<String> ids = ids(plan(env));
 
             assertThat(ids).containsSubsequence("seed-stack", "seed-health", "register-token",
-                    "images-publish", "seed-images-publish", "daemon-publish",
+                    "registry-ready", "images-publish", "seed-images-publish", "daemon-publish",
                     "publish-credential-release", "qits-project");
             assertThat(ids.subList(ids.indexOf("images-publish"),
                     ids.indexOf("images-publish") + 3)).containsExactly(

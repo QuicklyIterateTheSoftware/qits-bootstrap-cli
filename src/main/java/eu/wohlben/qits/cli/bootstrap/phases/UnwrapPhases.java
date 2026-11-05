@@ -412,11 +412,12 @@ public class UnwrapPhases {
      * The platform's own images: qits/* and everything published to this platform's registry, under
      * every name the registry has ever answered to.
      * <p>
-     * <b>Three spellings, and a pattern is added here rather than replaced</b> — the same rule the
+     * <b>Four spellings, and a pattern is added here rather than replaced</b> — the same rule the
      * container and network sweeps follow. A machine carries images from whichever topology it was
      * last bootstrapped on: {@code localhost:8081/…} and {@code 127.0.0.1:8081/…} from the days
-     * the store published a host port, and {@code registry.<env>.localhost:<port>/…} since
-     * unify-ingress put it behind the edge. The
+     * the store published a host port, {@code registry.<env>.localhost:<port>/…} from when
+     * unify-ingress put it behind the edge under a machine name, and {@code registry.qits.<domain>/…},
+     * the only name a bootstrap tags under since qits-1433. The
      * vhost test is deliberately not tied to THIS run's environment name or port: unwrap cleans a
      * machine, and the machine may carry tiers this run has never heard of.
      * <p>
@@ -433,7 +434,7 @@ public class UnwrapPhases {
                     "docker", "images", "--format", "{{.Repository}}:{{.Tag}}"), null).captured()) {
                 String ref = line.trim();
                 if (ref.startsWith("qits/") || isLegacyRegistryPortRef(ref)
-                        || isRegistryVhostRef(ref)) {
+                        || isRegistryVhostRef(ref) || isPublicRegistryRef(ref)) {
                     refs.add(ref);
                 }
             }
@@ -468,6 +469,16 @@ public class UnwrapPhases {
      * Only the {@code registry.} prefix and the {@code .localhost} label are fixed, because they
      * are what the edge routes on.
      */
+    /**
+     * An image tagged under the registry's PUBLIC name, {@code registry.qits.<domain>/…} — the one
+     * name a bootstrap tags and pushes under since qits-1433. Any domain, for the same reason the
+     * vhost test takes any tier: unwrap cleans a machine.
+     */
+    static boolean isPublicRegistryRef(String ref) {
+        int slash = ref.indexOf('/');
+        return slash > 0 && ref.substring(0, slash).startsWith("registry.qits.");
+    }
+
     static boolean isRegistryVhostRef(String ref) {
         int slash = ref.indexOf('/');
         if (slash < 0 || !ref.startsWith("registry.")) {

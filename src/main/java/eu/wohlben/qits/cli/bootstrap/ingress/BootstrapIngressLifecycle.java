@@ -2,6 +2,8 @@ package eu.wohlben.qits.cli.bootstrap.ingress;
 
 import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
 import eu.wohlben.qits.cli.bootstrap.phases.Boot;
+import eu.wohlben.qits.cli.bootstrap.platform.Docker;
+import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 
@@ -18,7 +20,8 @@ import java.util.function.Consumer;
 
 /**
  * Owns the disposable ingress for exactly one bootstrap run: the progress page on the public door
- * until the edge's seed deploy takes the door over. It holds no credential — it serves no route
+ * until the edge's seed deploy takes the door over. Port 443 it gives up earlier, to the seed
+ * edge, before the seed stack starts ({@link #releaseTls}). It holds no credential — it serves no route
  * that needs one.
  */
 public final class BootstrapIngressLifecycle {
@@ -82,6 +85,13 @@ public final class BootstrapIngressLifecycle {
             out.accept("  bootstrap edge retained across worker retry");
             return;
         }
+        if (mode() == BootstrapIngressMode.PUBLIC_TLS && seedEdgeUp()) {
+            // A rerun over a seed stack this boot already started: the seed edge holds 443 (it
+            // serves registry.qits.<domain> to the pushes), so the progress page takes 80 alone.
+            mode = BootstrapIngressMode.PUBLIC_HTTP;
+            out.accept("  the seed edge already holds 443 — the bootstrap ingress serves the "
+                    + "progress page on port 80 only");
+        }
         String image = boot.docker.selfImage();
         if (image == null) {
             throw new IllegalStateException("cannot identify this bootstrap payload image for bootstrap ingress");
@@ -118,6 +128,36 @@ public final class BootstrapIngressLifecycle {
         Boot.must(boot.docker.run(command, out), "starting the bootstrap ingress failed");
         out.accept("  bootstrap ingress: " + address() + " (" + description()
                 + ", expires " + Instant.ofEpochSecond(boot.state.bootstrapIngressExpiresAt) + ")");
+    }
+
+    /**
+     * <b>Gives 443 to the seed edge</b> — see {@code SeedPhases.edgeTlsHandoff}: every image push
+     * of the boot goes to {@code registry.qits.<domain>}, which arrives on this host's 443, and the
+     * seed edge is the one that has to answer it there. An ingress in {@code PUBLIC_TLS} mode is
+     * restarted as {@code PUBLIC_HTTP}: the same progress page on port 80, no TLS half. The mode is
+     * recorded in the state file as every start records it, so a worker retry restores the
+     * port-80-only ingress rather than binding 443 again.
+     *
+     * @return whether there was a 443 to give up
+     */
+    public boolean releaseTls(Consumer<String> out) throws IOException {
+        if (!boot.config.bootstrapIngress() || mode() != BootstrapIngressMode.PUBLIC_TLS) {
+            return false;
+        }
+        out.accept("  the bootstrap ingress gives 443 to the seed edge; the progress page stays "
+                + "on http://" + boot.config.requiredDomain());
+        if (boot.docker.allNames().contains(CONTAINER)) {
+            boot.docker.removeContainer(CONTAINER, out);
+        }
+        mode = BootstrapIngressMode.PUBLIC_HTTP;
+        start(out);
+        return true;
+    }
+
+    /** Whether this boot's seed stack already runs the edge — the holder of 443 from then on. */
+    private boolean seedEdgeUp() {
+        return boot.docker.serviceNames().contains(Docker.stackService(Docker.STACK,
+                PlatformModel.wireAlias("edge", boot.config.envName())));
     }
 
     /** Safe to call for every outcome, including Ctrl-C and an earlier failed phase. */

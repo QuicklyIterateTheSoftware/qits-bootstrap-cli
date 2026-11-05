@@ -1,6 +1,8 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
 import eu.wohlben.qits.cli.bootstrap.config.TestConfig;
+import eu.wohlben.qits.cli.bootstrap.ingress.BootstrapIngressLifecycle;
+import eu.wohlben.qits.cli.bootstrap.ingress.BootstrapIngressMode;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseSkipped;
 import eu.wohlben.qits.cli.bootstrap.platform.MuslToolchain;
@@ -15,6 +17,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -749,8 +752,6 @@ class SeedPhasesTest {
                         + context.resolve("qits-system-runner"),
                 "docker rm -f cid-7",
                 "docker tag qits/qits-system-runner:2026.930.132340 "
-                        + "registry.prod.localhost:8080/qits/qits-system-runner:2026.930.132340",
-                "docker tag qits/qits-system-runner:2026.930.132340 "
                         + "registry.qits.qits-dev.eu/qits/qits-system-runner:2026.930.132340");
         // The tag's tree is what was compiled, never the checkout.
         assertThat(runner.lines()).anyMatch(line -> line.startsWith("docker cp ")
@@ -772,9 +773,9 @@ class SeedPhasesTest {
                 .isInstanceOf(PhaseSkipped.class)
                 .hasMessageContaining("qits/qits-system-runner:2026.930.132340 is already on this host");
         assertThat(runner.lines()).contains("docker tag qits/qits-system-runner:2026.930.132340 "
-                + "registry.prod.localhost:8080/qits/qits-system-runner:2026.930.132340",
-                "docker tag qits/qits-system-runner:2026.930.132340 "
                 + "registry.qits.qits-dev.eu/qits/qits-system-runner:2026.930.132340");
+        // One registry name, and no machine-name tag beside it.
+        assertThat(runner.lines()).noneMatch(line -> line.contains(".localhost"));
         assertThat(runner.lines()).noneMatch(line -> line.startsWith("docker create"));
     }
 
@@ -1546,8 +1547,14 @@ class SeedPhasesTest {
                 "PUBLIC_ORIGIN", "IDP_ORIGIN", "BROWSER_HOSTS", "SESSION_COOKIE_DOMAIN");
     }
 
+    /**
+     * <b>The seed edge holds 443 whatever mode the bootstrap ingress is in</b> (owner ruling
+     * 2026-11-05): every push goes to {@code registry.qits.<domain>}, which arrives on this host's
+     * 443, so the seed edge has to answer there from its first start. A public ingress gives 443 up
+     * in {@code edge-tls-handoff} and keeps the progress page on 80.
+     */
     @Test
-    void aPublicBootstrapEdgeKeepsSeedTlsPortsOutOfCompose() {
+    void aPublicBootstrapEdgeStillGivesTheSeedEdgeItsTlsPort() {
         Boot boot = new Boot(TestConfig.from(Map.of(
                 "QITS_DOMAIN", "wohlben.eu",
                 "QITS_BOOTSTRAP_INGRESS_PUBLIC", "true")),
@@ -1555,9 +1562,83 @@ class SeedPhasesTest {
 
         Map<String, String> tokens = new SeedPhases(boot).tokens();
 
-        assertThat(tokens).containsEntry("EDGE_SEED_TLS_PORTS", "");
+        assertThat(tokens.get("EDGE_SEED_TLS_PORTS")).contains("published: 443")
+                .contains("target: 8443").contains("mode: host");
         // The deployed edge's 443 is its own deployments.yml's publish, not a stack token.
         assertThat(tokens).doesNotContainKey("EDGE_TLS_ARGS");
+    }
+
+    /**
+     * <b>edge-tls-handoff: a TLS ingress gives 443 to the seed edge and keeps the progress page on
+     * 80</b> (owner ruling 2026-11-05). Every image push goes to {@code registry.qits.<domain>},
+     * which arrives on this host's 443, and only the seed edge can answer it there. The ingress
+     * container is replaced by a port-80-only one, and the mode it records is the plain-HTTP one,
+     * so a retry does not bind 443 again.
+     */
+    @Test
+    void theTlsHandoffGivesThePublicTlsPortToTheSeedEdge() throws Exception {
+        List<String> removed = new ArrayList<>();
+        ScriptedRunner runner = new ScriptedRunner(command -> {
+            String line = String.join(" ", command);
+            if (line.startsWith("docker rm -f")) {
+                removed.add(command.getLast());
+                return ScriptedRunner.ok();
+            }
+            if (line.equals("docker ps -a --format {{.Names}}")) {
+                return removed.isEmpty()
+                        ? ScriptedRunner.ok(BootstrapIngressLifecycle.CONTAINER)
+                        : ScriptedRunner.ok();
+            }
+            if (line.startsWith("docker inspect --type container -f {{.Config.Image}}")) {
+                return ScriptedRunner.ok("qits-bootstrap:abc");
+            }
+            return ScriptedRunner.ok();
+        });
+        Boot boot = new Boot(TestConfig.from(Map.of("QITS_DOMAIN", "wohlben.eu",
+                "QITS_BOOTSTRAP_INGRESS_PUBLIC", "true")), new RunLog(temp.resolve("run.log")),
+                runner);
+        boot.state.bootstrapIngressEnvFile = Files.createFile(temp.resolve("ingress.env"));
+        // Undecided, a public ingress reads as PUBLIC_TLS — what a re-bootstrap with a retained
+        // certificate pair runs in.
+        assertThat(boot.ingress.mode()).isEqualTo(BootstrapIngressMode.PUBLIC_TLS);
+        CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
+
+        new SeedPhases(boot).edgeTlsHandoff().action().run(ctx);
+
+        assertThat(removed).containsExactly(BootstrapIngressLifecycle.CONTAINER);
+        assertThat(boot.ingress.mode()).isEqualTo(BootstrapIngressMode.PUBLIC_HTTP);
+        List<String> started = runner.argv.stream()
+                .filter(command -> command.size() > 2 && command.get(1).equals("run")
+                        && command.contains(BootstrapIngressLifecycle.CONTAINER))
+                .findFirst().orElseThrow();
+        assertThat(started).containsSubsequence("-p", "80:8080");
+        assertThat(String.join(" ", started)).doesNotContain("443");
+        assertThat(Files.readString(boot.state.bootstrapIngressEnvFile))
+                .contains("QITS_BOOTSTRAP_INGRESS_MODE=PUBLIC_HTTP")
+                .doesNotContain("TLS_PORT");
+        // A second pass has nothing left to give.
+        assertThatThrownBy(() -> new SeedPhases(boot).edgeTlsHandoff().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(PhaseSkipped.class)
+                .hasMessageContaining("holds no 443 (PUBLIC_HTTP)");
+    }
+
+    /** An ingress that never held 443 — or none at all — has nothing to hand over. */
+    @Test
+    void theTlsHandoffIsANoOpWhenTheIngressHoldsNoTlsPort() throws Exception {
+        for (Map<String, String> env : List.of(
+                Map.of("QITS_DOMAIN", "wohlben.eu", "QITS_BOOTSTRAP_INGRESS_PUBLIC", "false"),
+                Map.of("QITS_DOMAIN", "wohlben.eu", "QITS_BOOTSTRAP_INGRESS", "false"))) {
+            ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
+            Boot boot = new Boot(TestConfig.from(env), new RunLog(temp.resolve("run.log")),
+                    runner);
+
+            assertThatThrownBy(() -> new SeedPhases(boot).edgeTlsHandoff().action()
+                    .run(new CiLogStreamTest.Recorder()))
+                    .isInstanceOf(PhaseSkipped.class);
+            assertThat(runner.argv).noneMatch(command -> command.contains("rm")
+                    || command.contains("run"));
+        }
     }
 
     private static final List<String> TAGS = List.of("2026.812.153438", "2026.811.090000");
@@ -1647,12 +1728,12 @@ class SeedPhasesTest {
     @Test
     void aPullersConfigJsonIsWhatDockerLoginWouldHaveWritten() {
         String json = SeedPhases.dockerConfigJson(
-                List.of("registry.prod.localhost:8080"), "qits-deployments", "s3cr3t");
+                List.of("registry.qits.qits-dev.eu"), "qits-deployments", "s3cr3t");
 
         String auth = Base64.getEncoder().encodeToString(
                 "qits-deployments:s3cr3t".getBytes(StandardCharsets.UTF_8));
         assertThat(json).isEqualTo(
-                "{\"auths\":{\"registry.prod.localhost:8080\":{\"auth\":\"" + auth + "\"}}}\n");
+                "{\"auths\":{\"registry.qits.qits-dev.eu\":{\"auth\":\"" + auth + "\"}}}\n");
         // The raw secret is not in the file: what travels is the base64, which is an encoding and
         // not protection — and that is exactly why the write masks both.
         assertThat(json).doesNotContain("s3cr3t");
@@ -1668,14 +1749,14 @@ class SeedPhasesTest {
     @Test
     void theSystemConsolesConfigJsonNamesTheRegistryAndTheMirror() {
         String json = SeedPhases.dockerConfigJson(
-                List.of("registry.prod.localhost:8080", "mirror.prod.localhost:8080"),
+                List.of("registry.qits.qits-dev.eu", "mirror.qits.qits-dev.eu"),
                 "qits-system", "s3cr3t");
 
         String auth = Base64.getEncoder().encodeToString(
                 "qits-system:s3cr3t".getBytes(StandardCharsets.UTF_8));
         assertThat(json).isEqualTo("{\"auths\":{"
-                + "\"registry.prod.localhost:8080\":{\"auth\":\"" + auth + "\"},"
-                + "\"mirror.prod.localhost:8080\":{\"auth\":\"" + auth + "\"}}}\n");
+                + "\"registry.qits.qits-dev.eu\":{\"auth\":\"" + auth + "\"},"
+                + "\"mirror.qits.qits-dev.eu\":{\"auth\":\"" + auth + "\"}}}\n");
         assertThat(json).doesNotContain("s3cr3t");
     }
 
@@ -1687,7 +1768,7 @@ class SeedPhasesTest {
     @Test
     void theWriteHidesTheSecretAndTheBase64OfIt() {
         String json = SeedPhases.dockerConfigJson(
-                List.of("registry.prod.localhost:8080"), "prod-qits-containers", "s3cr3t");
+                List.of("registry.qits.qits-dev.eu"), "prod-qits-containers", "s3cr3t");
         Cmd write = SeedPhases.dockerConfigWrite(
                 "qits-containers-config", json, "prod-qits-containers", "s3cr3t");
 
