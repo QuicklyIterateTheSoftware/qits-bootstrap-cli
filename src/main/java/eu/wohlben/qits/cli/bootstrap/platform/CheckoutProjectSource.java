@@ -1,5 +1,7 @@
 package eu.wohlben.qits.cli.bootstrap.platform;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import eu.wohlben.qits.bootstrap.graph.Coordinate;
 import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import eu.wohlben.qits.bootstrap.graph.Pin;
@@ -41,7 +43,7 @@ import java.util.concurrent.TimeUnit;
  * repository's to fix and fails here, naming it — never a node with fewer pins than it holds.
  * <ul>
  *   <li><b>consumes</b>: {@link ManifestReader}'s pins, kept only when they are INTERNAL — see
- *       {@link #internal}.
+ *       {@link #internal} — plus the names of a lockless package.json ({@link #lockless}).
  *   <li><b>produces</b>: {@code artifacts:} of {@code .config/qits/release.yml}, its maven, npm and
  *       docker entries. {@code daemon} and {@code docs} are no ecosystem a manifest can pin.
  *   <li><b>deployment</b>: {@code .config/qits/deployments.yml}, when the repository carries one.
@@ -235,7 +237,51 @@ public final class CheckoutProjectSource implements ProjectSource {
                         parsed.version(), parsed.manifestPath(), parsed.location()));
             }
         }
+        pins.addAll(lockless(files));
         return List.copyOf(pins);
+    }
+
+    /** The two blocks of a root package.json a build installs. */
+    private static final List<String> NPM_BLOCKS = List.of("dependencies", "devDependencies");
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+
+    /**
+     * <b>The npm pins of a root {@code package.json} with no {@code package-lock.json} beside it</b>
+     * — the two jslibs, which lock with pnpm. {@code ManifestReader} takes an npm VERSION from the
+     * lock alone, so it pins nothing for them, and qits-ui-components-jslib's devDependency on
+     * {@code @qits/angular} was no edge at all.
+     * <p>
+     * Ordering needs the edge, not the version; qits-maintenance does not read pnpm locks either,
+     * so this stays the boot's. The version is the declared range verbatim — for these two an
+     * exact calver — and the location is the block, as {@code NpmParser} writes it.
+     */
+    static List<Pin> lockless(RepositoryFiles files) {
+        List<String> paths = files.paths();
+        if (!paths.contains("package.json") || paths.contains(ManifestReader.PACKAGE_LOCK)) {
+            return List.of();
+        }
+        JsonNode manifest;
+        try {
+            manifest = JSON.readTree(files.read("package.json").orElseThrow(() ->
+                    new IllegalStateException("package.json is listed and could not be read")));
+        } catch (IOException e) {
+            throw new IllegalStateException("package.json is not JSON: " + e.getMessage(), e);
+        }
+        List<Pin> pins = new ArrayList<>();
+        for (String block : NPM_BLOCKS) {
+            JsonNode dependencies = manifest == null ? null : manifest.get(block);
+            if (dependencies == null || !dependencies.isObject()) {
+                continue;
+            }
+            for (Map.Entry<String, JsonNode> entry : dependencies.properties()) {
+                if (entry.getValue().isTextual() && internal(Ecosystem.NPM, entry.getKey())) {
+                    pins.add(new Pin(new Coordinate(Ecosystem.NPM, entry.getKey()),
+                            entry.getValue().asText(), "package.json", block));
+                }
+            }
+        }
+        return pins;
     }
 
     private static Set<Coordinate> coordinates(RepositoryFiles files) {

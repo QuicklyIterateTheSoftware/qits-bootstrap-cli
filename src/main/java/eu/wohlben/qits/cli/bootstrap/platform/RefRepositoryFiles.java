@@ -22,9 +22,13 @@ import java.util.Optional;
  * {@link #paths()}, and reads a reactor module's pom by path. So the listing is the root files that
  * reader looks for — each one included only when it reads — plus {@code Sources.dockerfiles}.
  * <p>
- * <b>One limit is inherited, and it is stated rather than hidden.</b> {@code Sources.at} answers
- * null for a file past its capture limit (twenty thousand lines), so a lock longer than that is
- * absent here and its repository's npm pins carry no version — they drop out rather than guess.
+ * <b>Two limits are inherited, and they are stated rather than hidden.</b> {@code Sources.at}
+ * answers null for a file past its capture limit (twenty thousand lines), so a lock longer than
+ * that is absent here and its repository's npm pins carry no version — they drop out rather than
+ * guess (the root package.json is then read lockless, by name, see
+ * {@link CheckoutProjectSource#lockless}). And {@code Boot}'s {@code Sources.dockerfiles} lists only
+ * names starting {@code Dockerfile}, so a {@code node.Dockerfile} is not listed; widening that
+ * listing would change what the pin closure reads, which is a behaviour change of its own.
  */
 public final class RefRepositoryFiles implements RepositoryFiles {
 
