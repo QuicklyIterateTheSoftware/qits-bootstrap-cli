@@ -76,11 +76,11 @@ class BootOrderTest {
 
         BootOrder order = BootOrder.derive(graph, source);
 
-        assertThat(order.deploys()).containsExactly("qits-x-service");
-        assertThat(order.pushes()).containsExactly("qits-lib-javalib", "qits-snap-javalib");
-        assertThat(order.replays()).containsExactly("qits-lib-javalib");
-        assertThat(order.unnamed()).containsExactlyInAnyOrder("qits-lib-javalib",
-                "qits-snap-javalib", "qits-x-service");
+        // Model names: a qits- repository with no REPOSITORIES entry is its bare name.
+        assertThat(order.deploys()).containsExactly("x-service");
+        assertThat(order.pushes()).containsExactly("lib-javalib", "snap-javalib");
+        assertThat(order.replays()).containsExactly("lib-javalib");
+        assertThat(order.unnamed()).isEmpty();
     }
 
     @Test
@@ -90,8 +90,8 @@ class BootOrderTest {
                         "qits-b", new Deployment("qits-b", List.of())),
                 Map.of(), Map.of());
         ProjectGraph graph = ProjectGraph.of(source, CheckoutProjectSource.RESOURCE_PROVIDERS);
-        List<CutoverRules.Rule> rules = List.of(new CutoverRules.Rule("qits-a", "qits-b", "one"),
-                new CutoverRules.Rule("qits-b", "qits-a", "two"));
+        List<CutoverRules.Rule> rules = List.of(new CutoverRules.Rule("a", "b", "one"),
+                new CutoverRules.Rule("b", "a", "two"));
 
         assertThatThrownBy(() -> BootOrder.derive(graph, source, rules))
                 .isInstanceOf(IllegalStateException.class)
@@ -136,6 +136,19 @@ class BootOrderTest {
                 return Map.of();
             }
         };
+    }
+
+    /** Only a name outside the qits- grammar has no model name, and it keeps its own. */
+    @Test
+    void aRepositoryWithNoModelNameIsListedUnderItsOwn() {
+        Source source = new Source(Map.of("vendored-lib", List.of()), Map.of(), Map.of(),
+                Map.of());
+        ProjectGraph graph = ProjectGraph.of(source, CheckoutProjectSource.RESOURCE_PROVIDERS);
+
+        BootOrder order = BootOrder.derive(graph, source);
+
+        assertThat(order.pushes()).containsExactly("vendored-lib");
+        assertThat(order.unnamed()).containsExactly("vendored-lib");
     }
 
     @Test

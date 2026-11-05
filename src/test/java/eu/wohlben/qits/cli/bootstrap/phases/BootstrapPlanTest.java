@@ -3,6 +3,9 @@ package eu.wohlben.qits.cli.bootstrap.phases;
 import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
 import eu.wohlben.qits.cli.bootstrap.config.TestConfig;
 import eu.wohlben.qits.cli.bootstrap.engine.Phase;
+import eu.wohlben.qits.cli.bootstrap.platform.CheckoutProjectSource;
+import eu.wohlben.qits.cli.bootstrap.platform.CutoverRules;
+import eu.wohlben.qits.cli.bootstrap.platform.EstateFixture;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -14,7 +17,11 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** The plan is built before anything runs, which is what makes "9 of 47" a fact. */
+/**
+ * The plan is built before anything runs, which is what makes "9 of 47" a fact — and the train is
+ * planned by its own phase once the checkouts exist. {@link #plan} builds the plan and runs that
+ * phase against the estate fixture, so every assertion here sees the whole run.
+ */
 class BootstrapPlanTest {
 
     @TempDir
@@ -32,8 +39,42 @@ class BootstrapPlanTest {
     }
 
     private List<Phase> planExactly(Map<String, String> env) {
-        BootstrapConfig config = TestConfig.from(env);
-        return BootstrapPlan.build(new Boot(config, new RunLog(temp.resolve("run.log"))));
+        return expandTrain(BootstrapPlan.build(boot(env, EstateFixture.checkouts())));
+    }
+
+    private Boot boot(Map<String, String> env, CheckoutProjectSource.Checkouts checkouts) {
+        Boot boot = new Boot(TestConfig.from(env), new RunLog(temp.resolve("run.log")));
+        boot.deriveEstateFrom(checkouts);
+        return boot;
+    }
+
+    /** A context that records nothing and hands follow-ups to {@code then}. */
+    private static eu.wohlben.qits.cli.bootstrap.engine.PhaseContext context(
+            java.util.function.Consumer<List<Phase>> then) {
+        return new eu.wohlben.qits.cli.bootstrap.engine.PhaseContext() {
+            @Override public void log(String line) { }
+            @Override public void status(String status) { }
+            @Override public void note(String note) { }
+            @Override public void warn(String message) { }
+            @Override public void then(List<Phase> followUps) { then.accept(followUps); }
+        };
+    }
+
+    /** {@code plan-train}, run the way the engine runs it: its follow-ups go in right after it. */
+    static List<Phase> expandTrain(List<Phase> phases) {
+        List<Phase> expanded = new java.util.ArrayList<>(phases);
+        int at = ids(expanded).indexOf("plan-train");
+        assertThat(at).as("the plan has a plan-train phase").isNotNegative();
+        List<Phase> train = new java.util.ArrayList<>();
+        try {
+            expanded.get(at).action().run(context(train::addAll));
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        expanded.addAll(at + 1, train);
+        return List.copyOf(expanded);
     }
 
     private static List<String> ids(List<Phase> phases) {
@@ -55,8 +96,11 @@ class BootstrapPlanTest {
         assertThat(ids(phases)).startsWith("preflight", "network", "ipv6-loopback", "host-oom",
                 "bootstrap-ingress-prepare", "bootstrap-ingress", "wrapper", "sources",
                 "recorded-state", "seed-golden-masters", "seed-pacts", "maven-seed");
+        // The repositories are created before the train is planned, and every push it plans comes
+        // before every replay and every deploy.
         assertThat(ids(phases)).containsSubsequence(
-                "git-repos", "release-train-push", "preseed");
+                "git-repos", "target-connected", "plan-train", "push-oci", "push-spa-ci",
+                "release-eventstream", "deploy-idp");
         assertThat(ids(phases)).endsWith("deploy-deployments", "summary",
                 "teardown-bootstrap-builder");
         assertThat(phases).allSatisfy(phase -> assertThat(phase.title()).isNotBlank());
@@ -291,13 +335,13 @@ class BootstrapPlanTest {
             assertThat(ids).containsSubsequence("seed-health", "images-publish",
                     "publish-credential-release", "qits-project", "git-repos",
                     "seed-deploy-system", "seed-deploy-edge", "edge-ready", "target-localhost",
-                    "target-connected", "release-train-push");
+                    "target-connected", "plan-train");
             // The platform's own edge is proved to serve what the target dials, right before it
             // dials it.
             int target = ids.indexOf("target-localhost");
             assertThat(ids.subList(target - 2, target + 3)).containsExactly(
                     "seed-deploy-edge", "edge-ready", "target-localhost", "target-connected",
-                    "release-train-push");
+                    "plan-train");
             assertThat(ids.stream().filter(id -> id.startsWith("target-"))).hasSize(2);
             assertThat(ids).doesNotContain("runner-localhost", "runner-connected",
                     "workspaces-runner-localhost", "workspaces-runner-connected");
@@ -345,9 +389,9 @@ class BootstrapPlanTest {
             assertThat(ids.get(first - 2)).isEqualTo("environment");
             assertThat(ids.stream().filter("deployment-settings"::equals)).hasSize(1);
             assertThat(ids).containsSubsequence("seed-deploy-edge", "edge-ready", "target-localhost",
-                    "target-connected", "release-train-push", "preseed",
-                    "release-spa-ui-components", "deploy-observability", "deploy-idp",
-                    "deploy-edge", "deploy-deployments", "summary");
+                    "target-connected", "plan-train", "push-spa-ui-components",
+                    "release-spa-ui-components", "deploy-idp", "deploy-edge",
+                    "deploy-deployments", "summary");
             assertThat(ids).doesNotContain("seed-deploy-deployments",
                     "seed-deploy-oci-postgresql");
             // The environment is reconciled once, before the first deployment of either kind.
@@ -371,10 +415,12 @@ class BootstrapPlanTest {
                 "seed-qits-system-runner-protocol", "seed-image-system", "step-image-ci-base",
                 "step-image-ci-slot", "seed-toolchain", "ci-daemon", "system-runner-image");
         // The ci image consumes qits-githost-events, which maven-seed builds — and qits-projects
-        // consumes it too, which the deploy train reaches long before the git host's own
-        // deployment; the store holds it by then, from store-seed.
+        // consumes it too, whichever of the two the train deploys first (no cutover rule orders
+        // projects against githost: the git host resolves names from its own index and calls no
+        // qits-projects); the store holds it by then, from store-seed.
         assertThat(ids).containsSubsequence("maven-seed", "seed-image-ci", "store-seed",
-                "deploy-projects", "deploy-githost");
+                "deploy-projects");
+        assertThat(ids).containsSubsequence("store-seed", "deploy-githost");
         // The edge needs nothing from the platform — no client bundle, no qits dependency — so its
         // image is built in the first half and needs no service image before it.
         assertThat(ids).containsSubsequence("seed-image-edge", "seed-image-artifacts");
@@ -411,28 +457,39 @@ class BootstrapPlanTest {
         assertThat(ids).doesNotContain("seed-image-cd", "seed-image-serviceregistry");
     }
 
+    /**
+     * <b>Every deploy is its own phase, after every replay, in an order every cutover rule
+     * holds.</b> The order itself is {@code BootOrderEstateTest}'s and {@code CutoverRulesTest}'s;
+     * this is the plan carrying it out: each {@link CutoverRules} pair and each RUNTIME edge among
+     * the deploys (the idp's {@code idp:client}) puts its two phases in that order.
+     */
     @Test
     void everyDeployableIsItsOwnPhaseInTheOrderTheTrainRunsIn() {
         List<String> ids = ids(plan(Map.of()));
+        List<String> deploys = EstateFixture.estate().deploys();
 
-        assertThat(ids).containsSubsequence("environment", "deploy-observability",
-                "deploy-idp",
-                "deploy-stt", "deploy-projects", "deploy-workspaces",
-                "deploy-events",
-                "deploy-mirror", "deploy-artifacts", "deploy-githost",
-                // docs after artifacts, which it reads from.
-                "deploy-docs",
-                // The orchestrator immediately before ci: ci runs every step as a container it asks
-                // that service for, so a ci cutover inside the orchestrator's window is a pipeline
-                // with nowhere to run.
-                "deploy-containers", "deploy-ci",
-                // The three late ones, after every service they call and before the door: the
-                // technical processes, the dependency inventory, then the base system panels —
-                // which call no peer at all and go last because their cutover drops every open
-                // terminal.
-                "deploy-orchestrator", "deploy-maintenance",
-                "deploy-system",
-                "deploy-edge", "deploy-deployments");
+        assertThat(ids.stream().filter(id -> id.startsWith("deploy-")).toList())
+                .containsExactlyElementsOf(deploys.stream().map(name -> "deploy-" + name).toList());
+        for (CutoverRules.Rule rule : CutoverRules.expand(CutoverRules.RULES,
+                new java.util.LinkedHashSet<>(deploys))) {
+            assertThat(ids.indexOf("deploy-" + rule.before()))
+                    .as("%s before %s: %s", rule.before(), rule.after(), rule.reason())
+                    .isLessThan(ids.indexOf("deploy-" + rule.after()));
+        }
+        for (String name : deploys) {
+            if (!name.equals("idp") && !name.equals("observability")) {
+                assertThat(ids.indexOf("deploy-idp")).as("%s declares idp:client", name)
+                        .isLessThan(ids.indexOf("deploy-" + name));
+            }
+        }
+        // Every replay before the first deploy: a deployable's build pins what they publish.
+        int lastReplay = -1;
+        for (int i = 0; i < ids.size(); i++) {
+            if (ids.get(i).startsWith("release-")) {
+                lastReplay = i;
+            }
+        }
+        assertThat(lastReplay).isLessThan(ids.indexOf("deploy-" + deploys.getFirst()));
         assertThat(ids).doesNotContain("deploy-cd", "deploy-serviceregistry");
         // postgres is the seed database, never a train phase: re-reading its spec from qits-githost
         // (whose storage is postgres) is a circular dependency that crash-loops it.
@@ -440,6 +497,52 @@ class BootstrapPlanTest {
         // Pre-rename spellings deploy nothing and would push to repositories nobody reads.
         assertThat(ids).doesNotContain("deploy-platform-idp", "deploy-platform-deployments",
                 "deploy-platform-artifacts", "deploy-platform-docs");
+    }
+
+    /**
+     * <b>A dependency cycle fails {@code plan-train}, naming both members, before any train phase
+     * runs.</b> Two repositories that pin each other's gitlinks cannot be ordered, and breaking the
+     * cycle is a person's decision, not the boot's.
+     */
+    @Test
+    void aGitlinkCycleFailsTheTrainPlanNamingBoth() throws Exception {
+        Path estate = temp.resolve("estate");
+        java.nio.file.Files.createDirectories(estate);
+        java.nio.file.Files.writeString(estate.resolve(".gitmodules"), """
+                [submodule "qits-a-javalib"]
+                \tpath = components/a/qits-a-javalib
+                \turl = ../qits-a-javalib.git
+                [submodule "qits-b-javalib"]
+                \tpath = components/b/qits-b-javalib
+                \turl = ../qits-b-javalib.git
+                """);
+        for (String[] pair : new String[][] {{"qits-a-javalib", "qits-b-javalib"},
+                {"qits-b-javalib", "qits-a-javalib"}}) {
+            Path files = estate.resolve(pair[0]).resolve("files");
+            java.nio.file.Files.createDirectories(files);
+            java.nio.file.Files.writeString(files.resolve(".gitmodules"),
+                    "[submodule \"" + pair[1] + "\"]\n\tpath = " + pair[1] + "\n\turl = ../"
+                            + pair[1] + ".git\n");
+            java.nio.file.Files.writeString(estate.resolve(pair[0]).resolve("gitlinks"),
+                    pair[1] + " 0123456789abcdef0123456789abcdef01234567\n");
+        }
+        List<Phase> phases = BootstrapPlan.build(boot(withDomain(Map.of()),
+                CheckoutProjectSource.Checkouts.fixture(estate)));
+        Phase planTrain = phases.stream().filter(p -> p.id().equals("plan-train")).findFirst()
+                .orElseThrow();
+
+        assertThatThrownBy(() -> planTrain.action().run(context(followUps -> {
+            throw new AssertionError("a cycle plans no train phase");
+        })))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("dependency cycle: qits-a-javalib, qits-b-javalib");
+    }
+
+    private static Map<String, String> withDomain(Map<String, String> env) {
+        Map<String, String> withDomain = new java.util.HashMap<>(Map.of(
+                "QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7"));
+        withDomain.putAll(env);
+        return withDomain;
     }
 
     /**
@@ -461,11 +564,14 @@ class BootstrapPlanTest {
     void theRepositoriesAreRegisteredBeforeTheyArePushedTo() {
         List<String> ids = ids(plan(Map.of()));
 
-        assertThat(ids).containsSubsequence("qits-project", "git-repos", "release-train-push",
-                "preseed");
-        // And the whole train that follows pushes through the address it created.
-        assertThat(ids).containsSubsequence("git-repos", "deploy-projects", "deploy-githost",
-                "deploy-ci", "deploy-edge", "deploy-deployments");
+        assertThat(ids).containsSubsequence("qits-project", "git-repos", "plan-train");
+        // And the whole train that follows pushes through the address it created: every push,
+        // replay and deploy is planned after git-repos.
+        int gitRepos = ids.indexOf("git-repos");
+        assertThat(ids).filteredOn(id -> id.startsWith("push-") || id.startsWith("release-")
+                        || id.startsWith("deploy-"))
+                .isNotEmpty()
+                .allSatisfy(id -> assertThat(ids.indexOf(id)).as(id).isGreaterThan(gitRepos));
         // The phase that used to hang off qits-projects' deployment is gone with the wait it was:
         // the alias table answers from the seed on.
         assertThat(ids).doesNotContain("register-repos");
@@ -489,10 +595,13 @@ class BootstrapPlanTest {
     void theReleasesTheWrapperBuildsInstallAreReplayedBeforeTheTrainDeploysAnything() {
         List<String> ids = ids(plan(Map.of()));
 
-        assertThat(ids).containsSubsequence("preseed",
-                "release-spa-ui-components",
-                "release-integrations-angular", "release-integrations-quarkus",
-                "release-eventstream", "deploy-observability");
+        // Each pair is a manifest edge: ui-components' package.json pins @qits/angular, and
+        // eventstream's pom pins qits-db-core from the Quarkus integration release. Every replay
+        // follows every push and precedes every deploy.
+        assertThat(ids).containsSubsequence("push-spa-ui-components",
+                "release-integrations-angular", "release-spa-ui-components");
+        assertThat(ids).containsSubsequence("release-integrations-quarkus",
+                "release-eventstream", "deploy-idp");
     }
 
     /**
@@ -501,8 +610,8 @@ class BootstrapPlanTest {
      * it at a pinned version. Replaying a daemon first builds against a tag nothing has pushed.
      * <p>
      * The editor is one link further down the same chain — its Dockerfile is
-     * {@code FROM ${WORKSPACE_IMAGE}} with a committed qits/workspace pin — so the daemon that
-     * publishes that image has to precede it for exactly the same reason.
+     * {@code FROM ${WORKSPACE_IMAGE}} with a committed qits/workspace pin — but nothing pins the
+     * editor's own image, so it is pushed and never replayed.
      */
     @Test
     void theWorkspaceBaseIsReplayedBeforeEverythingThatLayersOnIt() {
@@ -510,8 +619,8 @@ class BootstrapPlanTest {
 
         assertThat(ids).containsSubsequence("release-oci-workspace", "release-workspace-daemon");
         assertThat(ids).containsSubsequence("release-oci-workspace", "release-projects-daemon");
-        assertThat(ids).containsSubsequence("release-workspace-daemon",
-                "release-oci-workspace-editor");
+        assertThat(ids).doesNotContain("release-oci-workspace-editor");
+        assertThat(ids).contains("push-oci-workspace-editor");
         // Still before the deployables: qits-workspaces and qits-projects pin these images, and a
         // pin with nothing behind it fails at the first workspace launch rather than at deploy.
         assertThat(ids).containsSubsequence("release-projects-daemon", "deploy-workspaces");
@@ -595,7 +704,7 @@ class BootstrapPlanTest {
                         "maven-seed");
         assertThat(warm.size()).isLessThan(cold.size());
         // The pipeline half is untouched: a warm rerun still pushes and still waits.
-        assertThat(warm).contains("deploy-deployments", "release-train-push", "summary");
+        assertThat(warm).contains("deploy-deployments", "plan-train", "push-oci", "summary");
         // postgres is NOT a build, so a warm rerun still runs it: it resolves the passwords both
         // generated files carry, and the server has to answer before the deployer starts.
         assertThat(warm).contains("seed-postgres");
@@ -681,13 +790,14 @@ class BootstrapPlanTest {
      */
     @Test
     void everyRepositoryIsBuiltInPhaseOneOrDeferredOrNotBuilt() {
-        java.util.SortedMap<String, String> built = SeedPhases.phaseOneBuilds();
+        eu.wohlben.qits.cli.bootstrap.platform.Estate estate = EstateFixture.estate();
+        java.util.SortedMap<String, String> built = SeedPhases.phaseOneBuilds(estate);
         Map<String, String> deferred =
                 eu.wohlben.qits.cli.bootstrap.platform.PlatformModel.DEFERRED_TO_PHASE_4;
         Map<String, String> notBuilt =
                 eu.wohlben.qits.cli.bootstrap.platform.PlatformModel.NOT_BUILT;
 
-        for (String name : eu.wohlben.qits.cli.bootstrap.platform.PlatformModel.sourceRepos()) {
+        for (String name : estate.sourceRepos()) {
             boolean covered = built.containsKey(name) || deferred.containsKey(name)
                     || notBuilt.containsKey(name)
                     || (name.startsWith("spa-")
@@ -701,9 +811,12 @@ class BootstrapPlanTest {
         assertThat(deferred).containsKeys("stt", "docs", "observability", "maintenance",
                 "orchestrator", "landing-app");
         assertThat(deferred.values()).allSatisfy(reason -> assertThat(reason).isNotBlank());
-        // The three retired or unused entries, each with its one-line reason, and exactly these.
-        assertThat(notBuilt).containsOnlyKeys("oci-workspace-editor", "workspaces-runner-daemon",
-                "spa-workspaces");
+        // The unused entry, with its one-line reason, and exactly it: the retired workspaces runner
+        // and client left with their submodules, so the boot clones neither and lists neither.
+        assertThat(notBuilt).containsOnlyKeys("oci-workspace-editor");
+        assertThat(notBuilt.keySet()).allSatisfy(name ->
+                assertThat(estate.sourceRepos()).as("%s is a repository the boot clones", name)
+                        .contains(name));
         assertThat(notBuilt.values()).allSatisfy(reason -> assertThat(reason).isNotBlank());
         // Nothing is both: a deferred repository phase 1 also built would be a stale entry —
         // except landing-app, whose PACTS phase 1 packs while the app itself is deferred.

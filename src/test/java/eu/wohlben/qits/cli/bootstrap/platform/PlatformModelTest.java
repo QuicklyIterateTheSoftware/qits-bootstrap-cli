@@ -1,5 +1,7 @@
 package eu.wohlben.qits.cli.bootstrap.platform;
 
+import eu.wohlben.qits.bootstrap.graph.Coordinate;
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
@@ -10,6 +12,9 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class PlatformModelTest {
+
+    /** What the platform is made of, as the estate fixture declares it (qits-3). */
+    private static final Estate ESTATE = EstateFixture.estate();
 
     @Test
     void everyRepositoryKnowsWhereItLivesInTheWrapper() {
@@ -164,7 +169,7 @@ class PlatformModelTest {
 
         // Swept rather than listed, over every deployable there is — which is the point: there is
         // no second list to fall out of step with, because there is no second kind of service.
-        for (String app : PlatformModel.DEPLOYABLES) {
+        for (String app : ESTATE.deploys()) {
             assertThat(PlatformModel.wireAlias(app, "preprod"))
                     .as("the address and identity of %s", app)
                     .isEqualTo("preprod-" + PlatformModel.application(app));
@@ -240,7 +245,6 @@ class PlatformModelTest {
         expected.put("spa-githost", "qits-githost-frontend");
         expected.put("spa-observability", "qits-observability-frontend");
         expected.put("spa-projects", "qits-projects-frontend");
-        expected.put("spa-workspaces", "qits-workspaces-frontend");
         expected.put("spa-idp", "qits-idp-frontend");
         expected.put("spa-maintenance", "qits-maintenance-frontend");
         expected.put("spa-mirror", "qits-mirror-frontend");
@@ -262,8 +266,6 @@ class PlatformModelTest {
         expected.put("ci-daemon", "qits-ci-daemon");
         expected.put("projects-daemon", "qits-projects-daemon");
         expected.put("workspace-daemon", "qits-workspace-daemon");
-        // The workspaces runner: a release publisher, its name already the repository's.
-        expected.put("workspaces-runner-daemon", "qits-workspaces-runner-daemon");
         // The target's runner, the same shape (qits-1535).
         expected.put("system-runner-daemon", "qits-system-runner-daemon");
         // The runner library its consumers pin, seeded since qits-1547.
@@ -275,7 +277,7 @@ class PlatformModelTest {
         expected.put("bootstrap-javalib", "qits-bootstrap-javalib");
 
         // Every repository of the platform, and nothing that is not one.
-        assertThat(PlatformModel.platformRepos())
+        assertThat(ESTATE.repos())
                 .containsExactlyInAnyOrderElementsOf(expected.keySet());
         expected.forEach((name, repo) ->
                 assertThat(PlatformModel.repo(name)).as(name).isEqualTo(repo));
@@ -296,13 +298,13 @@ class PlatformModelTest {
      */
     @Test
     void noRepositoryIsLeftAtAStaleName() {
-        assertThat(PlatformModel.platformRepos())
+        assertThat(ESTATE.repos())
                 .filteredOn(name -> !name.equals(OUT_OF_GRAMMAR))
                 .allSatisfy(name -> assertThat(PlatformModel.repo(name)).as(name)
                         .matches(".*-(service|frontend|daemon|oci|cli|javalib|jslib)$"));
         // And the spellings the renames replaced are gone: a name that resolves to no repository on
         // the git host creates one, pushes to it, and waits an hour for a build nobody asked for.
-        assertThat(PlatformModel.platformRepos().stream().map(PlatformModel::repo))
+        assertThat(ESTATE.repos().stream().map(PlatformModel::repo))
                 .doesNotContain("qits-oci", "qits-oci-postgresql", "qits-oci-workspace",
                         "qits-eventstream", "qits-blobstore", "qits-registries", "qits-userflows",
                         "qits-spa-ui-components", "qits-integrations-angular",
@@ -327,7 +329,7 @@ class PlatformModelTest {
         // There is no deploy ref at all any more, and that is the assertion: a release deploys and
         // every application enters at the one designated environment. Nothing may reintroduce a
         // per-plane ref without this file saying so — and there is no plane left to hang one on.
-        assertThat(PlatformModel.platformRepos()).doesNotContain("platform-branch");
+        assertThat(ESTATE.repos()).doesNotContain("platform-branch");
     }
 
     @Test
@@ -392,19 +394,19 @@ class PlatformModelTest {
      */
     @Test
     void everyDeployableIsAnOrdinaryServiceOfTheOneEnvironment() {
-        assertThat(PlatformModel.DEPLOYABLES).containsExactlyInAnyOrder(
+        assertThat(ESTATE.deploys()).containsExactlyInAnyOrder(
                 "observability", "idp", "stt", "projects",
                 "workspaces", "events", "mirror", "artifacts", "githost", "docs",
                 "containers", "ci", "orchestrator", "maintenance", "system",
                 "edge", "deployments");
         // qits-configuration was a deployable until its retirement (qits-765, qits-1396).
-        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("configuration");
+        assertThat(ESTATE.deploys()).doesNotContain("configuration");
         // postgres is neither here nor a deployable: it is the seed database, a seed-only service
-        // the train never deploys, so it left DEPLOYABLES for SEEDED_REPOS.
-        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("oci-postgresql");
+        // the train never deploys, so the derivation pushes it and deploys it not.
+        assertThat(ESTATE.deploys()).doesNotContain("oci-postgresql");
         // And every one of them is addressed by the one rule. A second rule is what this test
         // exists to catch coming back.
-        for (String app : PlatformModel.DEPLOYABLES) {
+        for (String app : ESTATE.deploys()) {
             assertThat(PlatformModel.wireAlias(app, "dev"))
                     .as("the address of %s", app)
                     .isEqualTo("dev-" + PlatformModel.application(app));
@@ -440,9 +442,9 @@ class PlatformModelTest {
         // Every seed service is also deployed through the pipeline afterwards, with ONE exception:
         // postgres stays the seed service for good, because re-reading its spec from qits-githost
         // (whose storage IS postgres) is a circular dependency that crash-loops it.
-        assertThat(PlatformModel.DEPLOYABLES).containsAll(
+        assertThat(ESTATE.deploys()).containsAll(
                 PlatformModel.CORE.stream().filter(name -> !name.equals("oci-postgresql")).toList());
-        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("oci-postgresql");
+        assertThat(ESTATE.deploys()).doesNotContain("oci-postgresql");
     }
 
     /**
@@ -461,10 +463,10 @@ class PlatformModelTest {
 
     @Test
     void theRetiredDeployersAreGone() {
-        assertThat(PlatformModel.platformRepos()).doesNotContain("cd", "serviceregistry");
+        assertThat(ESTATE.repos()).doesNotContain("cd", "serviceregistry");
         // And so are the pre-rename spellings: a name that resolves to no repository on the git
         // host creates one, pushes to it, and waits an hour for a build nobody asked for.
-        assertThat(PlatformModel.platformRepos()).doesNotContain(
+        assertThat(ESTATE.repos()).doesNotContain(
                 // The six that carried the plane as a prefix. `idp` is NOT here: that is the
                 // model name now, and asserting its absence would assert the idp away.
                 "platform-idp", "platform-edge", "platform-mirror", "platform-maintenance",
@@ -610,8 +612,9 @@ class PlatformModelTest {
      */
     @Test
     void theCiRunnerIsNoRepositoryOfTheBootAnyMore() {
-        assertThat(PlatformModel.platformRepos()).doesNotContain("ci-runner");
-        assertThat(PlatformModel.nameOf("qits-ci-runner-daemon")).isNull();
+        assertThat(ESTATE.repos()).doesNotContain("ci-runner");
+        // nameOf answers any qits- name; membership is the wrapper's, and it has no ci runner.
+        assertThat(ESTATE.sourceRepos()).doesNotContain(PlatformModel.nameOf("qits-ci-runner-daemon"));
         assertThat(PlatformModel.mavenModule("ci-runner")).isEmpty();
     }
 
@@ -629,12 +632,12 @@ class PlatformModelTest {
 
     @Test
     void theDeployablesAndTheSeededReposAreDisjointAndTogetherAreEveryRepository() {
-        assertThat(PlatformModel.DEPLOYABLES).doesNotContainAnyElementsOf(
-                PlatformModel.SEEDED_REPOS);
-        assertThat(PlatformModel.platformRepos())
-                .hasSize(PlatformModel.DEPLOYABLES.size() + PlatformModel.SEEDED_REPOS.size())
-                .containsAll(PlatformModel.DEPLOYABLES)
-                .containsAll(PlatformModel.SEEDED_REPOS);
+        assertThat(ESTATE.deploys()).doesNotContainAnyElementsOf(
+                ESTATE.order().pushes());
+        assertThat(ESTATE.repos())
+                .hasSize(ESTATE.deploys().size() + ESTATE.order().pushes().size())
+                .containsAll(ESTATE.deploys())
+                .containsAll(ESTATE.order().pushes());
     }
 
     /**
@@ -644,13 +647,15 @@ class PlatformModelTest {
      */
     @Test
     void theAgentHarnessIsASeededLibrary() {
-        assertThat(PlatformModel.SEEDED_REPOS).contains("coding-agents");
-        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("coding-agents");
-        assertThat(PlatformModel.RELEASE_PUBLISHERS).doesNotContain("coding-agents");
+        assertThat(ESTATE.order().pushes()).contains("coding-agents");
+        assertThat(ESTATE.deploys()).doesNotContain("coding-agents");
+        // A replay since qits-3: both agent daemons and qits-workspaces pin its jars at a calver,
+        // and being seed-built is no exemption.
+        assertThat(ESTATE.order().replays()).contains("coding-agents");
         assertThat(PlatformModel.repo("coding-agents")).isEqualTo("qits-coding-agents");
         assertThat(PlatformModel.nameOf("qits-coding-agents")).isEqualTo("coding-agents");
         assertThat(PlatformModel.mavenModule("coding-agents")).isEmpty();
-        assertThat(PlatformModel.carriesVersionIdentity("coding-agents")).isFalse();
+        assertThat(ESTATE.carriesVersionIdentity("coding-agents")).isTrue();
     }
 
     /**
@@ -661,58 +666,40 @@ class PlatformModelTest {
      */
     @Test
     void theByteplaneClientsAreSeededAndNeitherDeployedNorReplayed() {
-        assertThat(PlatformModel.SEEDED_REPOS).contains("spa-githost", "spa-mirror");
-        assertThat(PlatformModel.DEPLOYABLES)
+        assertThat(ESTATE.order().pushes()).contains("spa-githost", "spa-mirror");
+        assertThat(ESTATE.deploys())
                 .doesNotContain("spa-githost", "spa-mirror");
-        assertThat(PlatformModel.RELEASE_PUBLISHERS)
+        assertThat(ESTATE.order().replays())
                 .doesNotContain("spa-githost", "spa-mirror");
     }
 
     /**
      * Every publisher whose release is replayed needs a repository on the git host, a checkout and a
-     * main history — which is what SEEDED_REPOS gets it. A publisher missing from that list has no
+     * main history — which is what being a push gets it. A replay that were no push would have no
      * source directory to read a tag out of, and the replay phase fails on a path nobody cloned.
      */
     @Test
     void everyReleasePublisherIsARepositoryTheBootstrapSeeds() {
-        assertThat(PlatformModel.SEEDED_REPOS).containsAll(PlatformModel.RELEASE_PUBLISHERS);
+        assertThat(ESTATE.order().pushes()).containsAll(ESTATE.order().replays());
         // Dependency order, and the one pair that is load-bearing: the daemon builds pull
         // qits/workspace-base at a pinned version, and the base's own replay is what publishes it.
-        assertThat(PlatformModel.RELEASE_PUBLISHERS)
+        assertThat(ESTATE.order().replays())
                 .containsSubsequence("oci-workspace", "workspace-daemon")
                 .containsSubsequence("oci-workspace", "projects-daemon");
-        // The byte-plane lib is deliberately absent until its first calver release exists: a replay
-        // restores a pin, and every consumer still pins 1.0.0-SNAPSHOT, which the seed publishes
-        // restore. When it joins, it goes before eventstream.
-        assertThat(PlatformModel.RELEASE_PUBLISHERS).doesNotContain("registries");
+        // The byte-plane lib joined once its consumers moved onto calvers — artifacts, githost and
+        // mirror pin its jars at 2026.1103.145246 — which is the condition it was waiting for.
+        assertThat(ESTATE.order().replays()).contains("registries");
     }
 
     /**
-     * <b>qits-workspaces-runner-daemon, added on 2026-10-05 (qits-626): a release publisher, never
-     * a deployable.</b> The retired workspaces runner phase started {@code qits/qits-workspaces-runner}
-     * at the version qits-workspaces pinned, and a qits-workspaces release from before the target
-     * cutover still resolves the protocol jar — so it is replayed after qits-workspace-daemon until
-     * the retirement, and the replay asks for the image AND that jar.
+     * <b>qits-workspaces-runner-daemon was a release publisher from 2026-10-05 (qits-626) until
+     * the target retired it (qits-1535)</b>, and it went with its submodule: the derivation follows
+     * the wrapper, so nothing hosts, replays or deploys it, and no pom pins its protocol any more.
      */
     @Test
-    void theWorkspacesRunnerDaemonIsAReplayedImagePublisher() {
-        assertThat(PlatformModel.SEEDED_REPOS).contains("workspaces-runner-daemon");
-        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("workspaces-runner-daemon");
-        assertThat(PlatformModel.RELEASE_PUBLISHERS)
-                .containsSubsequence("workspace-daemon", "workspaces-runner-daemon");
-        assertThat(PlatformModel.RELEASE_PUBLISHERS.get(
-                PlatformModel.RELEASE_PUBLISHERS.indexOf("workspace-daemon") + 1))
-                .isEqualTo("workspaces-runner-daemon");
-        assertThat(PlatformModel.releasePackages("workspaces-runner-daemon")).containsExactly(
-                new PlatformModel.ReleasePackage(PlatformModel.ReleasePackage.Kind.OCI,
-                        "qits/qits-workspaces-runner"),
-                new PlatformModel.ReleasePackage(PlatformModel.ReleasePackage.Kind.MAVEN,
-                        "qits-workspaces-runner-protocol"));
-        assertThat(PlatformModel.repo("workspaces-runner-daemon"))
-                .isEqualTo("qits-workspaces-runner-daemon");
-        assertThat(PlatformModel.repoPath("workspaces-runner-daemon"))
-                .isEqualTo("daemons/qits-workspaces-runner-daemon");
-        assertThat(PlatformModel.carriesVersionIdentity("workspaces-runner-daemon")).isTrue();
+    void theRetiredWorkspacesRunnerIsNoPartOfTheBoot() {
+        assertThat(ESTATE.repos()).doesNotContain("workspaces-runner-daemon");
+        assertThat(PinnedVersions.PRODUCERS).doesNotContainValue("workspaces-runner-daemon");
     }
 
     /**
@@ -724,20 +711,19 @@ class PlatformModelTest {
      */
     @Test
     void theSystemRunnerDaemonIsAReplayedImagePublisher() {
-        assertThat(PlatformModel.SEEDED_REPOS).contains("system-runner-daemon");
-        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("system-runner-daemon");
-        assertThat(PlatformModel.RELEASE_PUBLISHERS)
-                .containsSubsequence("workspaces-runner-daemon", "system-runner-daemon");
-        assertThat(PlatformModel.releasePackages("system-runner-daemon")).containsExactly(
-                new PlatformModel.ReleasePackage(PlatformModel.ReleasePackage.Kind.OCI,
-                        "qits/qits-system-runner"),
-                new PlatformModel.ReleasePackage(PlatformModel.ReleasePackage.Kind.MAVEN,
-                        "qits-system-runner-protocol"));
+        assertThat(ESTATE.order().pushes()).contains("system-runner-daemon");
+        assertThat(ESTATE.deploys()).doesNotContain("system-runner-daemon");
+        // A replay by the membership rule: qits-system pins its protocol jar at a release.
+        assertThat(ESTATE.order().replays()).contains("system-runner-daemon");
+        // What its replay asks the registry for: the image and the jar its release.yml declares.
+        assertThat(ESTATE.publishes("system-runner-daemon")).containsExactlyInAnyOrder(
+                new Coordinate(Ecosystem.DOCKER, "qits/qits-system-runner"),
+                new Coordinate(Ecosystem.MAVEN, "eu.wohlben.qits:qits-system-runner-protocol"));
         assertThat(PlatformModel.repo("system-runner-daemon"))
                 .isEqualTo("qits-system-runner-daemon");
         assertThat(PlatformModel.repoPath("system-runner-daemon"))
                 .isEqualTo("daemons/qits-system-runner-daemon");
-        assertThat(PlatformModel.carriesVersionIdentity("system-runner-daemon")).isTrue();
+        assertThat(ESTATE.carriesVersionIdentity("system-runner-daemon")).isTrue();
     }
 
     /**
@@ -749,49 +735,66 @@ class PlatformModelTest {
      */
     @Test
     void theContainersDriverIsASeededLibraryOnEventstreamsTerms() {
-        assertThat(PlatformModel.SEEDED_REPOS).contains("containers-driver");
-        assertThat(PlatformModel.RELEASE_PUBLISHERS).contains("containers-driver");
-        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("containers-driver");
+        assertThat(ESTATE.order().pushes()).contains("containers-driver");
+        assertThat(ESTATE.order().replays()).contains("containers-driver");
+        assertThat(ESTATE.deploys()).doesNotContain("containers-driver");
         assertThat(PlatformModel.repo("containers-driver")).isEqualTo("qits-containers-javalib");
         assertThat(PlatformModel.nameOf("qits-containers-javalib")).isEqualTo("containers-driver");
         assertThat(PlatformModel.repoPath("containers-driver"))
                 .isEqualTo("libs/qits-containers-javalib");
         assertThat(PlatformModel.mavenModule("containers-driver")).isEmpty();
-        assertThat(PlatformModel.releasePackages("containers-driver")).singleElement()
-                .isEqualTo(new PlatformModel.ReleasePackage(
-                        PlatformModel.ReleasePackage.Kind.MAVEN, "qits-containers-driver"));
-        assertThat(PlatformModel.carriesVersionIdentity("containers-driver")).isTrue();
+        assertThat(ESTATE.publishes("containers-driver")).containsExactly(
+                new Coordinate(Ecosystem.MAVEN, "eu.wohlben.qits:qits-containers-driver"));
+        assertThat(ESTATE.carriesVersionIdentity("containers-driver")).isTrue();
         // The service's own client module no longer publishes core beside it.
         assertThat(PlatformModel.mavenModule("containers")).isEqualTo("client");
     }
 
+    /**
+     * {@code before} deploys before {@code after}, and the reason is a {@link CutoverRules} pair or
+     * a RUNTIME edge the declarations derive — never a position in a list.
+     */
+    private static void deploysBefore(String before, String after, String rule) {
+        List<String> deploys = ESTATE.deploys();
+        assertThat(deploys).contains(before, after);
+        assertThat(deploys.indexOf(before)).as("%s before %s: %s", before, after, rule)
+                .isLessThan(deploys.indexOf(after));
+    }
+
+    /** The order of every one of {@code befores} against {@code after}, by one rule. */
+    private static void deploysBefore(List<String> befores, String after, String rule) {
+        befores.forEach(before -> deploysBefore(before, after, rule));
+    }
+
     @Test
-    void observabilityIsFirstTheEdgeIsSecondToLastAndTheDeployerIsLast() {
-        // Order matters: observability quiets the OTLP warnings earliest, and the deployer's own
-        // deployment is the self-update handoff.
-        assertThat(PlatformModel.DEPLOYABLES.getFirst()).isEqualTo("observability");
-        assertThat(PlatformModel.DEPLOYABLES.getLast()).isEqualTo("deployments");
+    void theDeployerIsLastTheEdgeLastOfTheRestAndTheByteplaneInItsForcedOrder() {
+        // Every other deploy before the deployer: its deployment is the self-update handoff.
+        assertThat(ESTATE.deploys().getLast()).isEqualTo("deployments");
+        // Every other deploy but the deployer before the edge: it is the door.
+        assertThat(ESTATE.deploys().get(ESTATE.deploys().size() - 2)).isEqualTo("edge");
         // The database is NOT in the train: re-reading its spec from qits-githost (whose storage
-        // is postgres) is a circular dependency, so it stays the seed service. The idp is second.
-        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("oci-postgresql");
-        assertThat(PlatformModel.DEPLOYABLES.get(1)).isEqualTo("idp");
-        // The edge is the host port, so its cutover takes the CLI's own door away for a beat. It
-        // goes as late as it can, before the self-update.
-        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
-                "edge", "deployments");
+        // is postgres) is a circular dependency, so it stays the seed service.
+        assertThat(ESTATE.deploys()).doesNotContain("oci-postgresql");
+        // The idp mints every later application's tokens: each declares idp:client, a RUNTIME
+        // edge. Observability declares none and is ordered by nothing — "observability first"
+        // was a preference for quiet OTLP warnings, dropped with the list (qits-3).
+        ESTATE.deploys().stream().filter(app -> !app.equals("idp") && !app.equals("observability"))
+                .forEach(app -> deploysBefore("idp", app, "idp:client"));
         // The mirror before everything whose build resolves through it, and the git host between
         // the store and ci — ci reads pipeline config out of the git host and clones from it.
-        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
-                "mirror", "artifacts", "githost", "ci");
-        // The orchestrator immediately before ci: ci runs every step as a container it asks that
-        // service for, so the two cutovers have to be ordered rather than overlapping.
-        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence("containers", "ci");
-        // docs reads from qits-artifacts and qits-observability, so it deploys after both.
-        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence("artifacts", "docs");
-        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence("observability", "docs");
-        // ...without splitting the byte plane's three or the containers-ci pair.
-        assertThat(PlatformModel.DEPLOYABLES).containsSequence("mirror", "artifacts", "githost");
-        assertThat(PlatformModel.DEPLOYABLES).containsSequence("containers", "ci");
+        deploysBefore("mirror", "artifacts", "every later build resolves through the mirror");
+        deploysBefore("artifacts", "githost", "the byte plane's build path");
+        deploysBefore("githost", "ci", "ci reads its pipeline config from githost and clones it");
+        // ci runs every step as a container it asks qits-containers for.
+        deploysBefore("containers", "ci", "ci's steps run as containers");
+        // docs reads from qits-artifacts. (It also exports telemetry to qits-observability, as
+        // every service does; that was observability first again, and is no rule.)
+        deploysBefore("artifacts", "docs", "docs reads from artifacts");
+        deploysBefore("githost", "docs", "docs goes after githost");
+        deploysBefore("docs", "containers", "docs before containers, whose place against ci is"
+                + " forced");
+        // No adjacency is asserted: the byte plane's three and the containers-ci pair are
+        // ordered, never required to sit side by side.
     }
 
     /**
@@ -820,10 +823,10 @@ class PlatformModelTest {
      */
     @Test
     void theOrchestratorIsDeployedAfterEveryPeerItCalls() {
-        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
-                "artifacts", "containers", "ci", "orchestrator");
-        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
-                "orchestrator", "edge", "deployments");
+        deploysBefore(List.of("artifacts", "containers", "ci"), "orchestrator",
+                "it calls them from a scheduler");
+        deploysBefore("orchestrator", "edge", "the edge's cutover takes the door away");
+        deploysBefore("edge", "deployments", "the self-update handoff is last");
         // A platform service: what a deletion run reclaims is one machine's, however many tiers
         // share it, so there is one instance and its alias carries no tier.
         assertThat(PlatformModel.wireAlias("orchestrator", "dev")).isEqualTo("dev-qits-orchestrator");
@@ -845,8 +848,8 @@ class PlatformModelTest {
         assertThat(PlatformModel.mavenModule("orchestrator")).isEmpty();
         // The client is seeded like every other frontend and deployed by nobody: its bundle ships
         // inside the service's own image.
-        assertThat(PlatformModel.SEEDED_REPOS).contains("spa-orchestrator");
-        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("spa-orchestrator");
+        assertThat(ESTATE.order().pushes()).contains("spa-orchestrator");
+        assertThat(ESTATE.deploys()).doesNotContain("spa-orchestrator");
     }
 
     /**
@@ -858,7 +861,7 @@ class PlatformModelTest {
     @Test
     void theOrchestratorsCredentialArrivesWithItsOwnDeployment() {
         assertThat(PlatformModel.SEED_IDP_CLIENT_APPS).doesNotContain("orchestrator");
-        assertThat(PlatformModel.DEPLOYABLES).contains("orchestrator");
+        assertThat(ESTATE.deploys()).contains("orchestrator");
         // Its client id is its wire alias, which says the plane: one deletion run reclaims one
         // MACHINE however many tiers share it.
         assertThat(PlatformModel.wireAlias("orchestrator", "prod"))
@@ -875,11 +878,9 @@ class PlatformModelTest {
      */
     @Test
     void theDependencyInventoryIsDeployedAfterEveryPeerItReads() {
-        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
-                "projects", "mirror", "artifacts", "githost", "ci",
-                "maintenance");
-        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
-                "maintenance", "edge", "deployments");
+        deploysBefore(List.of("projects", "mirror", "artifacts", "githost", "ci"), "maintenance",
+                "its scheduler reads those five");
+        deploysBefore("maintenance", "edge", "the edge's cutover takes the door away");
         // NOT A SEED SERVICE, and that is the whole difference from the orchestrator's rollout:
         // nothing calls it, so nothing waits on it. No seed block, no seed image, no placeholder
         // bundle — the train restores it from its last release like any other application.
@@ -887,7 +888,7 @@ class PlatformModelTest {
         assertThat(PlatformModel.seedUiPath("maintenance")).isEmpty();
         // It carries version identity, so a restoring boot stands it at its newest release rather
         // than shipping main.
-        assertThat(PlatformModel.carriesVersionIdentity("maintenance")).isTrue();
+        assertThat(ESTATE.carriesVersionIdentity("maintenance")).isTrue();
         // A platform service: one inventory of one catalog, so its alias carries no tier.
         assertThat(PlatformModel.wireAlias("maintenance", "dev")).isEqualTo("dev-qits-maintenance");
         assertThat(PlatformModel.wireAlias("maintenance", "prod"))
@@ -907,9 +908,9 @@ class PlatformModelTest {
         assertThat(PlatformModel.mavenModule("maintenance")).isEmpty();
         // The client is seeded like every other frontend and deployed by nobody: its bundle ships
         // inside the service's own image, and it publishes no release for a replay to restore.
-        assertThat(PlatformModel.SEEDED_REPOS).contains("spa-maintenance");
-        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("spa-maintenance");
-        assertThat(PlatformModel.RELEASE_PUBLISHERS).doesNotContain("maintenance",
+        assertThat(ESTATE.order().pushes()).contains("spa-maintenance");
+        assertThat(ESTATE.deploys()).doesNotContain("spa-maintenance");
+        assertThat(ESTATE.order().replays()).doesNotContain("maintenance",
                 "spa-maintenance");
     }
 
@@ -924,7 +925,7 @@ class PlatformModelTest {
         // Not a seed client: nothing runs it during the seed window, so its credential is the
         // idp:client resource it declares and qits-deployments is what creates it.
         assertThat(PlatformModel.SEED_IDP_CLIENT_APPS).doesNotContain("maintenance");
-        assertThat(PlatformModel.DEPLOYABLES).contains("maintenance");
+        assertThat(ESTATE.deploys()).contains("maintenance");
         // The three peers it drives, at the aliases it dials them by — two tiers' and one bare.
         assertThat(PlatformModel.wireAlias("projects", "prod")).isEqualTo("prod-qits-projects");
         assertThat(PlatformModel.wireAlias("githost", "prod")).isEqualTo("prod-qits-githost");
@@ -940,11 +941,9 @@ class PlatformModelTest {
      */
     @Test
     void theBaseSystemPanelsAreDeployedLastOfThePlatformTierAndCallNoPeer() {
-        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
-                "containers", "ci", "orchestrator", "maintenance",
-                "system");
-        assertThat(PlatformModel.DEPLOYABLES).containsSubsequence(
-                "system", "edge", "deployments");
+        deploysBefore(List.of("containers", "ci", "orchestrator", "maintenance"), "system",
+                "its cutover drops every open terminal");
+        deploysBefore("system", "edge", "the edge's cutover takes the door away");
         // A SEED SERVICE since qits-1547, and not for its panels: the localhost target registers
         // with its targets module before the first release replay. Its client is staged like
         // every seed service's.
@@ -952,7 +951,7 @@ class PlatformModelTest {
         assertThat(PlatformModel.seedUiPath("system"))
                 .isEqualTo("service/src/main/webui/dist/qits-platform-spa-system/browser");
         // It carries version identity, so a restoring boot stands it at its newest release.
-        assertThat(PlatformModel.carriesVersionIdentity("system")).isTrue();
+        assertThat(ESTATE.carriesVersionIdentity("system")).isTrue();
         // A platform service: what it shows is a MACHINE, which has no per-tier half.
         assertThat(PlatformModel.wireAlias("system", "dev")).isEqualTo("dev-qits-system");
         assertThat(PlatformModel.wireAlias("system", "prod"))
@@ -971,9 +970,9 @@ class PlatformModelTest {
         assertThat(PlatformModel.mavenModule("system")).isEmpty();
         // The console is seeded like every other frontend and deployed by nobody: its bundle ships
         // inside the service's own image, and it publishes no release for a replay to restore.
-        assertThat(PlatformModel.SEEDED_REPOS).contains("spa-system");
-        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("spa-system");
-        assertThat(PlatformModel.RELEASE_PUBLISHERS).doesNotContain("system",
+        assertThat(ESTATE.order().pushes()).contains("spa-system");
+        assertThat(ESTATE.deploys()).doesNotContain("spa-system");
+        assertThat(ESTATE.order().replays()).doesNotContain("system",
                 "spa-system");
     }
 
@@ -991,9 +990,9 @@ class PlatformModelTest {
         // qits-1547, so this bootstrap creates it against the running idp like the other seed
         // services' rather than waiting for a deployment to.
         assertThat(PlatformModel.SEED_IDP_CLIENT_APPS).contains("system");
-        assertThat(PlatformModel.DEPLOYABLES).contains("system");
+        assertThat(ESTATE.deploys()).contains("system");
         // And the alias the templates spell for its gate, which is also that client's id.
-        assertThat(PlatformModel.modelTokens("prod"))
+        assertThat(PlatformModel.modelTokens("prod", ESTATE))
                 .containsEntry("ALIAS_SYSTEM", "prod-qits-system");
     }
 
@@ -1038,7 +1037,7 @@ class PlatformModelTest {
      */
     @Test
     void everyAliasTheTemplatesNeedComesOutOfTheModel() {
-        Map<String, String> tokens = PlatformModel.modelTokens("prod");
+        Map<String, String> tokens = PlatformModel.modelTokens("prod", ESTATE);
 
         // An environment service carries the tier; a platform one has no tier to carry.
         assertThat(tokens).containsEntry("ALIAS_CI", "prod-qits-ci")
@@ -1049,10 +1048,10 @@ class PlatformModelTest {
         assertThat(tokens.keySet()).noneMatch(key -> key.startsWith("CLIENT_KEY_"));
         // Every application, so a service added to the model needs no second edit here.
         assertThat(tokens.keySet())
-                .containsAll(PlatformModel.platformRepos().stream()
+                .containsAll(ESTATE.repos().stream()
                         .map(app -> "ALIAS_" + PlatformModel.clientKey(app)).toList());
         // And it follows the environment name, which the templates cannot.
-        assertThat(PlatformModel.modelTokens("preprod"))
+        assertThat(PlatformModel.modelTokens("preprod", ESTATE))
                 .containsEntry("ALIAS_CI", "preprod-qits-ci")
                 // Every alias follows the environment now. The bus was the example of one that did
                 // NOT — it was the bare qits-events on any tier, because it was on the plane.
@@ -1094,22 +1093,27 @@ class PlatformModelTest {
      */
     @Test
     void onlyDeployablesAndPublishersCarryVersionIdentity() {
-        assertThat(PlatformModel.carriesVersionIdentity("ci")).isTrue();
-        assertThat(PlatformModel.carriesVersionIdentity("idp")).isTrue();
-        assertThat(PlatformModel.carriesVersionIdentity("eventstream")).isTrue();
-        assertThat(PlatformModel.carriesVersionIdentity("oci-workspace")).isTrue();
-        // Seeded, and neither: the step images and the SPA seed sources.
-        assertThat(PlatformModel.carriesVersionIdentity("oci")).isFalse();
-        assertThat(PlatformModel.carriesVersionIdentity("spa-projects")).isFalse();
-        assertThat(PlatformModel.carriesVersionIdentity("ci-daemon")).isFalse();
+        assertThat(ESTATE.carriesVersionIdentity("ci")).isTrue();
+        assertThat(ESTATE.carriesVersionIdentity("idp")).isTrue();
+        assertThat(ESTATE.carriesVersionIdentity("eventstream")).isTrue();
+        assertThat(ESTATE.carriesVersionIdentity("oci-workspace")).isTrue();
+        // Pushed, and neither deployed nor pinned at a release: the SPA seed sources and the
+        // editor image.
+        assertThat(ESTATE.carriesVersionIdentity("spa-projects")).isFalse();
+        assertThat(ESTATE.carriesVersionIdentity("oci-workspace-editor")).isFalse();
+        // Replays since qits-3, so they stand at their release too: qits-workspace-oci pins the
+        // step images' node-browser-base at a calver, and qits-ci pins qits-ci-daemon-protocol.
+        // A pin is only as good as the registry behind it; being seed-built is no exemption.
+        assertThat(ESTATE.carriesVersionIdentity("oci")).isTrue();
+        assertThat(ESTATE.carriesVersionIdentity("ci-daemon")).isTrue();
         // The seed database too: it is not deployed and nobody pins a postgres release, so its
         // seed image builds from main.
-        assertThat(PlatformModel.carriesVersionIdentity("oci-postgresql")).isFalse();
+        assertThat(ESTATE.carriesVersionIdentity("oci-postgresql")).isFalse();
         // Every entry of both sets, so a new deployable cannot be added without one.
-        assertThat(PlatformModel.DEPLOYABLES).allSatisfy(name ->
-                assertThat(PlatformModel.carriesVersionIdentity(name)).isTrue());
-        assertThat(PlatformModel.RELEASE_PUBLISHERS).allSatisfy(name ->
-                assertThat(PlatformModel.carriesVersionIdentity(name)).isTrue());
+        assertThat(ESTATE.deploys()).allSatisfy(name ->
+                assertThat(ESTATE.carriesVersionIdentity(name)).isTrue());
+        assertThat(ESTATE.order().replays()).allSatisfy(name ->
+                assertThat(ESTATE.carriesVersionIdentity(name)).isTrue());
     }
 
     /**
@@ -1136,11 +1140,11 @@ class PlatformModelTest {
      * <p>
      * Nineteen entries: the environment, the seventeen deployables' browser labels, and the one edge
      * app label no application name spells ({@code registry} is qits-artifacts). {@code idp} and {@code edge} are in it twice over — from
-     * {@link PlatformModel#DEPLOYABLES} and by name — and appear once.
+     * the derived deploys and by name — and appear once.
      */
     @Test
     void theReservedSlugsAreTheEnvironmentAndEveryServiceLabel() {
-        assertThat(PlatformModel.reservedSlugs("dev")).isEqualTo("dev,"
+        assertThat(PlatformModel.reservedSlugs("dev", ESTATE.deploys())).isEqualTo("dev,"
                 + "artifacts,ci,containers,deployments,docs,edge,events,"
                 + "githost,idp,maintenance,mirror,observability,orchestrator,projects,registry,"
                 + "stt,system,workspaces");
@@ -1154,10 +1158,10 @@ class PlatformModelTest {
      */
     @Test
     void anEnvironmentNamedAfterAServiceIsReservedOnce() {
-        List<String> slugs = PlatformModel.reservedSlugList("docs");
+        List<String> slugs = PlatformModel.reservedSlugList("docs", ESTATE.deploys());
 
         assertThat(slugs).startsWith("docs").containsOnlyOnce("docs");
-        assertThat(slugs).isEqualTo(PlatformModel.reservedSlugList("docs"));
+        assertThat(slugs).isEqualTo(PlatformModel.reservedSlugList("docs", ESTATE.deploys()));
     }
 
     /**
@@ -1168,9 +1172,9 @@ class PlatformModelTest {
      */
     @Test
     void everyDeployableAndEveryEdgeAppReservesItsLabel() {
-        List<String> slugs = PlatformModel.reservedSlugList("dev");
+        List<String> slugs = PlatformModel.reservedSlugList("dev", ESTATE.deploys());
 
-        assertThat(PlatformModel.DEPLOYABLES).allSatisfy(name ->
+        assertThat(ESTATE.deploys()).allSatisfy(name ->
                 assertThat(slugs).contains(PlatformModel.browserLabel(name)));
         assertThat(slugs).containsAll(PlatformModel.EDGE_APPS);
     }
@@ -1207,13 +1211,14 @@ class PlatformModelTest {
     void theReadOnlyRepositoriesAreClonedButNeverHosted() {
         assertThat(PlatformModel.READ_ONLY_REPOS)
                 .containsExactly("bootstrap-cli", "landing-app", "platform-access-monorepo");
-        assertThat(PlatformModel.sourceRepos()).containsAll(PlatformModel.platformRepos())
+        assertThat(ESTATE.sourceRepos()).containsAll(ESTATE.repos())
                 .containsAll(PlatformModel.READ_ONLY_REPOS);
-        assertThat(PlatformModel.platformRepos()).doesNotContainAnyElementsOf(
+        assertThat(ESTATE.repos()).doesNotContainAnyElementsOf(
                 PlatformModel.READ_ONLY_REPOS);
         assertThat(PlatformModel.sourceNameOf("qits-landing-app")).isEqualTo("landing-app");
         assertThat(PlatformModel.sourceNameOf("qits-ci-frontend")).isEqualTo("spa-ci");
-        assertThat(PlatformModel.sourceNameOf("qits-nowhere")).isNull();
+        assertThat(PlatformModel.sourceNameOf("nowhere-else")).isNull();
+        assertThat(ESTATE.sourceRepos()).doesNotContain(PlatformModel.sourceNameOf("qits-nowhere"));
         assertThat(PlatformModel.repo("platform-access-monorepo")).isEqualTo("qits-platform-access-monorepo");
         assertThat(PlatformModel.mavenModule("platform-access-monorepo"))
                 .isEqualTo("platform-access-cli-binary");
@@ -1231,7 +1236,7 @@ class PlatformModelTest {
                 "stt", "docs", "observability", "maintenance", "orchestrator", "landing-app",
                 "bootstrap-javalib");
         assertThat(PlatformModel.NOT_BUILT.keySet()).containsExactlyInAnyOrder(
-                "oci-workspace-editor", "workspaces-runner-daemon", "spa-workspaces");
+                "oci-workspace-editor");
         assertThat(PlatformModel.DEFERRED_TO_PHASE_4.keySet())
                 .doesNotContainAnyElementsOf(PlatformModel.NOT_BUILT.keySet());
         assertThat(PlatformModel.DEFERRED_TO_PHASE_4.values())

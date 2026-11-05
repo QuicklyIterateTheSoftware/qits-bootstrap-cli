@@ -34,6 +34,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class SeedPhasesTest {
 
+    private static final eu.wohlben.qits.cli.bootstrap.platform.Estate ESTATE =
+            eu.wohlben.qits.cli.bootstrap.platform.EstateFixture.estate();
+
     @TempDir
     Path temp;
 
@@ -504,6 +507,7 @@ class SeedPhasesTest {
                 "QITS_DOMAIN", "qits-dev.eu",
                 "QITS_SRC", temp.resolve("src").toString())),
                 new RunLog(temp.resolve("run.log")), runner, http);
+        boot.deriveEstateFrom(eu.wohlben.qits.cli.bootstrap.platform.EstateFixture.checkouts());
         boot.state.srcDir = temp.resolve("src");
         boot.state.wrapperDir = temp;
         Path ci = Files.createDirectories(boot.state.repoDir("ci"));
@@ -972,6 +976,7 @@ class SeedPhasesTest {
                 "QITS_DOMAIN", "qits-dev.eu",
                 "QITS_SRC", temp.resolve("src").toString())),
                 new RunLog(temp.resolve("run.log")), runner, new CannedHttp());
+        boot.deriveEstateFrom(eu.wohlben.qits.cli.bootstrap.platform.EstateFixture.checkouts());
         boot.state.srcDir = temp.resolve("src");
         boot.state.wrapperDir = temp;
         Path edge = Files.createDirectories(boot.state.repoDir("edge"));
@@ -1118,6 +1123,7 @@ class SeedPhasesTest {
                 ScriptedRunner.ok(EVENTSTREAM_JAR));
         Boot boot = new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log")),
                 runner, new CannedHttp());
+        boot.deriveEstateFrom(eu.wohlben.qits.cli.bootstrap.platform.EstateFixture.checkouts());
         Path repo = edgeReactor();
 
         assertThatThrownBy(() -> new SeedPhases(boot).mavenPreflight(
@@ -1143,6 +1149,7 @@ class SeedPhasesTest {
                 ScriptedRunner.ok(EVENTSTREAM_JAR, goldenMasters));
         Boot boot = new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log")),
                 runner, new CannedHttp());
+        boot.deriveEstateFrom(eu.wohlben.qits.cli.bootstrap.platform.EstateFixture.checkouts());
         CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
 
         new SeedPhases(boot).mavenPreflight(ctx, "edge", edgeReactor());
@@ -1157,6 +1164,7 @@ class SeedPhasesTest {
                 ScriptedRunner.failed("Cannot connect to the Docker daemon"));
         Boot boot = new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log")),
                 runner, new CannedHttp());
+        boot.deriveEstateFrom(eu.wohlben.qits.cli.bootstrap.platform.EstateFixture.checkouts());
         Path repo = edgeReactor();
 
         assertThatThrownBy(() -> new SeedPhases(boot).mavenPreflight(
@@ -1500,6 +1508,7 @@ class SeedPhasesTest {
         Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "prod",
                 "QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7")),
                 new RunLog(temp.resolve("run.log")));
+        boot.deriveEstateFrom(eu.wohlben.qits.cli.bootstrap.platform.EstateFixture.checkouts());
         boot.state.serviceClientSecrets.put(PlatformModel.application("edge"), "s3cr3t");
 
         Map<String, String> tokens = new SeedPhases(boot).tokens();
@@ -1534,6 +1543,7 @@ class SeedPhasesTest {
         Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev",
                 "QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7")),
                 new RunLog(temp.resolve("run.log")));
+        boot.deriveEstateFrom(eu.wohlben.qits.cli.bootstrap.platform.EstateFixture.checkouts());
 
         Map<String, String> tokens = new SeedPhases(boot).tokens();
 
@@ -1559,6 +1569,7 @@ class SeedPhasesTest {
                 "QITS_DOMAIN", "wohlben.eu",
                 "QITS_BOOTSTRAP_INGRESS_PUBLIC", "true")),
                 new RunLog(temp.resolve("run.log")));
+        boot.deriveEstateFrom(eu.wohlben.qits.cli.bootstrap.platform.EstateFixture.checkouts());
 
         Map<String, String> tokens = new SeedPhases(boot).tokens();
 
@@ -1599,6 +1610,7 @@ class SeedPhasesTest {
         Boot boot = new Boot(TestConfig.from(Map.of("QITS_DOMAIN", "wohlben.eu",
                 "QITS_BOOTSTRAP_INGRESS_PUBLIC", "true")), new RunLog(temp.resolve("run.log")),
                 runner);
+        boot.deriveEstateFrom(eu.wohlben.qits.cli.bootstrap.platform.EstateFixture.checkouts());
         boot.state.bootstrapIngressEnvFile = Files.createFile(temp.resolve("ingress.env"));
         // Undecided, a public ingress reads as PUBLIC_TLS — what a re-bootstrap with a retained
         // certificate pair runs in.
@@ -1672,6 +1684,7 @@ class SeedPhasesTest {
             ScriptedRunner runner = new ScriptedRunner(command -> ScriptedRunner.ok());
             Boot boot = new Boot(TestConfig.from(env), new RunLog(temp.resolve("run.log")),
                     runner);
+            boot.deriveEstateFrom(eu.wohlben.qits.cli.bootstrap.platform.EstateFixture.checkouts());
 
             assertThatThrownBy(() -> new SeedPhases(boot).edgeTlsHandoff().action()
                     .run(new CiLogStreamTest.Recorder()))
@@ -1692,13 +1705,13 @@ class SeedPhasesTest {
      */
     @Test
     void aDeployableStandsAtItsNewestRelease() {
-        assertThat(SeedPhases.bootIdentity("ci", TAGS)).isEqualTo("2026.812.153438");
+        assertThat(SeedPhases.bootIdentity("ci", ESTATE, TAGS)).isEqualTo("2026.812.153438");
     }
 
     /** A release publisher's output is a coordinate consumers pin, so it follows its tag too. */
     @Test
     void aReleasePublisherStandsAtItsNewestRelease() {
-        assertThat(SeedPhases.bootIdentity("eventstream", TAGS))
+        assertThat(SeedPhases.bootIdentity("eventstream", ESTATE, TAGS))
                 .isEqualTo("2026.812.153438");
     }
 
@@ -1709,18 +1722,20 @@ class SeedPhasesTest {
      */
     @Test
     void aSeededSourceWithNoVersionIdentityStaysOnMain() {
-        assertThat(SeedPhases.bootIdentity("oci", TAGS)).isEmpty();
+        // Pushed and neither deployed nor pinned at a release: the editor image and the database.
+        assertThat(SeedPhases.bootIdentity("oci-workspace-editor", ESTATE, TAGS)).isEmpty();
+        assertThat(SeedPhases.bootIdentity("oci-postgresql", ESTATE, TAGS)).isEmpty();
         // The SPA seed sources are the same shape: a placeholder bundle, then the real client from
         // the pipeline.
-        assertThat(SeedPhases.bootIdentity("spa-projects", TAGS)).isEmpty();
+        assertThat(SeedPhases.bootIdentity("spa-projects", ESTATE, TAGS)).isEmpty();
     }
 
     /** In scope but never released: main, which is what an empty answer means to the caller. */
     @Test
     void aRepositoryWithNoReleaseStaysOnMain() {
-        assertThat(SeedPhases.bootIdentity("ci", List.of())).isEmpty();
+        assertThat(SeedPhases.bootIdentity("ci", ESTATE, List.of())).isEmpty();
         // A stray tag is not a release.
-        assertThat(SeedPhases.bootIdentity("ci", List.of("latest"))).isEmpty();
+        assertThat(SeedPhases.bootIdentity("ci", ESTATE, List.of("latest"))).isEmpty();
     }
 
     /**
@@ -1732,9 +1747,21 @@ class SeedPhasesTest {
      */
     @Test
     void nothingButTheNameAndTheTagsDecidesWhatACheckoutStandsAt() {
-        assertThat(SeedPhases.bootIdentity("ci", TAGS)).isEqualTo("2026.812.153438");
-        assertThat(SeedPhases.bootIdentity("eventstream", TAGS)).isEqualTo("2026.812.153438");
-        assertThat(SeedPhases.bootIdentity("oci", TAGS)).isEmpty();
+        assertThat(SeedPhases.bootIdentity("ci", ESTATE, TAGS)).isEqualTo("2026.812.153438");
+        assertThat(SeedPhases.bootIdentity("eventstream", ESTATE, TAGS)).isEqualTo("2026.812.153438");
+        assertThat(SeedPhases.bootIdentity("spa-projects", ESTATE, TAGS)).isEmpty();
+    }
+
+    /**
+     * <b>qits-oci carries version identity since qits-3</b>: it is a replay — qits-workspace-oci's
+     * Dockerfile pins qits/build-images/node-browser-base at a calver, and a pin is only as good as
+     * the registry behind it — and the rule is deploys and replays. Its newest release therefore
+     * has to carry what its step images need; the 2026-08 measurement above is the hazard.
+     */
+    @Test
+    void theStepImagesStandAtTheirReleaseNowThatTheyAreReplayed() {
+        assertThat(ESTATE.order().replays()).contains("oci");
+        assertThat(SeedPhases.bootIdentity("oci", ESTATE, TAGS)).isEqualTo("2026.812.153438");
     }
 
     // --- the pullers' docker credentials -----------------------------------------------------------
@@ -1973,6 +2000,7 @@ class SeedPhasesTest {
                         ? ScriptedRunner.ok("prod-qits-edge", "qits_prod-qits-githost")
                         : ScriptedRunner.ok());
         Boot boot = new Boot(TestConfig.from(Map.of()), new RunLog(temp.resolve("run.log")), runner);
+        boot.deriveEstateFrom(eu.wohlben.qits.cli.bootstrap.platform.EstateFixture.checkouts());
         SeedPhases seed = new SeedPhases(boot);
 
         for (var phase : List.of(seed.bootstrapIngressPrepare(), seed.bootstrapIngressStart())) {

@@ -15,6 +15,8 @@ import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
 import eu.wohlben.qits.cli.bootstrap.proc.ScriptedRunner;
+import eu.wohlben.qits.bootstrap.graph.Coordinate;
+import eu.wohlben.qits.bootstrap.graph.Ecosystem;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -34,6 +36,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * functions — and each of them decided a boot wrongly once.
  */
 class PipelinePhasesTest {
+
+    /** What the platform is made of, as the estate fixture declares it (qits-3). */
+    private static final eu.wohlben.qits.cli.bootstrap.platform.Estate ESTATE =
+            eu.wohlben.qits.cli.bootstrap.platform.EstateFixture.estate();
 
     @Test
     void healthyServes() {
@@ -1276,25 +1282,26 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>Which publishers the pinned-tag replay is for.</b> Three of the nine are seed libraries,
-     * and the maven publishes of phases 18-25 already put every pinned version of those in the
-     * store out of the same closure — so replaying their older tags would cost a ci run per tag
-     * for bytes the registry has. The seven below are the ones nothing else publishes.
+     * <b>Which replays the pinned-tag replay is for</b>, as a rule rather than a list: every replay
+     * that is not a {@link SeedPhases#SEED_LIBRARIES} entry. A seed library's pinned versions are
+     * already in the store — the maven publishes of phase 1 put them there out of the same closure
+     * — so replaying its older tags would cost a ci run per tag for bytes the registry has.
      */
     @Test
     void theSeedLibrariesAreExcludedFromThePinnedTagReplay() {
-        List<String> alsoSeeded = PlatformModel.RELEASE_PUBLISHERS.stream()
-                .filter(SeedPhases.SEED_LIBRARIES::contains)
-                .toList();
+        List<String> replays = ESTATE.order().replays();
 
-        assertThat(alsoSeeded).containsExactlyInAnyOrder(
-                "integrations-quarkus", "eventstream", "containers-driver");
-        assertThat(PlatformModel.RELEASE_PUBLISHERS)
-                .filteredOn(name -> !SeedPhases.SEED_LIBRARIES.contains(name))
-                .containsExactly("bootstrap-javalib", "spa-ui-components", "integrations-angular",
-                        "oci-workspace",
-                        "workspace-daemon", "workspaces-runner-daemon", "system-runner-daemon",
-                        "oci-workspace-editor", "projects-daemon");
+        // The seed libraries that are replays too: being seed-built is no exemption from the
+        // newest release's replay (qits-3), only from the older pinned tags'.
+        assertThat(replays).filteredOn(SeedPhases.SEED_LIBRARIES::contains)
+                .containsExactlyInAnyOrder("userflows", "coding-agents", "integrations-quarkus",
+                        "registries", "eventstream", "containers-driver");
+        // githost and containers publish a seed-library module each, and are deploys.
+        assertThat(ESTATE.deploys()).contains("githost", "containers");
+        assertThat(replays).filteredOn(name -> !SeedPhases.SEED_LIBRARIES.contains(name))
+                .containsExactlyInAnyOrder("bootstrap-javalib", "spa-ui-components",
+                        "integrations-angular", "oci-workspace", "workspace-daemon",
+                        "system-runner-daemon", "projects-daemon", "runner", "ci-daemon", "oci");
     }
 
     // --- when a tag that already stands still needs its build ------------------------------------
@@ -1320,42 +1327,67 @@ class PipelinePhasesTest {
     }
 
     /**
-     * <b>What each publisher's run leaves behind, addressed by the RELEASE version.</b> The image
-     * publishers tag with the version itself, which is what makes the question answerable; the two
-     * npm ones publish their own semver, and answering nothing is honest rather than a gap.
+     * <b>What each replay's run leaves behind, addressed by the RELEASE version</b>: the maven,
+     * npm and docker artifacts its {@code release.yml} declares. The image publishers tag with the
+     * version itself, which is what makes the question answerable; the npm pair publishes one
+     * version per release tag, so it answers like the rest.
      */
     @Test
-    void everyPublisherSaysWhatItsRunPublishes() {
-        assertThat(PlatformModel.releasePackages("oci-workspace")).singleElement()
-                .isEqualTo(new PlatformModel.ReleasePackage(
-                        PlatformModel.ReleasePackage.Kind.OCI, "qits/workspace-base"));
-        assertThat(PlatformModel.releasePackages("workspace-daemon")).singleElement()
-                .isEqualTo(new PlatformModel.ReleasePackage(
-                        PlatformModel.ReleasePackage.Kind.OCI, "qits/workspace"));
-        assertThat(PlatformModel.releasePackages("oci-workspace-editor")).singleElement()
-                .isEqualTo(new PlatformModel.ReleasePackage(
-                        PlatformModel.ReleasePackage.Kind.OCI, "qits/workspace-editor"));
+    void everyReplaySaysWhatItsRunPublishes() {
+        assertThat(ESTATE.publishes("oci-workspace")).containsExactly(
+                new Coordinate(Ecosystem.DOCKER, "qits/workspace-base"));
+        assertThat(ESTATE.publishes("workspace-daemon")).containsExactlyInAnyOrder(
+                new Coordinate(Ecosystem.DOCKER, "qits/workspace"),
+                new Coordinate(Ecosystem.MAVEN, "eu.wohlben.qits:qits-workspace-daemon-protocol"));
         // Two images from one run, so either one missing is a run to ask for again.
-        assertThat(PlatformModel.releasePackages("projects-daemon")).hasSize(2)
-                .extracting(PlatformModel.ReleasePackage::coordinate)
-                .containsExactly("qits/projects-daemon", "qits/project-agent");
-        assertThat(PlatformModel.releasePackages("eventstream")).singleElement()
-                .isEqualTo(new PlatformModel.ReleasePackage(
-                        PlatformModel.ReleasePackage.Kind.MAVEN, "qits-eventstream"));
-        assertThat(PlatformModel.releasePackages("containers-driver")).singleElement()
-                .isEqualTo(new PlatformModel.ReleasePackage(
-                        PlatformModel.ReleasePackage.Kind.MAVEN, "qits-containers-driver"));
-        assertThat(PlatformModel.releasePackages("integrations-quarkus")).singleElement()
-                .extracting(PlatformModel.ReleasePackage::coordinate).isEqualTo("qits-auth-core");
-        // The npm pair publishes one version per release tag, so they answer like the rest.
-        assertThat(PlatformModel.releasePackages("spa-ui-components")).singleElement()
-                .isEqualTo(new PlatformModel.ReleasePackage(
-                        PlatformModel.ReleasePackage.Kind.NPM, "@qits/ui-components"));
-        assertThat(PlatformModel.releasePackages("integrations-angular")).singleElement()
-                .extracting(PlatformModel.ReleasePackage::coordinate).isEqualTo("@qits/angular");
-        // Every publisher the plan makes a phase for is answered one way or the other.
-        assertThat(PlatformModel.RELEASE_PUBLISHERS)
-                .allSatisfy(name -> assertThat(PlatformModel.releasePackages(name)).isNotNull());
+        assertThat(ESTATE.publishes("projects-daemon")).contains(
+                new Coordinate(Ecosystem.DOCKER, "qits/projects-daemon"),
+                new Coordinate(Ecosystem.DOCKER, "qits/project-agent"));
+        assertThat(ESTATE.publishes("eventstream")).contains(
+                new Coordinate(Ecosystem.MAVEN, "eu.wohlben.qits:qits-eventstream"));
+        assertThat(ESTATE.publishes("containers-driver")).containsExactly(
+                new Coordinate(Ecosystem.MAVEN, "eu.wohlben.qits:qits-containers-driver"));
+        // Every jar of the reactor, not one standing for it: a run that died half way published
+        // half of what the replay owes.
+        assertThat(ESTATE.publishes("integrations-quarkus")).contains(
+                new Coordinate(Ecosystem.MAVEN, "eu.wohlben.qits:qits-auth-core"),
+                new Coordinate(Ecosystem.MAVEN, "eu.wohlben.qits:qits-db-core"));
+        assertThat(ESTATE.publishes("spa-ui-components")).containsExactly(
+                new Coordinate(Ecosystem.NPM, "@qits/ui-components"));
+        assertThat(ESTATE.publishes("integrations-angular")).containsExactly(
+                new Coordinate(Ecosystem.NPM, "@qits/angular"));
+        // A daemon binary and a docs site are released and pinned by no manifest: not asked.
+        assertThat(ESTATE.publishes("ci-daemon")).containsExactly(
+                new Coordinate(Ecosystem.MAVEN, "eu.wohlben.qits:qits-ci-daemon-protocol"));
+        // Every replay the plan makes a phase for publishes something addressable.
+        assertThat(ESTATE.order().replays())
+                .allSatisfy(name -> assertThat(ESTATE.publishes(name)).isNotEmpty());
+    }
+
+    /**
+     * <b>A {@code publish: if-changed} artifact is never "missing" at a release version.</b>
+     * qits-runner-javalib declares all three of its jars so: a release that found a module
+     * unchanged publishes nothing for it at its own version, and asking the registry for that exact
+     * version would call the release unpublished and rebuild it on every boot. Its other artifacts
+     * are still asked about; with nothing left to ask, the tag is the evidence.
+     */
+    @Test
+    void anIfChangedArtifactIsNotAskedForAtTheReleaseVersion() {
+        Coordinate protocol = new Coordinate(Ecosystem.MAVEN, "eu.wohlben.qits:qits-runner-protocol");
+        Coordinate toolkit = new Coordinate(Ecosystem.MAVEN, "eu.wohlben.qits:qits-runner-toolkit");
+        Coordinate contracts =
+                new Coordinate(Ecosystem.MAVEN, "eu.wohlben.qits:qits-runner-toolkit-contracts");
+
+        assertThat(ESTATE.publishedIfChanged("runner"))
+                .containsExactlyInAnyOrder(protocol, toolkit, contracts);
+        assertThat(PipelinePhases.askable(ESTATE.publishes("runner"),
+                ESTATE.publishedIfChanged("runner"))).isEmpty();
+        // Unconditional artifacts stay: every other replay declares none conditional.
+        assertThat(ESTATE.order().replays()).filteredOn(name -> !name.equals("runner"))
+                .allSatisfy(name -> assertThat(ESTATE.publishedIfChanged(name)).as(name).isEmpty());
+        Coordinate image = new Coordinate(Ecosystem.DOCKER, "qits/x");
+        assertThat(PipelinePhases.askable(java.util.Set.of(image, protocol),
+                java.util.Set.of(protocol))).containsExactly(image);
     }
 
     /**
@@ -3044,8 +3076,10 @@ class PipelinePhasesTest {
         assertThat(lines).anyMatch(line -> line.contains("qits-stt-service — speech-to-text"))
                 .anyMatch(line -> line.contains("qits-landing-app — "))
                 .anyMatch(line -> line.contains("qits-orchestrator-service — "))
-                .anyMatch(line -> line.contains("qits-workspace-editor-oci — "))
-                .anyMatch(line -> line.contains("qits-workspaces-runner-daemon — "))
-                .anyMatch(line -> line.contains("qits-workspaces-frontend — "));
+                .anyMatch(line -> line.contains("qits-workspace-editor-oci — "));
+        // The retired runner and client left the wrapper, so the boot clones them no more and the
+        // summary has nothing to say about them.
+        assertThat(lines).noneMatch(line -> line.contains("qits-workspaces-runner-daemon")
+                || line.contains("qits-workspaces-frontend"));
     }
 }

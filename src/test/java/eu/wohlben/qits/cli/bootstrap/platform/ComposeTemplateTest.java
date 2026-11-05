@@ -32,7 +32,7 @@ class ComposeTemplateTest {
         // The same derivation SeedPhases.tokens fills these from, and it is asked here rather than
         // restated: an alias or a client-id key spelled twice is a plane move that lands in the
         // generated file and not in the test that guards it.
-        values.putAll(PlatformModel.modelTokens(ENV));
+        values.putAll(PlatformModel.modelTokens(ENV, EstateFixture.estate()));
         values.put("COMPOSE_FILE", "docker-compose.qits.yml");
         values.put("PORT", "8080");
         values.put("GIT_HOST_PORT", "8083");
@@ -278,7 +278,7 @@ class ComposeTemplateTest {
     void noGeneratedAddressDialsAnApplicationByItsBareName() {
         String compose = ComposeTemplate.compose(tokens());
 
-        for (String service : PlatformModel.DEPLOYABLES) {
+        for (String service : EstateFixture.estate().deploys()) {
             String bare = PlatformModel.application(service);
             assertThat(compose.lines()
                     .filter(line -> !line.strip().startsWith("#"))
@@ -422,7 +422,7 @@ class ComposeTemplateTest {
      */
     @Test
     void qitsProjectsIsToldWhichSlugsAreReserved() {
-        String reserved = PlatformModel.reservedSlugs(ENV);
+        String reserved = PlatformModel.reservedSlugs(ENV, EstateFixture.estate().deploys());
         String projects = serviceBlock(ComposeTemplate.compose(tokens()),
                 ENV + "-qits-projects");
 
@@ -540,9 +540,9 @@ class ComposeTemplateTest {
         // THE FRAGMENT IS NEVER EMPTY NOW, and the deployer is the proof: it was the one
         // application whose TIER_ENV rendered "" — the guard against a null-keyed resource row —
         // and there is no plane left for such a row to hang off.
-        assertThat(PlatformModel.modelTokens(ENV).get("TIER_ENV_DEPLOYMENTS"))
+        assertThat(PlatformModel.modelTokens(ENV, EstateFixture.estate()).get("TIER_ENV_DEPLOYMENTS"))
                 .endsWith("      QITS_ENVIRONMENT: prod");
-        assertThat(PlatformModel.modelTokens(ENV).get("TIER_ENV_CI"))
+        assertThat(PlatformModel.modelTokens(ENV, EstateFixture.estate()).get("TIER_ENV_CI"))
                 .endsWith("      QITS_ENVIRONMENT: prod");
         // No fragment leaves a blank line or an orphan comment where it renders.
         assertThat(compose).doesNotContain("\n\n\n");
@@ -1361,7 +1361,7 @@ class ComposeTemplateTest {
 
         // The environment is not spelled into a runner address here either, on any tier.
         Map<String, String> staging = tokens();
-        staging.putAll(PlatformModel.modelTokens("staging"));
+        staging.putAll(PlatformModel.modelTokens("staging", EstateFixture.estate()));
         staging.put("ENV_NAME", "staging");
         assertThat(serviceBlock(ComposeTemplate.compose(staging),
                 PlatformModel.wireAlias("ci", "staging")))
@@ -1549,7 +1549,7 @@ class ComposeTemplateTest {
     void theEnvironmentNameReachesEveryGeneratedAddress() {
         Map<String, String> other = tokens();
         other.put("ENV_NAME", "preprod");
-        other.putAll(PlatformModel.modelTokens("preprod"));
+        other.putAll(PlatformModel.modelTokens("preprod", EstateFixture.estate()));
 
                 // ci's own client id follows the tier, on the seed where it is spelled at all.
                 // Neither ci nor the deployer is told a registry vhost any more — each derives

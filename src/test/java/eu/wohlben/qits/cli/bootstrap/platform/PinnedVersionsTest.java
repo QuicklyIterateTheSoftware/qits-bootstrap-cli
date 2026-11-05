@@ -17,6 +17,10 @@ import static org.assertj.core.api.Assertions.entry;
  */
 class PinnedVersionsTest {
 
+    /** Which replay publishes each image and npm package, as the estate fixture declares it. */
+    private static final PinnedVersions.Producers ESTATE_PRODUCERS =
+            PinnedVersions.Producers.of(EstateFixture.estate());
+
     /** A checkout, as (name, ref, path) to file text. */
     private final Map<String, String> files = new LinkedHashMap<>();
 
@@ -88,7 +92,7 @@ class PinnedVersionsTest {
         pom("eventstream", "2026.904.82646", library("2026.904.82646"));
         pom("ci", PinnedVersions.HEAD, library("1.0.0", "eventstream", "2026.904.82646"));
 
-        PinnedVersions pins = PinnedVersions.read(List.of("ci"), source);
+        PinnedVersions pins = PinnedVersions.read(List.of("ci"), source, ESTATE_PRODUCERS);
 
         assertThat(pins.extraVersions("eventstream")).containsExactly("2026.904.82646");
         assertThat(pins.warnings()).isEmpty();
@@ -100,7 +104,7 @@ class PinnedVersionsTest {
         pom("eventstream", PinnedVersions.HEAD, library("2026.905.25646"));
         pom("ci", PinnedVersions.HEAD, library("1.0.0", "eventstream", "2026.905.25646"));
 
-        assertThat(PinnedVersions.read(List.of("ci"), source).extraVersions("eventstream"))
+        assertThat(PinnedVersions.read(List.of("ci"), source, ESTATE_PRODUCERS).extraVersions("eventstream"))
                 .isEmpty();
     }
 
@@ -118,7 +122,7 @@ class PinnedVersionsTest {
         pom("integrations-quarkus", "2026.902.53026", library("2026.902.53026"));
         pom("ci", PinnedVersions.HEAD, library("1.0.0", "eventstream", "2026.904.82646"));
 
-        PinnedVersions pins = PinnedVersions.read(List.of("ci"), source);
+        PinnedVersions pins = PinnedVersions.read(List.of("ci"), source, ESTATE_PRODUCERS);
 
         assertThat(pins.extraVersions("eventstream")).containsExactly("2026.904.82646");
         // db-core is one of six jars this one repository publishes, so the pin resolves to it.
@@ -136,7 +140,7 @@ class PinnedVersionsTest {
         pom("b", PinnedVersions.HEAD, library("1.0.0", "eventstream", "2026.904.82646"));
         pom("c", PinnedVersions.HEAD, library("1.0.0", "eventstream", "2026.825.74539"));
 
-        assertThat(PinnedVersions.read(List.of("a", "b", "c"), source).extraVersions("eventstream"))
+        assertThat(PinnedVersions.read(List.of("a", "b", "c"), source, ESTATE_PRODUCERS).extraVersions("eventstream"))
                 .containsExactly("2026.825.74539", "2026.904.82646", "2026.904.210416");
     }
 
@@ -150,7 +154,7 @@ class PinnedVersionsTest {
         pom("eventstream", PinnedVersions.HEAD, library("2026.905.25646"));
         pom("ci", PinnedVersions.HEAD, library("1.0.0", "eventstream", "2026.101.1"));
 
-        PinnedVersions pins = PinnedVersions.read(List.of("ci"), source);
+        PinnedVersions pins = PinnedVersions.read(List.of("ci"), source, ESTATE_PRODUCERS);
 
         assertThat(pins.extraVersions("eventstream")).isEmpty();
         assertThat(pins.warnings()).singleElement().asString()
@@ -193,7 +197,7 @@ class PinnedVersionsTest {
                 """);
         pom("ci", PinnedVersions.HEAD, library("1.0.0", "githost-events", "2026.820.65553"));
 
-        PinnedVersions pins = PinnedVersions.read(List.of("ci"), source);
+        PinnedVersions pins = PinnedVersions.read(List.of("ci"), source, ESTATE_PRODUCERS);
 
         assertThat(pins.extraVersions("githost")).containsExactly("2026.820.65553");
         assertThat(pins.extraVersions("eventstream")).containsExactly("2026.817.202549");
@@ -207,7 +211,7 @@ class PinnedVersionsTest {
     @Test
     void everyPinPropertyNamesARepositoryTheBootHas() {
         assertThat(PinnedVersions.PRODUCERS.values())
-                .allSatisfy(producer -> assertThat(PlatformModel.platformRepos())
+                .allSatisfy(producer -> assertThat(EstateFixture.estate().repos())
                         .contains(producer));
         // The six jars of one reactor, and the two service repositories that publish a library
         // module each.
@@ -225,7 +229,7 @@ class PinnedVersionsTest {
         pom("ci", PinnedVersions.HEAD, library("1.0.0", "not-a-library", "1.2.3"));
         pom("projects", PinnedVersions.HEAD, library("1.0.0", "not-a-library", "1.2.3"));
 
-        assertThat(PinnedVersions.read(List.of("ci", "projects"), source).warnings())
+        assertThat(PinnedVersions.read(List.of("ci", "projects"), source, ESTATE_PRODUCERS).warnings())
                 .singleElement().asString().contains("qits-not-a-library");
     }
 
@@ -259,7 +263,7 @@ class PinnedVersionsTest {
                 """);
 
         PinnedVersions pins =
-                PinnedVersions.read(List.of("workspace-daemon", "projects-daemon"), source);
+                PinnedVersions.read(List.of("workspace-daemon", "projects-daemon"), source, ESTATE_PRODUCERS);
 
         assertThat(pins.extraVersions("coding-agents"))
                 .containsExactly("2026.909.101408", "2026.909.111643");
@@ -373,7 +377,7 @@ class PinnedVersionsTest {
                         + "FROM ${WORKSPACE_IMAGE}\n");
 
         PinnedVersions pins = PinnedVersions.read(
-                List.of("editor", "workspace-daemon", "oci-workspace"), source);
+                List.of("editor", "workspace-daemon", "oci-workspace"), source, ESTATE_PRODUCERS);
 
         assertThat(pins.extraVersions("workspace-daemon")).containsExactly("2026.904.223250");
         // Oldest first, which is the order they are replayed in.
@@ -389,22 +393,26 @@ class PinnedVersionsTest {
         dockerfile("workspace-daemon", PinnedVersions.HEAD, "docker/Dockerfile",
                 "FROM qits/workspace-base:2026.905.92439\n");
 
-        assertThat(PinnedVersions.read(List.of("workspace-daemon"), source)
+        assertThat(PinnedVersions.read(List.of("workspace-daemon"), source, ESTATE_PRODUCERS)
                 .extraVersions("oci-workspace")).isEmpty();
     }
 
     /** Every qits image the estate pins resolves to the publisher whose run pushes it. */
     @Test
     void everyQitsImageNamesItsPublisher() {
-        assertThat(PinnedVersions.IMAGE_PRODUCERS)
+        assertThat(ESTATE_PRODUCERS.images())
                 .containsEntry("qits/workspace-base", "oci-workspace")
                 .containsEntry("qits/workspace", "workspace-daemon")
                 .containsEntry("qits/projects-daemon", "projects-daemon")
                 .containsEntry("qits/project-agent", "projects-daemon");
-        // Derived from releasePackages, so a publisher that grows an image says so in one place.
-        assertThat(PinnedVersions.IMAGE_PRODUCERS.values())
-                .allSatisfy(producer -> assertThat(PlatformModel.RELEASE_PUBLISHERS)
+        // Derived from each replay's release.yml, so a publisher that grows an image says so in
+        // one place — and only a replay publishes one: a deploy's image is its own deployment.
+        assertThat(ESTATE_PRODUCERS.images().values())
+                .allSatisfy(producer -> assertThat(EstateFixture.estate().order().replays())
                         .contains(producer));
+        // The step images joined with qits-oci's replay (qits-3).
+        assertThat(ESTATE_PRODUCERS.images())
+                .containsEntry("qits/build-images/node-browser-base", "oci");
     }
 
     /** An image nothing in the plan publishes is said once rather than chased. */
@@ -413,7 +421,7 @@ class PinnedVersionsTest {
         dockerfile("ci", PinnedVersions.HEAD, "docker/Dockerfile",
                 "FROM qits/nothing-publishes-this:2026.905.1\n");
 
-        assertThat(PinnedVersions.read(List.of("ci"), source).warnings())
+        assertThat(PinnedVersions.read(List.of("ci"), source, ESTATE_PRODUCERS).warnings())
                 .singleElement().asString().contains("qits/nothing-publishes-this");
     }
 
@@ -424,7 +432,7 @@ class PinnedVersionsTest {
         dockerfile("workspace-daemon", PinnedVersions.HEAD, "docker/Dockerfile",
                 "FROM qits/workspace-base:2026.101.1\n");
 
-        PinnedVersions pins = PinnedVersions.read(List.of("workspace-daemon"), source);
+        PinnedVersions pins = PinnedVersions.read(List.of("workspace-daemon"), source, ESTATE_PRODUCERS);
 
         assertThat(pins.extraVersions("oci-workspace")).isEmpty();
         assertThat(pins.warnings()).singleElement().asString()
@@ -466,7 +474,7 @@ class PinnedVersionsTest {
     void anNpmPinIsReadFromTheFrontendLockAtTheGitlink() {
         frontendPinning("2026.902.204627");
 
-        PinnedVersions pins = PinnedVersions.read(List.of("githost"), source);
+        PinnedVersions pins = PinnedVersions.read(List.of("githost"), source, ESTATE_PRODUCERS);
 
         assertThat(pins.extraVersions("spa-ui-components")).containsExactly("2026.902.204627");
         assertThat(pins.warnings()).isEmpty();
@@ -477,7 +485,7 @@ class PinnedVersionsTest {
     void anNpmPinOnTheNewestReleaseIsNotAnExtra() {
         frontendPinning("2026.905.91746");
 
-        assertThat(PinnedVersions.read(List.of("githost"), source)
+        assertThat(PinnedVersions.read(List.of("githost"), source, ESTATE_PRODUCERS)
                 .extraVersions("spa-ui-components")).isEmpty();
     }
 
@@ -490,7 +498,7 @@ class PinnedVersionsTest {
     void aPrereleasePinIsSkippedWithAWarning() {
         frontendPinning("2026.902.204627-main.geec9f2c");
 
-        PinnedVersions pins = PinnedVersions.read(List.of("githost"), source);
+        PinnedVersions pins = PinnedVersions.read(List.of("githost"), source, ESTATE_PRODUCERS);
 
         assertThat(pins.extraVersions("spa-ui-components")).isEmpty();
         assertThat(pins.warnings()).singleElement().asString()
@@ -506,7 +514,7 @@ class PinnedVersionsTest {
         frontendPinning("2026.902.204627");
         files.remove("spa-githost@052f94e3:package-lock.json");
 
-        PinnedVersions pins = PinnedVersions.read(List.of("githost"), source);
+        PinnedVersions pins = PinnedVersions.read(List.of("githost"), source, ESTATE_PRODUCERS);
 
         assertThat(pins.extraVersions("spa-ui-components")).isEmpty();
         assertThat(pins.warnings()).singleElement().asString()
@@ -522,24 +530,25 @@ class PinnedVersionsTest {
                 {"lockfileVersion":3,"packages":{
                   "node_modules/@qits/ui-components":{"version":"2026.902.204627"},
                   "node_modules/@angular/core":{"version":"21.0.1"},
-                  "node_modules/rxjs":{"version":"7.8.1"}}}""", warnings))
+                  "node_modules/rxjs":{"version":"7.8.1"}}}""", warnings,
+                ESTATE_PRODUCERS.npm().keySet()))
                 .containsExactly(entry("@qits/ui-components", "2026.902.204627"));
         assertThat(warnings).isEmpty();
         // The v1 shape, in case a frontend still carries one.
         assertThat(PinnedVersions.npmPinsIn(
                 "{\"dependencies\":{\"@qits/angular\":{\"version\":\"2026.904.202810\"}}}",
-                warnings))
+                warnings, ESTATE_PRODUCERS.npm().keySet()))
                 .containsExactly(entry("@qits/angular", "2026.904.202810"));
     }
 
     /** Every @qits package a lock could pin resolves to the publisher whose run publishes it. */
     @Test
     void everyQitsPackageNamesItsPublisher() {
-        assertThat(PinnedVersions.NPM_PRODUCERS)
+        assertThat(ESTATE_PRODUCERS.npm())
                 .containsEntry("@qits/ui-components", "spa-ui-components")
                 .containsEntry("@qits/angular", "integrations-angular");
-        assertThat(PinnedVersions.NPM_PRODUCERS.values())
-                .allSatisfy(producer -> assertThat(PlatformModel.RELEASE_PUBLISHERS)
+        assertThat(ESTATE_PRODUCERS.npm().values())
+                .allSatisfy(producer -> assertThat(EstateFixture.estate().order().replays())
                         .contains(producer));
     }
 }

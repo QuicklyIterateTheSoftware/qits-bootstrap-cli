@@ -182,8 +182,9 @@ class DeploymentSettingsGuardTest {
         }
         assertThat(offenders).isEmpty();
         assertThat(PlatformModel.CORE).doesNotContain("configuration");
-        assertThat(PlatformModel.DEPLOYABLES).doesNotContain("configuration");
-        assertThat(PlatformModel.SEEDED_REPOS).doesNotContain("spa-configuration");
+        // Retired with its submodules: the derivation has neither, because the wrapper has neither.
+        assertThat(EstateFixture.estate().repos()).doesNotContain("configuration",
+                "spa-configuration");
     }
 
     private static String value(List<DeploymentSettings.Setting> settings, String application,

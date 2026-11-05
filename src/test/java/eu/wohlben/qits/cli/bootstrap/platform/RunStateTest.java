@@ -44,6 +44,36 @@ class RunStateTest {
         assertThat(state.wrapperDeclares("docs")).isFalse();
     }
 
+    /**
+     * <b>Which repositories the platform has is the wrapper's to say</b> (qits-3): its submodules,
+     * by the url's repository, in model names sorted by repository, less the read-only ones —
+     * before a single checkout exists, which is when {@code sources} needs to know.
+     */
+    @Test
+    void theWrapperSaysWhichRepositoriesThePlatformHas() throws IOException {
+        RunState state = wrapperDeclaring("""
+                [submodule "qits-ci-service"]
+                	path = components/qits-ci/qits-ci-service
+                	url = ../qits-ci-service.git
+                [submodule "qits-bootstrap-cli"]
+                	path = components/qits-bootstrap/qits-bootstrap-cli
+                	url = ../qits-bootstrap-cli.git
+                [submodule "renamed-entry"]
+                	path = components/qits-ci/qits-ci-frontend
+                	url = ../qits-ci-frontend.git
+                [submodule "qits-coding-agents"]
+                	path = components/qits-agents/qits-coding-agents
+                	url = ../qits-coding-agents.git
+                """);
+
+        assertThat(state.platformRepos()).containsExactly("spa-ci", "ci", "coding-agents");
+        assertThat(state.sourceRepos()).containsExactly("spa-ci", "ci", "coding-agents",
+                "bootstrap-cli", "landing-app", "platform-access-monorepo");
+        RunState none = new RunState();
+        none.wrapperDir = temp.resolve("no-wrapper-yet");
+        assertThat(none.platformRepos()).as("a cold start before the wrapper phase").isEmpty();
+    }
+
     /** The old layout is read the same way, because it is read rather than derived. */
     @Test
     void anArchetypeWrapperIsFollowedJustAsLiterally() throws IOException {

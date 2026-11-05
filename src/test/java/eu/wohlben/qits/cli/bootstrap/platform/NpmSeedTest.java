@@ -108,17 +108,17 @@ class NpmSeedTest {
      */
     @Test
     void eachPackageIsBuiltFromTheRepositoryThatPublishesIt() {
-        assertThat(NpmSeed.producer("@qits/ui-components")).isEqualTo("spa-ui-components");
-        assertThat(NpmSeed.producer("@qits/angular")).isEqualTo("integrations-angular");
-        assertThat(NpmSeed.producer("@qits/ci-golden-masters")).isEqualTo("ci");
-        assertThat(NpmSeed.producer("@qits/edge-golden-masters")).isEqualTo("edge");
-        assertThat(NpmSeed.producer("@qits/system-golden-masters")).isEqualTo("system");
+        assertThat(NpmSeed.producer("@qits/ui-components", EstateFixture.estate())).isEqualTo("spa-ui-components");
+        assertThat(NpmSeed.producer("@qits/angular", EstateFixture.estate())).isEqualTo("integrations-angular");
+        assertThat(NpmSeed.producer("@qits/ci-golden-masters", EstateFixture.estate())).isEqualTo("ci");
+        assertThat(NpmSeed.producer("@qits/edge-golden-masters", EstateFixture.estate())).isEqualTo("edge");
+        assertThat(NpmSeed.producer("@qits/system-golden-masters", EstateFixture.estate())).isEqualTo("system");
         assertThat(NpmSeed.kind("@qits/angular")).isEqualTo(NpmSeed.Kind.JSLIB);
         assertThat(NpmSeed.kind("@qits/ci-golden-masters")).isEqualTo(NpmSeed.Kind.GOLDEN_MASTERS);
         // Nothing this boot clones publishes these.
-        assertThat(NpmSeed.producer("@qits/nowhere-golden-masters")).isNull();
-        assertThat(NpmSeed.producer("@qits/something")).isNull();
-        assertThat(NpmSeed.jslibs()).containsExactly("@qits/angular", "@qits/ui-components");
+        assertThat(NpmSeed.producer("@qits/nowhere-golden-masters", EstateFixture.estate())).isNull();
+        assertThat(NpmSeed.producer("@qits/something", EstateFixture.estate())).isNull();
+        assertThat(NpmSeed.jslibs(EstateFixture.estate())).containsExactly("@qits/angular", "@qits/ui-components");
     }
 
     /** Every {@code @qits} entry {@code npm ci} installs, at any depth; links install nothing. */

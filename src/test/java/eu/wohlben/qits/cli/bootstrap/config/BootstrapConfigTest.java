@@ -154,7 +154,7 @@ class BootstrapConfigTest {
         // which is what lets these four move without a flag day.
         //
         // They stay DERIVED for the reason they always were, and the reason cuts both ways now: a
-        // concatenation here could not follow PLATFORM_SERVICES when an application moved plane,
+        // concatenation here could not follow the plane list when an application moved plane,
         // and it cannot follow this either. dialAlias is the one place the qualifier is decided.
         assertThat(config.platformDeploymentsUrl())
                 .isEqualTo("http://preprod-qits-deployments:8080/deployments");
