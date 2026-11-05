@@ -108,20 +108,24 @@ public final class CheckoutProjectSource implements ProjectSource {
         /**
          * The {@code src/test/resources/estate/} layout {@code refresh.sh} writes: the wrapper's
          * {@code .gitmodules} at the top, and per repository {@code <repo>/files/} plus a
-         * {@code <repo>/gitlinks} of {@code <path> <sha>} lines.
+         * {@code <repo>/gitlinks} of {@code <path> <sha>} lines. Every stored file carries
+         * {@link DirectoryRepositoryFiles#FIXTURE_SUFFIX}, so no recursive manifest search over
+         * this repository mistakes one for its own; this form reads them under their real names.
          */
         static Checkouts fixture(Path estate) {
             return new Checkouts() {
                 @Override
                 public String gitmodules() {
-                    return readFile(estate.resolve(GitmodulesParser.PATH));
+                    return readFile(estate.resolve(GitmodulesParser.PATH
+                            + DirectoryRepositoryFiles.FIXTURE_SUFFIX));
                 }
 
                 @Override
                 public RepositoryFiles files(GitmodulesParser.Submodule submodule) {
                     Path repo = estate.resolve(submodule.name());
                     return new DirectoryRepositoryFiles(repo.resolve("files"),
-                            () -> gitlinksFile(repo.resolve("gitlinks")));
+                            () -> gitlinksFile(repo.resolve("gitlinks")),
+                            DirectoryRepositoryFiles.FIXTURE_SUFFIX);
                 }
             };
         }

@@ -13,6 +13,13 @@
 #                                    the root and in docker/, and the root .gitmodules
 #   <repo>/gitlinks                  `<path> <sha>` per gitlink its HEAD records
 #
+# EVERY COPIED FILE IS STORED AS <name>.fixture (pom.xml.fixture, .gitmodules.fixture, ...), and
+# CheckoutProjectSource.Checkouts.fixture reads them under their real names. A recursive
+# `grep --include=pom.xml` over this repository — qits-ci's QA, release and golden-recordings steps
+# run one to decide which -D flags to hand maven — must find this repository's own pom and nothing
+# else: the estate's poms once made it pass -Dqits.maven.repository.url and -Dquarkus.quinoa into
+# surefire, and the CLI's strict `qits` config refused them (SRCFG00050).
+#
 # It writes only under this directory, and reads the wrapper. Needs git and jq.
 set -euo pipefail
 
@@ -22,7 +29,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 
 # Everything but this script is regenerated.
 find "$here" -mindepth 1 -maxdepth 1 ! -name refresh.sh -exec rm -rf {} +
-cp "$wrapper/.gitmodules" "$here/.gitmodules"
+cp "$wrapper/.gitmodules" "$here/.gitmodules.fixture"
 
 is_dockerfile() {
   case "$1" in
@@ -99,3 +106,7 @@ git -C "$wrapper" config -f .gitmodules --get-regexp '^submodule\..*\.path$' | w
     done >> "$here/$repo/gitlinks"
   fi
 done
+
+# The suffix, last, over everything the loop copied.
+find "$here" -mindepth 3 -path "$here/*/files/*" -type f ! -name '*.fixture' \
+  -exec sh -c 'mv "$1" "$1.fixture"' _ {} \;
