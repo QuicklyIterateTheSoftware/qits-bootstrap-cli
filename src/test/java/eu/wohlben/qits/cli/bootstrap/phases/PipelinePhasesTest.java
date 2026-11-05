@@ -1291,7 +1291,8 @@ class PipelinePhasesTest {
                 "integrations-quarkus", "eventstream", "containers-driver");
         assertThat(PlatformModel.RELEASE_PUBLISHERS)
                 .filteredOn(name -> !SeedPhases.SEED_LIBRARIES.contains(name))
-                .containsExactly("spa-ui-components", "integrations-angular", "oci-workspace",
+                .containsExactly("bootstrap-javalib", "spa-ui-components", "integrations-angular",
+                        "oci-workspace",
                         "workspace-daemon", "workspaces-runner-daemon", "system-runner-daemon",
                         "oci-workspace-editor", "projects-daemon");
     }

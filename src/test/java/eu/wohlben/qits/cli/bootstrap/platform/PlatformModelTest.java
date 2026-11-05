@@ -271,6 +271,8 @@ class PlatformModelTest {
         // The agent harness, born on 2026-09-08 under a name outside the grammar. The wrapper
         // declares it so, and the boot follows the wrapper.
         expected.put("coding-agents", "qits-coding-agents");
+        // The boot-order library (qits-3): the default qits-<name> is already its repository.
+        expected.put("bootstrap-javalib", "qits-bootstrap-javalib");
 
         // Every repository of the platform, and nothing that is not one.
         assertThat(PlatformModel.platformRepos())
@@ -1218,7 +1220,7 @@ class PlatformModelTest {
     }
 
     /**
-     * <b>{@link PlatformModel#DEFERRED_TO_PHASE_4} holds exactly the brief's six satellites, and
+     * <b>{@link PlatformModel#DEFERRED_TO_PHASE_4} holds exactly the brief's six satellites and the boot-order library (qits-3), and
      * {@link PlatformModel#NOT_BUILT} the three retired or unused entries beside them</b>
      * (qits-889). The two used to be one list; splitting them keeps "phase 4 still wants this"
      * apart from "nobody wants this any more", and neither list may claim an entry of the other.
@@ -1226,7 +1228,8 @@ class PlatformModelTest {
     @Test
     void deferredToPhaseFourIsExactlyTheSixSatellitesAndNotBuiltTheThreeRetiredEntries() {
         assertThat(PlatformModel.DEFERRED_TO_PHASE_4.keySet()).containsExactlyInAnyOrder(
-                "stt", "docs", "observability", "maintenance", "orchestrator", "landing-app");
+                "stt", "docs", "observability", "maintenance", "orchestrator", "landing-app",
+                "bootstrap-javalib");
         assertThat(PlatformModel.NOT_BUILT.keySet()).containsExactlyInAnyOrder(
                 "oci-workspace-editor", "workspaces-runner-daemon", "spa-workspaces");
         assertThat(PlatformModel.DEFERRED_TO_PHASE_4.keySet())

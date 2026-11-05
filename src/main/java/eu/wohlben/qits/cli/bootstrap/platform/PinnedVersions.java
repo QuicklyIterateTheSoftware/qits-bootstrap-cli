@@ -117,7 +117,10 @@ public final class PinnedVersions {
             // One property for the harness reactor's two jars, spelled two ways: qits-workspace-
             // daemon says <qits.coding-agents.version>, qits-projects-daemon
             // <qits-coding-agents.version>. PIN reads both.
-            Map.entry("coding-agents", "coding-agents"));
+            Map.entry("coding-agents", "coding-agents"),
+            // qits-maintenance-service pins the boot-order library by <qits.bootstrap-graph.version>
+            // (qits-3); its release replay publishes it, and a lagging pin is one more tag to replay.
+            Map.entry("bootstrap-graph", "bootstrap-javalib"));
 
     /** What the closure reads: the checkouts, by (repository, ref). */
     public interface Sources {

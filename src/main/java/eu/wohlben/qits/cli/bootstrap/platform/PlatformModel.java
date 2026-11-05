@@ -117,7 +117,8 @@ public final class PlatformModel {
      * {@link #NOT_BUILT}, and a test holds the three together. A frontend of a deferred service is
      * deferred with it: its bundle ships in that service's image.
      * <p>
-     * These are the brief's six — genuine satellites, each wanted later. {@link #NOT_BUILT} is the
+     * The brief's six are genuine satellites, each wanted later; {@code bootstrap-javalib} joined them
+     * in qits-3 on the same terms — its only consumers are a deferred service and this CLI. {@link #NOT_BUILT} is the
      * other half of what that coverage test found: repositories the model clones that nothing
      * built here is waiting on at all.
      */
@@ -133,7 +134,10 @@ public final class PlatformModel {
             // Technical processes (the deletion run); a caller of four peers nothing calls.
             "orchestrator", "technical processes — a scheduled caller nothing waits on",
             // The apex browser app; no service depends on it. Its PACTS are packed in phase 1.
-            "landing-app", "the apex browser app — no service depends on it (its pacts are packed)");
+            "landing-app", "the apex browser app — no service depends on it (its pacts are packed)",
+            // The boot-order library (qits-3): its jar reaches the store by its release replay.
+            "bootstrap-javalib",
+            "the boot-order library — only qits-maintenance (itself deferred) and this CLI link it");
 
     /**
      * <b>THE REPOSITORIES THE MODEL CLONES THAT ARE NOT DEFERRED WORK AT ALL, each with the
@@ -388,6 +392,12 @@ public final class PlatformModel {
      * {@code target-localhost} phase starts this host's target from {@code qits/qits-system-runner}
      * at the version qits-system pins, and only that repository's own release run puts the image —
      * and the {@code qits-system-runner-protocol} jar qits-system's build resolves — in the store.
+     * <p>
+     * <b>qits-bootstrap-javalib joined in qits-3, as a release publisher.</b> It publishes
+     * {@code qits-bootstrap-graph}, the manifest readers and project graph qits-maintenance-service
+     * pins and this CLI links; nothing else on a cold platform publishes that jar. Model name
+     * {@code bootstrap-javalib}: the repository is {@code qits-} plus the name, so no
+     * {@link #REPOSITORIES} entry is needed.
      */
     public static final List<String> SEEDED_REPOS = List.of(
             "oci", "oci-postgresql", "ci-daemon", "eventstream", "containers-driver",
@@ -399,7 +409,7 @@ public final class PlatformModel {
             "spa-mirror", "spa-orchestrator", "spa-maintenance",
             "spa-system",
             "oci-workspace", "oci-workspace-editor", "workspace-daemon", "workspaces-runner-daemon",
-            "system-runner-daemon", "projects-daemon", "runner");
+            "system-runner-daemon", "projects-daemon", "runner", "bootstrap-javalib");
 
     /**
      * The publishers whose released versions the platform pins, replayed on a fresh platform because
@@ -411,6 +421,9 @@ public final class PlatformModel {
      * DOCKER IMAGES, added on 2026-08-10 after a fresh registry was measured to hold no
      * qits/workspace-base at all, which fails every workspace launch:
      * <ul>
+     *   <li><b>qits-bootstrap-javalib first</b>, because nothing among the replays depends on it:
+     *       qits-maintenance-service pins qits-bootstrap-graph (qits-3); its build in the train
+     *       resolves it from the registry, which only this replay fills.
      *   <li><b>qits-integrations-quarkus before qits-eventstream.</b> Eventstream's released POM
      *       pins {@code qits-db-core} to the Quarkus integration release; replaying eventstream
      *       first therefore asks the empty registry for an artifact the next phase would publish.
@@ -454,7 +467,8 @@ public final class PlatformModel {
      * calvers.
      */
     public static final List<String> RELEASE_PUBLISHERS =
-            List.of("spa-ui-components", "integrations-angular", "integrations-quarkus",
+            List.of("bootstrap-javalib", "spa-ui-components", "integrations-angular",
+                    "integrations-quarkus",
                     "eventstream", "containers-driver",
                     "oci-workspace", "workspace-daemon", "workspaces-runner-daemon",
                     "system-runner-daemon", "oci-workspace-editor", "projects-daemon");
@@ -490,6 +504,8 @@ public final class PlatformModel {
                     List.of(new ReleasePackage(ReleasePackage.Kind.MAVEN, "qits-eventstream"));
             case "containers-driver" ->
                     List.of(new ReleasePackage(ReleasePackage.Kind.MAVEN, "qits-containers-driver"));
+            case "bootstrap-javalib" ->
+                    List.of(new ReleasePackage(ReleasePackage.Kind.MAVEN, "qits-bootstrap-graph"));
             // One of its six jars stands for the reactor, the same one the seed publish probes.
             case "integrations-quarkus" ->
                     List.of(new ReleasePackage(ReleasePackage.Kind.MAVEN, "qits-auth-core"));
@@ -617,7 +633,7 @@ public final class PlatformModel {
             // and so does the byte plane's own, a library by the same test: three services consume
             // it and it is not deployed.
             case "eventstream", "containers-driver", "registries", "spa-ui-components", "userflows",
-                 "runner",
+                 "runner", "bootstrap-javalib",
                  "integrations-angular", "integrations-quarkus", "coding-agents" ->
                     "libs/" + repo(name);
             // Anything served at a URL is a frontend, and there is one spelling now. It was two
