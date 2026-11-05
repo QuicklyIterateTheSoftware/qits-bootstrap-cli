@@ -16,6 +16,7 @@ import eu.wohlben.qits.cli.bootstrap.platform.TargetSlots;
 import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.DomainTokens;
+import eu.wohlben.qits.cli.bootstrap.platform.Estate;
 import eu.wohlben.qits.cli.bootstrap.platform.MavenPins;
 import eu.wohlben.qits.cli.bootstrap.platform.MuslToolchain;
 import eu.wohlben.qits.cli.bootstrap.platform.NpmSeed;
@@ -106,8 +107,8 @@ public class SeedPhases {
      *   <li><b>qits-userflows is FIRST and depends on nothing of ours</b> — playwright, jackson,
      *       rest-assured, junit. It is here at all because seventeen root poms pin it and every one
      *       of those builds resolves it: it is TEST-scoped, and {@code mvn package -DskipTests}
-     *       resolves test-scoped dependencies all the same. It was in {@code SEEDED_REPOS} and
-     *       nowhere else, so a cold boot's first seed image build died on
+     *       resolves test-scoped dependencies all the same. It was a pushed repository and
+     *       nothing else, so a cold boot's first seed image build died on
      *       {@code qits-userflows:pom:2026.904.223009 (absent)} — 2026-09-05, phase 9. First
      *       rather than last because the phase's own skip probe asks for the LAST entry.
      *   <li><b>qits-coding-agents is SECOND and depends on nothing of ours either</b> — vertx-core
@@ -248,10 +249,10 @@ public class SeedPhases {
                 throw new IllegalStateException(refusal);
             }
 
-            long local = PlatformModel.platformRepos().stream()
+            long local = boot.state.platformRepos().stream()
                     .filter(name -> boot.git.isCheckout(boot.state.wrapperCheckout(name)))
                     .count();
-            int total = PlatformModel.platformRepos().size();
+            int total = boot.state.platformRepos().size();
             ctx.log("  " + local + " of " + total + " repositories have a local checkout; the rest "
                     + "come from " + boot.config.orgUrl());
             ctx.note(local + "/" + total + " local checkouts");
@@ -495,8 +496,8 @@ public class SeedPhases {
      * the deploy ref to. {@code --ship-mains} leaves everything on main, as this program always did.
      * <p>
      * <b>Version identity is the scope, and it is narrower than "seeded".</b> A deployable and a
-     * release publisher each have a last release the platform can state and consumers pin;
-     * everything else in {@code SEEDED_REPOS} — qits-oci's step-image sources, the SPA seed sources
+     * replay each have a last release the platform can state and consumers pin; every other
+     * pushed repository — the SPA seed sources
      * — is rebuilt from source every boot and pinned by nobody, so its tags go stale unnoticed and
      * main is its only meaningful identity. Measured: qits-oci's newest tag was three days behind
      * main and predated the passwd-backed {@code build} user its step images grew when steps
@@ -535,7 +536,8 @@ public class SeedPhases {
             boolean initialised = boot.state.wrapperInitialised(boot.git::isCheckout);
             // The read-only repositories too: their tags are where the pacts and the binary pin
             // the seed images resolve are cut from — see PlatformModel.READ_ONLY_REPOS.
-            for (String name : PlatformModel.sourceRepos()) {
+            List<String> sourceRepos = boot.state.sourceRepos();
+            for (String name : sourceRepos) {
                 String repo = PlatformModel.repo(name);
                 Path localSrc = boot.state.wrapperCheckout(name);
                 String refusal = localSourceRefusal(repo, localSrc, boot.state.wrapperPath(name),
@@ -572,7 +574,18 @@ public class SeedPhases {
                     ctx.status("cloning " + repo + " from " + from);
                     Boot.must(boot.git.clone(from, target, ctx::log), "clone of " + repo + " failed");
                 }
-                String identity = bootIdentity(name, boot.git.tagsNewestFirst(target, "main"));
+                ctx.log(String.format("  %-26s %s  (%s)", repo, boot.git.shortHead(target), from));
+            }
+            // WHICH CHECKOUTS CARRY VERSION IDENTITY is a fact the declarations state (qits-3), so
+            // it is read off them here, at main, with every checkout on main — before any of them
+            // is stood at a tag, which is what the answer decides. A cycle stops the boot here.
+            ctx.status("reading what the checkouts declare");
+            Estate atMain = boot.estateAt("main");
+            for (String name : sourceRepos) {
+                String repo = PlatformModel.repo(name);
+                Path target = boot.state.repoDir(name);
+                String identity = bootIdentity(name, atMain,
+                        boot.git.tagsNewestFirst(target, "main"));
                 if (!identity.isEmpty()) {
                     ctx.status("standing " + repo + " at " + identity);
                     Boot.must(boot.git.checkoutDetached(target, identity, ctx::log),
@@ -580,11 +593,11 @@ public class SeedPhases {
                                     + "from main but cannot be checked out, so this run cannot "
                                     + "build the release it is restoring");
                     restored++;
+                    ctx.log(String.format("  %-26s %s  (%s)", repo, boot.git.shortHead(target),
+                            identity));
                 }
-                ctx.log(String.format("  %-26s %s  (%s)", repo, boot.git.shortHead(target),
-                        identity.isEmpty() ? from : identity));
             }
-            ctx.note(PlatformModel.sourceRepos().size() + " repositories, " + restored
+            ctx.note(sourceRepos.size() + " repositories, " + restored
                     + " at their release");
         });
     }
@@ -655,13 +668,13 @@ public class SeedPhases {
      * <p>
      * <b>That last one is the scope, and it was learned the hard way.</b> Only a deployable or a
      * release publisher has a "last release" the platform can state — see
-     * {@link PlatformModel#carriesVersionIdentity}. The step-image sources and the SPA seed sources
+     * {@link Estate#carriesVersionIdentity}. The step-image sources and the SPA seed sources
      * are rebuilt from source every boot and pinned by nobody, so their tags are stale by
      * construction: qits-oci's newest tag predated the {@code build} user its step images grew, and
      * a maven-base built from it could not launch a step that declares {@code user: build}.
      */
-    static String bootIdentity(String name, List<String> tagsNewestFirst) {
-        return PlatformModel.carriesVersionIdentity(name)
+    static String bootIdentity(String name, Estate estate, List<String> tagsNewestFirst) {
+        return estate.carriesVersionIdentity(name)
                 ? PlatformModel.newestRelease(tagsNewestFirst)
                 : "";
     }
@@ -690,7 +703,7 @@ public class SeedPhases {
             // WHICH STORAGE ID EACH REPOSITORY'S BARE IS UNDER, read here for the reason every other
             // recorded value is: a rerun that decided this afresh would address a bare it had not
             // created and leave the platform's whole history in the one it had.
-            for (String name : PlatformModel.platformRepos()) {
+            for (String name : boot.state.platformRepos()) {
                 String repo = PlatformModel.repo(name);
                 state.repositoryId(repo)
                         .ifPresent(id -> boot.state.repositoryIds.put(repo, id));
@@ -706,7 +719,7 @@ public class SeedPhases {
             ctx.log("  recorded bootstrap client secret: "
                     + (boot.state.bootstrapSecret == null ? "none yet" : "yes"));
             ctx.log("  recorded repository storage ids: " + boot.state.repositoryIds.size() + " of "
-                    + PlatformModel.platformRepos().size());
+                    + boot.state.platformRepos().size());
             ctx.log("  register token: " + (boot.state.registerTokenRecorded
                     ? "minted by an earlier run" : "none yet"));
             ctx.note(boot.state.bootstrapSecret == null ? "no bootstrap secret yet"
@@ -872,7 +885,8 @@ public class SeedPhases {
 
         /** What the source archive holds: the whole tree, or the provider's golden masters. */
         String directory() {
-            return NpmSeed.kind(pkg.name()) == NpmSeed.Kind.JSLIB ? "." : "golden-masters";
+            // A jslib's source is its own tree; a golden-masters package carries its manifest.
+            return manifest == null ? "." : "golden-masters";
         }
     }
 
@@ -972,10 +986,10 @@ public class SeedPhases {
                 continue;
             }
             String why = pkg.id() + " (pinned by " + pinnedBy.get(pkg) + ")";
-            String producer = NpmSeed.producer(pkg.name());
+            String producer = NpmSeed.producer(pkg.name(), boot.estate());
             if (producer == null) {
                 throw new IllegalStateException(why + " cannot be built: it is neither a jslib a "
-                        + "release publishes (" + String.join(", ", NpmSeed.jslibs())
+                        + "release publishes (" + String.join(", ", NpmSeed.jslibs(boot.estate()))
                         + ") nor the golden masters of a repository this boot clones");
             }
             Path repo = boot.state.repoDir(producer);
@@ -1968,8 +1982,10 @@ public class SeedPhases {
             if (pacts ? parties == null : app == null) {
                 return;
             }
-            String source = pacts ? PlatformModel.sourceNameOf(parties[0])
-                    : PlatformModel.sourceRepos().contains(app) ? app : null;
+            // A party or provider the boot does not clone has no tag to pack from: warned below.
+            String candidate = pacts ? PlatformModel.sourceNameOf(parties[0]) : app;
+            String source = candidate != null && boot.estate().sourceRepos().contains(candidate)
+                    ? candidate : null;
             if (source == null) {
                 ctx.warn(artifactId + " " + versions + " — "
                         + (pacts ? parties[0] : PlatformModel.repo(app))
@@ -2485,10 +2501,10 @@ public class SeedPhases {
      * <b>Every repository phase 1 builds something from, and what</b> — derived from the same
      * constants the plan's phases are built from, so a repository a phase stops building drops out
      * of here with it. Together with {@link PlatformModel#DEFERRED_TO_PHASE_4} and
-     * {@link PlatformModel#NOT_BUILT} it must cover every repository the model clones; a test holds
-     * the three against {@link PlatformModel#sourceRepos}.
+     * {@link PlatformModel#NOT_BUILT} it must cover every repository the boot clones; a test holds
+     * the three against {@link Estate#sourceRepos}.
      */
-    static java.util.SortedMap<String, String> phaseOneBuilds() {
+    static java.util.SortedMap<String, String> phaseOneBuilds(Estate estate) {
         java.util.SortedMap<String, String> built = new java.util.TreeMap<>();
         for (String name : PlatformModel.CORE) {
             built.put(name, "seed image qits/" + name + ":latest");
@@ -2499,8 +2515,8 @@ public class SeedPhases {
         for (String library : SEED_LIBRARIES) {
             built.merge(library, "libraries into " + SEED_REPO_VOLUME, (a, b) -> a + "; " + b);
         }
-        NpmSeed.jslibs().forEach(pkg ->
-                built.put(NpmSeed.producer(pkg), "@qits packages into " + NpmSeed.VOLUME));
+        NpmSeed.jslibs(estate).forEach(pkg ->
+                built.put(NpmSeed.producer(pkg, estate), "@qits packages into " + NpmSeed.VOLUME));
         built.put("oci", "the step images and qits/build-images/node-browser-base");
         built.put("ci-daemon", "the ci-daemon binary and qits-ci-daemon-protocol");
         built.put("system-runner-daemon", "qits/qits-system-runner and its protocol");
@@ -4586,7 +4602,7 @@ public class SeedPhases {
         // `${ENV_NAME}-qits-deployments` was a second copy of PlatformModel.wireAlias that could
         // not follow it, and one that spelled QITS_ENVIRONMENT told a platform service it had a
         // tier.
-        values.putAll(PlatformModel.modelTokens(env));
+        values.putAll(PlatformModel.modelTokens(env, boot.estate()));
         values.put("COMPOSE_FILE", boot.state.composeFile == null ? "docker-compose.qits.yml"
                 : boot.state.composeFile.getFileName().toString());
         values.put("PORT", String.valueOf(boot.config.port()));

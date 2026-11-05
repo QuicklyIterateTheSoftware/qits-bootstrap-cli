@@ -121,31 +121,33 @@ public final class NpmSeed {
 
     /**
      * The model name of the repository whose release a package is built from, or null for a
-     * {@code @qits} name this boot does not know how to make. A jslib's is its release publisher
-     * ({@link PlatformModel#releasePackages}); a golden-masters package's is the provider's, by the
+     * {@code @qits} name this boot does not know how to make. A jslib's is the replay whose
+     * {@code release.yml} declares it ({@link Estate#producers}); a golden-masters package's is the provider's, by the
      * platform's coordinate rule ({@code CiContracts.coordinate}: the application with one
      * {@code qits-} removed, then {@code -golden-masters}) — the same model name the maven coordinate
      * {@code qits-<app>-golden-masters} names.
      */
-    public static String producer(String name) {
-        String jslib = PinnedVersions.NPM_PRODUCERS.get(name);
+    public static String producer(String name, Estate estate) {
+        String jslib = estate.producers(eu.wohlben.qits.bootstrap.graph.Ecosystem.NPM).get(name);
         if (jslib != null) {
             return jslib;
         }
         Matcher golden = GOLDEN_MASTERS.matcher(name);
-        if (golden.matches() && PlatformModel.sourceRepos().contains(golden.group(1))) {
+        if (golden.matches() && estate.sourceRepos().contains(golden.group(1))) {
             return golden.group(1);
         }
         return null;
     }
 
     /** The jslibs a release publishes, by package name, sorted. */
-    public static List<String> jslibs() {
-        return PinnedVersions.NPM_PRODUCERS.keySet().stream().sorted().toList();
+    public static List<String> jslibs(Estate estate) {
+        return estate.producers(eu.wohlben.qits.bootstrap.graph.Ecosystem.NPM).keySet().stream()
+                .sorted().toList();
     }
 
+    /** A golden-masters package says so in its name; every other {@code @qits} package is a jslib. */
     public static Kind kind(String name) {
-        return PinnedVersions.NPM_PRODUCERS.containsKey(name) ? Kind.JSLIB : Kind.GOLDEN_MASTERS;
+        return GOLDEN_MASTERS.matcher(name).matches() ? Kind.GOLDEN_MASTERS : Kind.JSLIB;
     }
 
     /**

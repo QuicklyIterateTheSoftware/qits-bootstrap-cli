@@ -215,6 +215,32 @@ public class RunState {
     }
 
     /**
+     * <b>Which repositories the platform has, before anything is derived from them</b> — model
+     * names, sorted by repository name the way the derivation's nodes are. The wrapper's own
+     * {@code .gitmodules} is the authority, less {@link PlatformModel#READ_ONLY_REPOS}: those are
+     * read and never hosted. It is what {@code sources} clones and {@code recorded-state} reads
+     * storage ids for, both before the checkouts exist; everything after them reads the same set
+     * from the derivation ({@link Estate#repos}). Empty until the wrapper is there.
+     */
+    public List<String> platformRepos() {
+        java.util.Set<String> readOnly = new java.util.HashSet<>();
+        PlatformModel.READ_ONLY_REPOS.forEach(name -> readOnly.add(PlatformModel.repo(name)));
+        return wrapperModules().repositories().stream()
+                .filter(repository -> !readOnly.contains(repository))
+                .sorted()
+                .map(PlatformModel::nameOf)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+    }
+
+    /** {@link #platformRepos} then the read-only ones: every repository {@code sources} clones. */
+    public List<String> sourceRepos() {
+        List<String> all = new java.util.ArrayList<>(platformRepos());
+        all.addAll(PlatformModel.READ_ONLY_REPOS);
+        return List.copyOf(all);
+    }
+
+    /**
      * <b>Whether this wrapper's submodules are checked out at all</b>, which is the line between
      * the two things a missing directory can mean. A wrapper cloned without them — the cold start,
      * and every rerun on that machine — has an empty directory at every gitlink and hides no local
@@ -223,7 +249,7 @@ public class RunState {
      * deploy the org's last push in silence.
      */
     public boolean wrapperInitialised(Predicate<Path> isCheckout) {
-        return PlatformModel.platformRepos().stream()
+        return platformRepos().stream()
                 .anyMatch(name -> isCheckout.test(wrapperCheckout(name)));
     }
 }

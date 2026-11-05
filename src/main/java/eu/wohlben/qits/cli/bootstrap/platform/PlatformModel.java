@@ -53,7 +53,7 @@ public final class PlatformModel {
      * image adds nothing to upstream postgres — and it is hand-built and hand-started like the
      * rest. Unlike the rest it STAYS the seed service: the train never re-deploys the database,
      * because reading its spec back from qits-githost (whose storage is this database) is a circular
-     * dependency that crash-loops it. It is absent from {@link #DEPLOYABLES} for that reason.
+     * dependency that crash-loops it. It is no deploy for that reason ({@link BootOrder#SEED_HELD_RESOURCES}).
      * <p>
      * <b>qits-events joined on 2026-08-10, because it is the BUS and the bus is now the only road a
      * green build takes.</b> The direct ci -&gt; deployer announcement is retired; what is left is
@@ -142,19 +142,15 @@ public final class PlatformModel {
     /**
      * <b>THE REPOSITORIES THE MODEL CLONES THAT ARE NOT DEFERRED WORK AT ALL, each with the
      * reason</b> (qits-889). {@link #DEFERRED_TO_PHASE_4} is six satellites phase 1 skips because
-     * their turn is later; these three are retired or unused model entries the same coverage test
-     * found beside them — nothing ahead ever wants them built, so they are named here rather than
-     * folded into the deferred list they do not belong to. The summary prints both, each under its
+     * their turn is later; this is the unused entry the same coverage test found beside them (the
+     * retired workspaces runner and client were two more until they left the wrapper, and the boot
+     * stopped cloning them with it) — nothing ahead ever wants it built, so it is named here
+     * rather than folded into the deferred list it does not belong to. The summary prints both, each under its
      * own heading, so the gap this list states is "not built (retired)" and not "deferred".
      */
     public static final Map<String, String> NOT_BUILT = deferred(
             // qits/workspace-editor: no consumer since qits-1152.
-            "oci-workspace-editor", "qits/workspace-editor — no consumer since qits-1152",
-            // Retired by the target (qits-1535), and no submodule of the wrapper any more either.
-            "workspaces-runner-daemon",
-            "qits/qits-workspaces-runner — retired by the target (qits-1535), not in the wrapper",
-            // The client qits-workspaces stopped serving (qits-1245); not in the wrapper either.
-            "spa-workspaces", "the retired workspaces client (qits-1245), not in the wrapper");
+            "oci-workspace-editor", "qits/workspace-editor — no consumer since qits-1152");
 
     private static Map<String, String> deferred(String... pairs) {
         Map<String, String> map = new LinkedHashMap<>();
@@ -165,102 +161,14 @@ public final class PlatformModel {
     }
 
     /**
-     * Everything the platform deploys through itself. Order matters: observability first (quiets
-     * OTLP warnings earliest), idp next (every later application's tokens are minted by it, and
-     * its own cutover must not fall inside another application's deploy window), the seed's own
-     * repos last, qits-deployments at the very end — its deployment is the self-update handoff.
-     * <p>
-     * <b>qits-platform-edge is second to last, immediately before the deployer.</b> It is the door,
-     * so its cutover is the one deployment that takes THIS PROGRAM's own door away for a beat:
-     * every remaining public request depends on it. Three consequences decide the position:
-     * <ul>
-     *   <li><b>Not early.</b> An edge deployed first would carry every later phase's traffic on a
-     *       binder this run has not yet watched serve anything. Late, the applications it fronts
-     *       are already deployed and a broken edge is the only thing left to look at.
-     *   <li><b>Before qits-deployments.</b> The deployer's own deployment is the self-update
-     *       handoff and has to stay last — and the edge's cutover is better performed by the seed
-     *       deployer that has already done every other cutover in this run than by a successor
-     *       whose first act it would be.
-     * </ul>
-     * The edge's own deploy wait needs no host port: it is a platform service, so its liveness is
-     * read from {@code docker ps} rather than from a deployment row.
-     * <p>
-     * <b>qits-oci-postgresql is deliberately NOT in this list — it is a seed service the train
-     * never re-deploys.</b> It is the platform's one database, every service's store and
-     * qits_githost's included, and it stays the seed-stack postgres that {@link ComposeTemplate}
-     * already renders {@code pg_isready}-gated. Re-deploying it would make qits-deployments read
-     * its spec from qits-githost, whose storage IS this database: during postgres's own cutover
-     * that read misses, the deployer falls back to its HTTP-probe default, and swarm kills a bare
-     * postgres that cannot answer it — a crash-loop out of a circular dependency. The bootstrapper
-     * stands the database up directly, so the train leaves it alone. It is in {@link #SEEDED_REPOS}
-     * for its checkout, its git-host repository and its seed-image build; it carries no deployment.
-     * <p>
-     * <b>The byte plane's three sit together, and their order inside it is forced.</b>
-     * qits-platform-mirror is first of the three: every image build and every dependency
-     * resolution after it goes through the mirror, so its cutover belongs before the services whose
-     * builds it feeds rather than in the middle of them. qits-githost comes after qits-artifacts
-     * and before qits-ci, because ci reads pipeline config out of the git host and clones from it —
-     * and because the githost's own deployment is the one that re-hosts the repository this train
-     * pushes to, the same self-referential class as the deployer.
-     * <p>
-     * <b>qits-docs comes AFTER qits-artifacts, because it reads from it.</b> It used to be forced:
-     * qits-configuration rendered its {@code QITS_DOCS_ARTIFACTS_URL} from the TARGET's recorded
-     * plane, and refused the deployment before qits-artifacts had one (the wohlben.eu cold boot of
-     * 2026-09-10). That store is retired, so the order is now only the general rule — an
-     * application that addresses another deploys after it. It goes after qits-githost rather than
-     * between the byte plane's three, and before qits-containers, whose place against qits-ci is
-     * forced.
-     * <p>
-     * <b>qits-containers is immediately BEFORE qits-ci, and that pair's order is forced.</b> ci runs
-     * every pipeline step as a container it asks this service for, so a ci cutover landing while the
-     * orchestrator is mid-cutover is a pipeline with nowhere to run. Deploying the orchestrator first
-     * puts its window before ci's rather than inside it, and leaves the run's own remaining
-     * deployments — the edge and the deployer — behind a ci that already has a working step host.
-     * <p>
-     * <b>qits-configuration was FOURTH, and is gone</b> (qits-765, qits-1396). The deployer read
-     * deployment configuration from it after a flip in the middle of this train; it reads its own
-     * settings store now, which {@code deployment-settings} fills before the first deployment, so
-     * no position in this list is load-bearing for configuration any more.
-     * <p>
-     * <b>qits-platform-orchestrator is LATE, after every service it calls.</b> It runs technical
-     * processes — multi-step jobs that only send requests to peers — so it is a caller and nothing
-     * calls it. Its first process is the platform's unified deletion run, which drives
-     * qits-artifacts, qits-containers, qits-ci and the deployer, and each of those four is above it
-     * here. The order is not a startup dependency: it holds a scheduler, so a cutover that lands
-     * while a peer is mid-cutover is a run whose steps fail against a service that is being
-     * replaced. Deploying it after them puts its first scheduled window behind their last one.
-     * It stays ABOVE the edge and the deployer for the reason everything does: the edge's cutover
-     * takes this program's door away and the deployer's is the self-update handoff.
-     * <p>
-     * <b>qits-platform-maintenance is LATE for the orchestrator's reason and is NOT in the
-     * seed.</b> It reads the catalog from qits-projects, the manifests from qits-githost, the
-     * versions from qits-artifacts and qits-platform-mirror, and it asks qits-ci to apply a bump —
-     * five callees, every one of them above it here. It holds a scheduler too, so a cutover landing
-     * inside a peer's window is a scan whose reads fail against a service being replaced. Nothing
-     * calls it, so no seed service waits on it: the train restores it from its last release like
-     * any other platform-tier application.
-     * <p>
-     * <b>qits-platform-system calls NO peer at all, and that is why its place is the free one.</b>
-     * The base system panels read the host's docker daemon and nothing else — {@code docker info},
-     * the swarm lists, this node's containers — so no service in this list is a dependency of it
-     * and nothing above it constrains where it goes. It is last of the platform-tier applications
-     * because its own cutover DROPS every open terminal: put earlier, the successor would take the
-     * sessions of an operator watching the rest of the train go by. It stays above the edge and the
-     * deployer for the reason everything does. Not in the seed either: nothing calls it.
-     */
-    public static final List<String> DEPLOYABLES = List.of(
-            "observability", "idp", "stt", "projects",
-            "workspaces", "events", "mirror", "artifacts", "githost", "docs",
-            "containers", "ci", "orchestrator", "maintenance", "system",
-            "edge", "deployments");
-
-    /**
      * <b>The seed images the deployer puts live BEFORE the first build</b> — at their real release
      * tag, through its manual door, so the platform runs as it does in steady state before this
      * host's runner is started and before the first release replay is asked for.
      * <p>
-     * It is {@link #CORE} in {@link #DEPLOYABLES} order, less two. qits-oci-postgresql is never
-     * deployed at all (see {@link #DEPLOYABLES}). qits-deployments stays where it is, LAST of the
+     * It is {@link #CORE} in deploy order ({@link BootOrder}), less two, and written out rather
+     * than read off the derivation because the seed deploys run before the train is planned.
+     * qits-oci-postgresql is never deployed at all (see {@link BootOrder#SEED_HELD_RESOURCES}).
+     * qits-deployments stays where it is, LAST of the
      * train: its own deployment is the self-update handoff, and nothing may follow it. The edge is
      * last of these for the train's own reason: its cutover takes the bootstrap ingress's
      * door away, so everything that still needs that door is done by then.
@@ -269,10 +177,9 @@ public final class PlatformModel {
      * a seed image is the release's code built by this run rather than by the release's own run,
      * and the train is where the release image replaces it.
      */
-    public static final List<String> SEED_DEPLOYED = DEPLOYABLES.stream()
-            .filter(CORE::contains)
-            .filter(name -> !"deployments".equals(name))
-            .toList();
+    public static final List<String> SEED_DEPLOYED = List.of(
+            "idp", "projects", "workspaces", "events", "mirror", "artifacts", "githost",
+            "containers", "ci", "system", "edge");
 
     /**
      * <b>There is no platform plane, and this is where it used to be listed.</b>
@@ -298,263 +205,16 @@ public final class PlatformModel {
      * cutover to run deliberately rather than a consequence to discover.
      */
 
-    /**
-     * Repositories that need a repository on the platform git host and a main push, but are not
-     * applications of qits-deployments. qits-projects can then inventory them, qits-workspaces can
-     * release them, and qits-ci can discover their event pipelines.
-     * <p>
-     * ci-daemon belongs here and nowhere else. It ships no image and no health endpoint, so it is
-     * not a deployable — but its binary is an ordinary release-train artifact, and a release train
-     * needs the repository on the git host.
-     * <p>
-     * <b>The three image publishers joined on 2026-08-10</b> for that same reason. qits-oci-workspace,
-     * qits-workspace-daemon and qits-projects-daemon publish versioned docker images the platform
-     * pins — qits/workspace-base, qits/workspace, qits/projects-daemon, qits/project-agent — and none
-     * of them is an application of the deployer: an image nothing runs as a container has no
-     * deployments.yml and no health endpoint. They need the repository, the history and the release
-     * replay below, and nothing else.
-     * <p>
-     * <b>qits-workspace-editor-oci is the fourth, on 2026-09-06, and it is here for the same
-     * reason.</b> It publishes qits/workspace-editor, which is kept built while its integration is
-     * rethought (qits-1150). It runs as nobody's container either, so it is a repository, a history
-     * and a release replay and nothing more.
-     * <p>
-     * <b>qits-registries joined on 2026-08-10</b>, and it is the byte plane's own library: one
-     * Maven module per registry format, and since 2026-08-30 the content-addressed blob store as
-     * one more module of the same reactor. Three services build against it — qits-artifacts,
-     * qits-platform-mirror and qits-githost — and none of those builds can run on the platform
-     * until the jars are IN the platform's Maven registry, which is what a repository plus a
-     * release replay gets them. qits-blobstore had its own entry here until the merge; the
-     * repository is retired, and the reactor publishes its jar under the unchanged coordinate.
-     * <p>
-     * <b>qits-spa-githost and qits-platform-spa-mirror joined on 2026-08-11</b>, the last two byte
-     * services to grow a client. They are here for the reason every other frontend is: a checkout
-     * this run can clone, a repository on the git host, and a main history — so qits-projects
-     * inventories them and qits-workspaces can release them. Neither is a release publisher and
-     * neither is a deployable: their bundles ship inside qits-githost's and qits-platform-mirror's
-     * own images, as webui submodules.
-     * <p>
-     * <b>qits-platform-spa-orchestrator joined on 2026-08-21</b>, and only the client is here: its
-     * service is a {@link #DEPLOYABLES} entry, and that list already gets a repository, a checkout
-     * and a main push. The two lists are disjoint on purpose — {@link #platformRepos} adds them —
-     * so an application named in both would be created twice and pushed twice.
-     * <p>
-     * <b>qits-platform-spa-maintenance joined on 2026-08-22</b>, on exactly those terms: its bundle
-     * ships inside qits-platform-maintenance's own image as a webui submodule, so it is a
-     * repository and a main history and nothing more.
-     * <p>
-     * <b>qits-platform-spa-system joined on 2026-08-23</b>, on the same terms: the admin console's
-     * bundle ships inside qits-platform-system's image.
-     * <p>
-     * <b>qits-oci-postgresql moved here from {@link #DEPLOYABLES}</b>, because it is a seed image
-     * this run builds but the train never deploys — see the note there for the circular dependency
-     * that forbids re-deploying the database. Seeded like every image publisher: a checkout, a
-     * git-host repository and a main history feed its seed-image build; it carries no release, so it
-     * is not restored to a tag.
-     * <p>
-     * <b>qits-coding-agents joined on 2026-09-10</b>, a library on qits-userflows' terms. It is the
-     * shared coding-agent harness (the {@code qits-agents} reactor: {@code qits-commands} and
-     * {@code qits-coding-agents}), which both agent daemons carried as in-repo modules until
-     * 2026-09-09 and now resolve as released jars from the platform's Maven registry. A boot that
-     * did not know it cloned nothing, published nothing, and the two daemon release replays died
-     * resolving a coordinate the fresh store had never seen.
-     * <p>
-     * <b>qits-ci-runner-daemon was here from 2026-09-30 (qits-588) to 2026-10-23 (qits-1547).</b>
-     * The runner it built executed every run of a cold boot until CI runs became leases on a
-     * qits-system target; qits-ci pins nothing of it any more, so nothing clones it.
-     * <p>
-     * <b>qits-containers-javalib joined on 2026-10-04 (qits-796), a library on qits-eventstream's
-     * terms.</b> It publishes {@code qits-containers-driver}, which qits-containers-service now
-     * depends on, and it has no dependency of its own on this platform — so like qits-eventstream it
-     * is cloned, seed-published whole and replayed with nothing above it in {@link #RELEASE_PUBLISHERS}
-     * forcing an order. qits-containers-service dropped {@code qits-containers-core} the same day:
-     * that module stays an internal part of its reactor (the registry, the entities, the Flyway
-     * migrations), with no consumer and therefore no seed publish of its own — see
-     * {@link #mavenModule}.
-     * <p>
-     * <b>qits-workspaces-runner-daemon joined on 2026-10-05 (qits-626), as a release publisher.</b>
-     * A cold boot starts this host's workspaces runner from {@code qits/qits-workspaces-runner} at
-     * the version qits-workspaces pins, and nothing but that repository's own release run puts the
-     * image in the store — so it is cloned, hosted and replayed like qits-workspace-daemon, and it
-     * is never a deployable: the runner is a container the bootstrap starts and that rolls itself
-     * over, exactly as the CI runner is. Since qits-1535 no phase starts that runner any more —
-     * the target replaced it — and the replay stays only while a qits-workspaces release that still
-     * compiles against {@code qits-workspaces-runner-protocol} can be the one the train restores; it
-     * goes with the submodule, in the retirement.
-     * <p>
-     * <b>qits-runner-javalib joined on 2026-10-23 (qits-1547), as a library no release replays.</b>
-     * qits-system and its runner compile against qits-runner-protocol and qits-runner-toolkit, and
-     * nothing on a cold platform publishes them — so the boot clones it, and
-     * {@code SeedPhases.runnerSeed} builds the versions the two pin from their tags. Model name
-     * {@code runner}, after the {@code qits.runner.version} property both pin it by.
-     * <p>
-     * <b>qits-system-runner-daemon joined on 2026-10-23 (qits-1535), on the same terms.</b> The
-     * {@code target-localhost} phase starts this host's target from {@code qits/qits-system-runner}
-     * at the version qits-system pins, and only that repository's own release run puts the image —
-     * and the {@code qits-system-runner-protocol} jar qits-system's build resolves — in the store.
-     * <p>
-     * <b>qits-bootstrap-javalib joined in qits-3, as a release publisher.</b> It publishes
-     * {@code qits-bootstrap-graph}, the manifest readers and project graph qits-maintenance-service
-     * pins and this CLI links; nothing else on a cold platform publishes that jar. Model name
-     * {@code bootstrap-javalib}: the repository is {@code qits-} plus the name, so no
-     * {@link #REPOSITORIES} entry is needed.
-     */
-    public static final List<String> SEEDED_REPOS = List.of(
-            "oci", "oci-postgresql", "ci-daemon", "eventstream", "containers-driver",
-            "registries", "spa-ui-components",
-            "userflows", "coding-agents", "spa-docs", "spa-deployments",
-            "integrations-angular", "integrations-quarkus", "spa-projects",
-            "spa-workspaces", "spa-artifacts", "spa-observability", "spa-events",
-            "spa-ci", "spa-githost", "spa-idp",
-            "spa-mirror", "spa-orchestrator", "spa-maintenance",
-            "spa-system",
-            "oci-workspace", "oci-workspace-editor", "workspace-daemon", "workspaces-runner-daemon",
-            "system-runner-daemon", "projects-daemon", "runner", "bootstrap-javalib");
-
-    /**
-     * The publishers whose released versions the platform pins, replayed on a fresh platform because
-     * a pin is only as good as the registry behind it. <b>Order is dependency order</b>, and this
-     * list is where that order lives — {@code BootstrapPlan} makes one phase per entry, in this
-     * sequence.
-     * <p>
-     * The first five are the Maven and npm packages the wrapper's builds install. The last four are
-     * DOCKER IMAGES, added on 2026-08-10 after a fresh registry was measured to hold no
-     * qits/workspace-base at all, which fails every workspace launch:
-     * <ul>
-     *   <li><b>qits-bootstrap-javalib first</b>, because nothing among the replays depends on it:
-     *       qits-maintenance-service pins qits-bootstrap-graph (qits-3); its build in the train
-     *       resolves it from the registry, which only this replay fills.
-     *   <li><b>qits-integrations-quarkus before qits-eventstream.</b> Eventstream's released POM
-     *       pins {@code qits-db-core} to the Quarkus integration release; replaying eventstream
-     *       first therefore asks the empty registry for an artifact the next phase would publish.
-     *   <li><b>qits-containers-javalib beside qits-eventstream, and before every service build.</b>
-     *       It is on 2026-10-04 (qits-796) the terms eventstream joined on: no qits dependency of
-     *       its own, so no order among the maven packages forces it, and it has to be replayed
-     *       before qits-containers-service — its one consumer — is deployed from the train below.
-     *   <li><b>qits-oci-workspace strictly before qits-workspace-daemon.</b> The daemon's
-     *       {@code docker/Dockerfile} carries {@code ARG WORKSPACE_BASE=…/qits/workspace-base:<pin>}
-     *       and its build PULLS that image through the registry — which the base's own replay is what
-     *       fills. The other order builds against a tag the registry has never seen.
-     *   <li><b>qits-workspace-editor-oci strictly after qits-workspace-daemon</b>, one link further
-     *       down the same chain: its {@code Dockerfile} is {@code FROM ${WORKSPACE_IMAGE}} with a
-     *       committed default of {@code …/qits/workspace:<pin>}, so its build pulls the image the
-     *       daemon's own replay is what publishes.
-     *   <li><b>qits-projects-daemon last</b>, and for the same reason as the first image pair: its
-     *       layered {@code qits/project-agent} build reads the pin out of
-     *       {@code .config/qits/workspace-base.version} and passes it as {@code --build-arg BASE}.
-     *       It is independent of qits-workspace-daemon; only the base has to precede it.
-     *   <li><b>qits-workspaces-runner-daemon after qits-workspace-daemon</b>, though nothing in its
-     *       build pulls the workspace image: its jar ({@code qits-workspaces-runner-protocol}) is
-     *       what a qits-workspaces release from before the target cutover resolves in the train,
-     *       and its image is what the retired {@code workspaces-runner-localhost} phase started.
-     *       Next to the workspace image because the two were one runtime's halves.
-     *   <li><b>qits-system-runner-daemon after it</b>, and for the same reason: its image is the
-     *       one the {@code target-localhost} phase starts after the train, at the version
-     *       qits-system pins, and its jar ({@code qits-system-runner-protocol}) is what
-     *       qits-system's own build in the train resolves. It replaced the workspaces runner as
-     *       this host's agent runtime, so it sits beside it.
-     * </ul>
-     * <p>
-     * <b>Phase 1 builds the four workspace-side images too since qits-889</b>, at the versions the
-     * platform PINS, and images-publish pushes them — so a replay of a pinned version finds its
-     * images held. The replays stay: the newest release is not always a pinned one, and its
-     * jars and binaries are the replay's to publish.
-     * <p>
-     * <b>qits-registries is NOT here yet, deliberately.</b> A replay restores a pin, and nothing
-     * pins a calver of it or of the qits-blobstore jar its reactor carries: every consumer still
-     * names {@code 1.0.0-SNAPSHOT}, which the seed publishes restore. It joins this list — before
-     * qits-eventstream — the moment its first release is cut and the consumer poms move onto the
-     * calvers.
-     */
-    public static final List<String> RELEASE_PUBLISHERS =
-            List.of("bootstrap-javalib", "spa-ui-components", "integrations-angular",
-                    "integrations-quarkus",
-                    "eventstream", "containers-driver",
-                    "oci-workspace", "workspace-daemon", "workspaces-runner-daemon",
-                    "system-runner-daemon", "oci-workspace-editor", "projects-daemon");
-
-    /**
-     * <b>What a release publisher's green run leaves in a registry, addressed by the RELEASE
-     * version.</b> It is the answer to "did that run actually publish anything", which a replay has
-     * to ask before it decides a version needs no build.
-     * <p>
-     * <b>All eight answer, and the npm pair answers too.</b> {@code @qits/ui-components} publishes
-     * one version per release tag — the packument's keys are that repository's calvers — so a
-     * replay can ask the registry whether a version is there. The seed's own {@code 0.0.4} publish
-     * is a different thing: a pinned commit, not a release, and no release tag names it.
-     * <p>
-     * The image publishers tag with the release version itself, which is what makes them
-     * answerable: {@code qits/workspace-base:2026.905.92439} is the coordinate the workspace
-     * daemon's build pins and the coordinate that release run pushes. Verified against the live
-     * registry's own tag lists on 2026-09-05.
-     */
-    public record ReleasePackage(Kind kind, String coordinate) {
-
-        /** How the coordinate is addressed: a maven artifactId, an image repository, an npm name. */
-        public enum Kind { MAVEN, OCI, NPM }
-    }
-
     /** The group every qits jar is published under. */
     public static final String MAVEN_GROUP_PATH = "eu/wohlben/qits";
-
-    /** The packages a publisher's release run publishes, or empty when none is addressable. */
-    public static List<ReleasePackage> releasePackages(String name) {
-        return switch (name) {
-            case "eventstream" ->
-                    List.of(new ReleasePackage(ReleasePackage.Kind.MAVEN, "qits-eventstream"));
-            case "containers-driver" ->
-                    List.of(new ReleasePackage(ReleasePackage.Kind.MAVEN, "qits-containers-driver"));
-            case "bootstrap-javalib" ->
-                    List.of(new ReleasePackage(ReleasePackage.Kind.MAVEN, "qits-bootstrap-graph"));
-            // One of its six jars stands for the reactor, the same one the seed publish probes.
-            case "integrations-quarkus" ->
-                    List.of(new ReleasePackage(ReleasePackage.Kind.MAVEN, "qits-auth-core"));
-            case "oci-workspace" ->
-                    List.of(new ReleasePackage(ReleasePackage.Kind.OCI, "qits/workspace-base"));
-            case "workspace-daemon" ->
-                    List.of(new ReleasePackage(ReleasePackage.Kind.OCI, "qits/workspace"));
-            case "oci-workspace-editor" ->
-                    List.of(new ReleasePackage(ReleasePackage.Kind.OCI, "qits/workspace-editor"));
-            // The image is the one the retired workspaces runner phase started. The
-            // pin-and-protocol jar rides the same run, after the image, and is asked for too:
-            // qits-workspaces' own build in the train resolves it, so a run that died between the
-            // two published half of what this replay owes.
-            case "workspaces-runner-daemon" -> List.of(
-                    new ReleasePackage(ReleasePackage.Kind.OCI, "qits/qits-workspaces-runner"),
-                    new ReleasePackage(ReleasePackage.Kind.MAVEN,
-                            "qits-workspaces-runner-protocol"));
-            // The target's runner, the same pair: the image target-localhost starts, and the jar
-            // qits-system's build in the train resolves.
-            case "system-runner-daemon" -> List.of(
-                    new ReleasePackage(ReleasePackage.Kind.OCI, "qits/qits-system-runner"),
-                    new ReleasePackage(ReleasePackage.Kind.MAVEN, "qits-system-runner-protocol"));
-            // Two images from one run, and a replay that found either one missing has to ask again.
-            case "projects-daemon" -> List.of(
-                    new ReleasePackage(ReleasePackage.Kind.OCI, "qits/projects-daemon"),
-                    new ReleasePackage(ReleasePackage.Kind.OCI, "qits/project-agent"));
-            // The npm pair. Their package versions ARE the release tag — the packument's keys are
-            // the publisher's calvers — so they answer like the others.
-            case "spa-ui-components" ->
-                    List.of(new ReleasePackage(ReleasePackage.Kind.NPM, "@qits/ui-components"));
-            case "integrations-angular" ->
-                    List.of(new ReleasePackage(ReleasePackage.Kind.NPM, "@qits/angular"));
-            default -> List.of();
-        };
-    }
 
     private PlatformModel() {
     }
 
-    /** Every pipeline repository: the deployables and the seeded ones. */
-    public static List<String> platformRepos() {
-        List<String> all = new ArrayList<>(DEPLOYABLES);
-        all.addAll(SEEDED_REPOS);
-        return List.copyOf(all);
-    }
-
     /**
      * <b>The repositories this run READS and never hosts, deploys or replays</b> — cloned by the
-     * {@code sources} phase beside {@link #platformRepos} and named nowhere else.
+     * {@code sources} phase beside the platform's own ({@link RunState#platformRepos}) and named
+     * nowhere else.
      * <p>
      * They exist because a seed image build resolves every qits coordinate its poms pin, test
      * scope included, out of the run's own file repository (qits-889), and three of those
@@ -568,22 +228,16 @@ public final class PlatformModel {
      *       {@code qits-platform-access-cli-binary}, which qits-ci COMPILES against (the pin of the
      *       {@code qits} binary its release steps download).
      * </ul>
-     * Kept out of {@link #platformRepos} on purpose: that list is what gets a git-host repository,
+     * Kept out of the platform's repositories on purpose: those get a git-host repository,
      * a main push and an inventory row, and none of these is this platform's to host.
      */
     public static final List<String> READ_ONLY_REPOS =
             List.of("bootstrap-cli", "landing-app", "platform-access-monorepo");
 
-    /** Every repository the {@code sources} phase clones: {@link #platformRepos} then the read-only. */
-    public static List<String> sourceRepos() {
-        List<String> all = new ArrayList<>(platformRepos());
-        all.addAll(READ_ONLY_REPOS);
-        return List.copyOf(all);
-    }
-
     /**
-     * The model name of a repository the run clones, by its repository name — {@link #nameOf} for
-     * the pipeline's and the bare name for {@link #READ_ONLY_REPOS} — or null for one it does not.
+     * The model name of a repository, by its repository name — {@link #nameOf} for the pipeline's
+     * and the bare name for {@link #READ_ONLY_REPOS} — or null for a name that is no qits
+     * repository. Whether the run clones it is membership's question ({@link Estate#sourceRepos}).
      */
     public static String sourceNameOf(String repository) {
         String name = nameOf(repository);
@@ -687,8 +341,7 @@ public final class PlatformModel {
      * — with no consumer of its own, so publishing it bought nothing and cost a jar in the registry
      * nobody resolved. {@code qits-containers-driver} is the library that replaced the gap a consumer
      * had: a repository of its own ({@code qits-containers-javalib}), seeded and replayed on
-     * qits-eventstream's terms rather than published by this method — see {@link #SEEDED_REPOS} and
-     * {@link #RELEASE_PUBLISHERS}.
+     * qits-eventstream's terms rather than published by this method — see {@link BootOrder}.
      * <p>
      * <b>The daemons are the same shape again, with the wire contract as the module.</b>
      * qits-ci compiles against {@code qits-ci-daemon-protocol} and qits-system against
@@ -838,9 +491,12 @@ public final class PlatformModel {
     }
 
     /**
-     * <b>The model name a git-host repository belongs to</b> — the inverse of {@link #repo}, and
-     * null for a repository this boot does not clone. It is what turns a {@code .gitmodules} entry
-     * (which names the frontend REPOSITORY) into a checkout this run can read.
+     * <b>The model name a git-host repository belongs to</b> — the inverse of {@link #repo}: the
+     * {@link #REPOSITORIES} entry, else the repository without its {@code qits-} prefix, and null
+     * for a name with neither. It is what turns a {@code .gitmodules} entry (which names the
+     * frontend REPOSITORY) into a checkout this run can read. Whether the platform HAS that
+     * repository is not this method's question any more: membership is the wrapper's
+     * ({@link RunState#platformRepos}, {@link Estate#repos}).
      */
     public static String nameOf(String repository) {
         for (Map.Entry<String, String> entry : REPOSITORIES.entrySet()) {
@@ -848,8 +504,7 @@ public final class PlatformModel {
                 return entry.getKey();
             }
         }
-        String bare = repository.startsWith("qits-") ? repository.substring("qits-".length()) : null;
-        return bare != null && platformRepos().contains(bare) ? bare : null;
+        return repository.startsWith("qits-") ? repository.substring("qits-".length()) : null;
     }
 
     /** The one project every platform repository belongs to, and the one qits-projects self-seeds. */
@@ -1030,7 +685,7 @@ public final class PlatformModel {
      * be changed.
      * <p>
      * <b>Derived, never copied.</b> The labels are the {@link #browserLabel}s of everything this
-     * bootstrap deploys ({@link #DEPLOYABLES}, which is now every deployable there is) plus the
+     * bootstrap deploys (the derived deploys, {@link Estate#deploys}) plus the
      * edge's own four ({@link #EDGE_APPS}). {@code idp} and {@code edge} are named
      * again below because the platform is not reachable without them — the login host and the
      * gateway itself — and a list that lost them to a refactor of the deployables would hand the
@@ -1045,14 +700,14 @@ public final class PlatformModel {
      * The environment name is dropped from the label set rather than repeated: a platform whose tier
      * is called {@code docs} reserves {@code docs} once.
      */
-    public static String reservedSlugs(String envName) {
-        return String.join(",", reservedSlugList(envName));
+    public static String reservedSlugs(String envName, List<String> deploys) {
+        return String.join(",", reservedSlugList(envName, deploys));
     }
 
     /** The same list unjoined, so a test can name one entry. */
-    public static List<String> reservedSlugList(String envName) {
+    public static List<String> reservedSlugList(String envName, List<String> deploys) {
         SortedSet<String> labels = new TreeSet<>();
-        DEPLOYABLES.forEach(app -> labels.add(browserLabel(app)));
+        deploys.forEach(app -> labels.add(browserLabel(app)));
         labels.addAll(EDGE_APPS);
         // The login host and the door. Both are already above; naming them is what stops a
         // refactor of the deployables from quietly handing either one to a project.
@@ -1221,7 +876,7 @@ public final class PlatformModel {
      *   <li>{@code RESERVED_SLUGS} — the names no project may take, which is this environment plus
      *       every label the platform already publishes. See {@link #reservedSlugs}. It is here
      *       rather than in {@code SeedPhases.tokens} for the reason the three above are: it is
-     *       derived from {@link #DEPLOYABLES}, so an application added there reserves its own
+     *       derived from the deploys, so an application that starts deploying reserves its own
      *       label without anybody remembering to.
      * </ul>
      * <p>
@@ -1230,11 +885,11 @@ public final class PlatformModel {
      * follow it. The 2026-08-17 flip is what proved that: the deployer's key is
      * {@code QITS_DEPLOYMENTS} now, with no tier in front of it.
      */
-    public static Map<String, String> modelTokens(String envName) {
+    public static Map<String, String> modelTokens(String envName, Estate estate) {
         Map<String, String> tokens = new LinkedHashMap<>();
         // The seed carries one application no pipeline deploys — the postgres image — so CORE is
         // asked as well as the deployables.
-        List<String> applications = new ArrayList<>(platformRepos());
+        List<String> applications = new ArrayList<>(estate.repos());
         CORE.stream().filter(app -> !applications.contains(app)).forEach(applications::add);
         for (String app : applications) {
             tokens.put("ALIAS_" + clientKey(app), wireAlias(app, envName));
@@ -1242,7 +897,7 @@ public final class PlatformModel {
             tokens.put("SEED_NETWORKS_" + clientKey(app), seedNetworks(app, envName, "    "));
             tokens.put("TIER_ENV_" + clientKey(app), tierEnv(envName, "      "));
         }
-        tokens.put("RESERVED_SLUGS", reservedSlugs(envName));
+        tokens.put("RESERVED_SLUGS", reservedSlugs(envName, estate.deploys()));
         return tokens;
     }
 
@@ -1277,31 +932,6 @@ public final class PlatformModel {
                 + indent + "# however many applications share it. That was the platform plane's\n"
                 + indent + "# shape and it is gone; the line is unconditional so it cannot return.\n"
                 + indent + "QITS_ENVIRONMENT: " + envName;
-    }
-
-    /**
-     * Does this repository's output carry VERSION IDENTITY on the platform? Only those are stood at
-     * a release tag by a restoring boot; every other source stays on main in both modes.
-     * <p>
-     * The two sets are the ones already declared above, and that is the whole rule: a
-     * {@link #DEPLOYABLES} entry becomes a deployed container the deploy ref names a commit for,
-     * and a {@link #RELEASE_PUBLISHERS} entry becomes a registry coordinate somebody pins. For both,
-     * "the last release" is a fact the platform can state, and a seed that disagrees with it breaks
-     * the successor — qits-ci's seed applied a migration its released binary had never heard of and
-     * left it crash-looping.
-     * <p>
-     * <b>Everything else in {@link #SEEDED_REPOS} has no such fact, and pinning it to a tag is
-     * actively wrong.</b> Measured on the first scoped-boot run: qits-oci's newest tag was three
-     * days old and predated the passwd-backed {@code build} user its step images grew when steps
-     * stopped running as root, so a maven-base seed-built from that tag could not launch a step
-     * declaring {@code user: build} — "unable to find user build: no matching entries in passwd
-     * file", phase 65. Step images are consumed by bare local tag and rebuilt from source every
-     * boot, so nothing pins a version of them and main is their only meaningful identity. The SPA
-     * checkouts are the same shape: a seed image's client is built from the service's own GITLINK
-     * of its webui (qits-889), never from the frontend checkout, so nothing reads them at a tag.
-     */
-    public static boolean carriesVersionIdentity(String name) {
-        return DEPLOYABLES.contains(name) || RELEASE_PUBLISHERS.contains(name);
     }
 
     /** A release version on this platform: CalVer, which is digits and dots. */

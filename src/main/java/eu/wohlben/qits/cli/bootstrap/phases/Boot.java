@@ -21,6 +21,9 @@ import eu.wohlben.qits.cli.bootstrap.engine.Waiter;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.Git;
 import eu.wohlben.qits.cli.bootstrap.platform.RunState;
+import eu.wohlben.qits.cli.bootstrap.platform.CheckoutProjectSource;
+import eu.wohlben.qits.cli.bootstrap.platform.Estate;
+import eu.wohlben.qits.cli.bootstrap.platform.GitModules;
 import eu.wohlben.qits.cli.bootstrap.platform.PinnedVersions;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
@@ -33,6 +36,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
 
@@ -81,6 +85,9 @@ public class Boot {
     public final ProjectsApi projects;
     /** The pin closure, read once — see {@link #pinnedVersions}. */
     private PinnedVersions pinned;
+    private Estate estate;
+    /** The checkouts the estate is derived from, at a ref; a test hands in a fixture instead. */
+    private Function<String, CheckoutProjectSource.Checkouts> estateCheckouts = this::checkoutsAt;
 
     public Boot(BootstrapConfig config, RunLog log) {
         this(config, log, new ProcessRunner(log));
@@ -145,12 +152,52 @@ public class Boot {
      */
     public PinnedVersions pinnedVersions(PhaseContext ctx) {
         if (pinned == null) {
-            pinned = PinnedVersions.read(PlatformModel.platformRepos(), checkouts());
+            pinned = PinnedVersions.read(estate().repos(), checkouts(),
+                    PinnedVersions.Producers.of(estate()));
             pinned.all().forEach((producer, versions) ->
                     ctx.log("  " + PlatformModel.repo(producer) + " is still pinned at " + versions));
             pinned.warnings().forEach(ctx::warn);
         }
         return pinned;
+    }
+
+    /**
+     * <b>What the platform is made of, as its checkouts declare it</b> (qits-3) — derived once per
+     * run, at the revision the boot builds ({@link PinnedVersions#HEAD}), the first time a phase
+     * asks. That is after {@code sources}, which is the phase that makes the checkouts; a cycle in
+     * the declarations fails the asking phase, naming every member.
+     */
+    public Estate estate() {
+        if (estate == null) {
+            estate = Estate.derive(estateCheckouts.apply(PinnedVersions.HEAD));
+        }
+        return estate;
+    }
+
+    /**
+     * The same derivation at another ref, not kept: {@code sources} asks it at {@code main} to
+     * decide which checkouts carry version identity before it stands any of them at a tag.
+     */
+    public Estate estateAt(String ref) {
+        return Estate.derive(estateCheckouts.apply(ref));
+    }
+
+    /** Derive from {@code checkouts} rather than this run's clones — the tests' fixture. */
+    void deriveEstateFrom(CheckoutProjectSource.Checkouts checkouts) {
+        this.estateCheckouts = ref -> checkouts;
+        this.estate = null;
+    }
+
+    private CheckoutProjectSource.Checkouts checkoutsAt(String ref) {
+        Path gitmodules = state.wrapperDir.resolve(GitModules.FILE);
+        String text;
+        try {
+            text = java.nio.file.Files.readString(gitmodules);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException("cannot read " + gitmodules
+                    + " — the platform's repositories are the wrapper's submodules", e);
+        }
+        return CheckoutProjectSource.Checkouts.atRef(text, checkouts(), ref);
     }
 
     /**

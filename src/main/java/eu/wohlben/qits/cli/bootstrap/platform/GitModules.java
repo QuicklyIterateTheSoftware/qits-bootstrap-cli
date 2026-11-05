@@ -116,6 +116,17 @@ public final class GitModules {
     }
 
     /** True when the wrapper declared nothing, which is what an absent file answers. */
+    /**
+     * Every repository the file declares, by the url's last segment without {@code .git} (the
+     * library's {@code GitmodulesParser} rule), falling back to the entry name, in file order.
+     */
+    public List<String> repositories() {
+        return entries.stream()
+                .map(entry -> entry.url() == null ? entry.name() : repository(entry.url()))
+                .distinct()
+                .toList();
+    }
+
     public boolean isEmpty() {
         return entries.isEmpty();
     }

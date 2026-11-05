@@ -4,27 +4,25 @@ import eu.wohlben.qits.bootstrap.graph.EdgeKind;
 import eu.wohlben.qits.bootstrap.graph.ProjectGraph;
 import eu.wohlben.qits.cli.bootstrap.platform.BootOrder;
 import eu.wohlben.qits.cli.bootstrap.platform.CheckoutProjectSource;
-import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import picocli.CommandLine;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumSet;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.Callable;
 
 /**
- * <b>What the wrapper's repositories declare about the boot's order, beside what
- * {@link PlatformModel} lists</b> (qits-3). It reads the checkouts and changes nothing — no git
- * write, no network, no docker — so it is safe on any wrapper, including a project agent's
- * {@code /workspace}.
+ * <b>The boot's order, as the wrapper's repositories declare it</b> (qits-3): what is pushed, what
+ * is replayed and the deploy order the {@code plan-train} phase would plan from this checkout. It
+ * reads the checkouts and changes nothing — no git write, no network, no docker — so it is safe on
+ * any wrapper, including a project agent's {@code /workspace}.
  */
 @CommandLine.Command(name = "order", mixinStandardHelpOptions = true,
-        description = "Derive the push, replay and deploy order from the wrapper's declarations"
-                + " and compare it with PlatformModel's lists. Reads only.")
+        description = "Derive the push, replay and deploy order from the wrapper's declarations."
+                + " Reads only.")
 public class OrderCommand implements Callable<Integer> {
 
     @CommandLine.Option(names = "--wrapper", required = true,
@@ -70,40 +68,11 @@ public class OrderCommand implements Callable<Integer> {
             out.append("no order: ").append(e.getMessage()).append('\n');
             return new Report(out.toString(), false);
         }
-        out.append("unnamed (no PlatformModel name): ")
+        out.append("unnamed (no model name): ")
                 .append(order.unnamed().isEmpty() ? "none" : order.unnamed()).append('\n');
-        section(out, "pushes", order.pushes(), PlatformModel.SEEDED_REPOS, false);
-        section(out, "replays", order.replays(), PlatformModel.RELEASE_PUBLISHERS, true);
-        section(out, "deploys", order.deploys(), PlatformModel.DEPLOYABLES, true);
+        out.append("\npushes:  ").append(order.pushes()).append('\n');
+        out.append("replays: ").append(order.replays()).append('\n');
+        out.append("deploys: ").append(order.deploys()).append('\n');
         return new Report(out.toString(), true);
-    }
-
-    private static void section(StringBuilder out, String title, List<String> derived,
-                                List<String> listed, boolean ordered) {
-        out.append('\n').append(title).append(" (derived): ").append(derived).append('\n');
-        out.append(title).append(" (listed):  ").append(listed).append('\n');
-        out.append("  only derived: ").append(minus(derived, listed)).append('\n');
-        out.append("  only listed:  ").append(minus(listed, derived)).append('\n');
-        if (ordered) {
-            List<String> inverted = new ArrayList<>();
-            for (int i = 0; i < listed.size(); i++) {
-                for (int j = i + 1; j < listed.size(); j++) {
-                    int a = derived.indexOf(listed.get(i));
-                    int b = derived.indexOf(listed.get(j));
-                    if (a >= 0 && b >= 0 && a > b) {
-                        inverted.add(listed.get(i) + " before " + listed.get(j));
-                    }
-                }
-            }
-            out.append("  listed pairs the derived order reverses: ")
-                    .append(inverted.isEmpty() ? "none" : "").append('\n');
-            inverted.forEach(pair -> out.append("    ").append(pair).append('\n'));
-        }
-    }
-
-    private static List<String> minus(List<String> from, List<String> remove) {
-        Set<String> left = new LinkedHashSet<>(from);
-        remove.forEach(left::remove);
-        return List.copyOf(left);
     }
 }

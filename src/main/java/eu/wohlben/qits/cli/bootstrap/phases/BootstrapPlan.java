@@ -8,8 +8,9 @@ import java.util.List;
 
 /**
  * The boot, as an ordered list built from configuration. The order is the script's, and the
- * comments there say why each constraint exists; the list is built up front so the header's
- * "9 of 47" is a fact rather than an estimate.
+ * comments there say why each constraint exists. Everything up to the train is built up front;
+ * the train itself is planned by its own phase ({@code plan-train}) once the checkouts it is read
+ * from exist, so the header's total is provisional until then and grows when it runs.
  */
 public final class BootstrapPlan {
 
@@ -297,27 +298,24 @@ public final class BootstrapPlan {
         // workspaces runner after the train.
         phases.add(pipeline.localhostTarget());
         phases.add(pipeline.localhostTargetConnected());
-        // STEP FOUR: THE FIRST BUILD. Every deployable's gitlinks must be advertised before CI
-        // clones it. In particular, qits-ci points at qits-spa-ci; pushing that SPA after the
-        // deployment train makes the githost correctly refuse CI's request for an unadvertised
-        // object.
-        phases.add(pipeline.releaseTrainPush());
-        phases.add(pipeline.releaseTrainPreseed());
-        for (String publisher : PlatformModel.RELEASE_PUBLISHERS) {
-            phases.add(pipeline.releaseReplay(publisher));
-        }
-        // THE TRAIN, and for the nine seed-deployed applications it is a REdeployment: their
-        // release run replaces the seed image under the same tag, and the deploy phase hands the
-        // version over again once that run is green — see PipelinePhases.deploy.
-        for (String deployable : PlatformModel.DEPLOYABLES) {
-            phases.add(pipeline.deploy(deployable));
-            // THERE IS NO REGISTRATION PHASE HERE ANY MORE, and its absence is what seeding
-            // qits-projects bought. Every repository's public address existed before the first
-            // push — `git-repos`, forty phases above — so this deployment inherits an alias table
-            // it does not have to be waited on to fill. It is still the deployment that matters
-            // most to the addresses: qits-githost, six below it, closes the id-addressed scheme,
-            // and by then this run has been name-addressing every push since its first.
-        }
+        // STEP FOUR: THE FIRST BUILD, and the one part of the plan that is not known up front.
+        // What is pushed, what is replayed and the deploy order are what the checkouts DECLARE
+        // (qits-3: BootOrder over CutoverRules), and the checkouts do not exist until `sources` has
+        // cloned them — on a cold box, not even the wrapper does. So this phase derives the train
+        // and hands it back as its follow-up phases, inserted right here: every push first (a
+        // deployable's gitlinks to its frontend must be advertised before CI clones it, and a
+        // replay's recipe is read from main on the git host), then every release replay, then the
+        // deploys. A dependency cycle fails it before any of them runs. The header's total grows
+        // when it does.
+        //
+        // THE TRAIN, and for the seed-deployed applications it is a REdeployment: their release
+        // run replaces the seed image under the same tag, and the deploy phase hands the version
+        // over again once that run is green — see PipelinePhases.deploy. There is no registration
+        // phase between deploys any more, and its absence is what seeding qits-projects bought:
+        // every repository's public address existed before the first push — `git-repos`, forty
+        // phases above — so the train inherits an alias table it does not have to be waited on to
+        // fill.
+        phases.add(pipeline.planTrain());
         phases.add(pipeline.summary());
         // LAST, AND AFTER THE SUMMARY ON PURPOSE. The summary phase only BUILDS the account —
         // BootstrapCommand prints it once the engine has run everything — so a phase below it still

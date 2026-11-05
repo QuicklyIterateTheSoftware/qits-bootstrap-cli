@@ -173,6 +173,13 @@
             <artifactId>qits-bootstrap-graph</artifactId>
             <version>${qits.bootstrap-graph.version}</version>
         </dependency>
+        <dependency>
+            <!-- Read directly for one key the library passes by: release.yml's `publish:`
+                 (CheckoutProjectSource.ifChanged), safe-loaded into a Map like the library does.
+                 The version is the one qits-bootstrap-graph brings, aligned by quarkus-bom. -->
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>io.quarkus</groupId>

@@ -18,6 +18,10 @@ import eu.wohlben.qits.cli.bootstrap.platform.BootstrapState;
 import eu.wohlben.qits.cli.bootstrap.platform.DeploymentSettings;
 import eu.wohlben.qits.cli.bootstrap.platform.ComposeTemplate;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
+import eu.wohlben.qits.bootstrap.graph.Coordinate;
+import eu.wohlben.qits.cli.bootstrap.platform.BootOrder;
+import eu.wohlben.qits.cli.bootstrap.platform.CutoverRules;
+import eu.wohlben.qits.cli.bootstrap.platform.Estate;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.platform.TargetSlots;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
@@ -1067,7 +1071,7 @@ public class PipelinePhases {
             recorded.read();
             int created = 0;
             int adopted = 0;
-            for (String name : PlatformModel.platformRepos()) {
+            for (String name : boot.estate().repos()) {
                 String repo = PlatformModel.repo(name);
                 String known = boot.state.repositoryIds.get(repo);
                 String resolved = resolvedStorageId(projectId, repo);
@@ -1114,7 +1118,7 @@ public class PipelinePhases {
             ctx.log("  every push from here on is " + boot.config.gitHostUrl() + "/" + projectId
                     + "/<repo>");
             ctx.note(created + " created, "
-                    + (PlatformModel.platformRepos().size() - created - adopted)
+                    + (boot.estate().repos().size() - created - adopted)
                     + " already there, " + adopted + " already registered");
         });
     }
@@ -1186,26 +1190,6 @@ public class PipelinePhases {
     }
 
     /**
-     * Deployable repositories contain gitlinks to the frontend repositories, and those commits must
-     * exist on the platform git host BEFORE the first wrapper pipeline clones its submodules. A
-     * push is the only door into the store, and an ordinary one is all it takes now: CI is gated
-     * only by release requests, so there is no release-train pipeline for this push to fire.
-     */
-    public Phase releaseTrainPreseed() {
-        return new Phase("preseed", "pre-seed release-train histories for deployable submodules", ctx -> {
-            for (String name : PlatformModel.SEEDED_REPOS) {
-                String repo = PlatformModel.repo(name);
-                Path src = boot.state.repoDir(name);
-                ctx.status("pushing " + repo + " main");
-                boot.push(ctx, repo + " main", src, boot.gitUrl(name),
-                        List.of("qits.token=" + boot.config.pushToken()), "main");
-                ctx.log("  " + repo + " history at " + boot.git.shortRef(src, "main"));
-            }
-            ctx.note(PlatformModel.SEEDED_REPOS.size() + " histories");
-        });
-    }
-
-    /**
      * The RELEASED artifacts, restored by re-establishing ONE SCM fact — the release tag — and then
      * asking qits-ci for the build that publishes it. The wrapper builds install RELEASED versions,
      * and a clean version only ever comes from a repo's release pipeline — the {@code release:}
@@ -1230,8 +1214,8 @@ public class PipelinePhases {
      * bus SCMRelease qits-maintenance listens for is the one qits-workspaces publishes on a REAL
      * release, and this door does not emit it.
      * <p>
-     * The recipe an event selects is read from MAIN on the git host, which is why {@code preseed}
-     * pushes main before any of these phases run: a repository with no main there matches no
+     * The recipe an event selects is read from MAIN on the git host, which is why every push
+     * ({@link #push}) runs before any of these phases: a repository with no main there matches no
      * trigger file, and the announcement would start nothing.
      * <p>
      * <b>The version replayed is the last release tag reachable from main</b>, and a repository
@@ -1341,7 +1325,7 @@ public class PipelinePhases {
      * built the image and then died pushing it, which is what happened to
      * {@code qits/workspace-base:2026.905.92439} on 2026-09-05: the rerun skipped that version and
      * every later phase that pulls it failed instead. So the skip asks the REGISTRY too, at the
-     * coordinates {@link PlatformModel#releasePackages} names, and asks for the build again when a
+     * coordinates the publisher's {@code release.yml} declares, and asks for the build again when a
      * package is missing — the tag needs no second push for that, only the announcement.
      *
      * @return whether this version was replayed. A version whose tag stands and whose packages the
@@ -1430,25 +1414,57 @@ public class PipelinePhases {
      * <b>Which of this publisher's release packages the registry does NOT hold at this version</b> —
      * empty when it holds them all, and NULL when the question cannot be asked, which is a third
      * answer rather than a missing one.
+     * <p>
+     * The packages are the maven, npm and docker artifacts its {@code .config/qits/release.yml}
+     * declares ({@link Estate#publishes}), every one addressed by the RELEASE version: a release
+     * run publishes each of them at the tag it builds — the image publishers tag with the release
+     * version itself, {@code qits/workspace-base:2026.905.92439} is the coordinate the workspace
+     * daemon's build pins and the coordinate that release run pushes, and {@code
+     * @qits/ui-components} publishes one version per release tag, so the packument's keys are that
+     * repository's calvers. The seed's own {@code 0.0.4} npm publish is a different thing: a pinned
+     * commit, not a release, and no release tag names it. A {@code daemon} or {@code docs} artifact
+     * is no registry coordinate and is not asked about.
+     * <p>
+     * <b>A {@code publish: if-changed} artifact is not asked about either.</b> The registry is asked
+     * for one exact version ({@code mavenPublished(group, artifact, version)}), and a release that
+     * found such a module unchanged published nothing at its own version — the consumers keep the
+     * older version they pin, which the pinned-tag replays restore. Counting it would call every
+     * such release unpublished and ask for its build on every boot. When every artifact is
+     * conditional — qits-runner-javalib's three — the question cannot be asked, which is the null
+     * answer: the tag is all the evidence there is.
      */
     private List<String> missingPackages(String name, String version) {
-        List<PlatformModel.ReleasePackage> packages = PlatformModel.releasePackages(name);
+        java.util.Set<Coordinate> packages = askable(boot.estate().publishes(name),
+                boot.estate().publishedIfChanged(name));
         if (packages.isEmpty()) {
             return null;
         }
         List<String> missing = new ArrayList<>();
-        for (PlatformModel.ReleasePackage published : packages) {
-            boolean held = switch (published.kind()) {
-                case MAVEN -> boot.artifacts.mavenPublished(PlatformModel.MAVEN_GROUP_PATH,
-                        published.coordinate(), version, "jar");
-                case OCI -> boot.artifacts.imagePublished(published.coordinate(), version);
-                case NPM -> boot.artifacts.npmPublished(published.coordinate(), version);
+        for (Coordinate published : packages) {
+            boolean held = switch (published.ecosystem()) {
+                case MAVEN -> {
+                    int colon = published.name().indexOf(':');
+                    yield boot.artifacts.mavenPublished(
+                            published.name().substring(0, colon).replace('.', '/'),
+                            published.name().substring(colon + 1), version, "jar");
+                }
+                case DOCKER -> boot.artifacts.imagePublished(published.name(), version);
+                case NPM -> boot.artifacts.npmPublished(published.name(), version);
+                case GITLINK -> true;
             };
             if (!held) {
-                missing.add(published.coordinate() + ":" + version);
+                missing.add(published.name() + ":" + version);
             }
         }
         return missing;
+    }
+
+    /** The packages a release version must hold: its declared ones less the conditional ones. */
+    static java.util.Set<Coordinate> askable(java.util.Set<Coordinate> published,
+                                             java.util.Set<Coordinate> ifChanged) {
+        java.util.Set<Coordinate> askable = new java.util.LinkedHashSet<>(published);
+        askable.removeAll(ifChanged);
+        return askable;
     }
 
     /**
@@ -2474,27 +2490,56 @@ public class PipelinePhases {
     }
 
     /**
-     * The seeded repositories take the same protected-main bootstrap door, but stop at the git
-     * host. Their own post-receive pipelines may publish packages; none of them is an application
-     * of the deployer, so there is deliberately no deployment lookup, image replay or health wait.
-     * qits-cd and qits-serviceregistry are here for their histories alone — both are superseded by
-     * qits-deployments and neither is deployed any more.
+     * <b>One repository the boot hosts and does not deploy, pushed to the git host</b> — main, by
+     * the same protected-main bootstrap door every push takes. A deploy pushes in its own phase;
+     * everything else the derivation hosts ({@link BootOrder#pushes}) comes through here, before
+     * the first replay, for two reasons: a deployable's gitlinks to its frontend have to be
+     * advertised before CI clones it (qits-ci points at qits-spa-ci, and pushing that SPA after the
+     * train makes the git host correctly refuse CI's request for an unadvertised object), and a
+     * replay's recipe is read from MAIN on the git host, so a repository with no main there matches
+     * no trigger file. There is deliberately no deployment lookup, image replay or health wait: none
+     * of these is an application of the deployer. A push starts no build either — CI is gated only by
+     * release requests.
      */
-    public Phase releaseTrainPush() {
-        return new Phase("release-train-push", "push the seeded repositories to the git host", ctx -> {
-            for (String name : PlatformModel.SEEDED_REPOS) {
-                String repo = PlatformModel.repo(name);
-                Path src = boot.state.repoDir(name);
-                ctx.status("pushing " + repo);
-                ProcessResult result = boot.push(ctx, repo + " main", src,
-                        boot.gitUrl(name),
-                        List.of("qits.token=" + boot.config.pushToken()), "main");
-                // The BRANCH's sha, like the refspec above: this checkout may stand at a release
-                // tag, and what went up is main.
-                ctx.log("  " + repo + (upToDate(result) ? " already at main"
-                        : " pushed " + boot.git.shortRef(src, "main")));
-            }
-            ctx.note(PlatformModel.SEEDED_REPOS.size() + " repositories");
+    public Phase push(String name) {
+        String repo = PlatformModel.repo(name);
+        return new Phase("push-" + name, "push " + repo + " to the git host", ctx -> {
+            Path src = boot.state.repoDir(name);
+            ctx.status("pushing " + repo);
+            ProcessResult result = boot.push(ctx, repo + " main", src, boot.gitUrl(name),
+                    List.of("qits.token=" + boot.config.pushToken()), "main");
+            // The BRANCH's sha, like the refspec above: this checkout may stand at a release
+            // tag, and what went up is main.
+            String sha = boot.git.shortRef(src, "main");
+            ctx.log("  " + repo + (upToDate(result) ? " already at main" : " pushed " + sha));
+            ctx.note(upToDate(result) ? "already at main" : "pushed " + sha);
+        });
+    }
+
+    /**
+     * <b>THE TRAIN, PLANNED FROM WHAT THE CHECKOUTS DECLARE</b> (qits-3): one {@link #push} per
+     * repository the boot hosts and does not deploy, one {@link #releaseReplay} per publisher
+     * another repository pins at a release, and one {@link #deploy} per deployable in deploy order
+     * — {@link BootOrder}, over {@link CutoverRules} — inserted right after this phase. A cycle in
+     * the declarations fails it, naming every member, before any train phase runs.
+     * <p>
+     * It re-derives nothing a phase before it has already read ({@code Boot.estate()} is derived
+     * once per run), and a rerun plans again from scratch, so its phases are the same ids every
+     * time: {@code push-<name>}, {@code release-<name>}, {@code deploy-<name>}.
+     */
+    public Phase planTrain() {
+        return new Phase("plan-train", "plan the release train from the checkouts", ctx -> {
+            BootOrder order = boot.estate().order();
+            List<Phase> train = new ArrayList<>();
+            order.pushes().forEach(name -> train.add(push(name)));
+            order.replays().forEach(name -> train.add(releaseReplay(name)));
+            order.deploys().forEach(name -> train.add(deploy(name)));
+            ctx.log("  pushes:  " + String.join(", ", order.pushes()));
+            ctx.log("  replays: " + String.join(", ", order.replays()));
+            ctx.log("  deploys: " + String.join(", ", order.deploys()));
+            ctx.then(train);
+            ctx.note(order.pushes().size() + " pushes, " + order.replays().size() + " replays, "
+                    + order.deploys().size() + " deploys");
         });
     }
 
@@ -3109,7 +3154,7 @@ public class PipelinePhases {
      * <b>Not a deployment, and never one.</b> The runner rolls ITSELF over when qits-system tells
      * it a newer version, by starting a successor container and leaving; a deployer replacing the
      * same container would be two actors racing to remove it. So it is in no stack file, no settings
-     * row and no {@code DEPLOYABLES} entry, and the train's cutovers pass it by: the target and
+     * row and no deployments.yml, and the train's cutovers pass it by: the target and
      * its client are rows of qits-system's database, which every successor of qits-system reads,
      * and the runner simply redials.
      * <p>

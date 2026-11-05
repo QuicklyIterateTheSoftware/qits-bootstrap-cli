@@ -107,10 +107,6 @@ public final class PinnedVersions {
             Map.entry("containers-client", "containers"),
             Map.entry("containers-core", "containers"),
             Map.entry("ci-daemon-protocol", "ci-daemon"),
-            // qits-workspaces pins its runner the way qits-ci pins its own — one jar beside the
-            // image, both at the runner's release tag — and the release replay of that repository
-            // is what publishes both, so a lagging pin is one more version to replay.
-            Map.entry("workspaces-runner-protocol", "workspaces-runner-daemon"),
             // qits-system pins the target's runner the same way (qits-1535).
             Map.entry("system-runner-protocol", "system-runner-daemon"),
             Map.entry("userflows", "userflows"),
@@ -201,8 +197,10 @@ public final class PinnedVersions {
      *
      * @param repositories the model names whose HEAD poms are the consumers to start from
      * @param poms         the checkouts, read by (name, ref, path)
+     * @param producers    which replay publishes each qits image and npm package
      */
-    public static PinnedVersions read(List<String> repositories, Sources sources) {
+    public static PinnedVersions read(List<String> repositories, Sources sources,
+                                      Producers producers) {
         Map<String, String> head = new LinkedHashMap<>();
         for (String producer : new LinkedHashSet<>(PRODUCERS.values())) {
             String pom = sources.at(producer, HEAD, ROOT_POM);
@@ -213,10 +211,11 @@ public final class PinnedVersions {
         }
 
         // AN IMAGE PRODUCER HAS NO POM VERSION TO READ. Its checkout publishes whatever its newest
-        // release tag says, and that tag IS the image tag — see PlatformModel.releasePackages.
+        // release tag says, and that tag IS the image tag — the docker artifacts its release.yml
+        // declares (Producers).
         Map<String, String> imageHead = new LinkedHashMap<>();
-        Set<String> tagPublishers = new LinkedHashSet<>(IMAGE_PRODUCERS.values());
-        tagPublishers.addAll(NPM_PRODUCERS.values());
+        Set<String> tagPublishers = new LinkedHashSet<>(producers.images().values());
+        tagPublishers.addAll(producers.npm().values());
         for (String producer : tagPublishers) {
             String version = sources.releaseVersion(producer);
             if (version != null && !version.isBlank()) {
@@ -238,9 +237,9 @@ public final class PinnedVersions {
                 queue(pinsIn(pom), head, found, warnings, unknown, pending, sources);
             }
             queueImages(imagePins(repository, HEAD, sources), imageHead, found, warnings, unknown,
-                    pending, sources);
-            queueNpm(npmPins(repository, HEAD, sources, warnings), imageHead, found, warnings,
-                    unknown, sources);
+                    pending, sources, producers.images());
+            queueNpm(npmPins(repository, HEAD, sources, warnings, producers.npm().keySet()),
+                    imageHead, found, warnings, unknown, sources, producers.npm());
         }
         while (!pending.isEmpty()) {
             String[] at = pending.removeFirst();
@@ -253,9 +252,9 @@ public final class PinnedVersions {
             // next hop: qits/workspace at 2026.904.223250 is FROM qits/workspace-base
             // 2026.902.143920, which nothing newer names any more.
             queueImages(imagePins(at[0], at[1], sources), imageHead, found, warnings, unknown,
-                    pending, sources);
-            queueNpm(npmPins(at[0], at[1], sources, warnings), imageHead, found, warnings, unknown,
-                    sources);
+                    pending, sources, producers.images());
+            queueNpm(npmPins(at[0], at[1], sources, warnings, producers.npm().keySet()), imageHead,
+                    found, warnings, unknown, sources, producers.npm());
         }
 
         Map<String, List<String>> extra = new LinkedHashMap<>();
@@ -355,42 +354,24 @@ public final class PinnedVersions {
     }
 
     /**
-     * <b>Which repository publishes each qits IMAGE</b> — the inverse of
-     * {@link PlatformModel#releasePackages}' OCI half, so the two cannot disagree. It is derived
-     * rather than written: a publisher that grows an image gets an entry by saying so once, in the
-     * place that already says what its release publishes.
+     * <b>Which repository publishes each qits IMAGE and each {@code @qits} npm package</b>,
+     * coordinate to model name. Derived rather than written: it is each replay's own
+     * {@code release.yml} ({@link Estate#producers}), so a publisher that grows an image gets an
+     * entry by saying so once, in the place that already says what its release publishes.
      */
-    static final Map<String, String> IMAGE_PRODUCERS = imageProducers();
+    public record Producers(Map<String, String> images, Map<String, String> npm) {
 
-    private static Map<String, String> imageProducers() {
-        Map<String, String> byImage = new LinkedHashMap<>();
-        for (String publisher : PlatformModel.RELEASE_PUBLISHERS) {
-            for (PlatformModel.ReleasePackage published : PlatformModel.releasePackages(publisher)) {
-                if (published.kind() == PlatformModel.ReleasePackage.Kind.OCI) {
-                    byImage.put(published.coordinate(), publisher);
-                }
-            }
+        public Producers {
+            images = Map.copyOf(images);
+            npm = Map.copyOf(npm);
         }
-        return Map.copyOf(byImage);
-    }
 
-    /**
-     * <b>Which repository publishes each {@code @qits} npm package</b>, derived from
-     * {@link PlatformModel#releasePackages} exactly as the image map is.
-     */
-    static final Map<String, String> NPM_PRODUCERS =
-            producersOfKind(PlatformModel.ReleasePackage.Kind.NPM);
-
-    private static Map<String, String> producersOfKind(PlatformModel.ReleasePackage.Kind kind) {
-        Map<String, String> byCoordinate = new LinkedHashMap<>();
-        for (String publisher : PlatformModel.RELEASE_PUBLISHERS) {
-            for (PlatformModel.ReleasePackage published : PlatformModel.releasePackages(publisher)) {
-                if (published.kind() == kind) {
-                    byCoordinate.put(published.coordinate(), publisher);
-                }
-            }
+        /** The estate's docker and npm replays. */
+        public static Producers of(Estate estate) {
+            return new Producers(
+                    estate.producers(eu.wohlben.qits.bootstrap.graph.Ecosystem.DOCKER),
+                    estate.producers(eu.wohlben.qits.bootstrap.graph.Ecosystem.NPM));
         }
-        return Map.copyOf(byCoordinate);
     }
 
     /**
@@ -404,9 +385,9 @@ public final class PinnedVersions {
      * publisher's newest tag.
      */
     static Map<String, String> npmPins(String repository, String ref, Sources sources,
-                                       List<String> warnings) {
+                                       List<String> warnings, Set<String> packages) {
         Map<String, String> pins = new LinkedHashMap<>(
-                npmPinsIn(sources.at(repository, ref, LOCK_FILE), warnings));
+                npmPinsIn(sources.at(repository, ref, LOCK_FILE), warnings, packages));
         String gitmodules = sources.at(repository, ref, ".gitmodules");
         if (gitmodules == null) {
             return pins;
@@ -431,7 +412,7 @@ public final class PinnedVersions {
                         + "in the closure");
                 return;
             }
-            pins.putAll(npmPinsIn(lock, warnings));
+            pins.putAll(npmPinsIn(lock, warnings, packages));
         });
         return pins;
     }
@@ -459,7 +440,8 @@ public final class PinnedVersions {
      * {@code <calver>-main.g<sha>} prereleases the registry also holds — is WARNED and skipped: no
      * release tag names one, so there is nothing to replay.
      */
-    static Map<String, String> npmPinsIn(String lock, List<String> warnings) {
+    static Map<String, String> npmPinsIn(String lock, List<String> warnings,
+                                         Set<String> packages) {
         Map<String, String> pins = new LinkedHashMap<>();
         if (lock == null || lock.isBlank()) {
             return pins;
@@ -470,7 +452,7 @@ public final class PinnedVersions {
                 String key = entry.getKey();
                 String name = key.startsWith("node_modules/")
                         ? key.substring("node_modules/".length()) : key;
-                if (!NPM_PRODUCERS.containsKey(name)) {
+                if (!packages.contains(name)) {
                     return;
                 }
                 String version = entry.getValue().path("version").asText("");
@@ -575,9 +557,10 @@ public final class PinnedVersions {
 
     private static void queueImages(Map<String, String> pins, Map<String, String> head,
                                     Map<String, TreeSet<String>> found, List<String> warnings,
-                                    Set<String> unknown, Deque<String[]> pending, Sources sources) {
+                                    Set<String> unknown, Deque<String[]> pending, Sources sources,
+                                    Map<String, String> imageProducers) {
         pins.forEach((image, version) -> {
-            String producer = IMAGE_PRODUCERS.get(image);
+            String producer = imageProducers.get(image);
             if (producer == null) {
                 unknown.add(image);
                 return;
@@ -611,9 +594,10 @@ public final class PinnedVersions {
      */
     private static void queueNpm(Map<String, String> pins, Map<String, String> head,
                                  Map<String, TreeSet<String>> found, List<String> warnings,
-                                 Set<String> unknown, Sources sources) {
+                                 Set<String> unknown, Sources sources,
+                                 Map<String, String> npmProducers) {
         pins.forEach((packageName, version) -> {
-            String producer = NPM_PRODUCERS.get(packageName);
+            String producer = npmProducers.get(packageName);
             if (producer == null) {
                 unknown.add(packageName);
                 return;

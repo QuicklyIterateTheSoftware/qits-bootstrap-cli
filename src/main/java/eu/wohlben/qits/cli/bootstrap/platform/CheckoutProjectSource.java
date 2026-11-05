@@ -54,7 +54,7 @@ public final class CheckoutProjectSource implements ProjectSource {
     /**
      * Resource kind to the application that provides it — what turns a {@code resources:} entry
      * into a RUNTIME edge. The database is the seed's and never re-deployed (see
-     * {@link PlatformModel#DEPLOYABLES}); the edge to it still orders every consumer after it.
+     * {@link BootOrder#SEED_HELD_RESOURCES}); the edge to it still orders every consumer after it.
      */
     public static final Map<String, String> RESOURCE_PROVIDERS =
             Map.of("postgresql", "qits-oci-postgresql", "idp", "qits-idp");
@@ -154,6 +154,7 @@ public final class CheckoutProjectSource implements ProjectSource {
     private final Map<String, List<Pin>> consumes = new LinkedHashMap<>();
     private final Map<String, Set<Coordinate>> produces = new LinkedHashMap<>();
     private final Map<String, Deployment> deployments = new LinkedHashMap<>();
+    private final Map<String, Set<Coordinate>> publishedIfChanged = new LinkedHashMap<>();
 
     private CheckoutProjectSource(Map<String, RepositoryFiles> files) {
         this.repositories = List.copyOf(files.keySet());
@@ -163,6 +164,7 @@ public final class CheckoutProjectSource implements ProjectSource {
             try {
                 consumes.put(repository, pins(repo));
                 produces.put(repository, coordinates(repo));
+                publishedIfChanged.put(repository, ifChanged(repo));
                 repo.read(DeploymentDeclaration.PATH)
                         .map(DeploymentDeclaration::parse)
                         .ifPresent(deployment -> deployments.put(repository, deployment));
@@ -205,6 +207,57 @@ public final class CheckoutProjectSource implements ProjectSource {
     @Override
     public Optional<Deployment> deployment(String repository) {
         return Optional.ofNullable(deployments.get(repository));
+    }
+
+    /**
+     * <b>The coordinates a release publishes only when they changed</b> — {@code publish:
+     * if-changed} on their {@code artifacts:} entry. A release that found such a module unchanged
+     * publishes nothing for it at its own version, so the registry holding no copy at that version
+     * is the release working as declared, not a run that died half way.
+     */
+    public Set<Coordinate> publishedIfChanged(String repository) {
+        return publishedIfChanged.getOrDefault(repository, Set.of());
+    }
+
+    /** The value of {@code publish:} that makes an artifact's publish conditional. */
+    static final String IF_CHANGED = "if-changed";
+
+    /**
+     * {@code publish:} is the release recipe's key, and {@code ReleaseDeclaration} passes it by, so
+     * it is read here: the same file, safe-loaded into a map the way the library loads it, and only
+     * the entries {@link #coordinates} keeps. A file the library already accepted cannot fail here.
+     */
+    static Set<Coordinate> ifChanged(RepositoryFiles files) {
+        Optional<String> release = files.read(ReleaseDeclaration.PATH);
+        if (release.isEmpty()) {
+            return Set.of();
+        }
+        Object document = new org.yaml.snakeyaml.Yaml(new org.yaml.snakeyaml.constructor
+                .SafeConstructor(new org.yaml.snakeyaml.LoaderOptions())).load(release.get());
+        if (!(document instanceof Map<?, ?> top) || !(top.get("artifacts") instanceof List<?> entries)) {
+            return Set.of();
+        }
+        Set<Coordinate> conditional = new LinkedHashSet<>();
+        for (Object entry : entries) {
+            if (entry instanceof Map<?, ?> fields
+                    && IF_CHANGED.equals(String.valueOf(fields.get("publish")))) {
+                Ecosystem ecosystem = ecosystem(String.valueOf(fields.get("type")));
+                if (ecosystem != null && fields.get("name") != null) {
+                    conditional.add(new Coordinate(ecosystem, String.valueOf(fields.get("name"))));
+                }
+            }
+        }
+        return Set.copyOf(conditional);
+    }
+
+    private static Ecosystem ecosystem(String type) {
+        return switch (type) {
+            case "maven" -> Ecosystem.MAVEN;
+            case "npm" -> Ecosystem.NPM;
+            case "docker" -> Ecosystem.DOCKER;
+            // daemon, docs: released, and pinned by no manifest.
+            default -> null;
+        };
     }
 
     /**
@@ -291,13 +344,7 @@ public final class CheckoutProjectSource implements ProjectSource {
         }
         Set<Coordinate> coordinates = new LinkedHashSet<>();
         for (DeclaredArtifact artifact : ReleaseDeclaration.artifacts(release.get())) {
-            Ecosystem ecosystem = switch (artifact.type()) {
-                case "maven" -> Ecosystem.MAVEN;
-                case "npm" -> Ecosystem.NPM;
-                case "docker" -> Ecosystem.DOCKER;
-                // daemon, docs: released, and pinned by no manifest.
-                default -> null;
-            };
+            Ecosystem ecosystem = ecosystem(artifact.type());
             if (ecosystem != null) {
                 coordinates.add(new Coordinate(ecosystem, artifact.name()));
             }

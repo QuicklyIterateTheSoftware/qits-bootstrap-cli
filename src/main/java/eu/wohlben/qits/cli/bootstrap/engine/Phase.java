@@ -2,7 +2,8 @@ package eu.wohlben.qits.cli.bootstrap.engine;
 
 /**
  * One step of the boot. The list of them is built at startup from configuration, which is what
- * makes the "3/47" in the header a real count rather than a guess.
+ * makes the "3/47" in the header a real count rather than a guess — until a phase plans more of
+ * the run ({@link PhaseContext#then}), when the count grows by what it planned.
  *
  * @param id     stable, machine-readable, unique in a run
  * @param title  what the header says while this phase runs

@@ -436,10 +436,9 @@ public interface BootstrapConfig {
      * qits-deployments gives a platform service the {@code <env>-<app>} alias beside its bare name
      * and the seed stack declares the same pair.
      * <p>
-     * Derived rather than spelled, so it follows {@link PlatformModel#PLATFORM_SERVICES} the way
-     * {@link #platformDeploymentsUrl} and {@link #eventsUrl} do — with the difference that
-     * {@link PlatformModel#dialAlias} qualifies EVERY plane, which is the whole direction of
-     * travel.
+     * Derived rather than spelled, the way {@link #platformDeploymentsUrl} and {@link #eventsUrl}
+     * are: {@link PlatformModel#dialAlias} qualifies every application the same way, now that
+     * there is no plane left to branch on.
      */
     default String idpDialUrl() {
         return "http://" + PlatformModel.wireAlias("idp", envName()) + ":8080/idp";
@@ -546,8 +545,8 @@ public interface BootstrapConfig {
      * platform anywhere to have caught it first. That is not a thing to leave load-bearing.
      * <p>
      * <b>The hostname is DERIVED, and that is what the 2026-08-17 plane move cost.</b> This method
-     * spelled {@code <env>-qits-deployments} and therefore did not follow
-     * {@link PlatformModel#PLATFORM_SERVICES}: the moment the deployer moved plane, every call this
+     * spelled {@code <env>-qits-deployments} and therefore did not follow the plane list that
+     * existed then: the moment the deployer moved plane, every call this
      * program makes to it — the environment reconcile, the build-event replay, the auth-plane probe
      * — would have gone to a name nothing answers to.
      */
