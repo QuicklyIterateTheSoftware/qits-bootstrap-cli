@@ -1,0 +1,29 @@
+# How this repository releases: the `spa-frontend` archetype's QA slot (`release-request:`, from
+# `.config/qits/release-archetypes/spa-frontend.yml` in qits-ci) — install, lint, test (the pact
+# spec included), build — and the contracts below.
+#
+# THE PACTS (qits-1284) are the REST calls @qits/ui-components makes on this SPA's behalf, declared
+# as contracts keyed by the provider's repository name. They sit flat in `pacts/` as
+# `qits-docs-frontend_qits-ui-components-jslib_<provider>.json`, written by
+# `src/app/ui-components.pact.spec.ts` (regenerate with `QITS_GOLDEN_UPDATE=true npm test`); qits-ci
+# packs `pacts/*_<provider>.json` into the maven jar eu.wohlben.qits:qits-docs-frontend-pacts-<provider>,
+# which that provider verifies in its own gate. A contract package is `if-changed` by definition: a
+# release whose pact with a provider did not change publishes nothing for it.
+#
+# `application:` IS THE APPLICATION THIS SPA BELONGS TO, `qits-docs`. The SPA ships no image and is
+# no deployable of its own: qits-docs-service carries it as its Quinoa `webui` submodule and serves
+# it from the `qits-docs` application. The pact packages' coordinates are spelled with the
+# REPOSITORY names, never this one; `application:` only names the application in the packages'
+# description.
+#
+# NO `release:` SLOT. `spa-frontend` has none, and since qits-1149 it needs none: qits-ci
+# synthesises a release step for every composition without one, and its postlude packs and
+# publishes the committed pacts. The step builds nothing, because there is nothing to build.
+archetype: spa-frontend
+
+contracts:
+  application: qits-docs
+  pacts:
+    qits-edge-service: { packages: [maven] }
+    qits-projects-service: { packages: [maven] }
+    qits-ci-service: { packages: [maven] }

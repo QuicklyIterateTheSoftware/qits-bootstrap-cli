@@ -1,0 +1,95 @@
+# How qits-deployments deploys this repo. It reads this file from the git host at the built
+# sha, so the answer travels with the commit.
+#
+# CARRYING THE FILE AT ALL is the other thing it says. qits-projects reads it at the release tag to
+# decide whether this repository deploys — a library or an SPA carries none, and its release
+# finalizes `main` there and then, while a deployable one waits for the deployment to succeed. What
+# deploys is the VERSION COORDINATE the release build published, never a branch.
+#
+# THE NAME THIS DEPLOYS AS, spelled because the repository is renamed and the application is not.
+# Every derivation the deployer makes hangs off this name — the wire alias peers dial, the container
+# it manages, the extras family, the database — so letting it follow the repository would
+# decommission the running service and start a stranger beside it.
+application: qits-orchestrator
+
+# WHAT THIS APPLICATION USED TO BE CALLED, and the one thing a rename is allowed to move.
+#
+# A renamed application is a NEW application to the deployer: services are keyed by name, swarm
+# cannot rename one, and pd_service / pd_deployment / pd_resource all hold an application name and no
+# repository identity. So this deploys BESIDE qits-platform-orchestrator and an operator retires the
+# predecessor afterwards. That half is unchanged.
+#
+# What this line moves is the DATABASE CLAIM. Without it the successor's first deploy is refused —
+# "the database qits_platform_orchestrator is already provisioned for qits-platform-orchestrator" — which is the
+# right refusal in general, because two unrelated repositories sharing a store is worse than a loud
+# failure. Naming the predecessor narrows that check to this one row rather than weakening it.
+#
+# It also preserves the CREDENTIAL: the claim row is read one statement later to decide whether to
+# send the stored password or a fresh one, so transferring it first means the predecessor — still
+# running, with open pools on that role — keeps working. Removing this line after the rename does not
+# tidy anything up; it re-arms the refusal.
+renamed_from: qits-platform-orchestrator
+
+# One route for this application's machine surface: the API at /orchestrator/api and the document at
+# /orchestrator/q. The edge path-routes every application's route prefix on EVERY host, so this one
+# line keeps both reachable wherever a reader is. The client itself is no longer under it — it is
+# served at / on this application's own host.
+routes: /orchestrator
+
+# WHERE THIS APPLICATION HANGS IN THE SIDEBAR. `system` is the global group — what this service
+# shows is the platform's own housekeeping rather than one project's work — and 3 is the position
+# inside it, after Mirror:2.
+#
+# The host is not spelled because the derived one is already right: the application name minus its
+# `qits-` prefix is `orchestrator`, which is the label this service is served on.
+navigation-entries: system.Orchestrator:3
+
+# THE STORES, DECLARED RATHER THAN CONFIGURED. The line below is what provisions them: a role and a
+# database of its own per entry on the tier's postgres, created before the successor container starts
+# and injected as QITS_RESOURCE_<NAME>_URL / _USERNAME / _PASSWORD — the generic contract the jars'
+# datasource defaults read verbatim.
+#
+# `db` omits the third segment, so its database is the default derivation: the application name minus
+# its `qits-` prefix, dashes to underscores, under a `qits_` prefix — `qits_platform_orchestrator`.
+# WHAT IS IN IT is the only account of a deletion that exists. Nothing else on the platform records
+# which images a night removed and on the strength of which pin set, so this database is not a cache
+# and a fresh one is not equivalent to the old one.
+#
+# `eventstream` is the qits-eventstream jar's own outbox and claim tables, and it NAMES its database
+# because the derivation would collide with the run log's. The resource NAME is load-bearing: the jar
+# reads QITS_RESOURCE_EVENTSTREAM_*, and an unset variable leaves its ${…} expressions unresolvable
+# so the process dies at Flyway naming the missing one rather than opening a fallback store. Being
+# dark under %dev/%test (qits.eventstream.enabled=false) stops publishing, sweeping and dialling —
+# never the datasource, which Quarkus opens and migrates at boot regardless. THE DEPLOYER PROVISIONS
+# IT ON THE NEXT DEPLOY; nothing has to be created by hand.
+# THE DATABASE IS NAMED EXPLICITLY, AND IT IS A SAFETY PIN RATHER THAN A PREFERENCE.
+# `postgresql:db` with no third segment DERIVES the database from the APPLICATION name —
+# `qits_` plus the name minus its `qits-` prefix. This application is STILL TO BE renamed
+# (qits-platform-orchestrator -> qits-orchestrator, blocked on qits-376), and a derived name would follow it: the deployment would provision a
+# BRAND NEW EMPTY `qits_orchestrator` and start against it, on a green deploy, with nothing failing.
+# Naming the database this application already uses makes the rename a rename of the
+# APPLICATION alone, which is the whole intent — and this line has to OUTLIVE the rename rather
+# than merely precede it. Removing it later is not a tidy-up; it is a silent migration to an
+# empty store on a deploy that goes green.
+#
+# VERIFIED AGAINST THE SERVER, not derived: `qits_platform_orchestrator` is in pg_database on
+# qits-oci-postgresql today, and `qits_orchestrator` is not.
+#
+# idp:client ASKS QITS-DEPLOYMENTS TO PROVISION THIS APPLICATION'S OWN QITS-IDP SERVICE CLIENT — id
+# `dev-qits-orchestrator` (derived from env + application), roles `qits:system`, fixed in qits-idp
+# code. The deployer stores the secret the way it stores a database password, and injects
+# QITS_RESOURCE_IDP_URL, QITS_RESOURCE_IDP_CLIENT_ID and QITS_RESOURCE_IDP_CLIENT_SECRET, which the
+# `qits` oidc client reads before its old fallback keys.
+#
+# Ticket qits-162, epic qits-540 contract C3.
+resources: postgresql:db:qits_platform_orchestrator, postgresql:eventstream:qits_platform_orchestrator_eventstream, idp:client
+
+# The readiness endpoint the deployer's health gate curls. The convention derives it from the
+# repository name and would land on exactly this path; it is written out because a probe that 404s
+# fails a deployment for a reason nobody would look for in a config file.
+health_path: /orchestrator/q/health/ready
+
+# Where the browsable API document lives: swagger-ui under this service's non-application
+# root, which sits under the primary route above. The shell's Api Docs viewer reads it off
+# /main-navigation and frames it for this repository.
+api-docs: /orchestrator/q/swagger-ui

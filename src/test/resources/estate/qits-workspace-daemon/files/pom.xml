@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Standalone parent for the extracted qits-workspace-daemon repo. Keeps the same
+         eu.wohlben:qits:1.0.0-SNAPSHOT coordinates the child's <parent> already points at
+         (../pom.xml), so the module builds unchanged now that it no longer lives under the
+         qits-backend monorepo root. Trimmed to only what this module needs — the quarkus-bom
+         import, the version-management entry for its workspace-daemon-protocol dependency, and the
+         quarkus/compiler/surefire plugin pins. The monorepo's app-wide machinery (spotless, the
+         :8080 dev-guard, isolated-test chunking, enforcer, jandex) is intentionally omitted. -->
+    <groupId>eu.wohlben</groupId>
+    <artifactId>qits</artifactId>
+    <version>2026.1105.104934</version>
+    <packaging>pom</packaging>
+
+    <modules>
+        <!-- Dependency order: workspace-daemon depends on all of them; detection depends on files.
+             The command and coding-agent modules used to sit here too; they are now the released
+             eu.wohlben.qits:qits-commands / qits-coding-agents, see the property below. -->
+        <module>workspace-daemon-protocol</module>
+        <module>workspace-daemon-files</module>
+        <module>workspace-daemon-detection</module>
+        <module>workspace-daemon</module>
+    </modules>
+
+    <properties>
+        <!-- The shared harness library (https://github.com/QuicklyIterateTheSoftware/qits-coding-agents).
+             It used to be TWO in-repo modules, `qits-commands` and `qits-coding-agents`, duplicated
+             under this daemon's package root and again under qits-projects-daemon's. Both moved out
+             whole: qits-coding-agents does not compile without qits-commands, and keeping one here
+             would have preserved exactly the split that let the two copies drift.
+
+             THIS IS A RELEASED COORDINATE, and the rhythm it forces is deliberate: a change to
+             shared harness code is released there first and arrives here as a version bump. A
+             daemon runs the library version it was built against, so "the library is fixed" and
+             "this daemon has the fix" are two different moments. -->
+        <!-- PLACEHOLDER (qits-1152): live transcript tail and one-line typed turns for interactive
+             sessions are on qits-coding-agents' qits-1152-agent-worktrees branch and not released
+             yet. Its first release that has them moves this pin; until then a build needs a
+             locally installed jar. -->
+        <qits.coding-agents.version>2026.1031.164420</qits.coding-agents.version>
+        <!-- Where that coordinate is resolved from; mirrored by .qits-maven-settings.xml's
+             `qits-maven` entry onto $QITS_MAVEN_REPOSITORY_URL inside a CI step or a build
+             container. Spelled as a property so a deployment can point it elsewhere without
+             editing the repository block. -->
+        <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.version>3.40.1</quarkus.platform.version>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+        <!-- pact-jvm, test scope only (ticket qits-1149): ConsumerPactVerificationTest verifies
+             consumers' pacts against this daemon's API. An external library, so it moves by hand. -->
+        <pact-jvm.version>4.7.5</pact-jvm.version>
+        <!-- The provider side (ticket qits-1230): the first consumer pact pinned against this
+             daemon, test scope only. Released coordinate, exact pin; the maintenance bump moves
+             it. -->
+        <qits.landing-app-pacts-qits-workspace-daemon.version>2026.1029.233746</qits.landing-app-pacts-qits-workspace-daemon.version>
+        <!-- qits-1149: the two other consumers whose pacts name this daemon — qits-platform-access-cli
+             (`pacts/qits-platform-access-cli_qits-workspace-daemon.json`) and qits-workspaces-service's
+             proxy (`pacts/qits-workspaces-service_qits-workspace-daemon.json`). -->
+        <qits.platform-access-monorepo-pacts-qits-workspace-daemon.version>2026.1103.101116</qits.platform-access-monorepo-pacts-qits-workspace-daemon.version>
+        <qits.workspaces-service-pacts-qits-workspace-daemon.version>2026.1029.225748</qits.workspaces-service-pacts-qits-workspace-daemon.version>
+        <!-- The platform's shared rules, test scope (qits-1754): ProviderStateCoverageRules checks
+             every state golden-masters/index.json records has its @State callback on
+             ConsumerPactVerificationTest. Published by qits-integrations-quarkus into the same
+             platform Maven repository as the coordinate above. -->
+        <qits.arch-rules.version>2026.1030.30851</qits.arch-rules.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Supplies the managed versions the child leaves unversioned: quarkus-arc,
+                 quarkus-vertx, snakeyaml, quarkus-junit5. -->
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- The wire-contract module (built from this repo's workspace-daemon-protocol/), so the
+                 child's version-less dependency on it resolves within the reactor.
+
+                 ITS COORDINATES ARE `eu.wohlben.qits:qits-workspace-daemon-protocol`, not this
+                 reactor's `eu.wohlben` groupId, because it is the one module here that is also
+                 DEPLOYED: qits-workspaces pins the workspace image by depending on it. Its own pom
+                 says why the name changed. -->
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-workspace-daemon-protocol</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben</groupId>
+                <artifactId>workspace-daemon-files</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben</groupId>
+                <artifactId>workspace-daemon-detection</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <!-- The command and coding-agent capability jars — the shared harness library, no
+                 longer built here. The groupId moved with them (`eu.wohlben.qits`, not
+                 `eu.wohlben`), which is the visible half of "these are somebody else's artifact
+                 now"; the packages moved the same way, `…workspacedaemon.commands` →
+                 `eu.wohlben.qits.commands` and `…workspacedaemon.agents` → `eu.wohlben.qits.agents`.
+                 Both are named here because this daemon compiles against both: a launch IS a
+                 command, so the daemon's own routes touch `Command`, `CommandService` and
+                 `CheckoutContext` directly. -->
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-commands</artifactId>
+                <version>${qits.coding-agents.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-coding-agents</artifactId>
+                <version>${qits.coding-agents.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>au.com.dius.pact.provider</groupId>
+                <artifactId>junit5</artifactId>
+                <version>${pact-jvm.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: the landing app's consumer pact,
+                     verified by ConsumerPactVerificationTest. -->
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-landing-app-pacts-qits-workspace-daemon</artifactId>
+                <version>${qits.landing-app-pacts-qits-workspace-daemon.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: qits-platform-access-cli's consumer pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-platform-access-monorepo-pacts-qits-workspace-daemon</artifactId>
+                <version>${qits.platform-access-monorepo-pacts-qits-workspace-daemon.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: qits-workspaces-service's consumer pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-workspaces-service-pacts-qits-workspace-daemon</artifactId>
+                <version>${qits.workspaces-service-pacts-qits-workspace-daemon.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The platform's shared rules, test scope. ProviderStateCoverageRules is what
+                     this repo takes it for. -->
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-arch-rules</artifactId>
+                <version>${qits.arch-rules.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- The platform's maven registry, declared because this reactor now resolves ONE dependency
+         that is not on Central: the shared harness library. Until it did, this repository declared
+         no repositories at all, which is what let `./mvnw verify` work on a bare clone with no
+         platform in sight. Inside a CI step or the Dockerfile's builder stage, .qits-maven-settings.xml
+         redirects `qits-maven` to $QITS_MAVEN_REPOSITORY_URL, derived from QITS_DOMAIN; the literal
+         below is the public host, which answers 401 anonymously — build with
+         `-s .qits-maven-settings.xml` and the QITS_MAVEN_* variables it reads. -->
+    <repositories>
+        <repository>
+            <id>qits-maven</id>
+            <url>${qits.maven.repository.url}</url>
+        </repository>
+    </repositories>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>${quarkus.platform.group-id}</groupId>
+                    <artifactId>quarkus-maven-plugin</artifactId>
+                    <version>${quarkus.platform.version}</version>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${compiler-plugin.version}</version>
+                    <configuration>
+                        <parameters>true</parameters>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${surefire-plugin.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

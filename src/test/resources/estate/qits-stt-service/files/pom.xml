@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Standalone parent for the extracted qits-stt repo (migration-plan.md §3.7 in the qits-qits
+         home repo). Speech-to-text: a browser-recorded WAV in, a transcript out, with NVIDIA
+         Parakeet (ONNX, CPU) doing the work in a resident python worker on the HOST.
+
+         That host-side python is the whole reason this is a service of its own rather than
+         something the workspace-daemon runs: SpeechWorker keeps a resident `venv/bin/python`
+         alive with the model in memory, and TranscriptionService bootstraps that venv with
+         `python3 -m venv` + `pip install onnx-asr[cpu,hub]`. It is not workspace-scoped and it
+         cannot move into a per-workspace container.
+
+         DELIBERATELY ITS OWN GAV, following qits-workspaces rather than the qits-workspace-daemon
+         extraction which kept eu.wohlben:qits. Keeping the monorepo groupId works when the child
+         artifactIds are globally unique (`workspace-daemon`); it does NOT work here, where the
+         modules are `domain` and `service`. Installing eu.wohlben:domain:1.0.0-SNAPSHOT would
+         clobber the monorepo's jar in the shared ~/.m2 — and in the qits_shared_m2 volume every
+         workspace container mounts. The directories stay domain/ and service/ (the replayed
+         history is anchored to those paths); only the coordinates are namespaced.
+
+         Versions that must stay in step with qits (Quarkus platform, JDK release) are duplicated
+         here on purpose: a clone of THIS repo alone must build, with no monorepo and no parent to
+         inherit from.
+
+         Trimmed to what these two modules actually need. The monorepo's app-wide machinery is
+         intentionally omitted: spotless, the :8080 dev-mode port guard, isolated-test surefire
+         chunking, enforcer, the derive-fixture-bares antrun step, the maven build-cache extension,
+         and the mandatory -Dqits.variant=oauth|forwardauth|local auth profiles. Lombok and
+         MapStruct are omitted too — this context has no entities and no mappers.
+
+         No Flyway, no datasource: qits-stt owns no tables (migration-plan.md §7). Transcription is
+         a pure request/response; nothing about it is persisted. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-stt</artifactId>
+    <version>2026.1105.123002</version>
+    <packaging>pom</packaging>
+    <name>qits-stt</name>
+
+    <modules>
+        <!-- Listed first: `service` depends on it. -->
+        <module>domain</module>
+        <module>service</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.version>3.34.6</quarkus.platform.version>
+        <qits.auth-core.version>2026.1105.105731</qits.auth-core.version>
+        <!-- CallerServerFilter/CallerClientFilter: jandex-indexed filters that record inbound
+             X-Qits-Caller as the qits.caller span attribute and stamp it on outgoing REST-client
+             calls. Also published by qits-integrations-quarkus. -->
+        <qits.http-core.version>2026.1103.132907</qits.http-core.version>
+        <!-- qits-telemetry-core (epic qits-428): the three OTLP/HTTP exporters as CDI beans whose
+             header supplier carries the `qits` oidc client's current bearer, so spans, logs and
+             metrics reach qits-observability at its edge host. Published by
+             qits-integrations-quarkus, like qits-http-core above. -->
+        <qits.telemetry-core.version>2026.1103.201640</qits.telemetry-core.version>
+        <!-- The user-story framework (test scope): the five @QuarkusIntegrationTest classes under
+             stt/stories/ (and stt/api/TranscriptionBootstrapIT beside them) are userflows, so a
+             `mvn verify` also regenerates service/target/userstories/ — the stories' documentation,
+             network diagrams included. Published out of libs/qits-userflows into the platform's own
+             Maven repository, which is what the `qits-maven` repository below is for; nothing here
+             resolves it from central.
+
+             NO qits-service-mock beside it, unlike every sibling service's rollout: this context
+             calls no HTTP upstream at all. What a deployment supplies it is disk state — a venv
+             holding the model — so the far side of every story is a stand-in PROCESS the catalogue
+             stages into target/, and there is no service to record.
+
+             2026.829 is the version that REMOVED Interactions.happened() — an edge is observed or
+             explicitly declared, never narrated — and that SHIPS the RestAssured tap as
+             NetworkTaps.restAssured(service), which is what let the hand-copied StoryNetworkFilter
+             beside the IT be deleted. Do not go back below it: nothing here will compile. -->
+        <qits.userflows.version>2026.1028.231715</qits.userflows.version>
+        <!-- The platform's shared ArchUnit rules (test scope), carrying DeskAdminParityRules —
+             epic qits-1621's check that every route admitting qits:admin-agent also admits
+             qits:desk-admin. This repo did not depend on qits-arch-rules before. -->
+        <qits.arch-rules.version>2026.1030.30851</qits.arch-rules.version>
+        <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+        <failsafe-plugin.version>3.5.4</failsafe-plugin.version>
+        <jandex-plugin.version>3.4.0</jandex-plugin.version>
+
+        <!-- Surefire's @{argLine} has no value unless something (jacoco/quarkus) sets it. -->
+        <argLine/>
+
+        <!-- Integration tests run against a PACKAGED artifact. `domain` is a library jar and keeps
+             this default; `service` — the only module that is an application — opts back IN
+             (skipITs=false there, the qits-githost shape), so a plain `mvn verify` boots the
+             packaged app for TranscriptionBootstrapIT. Deliberately, because that IT is also the
+             generator of the userstories documentation, and because it is the only IT there is: no
+             docker, no database, no network, and a /bin/sh child process, so there is no heavyweight
+             sibling for the flip to drag into somebody's build. -->
+        <skipITs>true</skipITs>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- The reactor's own modules, so children depend on them version-less. -->
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-auth-core</artifactId>
+                <version>${qits.auth-core.version}</version>
+            </dependency>
+            <dependency>
+                <!-- CallerServerFilter: having the jar on the deployable's classpath records
+                     inbound X-Qits-Caller as the qits.caller span attribute. Compile scope in
+                     `service` only; this repo builds no HttpClient of its own. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-http-core</artifactId>
+                <version>${qits.http-core.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The OTLP exporters that carry this service's own bearer (epic qits-428).
+                     Compile scope in `service` only. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-telemetry-core</artifactId>
+                <version>${qits.telemetry-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-userflows</artifactId>
+                <version>${qits.userflows.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site, like qits-userflows. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-arch-rules</artifactId>
+                <version>${qits.arch-rules.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-stt-domain</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <repositories>
+        <repository>
+            <id>qits-maven</id>
+            <url>${qits.maven.repository.url}</url>
+        </repository>
+    </repositories>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>${quarkus.platform.group-id}</groupId>
+                    <artifactId>quarkus-maven-plugin</artifactId>
+                    <version>${quarkus.platform.version}</version>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${compiler-plugin.version}</version>
+                    <configuration>
+                        <parameters>true</parameters>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${surefire-plugin.version}</version>
+                    <configuration>
+                        <systemPropertyVariables>
+                            <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                        </systemPropertyVariables>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <version>${failsafe-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>io.smallrye</groupId>
+                    <artifactId>jandex-maven-plugin</artifactId>
+                    <version>${jandex-plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>make-index</id>
+                            <goals>
+                                <goal>jandex</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

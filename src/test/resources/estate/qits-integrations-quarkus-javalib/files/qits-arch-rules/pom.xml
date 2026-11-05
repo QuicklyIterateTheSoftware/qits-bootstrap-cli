@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- The platform's shared rules: conventions a build can enforce, packaged so a service enables
+         them with one test-scope dependency and a short test class. ArchUnit rules over the
+         service's bytecode, and one rule over its configuration — both answer "is this service
+         built the way the platform is built", so they ship together.
+
+         EVERY TYPE THE RULES JUDGE IS NAMED AS A STRING, never as a dependency. The rules reason
+         about jakarta.persistence, qits-eventstream, qits-http-core, quarkus-junit5 and pact-jvm types, and depending on any
+         of them would (a) need the platform Maven registry, breaking the clone-alone build rule,
+         and (b) couple this module's version to somebody else's for no runtime gain — ArchUnit
+         reads bytecode, and bytecode carries names. quarkus-junit5, which TestProfileBudgetRules
+         judges, is the sharpest case: it is compile scope nowhere in the fleet, and putting it here
+         would push the Quarkus test framework onto the classpath of every consumer of these rules
+         and pin the fleet's Quarkus version from an arch-rules release. The price is that a rename
+         over there silently un-matches a rule here; the fixture mirror in this module's test
+         sources is where that would surface, and the rule javadoc names the contract. -->
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-integrations-quarkus</artifactId>
+        <version>2026.1105.105731</version>
+    </parent>
+
+    <artifactId>qits-arch-rules</artifactId>
+    <packaging>jar</packaging>
+    <name>qits-arch-rules</name>
+
+    <properties>
+        <archunit.version>1.4.1</archunit.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <!-- Compile scope on purpose: a consumer declares THIS module in test scope and gets
+                 the ArchUnit engine transitively, so "enable the rules" stays one dependency. -->
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <version>${archunit.version}</version>
+        </dependency>
+
+        <dependency>
+            <!-- PROVIDED: `DatasourceBaselineRules` reads the application's own MicroProfile config,
+                 and every Quarkus consumer already carries the API. Provided keeps it off the
+                 consumer's classpath (a test-scope dependency passes nothing on anyway) and keeps
+                 this module's version out of the fleet's. -->
+            <groupId>org.eclipse.microprofile.config</groupId>
+            <artifactId>microprofile-config-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <!-- PROVIDED: `ProviderStateCoverageRules` parses the provider's golden-masters/index.json,
+                 and every consumer is a Quarkus service with Jackson already on its test classpath.
+                 Provided keeps it off the consumer's classpath and keeps this module's Jackson out
+                 of the fleet's; the version is the Quarkus BOM's, like the services'. -->
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <!-- For the FIXTURES only: the self-test entities need real @Entity/@EntityListeners
+                 bytecode to run the rules against. The rules themselves never touch this API. -->
+            <groupId>jakarta.persistence</groupId>
+            <artifactId>jakarta.persistence-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- For DeskAdminParityRules' FIXTURES only: the self-test routes need real
+                 @GET/@POST/.../@RolesAllowed bytecode to run the rule against. The rule itself
+                 matches jakarta.ws.rs and jakarta.annotation.security by name, never by import,
+                 for the reasons the class javadoc gives. -->
+            <groupId>jakarta.ws.rs</groupId>
+            <artifactId>jakarta.ws.rs-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Same fixture-only reason: @RolesAllowed itself. -->
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Same fixture-only reason: WebSockets Next's @OnOpen/@OnTextMessage/@OnBinaryMessage,
+                 the rule's other kind of route. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-websockets-next</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The config implementation the tests build their fixtures with — Quarkus' own, so
+                 what the rule sees here is what it sees in a service. No Quarkus server: this is
+                 the config library alone. -->
+            <groupId>io.smallrye.config</groupId>
+            <artifactId>smallrye-config</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

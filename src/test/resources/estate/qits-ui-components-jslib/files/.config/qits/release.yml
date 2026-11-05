@@ -1,0 +1,4 @@
+archetype: npm-library
+artifacts:
+  - { type: npm, name: "@qits/ui-components", path: dist/qits-spa-ui-components, sbom: sbom.json }
+  - { type: docs, name: "@qits/ui-components" }

@@ -1,0 +1,272 @@
+# qits-workspaces as a GraalVM-native container IMAGE — the same shape as qits-artifacts' and
+# qits-workspace-daemon's docker/Dockerfile: a Mandrel builder stage compiles the binary, a minimal
+# runtime stage carries only it.
+#
+# This file is not how the binary is built; it is how the binary is SHIPPED. `.sdkmanrc` names a
+# GraalVM (25.0.2-graalce), so `sdk env && ./mvnw package -Dnative` produces
+# `service/target/qits-workspaces` with no container involved. What this adds is the image around it
+# — and a way for a machine with no GraalVM to get a binary at all, since the builder stage brings
+# its own native-image.
+#
+# Build from the repo root:
+#
+#     docker build -t qits/workspaces:latest -f docker/Dockerfile .
+#
+# --- this image does NOT run with an empty environment, and that is not a packaging bug ------------
+# `docker run --rm qits/workspaces:latest` dies before the HTTP listener, at Flyway, because both of
+# its datasources are the platform's generic resource contract and nothing else:
+# ${QITS_RESOURCE_DB_URL} for this context's store and ${QITS_RESOURCE_EVENTSTREAM_URL} for the
+# outbox, with no defaults behind them. An unset variable is an unresolvable expression, and the
+# process says which one is missing.
+#
+# That is the refuse-to-boot stance, and it is deliberate: a database this service opens is provided
+# by the deployment or the service does not run. qits-deployments creates the role and the database
+# for each resource named in .config/qits/deployments.yml and injects the triples into the container
+# it starts, so on the platform this is arranged before the process exists.
+#
+# IT USED TO FAIL HERE FOR A WORSE REASON, kept because the shape recurs. The store was a file H2
+# whose default url was `jdbc:h2:file:${user.home}/...`, and UID 1001 has no /etc/passwd entry in
+# ubi-minimal while a native image resolves user.home through getpwuid(2) rather than $HOME — so
+# `${user.home}` became `?`, setting HOME did not fix it, and the message was about a relative path
+# rather than about a missing setting. A default with no feature in it cannot lose one.
+#
+# One `${user.home}`-rooted path is left, and this image names it:
+#
+#   this service's    the git mirrors (one bare per repository, plus the worktrees a merge runs in)
+#   own tree          and the workspace metadata sidecars. Named here —
+#                     QITS_WORKSPACES_DATA_DIR=/data/workspaces — because it is a private cache on
+#                     the volume this image already owns, with no contract to agree with anybody
+#                     about. It is rebuildable: delete it and the next request re-clones.
+#
+# There used to be another, naming the shared volume of bare origins qits-artifacts serves, mounted
+# here so this service could write refs into them directly. That is what made a branch create, a
+# merge or a cleanup fire no post-receive and so produce no CI run. Every one of them is a push to
+# the git host over HTTP now, the sidecars this service used to keep on that volume moved to its own
+# tree, and the key is gone from the config with them — nothing here opens the shared volume, so
+# nothing here mounts it.
+#
+# So a deployment mounts a volume at /data (which this image owns, see the runtime stage) for that
+# tree, and supplies the two database triples plus the one address this service cannot invent:
+#
+#   docker run -v qits-workspaces-data:/data \
+#     -e QITS_RESOURCE_DB_URL=jdbc:postgresql://qits-oci-postgresql:5432/qits_workspaces \
+#     -e QITS_RESOURCE_DB_USERNAME=qits_workspaces -e QITS_RESOURCE_DB_PASSWORD=… \
+#     -e QITS_RESOURCE_EVENTSTREAM_URL=jdbc:postgresql://qits-oci-postgresql:5432/qits_workspaces_eventstream \
+#     -e QITS_RESOURCE_EVENTSTREAM_USERNAME=qits_workspaces_eventstream \
+#     -e QITS_RESOURCE_EVENTSTREAM_PASSWORD=… \
+#     -e QITS_PROJECTS_URL=http://qits-projects:8080 \
+#     qits/workspaces:latest
+#
+# `qits.projects.url` has no default and `wiring/HttpRepositoryLookup` REFUSES TO START without it: a
+# workspace is a branch of a repository and this context holds no foreign key into the repositories
+# tables, so with no registry to ask the service would come up 404ing every repository-scoped route —
+# a misconfiguration wearing the costume of an empty system. README.md, "Deploying it", has the rest
+# of the config surface.
+#
+# One consequence of the missing passwd entry that does NOT fail loudly, recorded so it is not
+# rediscovered: `WorkspaceContainerFactory.hostUid()` stats `${user.home}` to make a container's
+# /workspace files match the host user, and catches everything — with `?` for a home it silently
+# falls back to uid 1000. Harmless for a container-to-container deployment, wrong if the workspace
+# volumes are bind mounts from a differently-numbered host user. Set the paths above and it is still
+# wrong, because `user.home` is not one of them; fixing it needs a config key, not a Dockerfile line.
+#
+# --- READ THIS BEFORE DEPLOYING: git is part of this service's runtime -----------------------------
+# This service is the HOST side of a workspace (README.md, "The boundary"): its work is orchestrating
+# containers and git trees that live outside itself. So the runtime stage below is deliberately NOT
+# the usual "the binary and nothing else" — one external program is part of its *runtime*:
+#
+#   git     the gitmirror module forks real git against this service's own mirror of each repository
+#           and against the git host over HTTP — `clone --mirror`, `fetch --prune`, `ls-remote`,
+#           `worktree add/remove`, `merge`, `merge-tree --write-tree`, `rev-list`, `tag`, and `push`.
+#           That is the whole branch lifecycle, not an optional feature: absent, creating a workspace
+#           fails at its first `ls-remote`. Installed below from the image's own UBI repositories.
+#           Note what it now needs that it did not before: outbound HTTP to `qits.githost.url`. A
+#           git host this service cannot reach is no longer a one-endpoint problem.
+#
+# THERE IS NO DOCKER CLI HERE AND NO SOCKET TO MOUNT. Workspace containers are started by
+# qits-containers over HTTP — `QITS_CONTAINERS_URL` plus a machine token — so this service holds no
+# docker socket, ships no docker client, and git is the only process it spawns. A deployment that
+# still passes `-v /var/run/docker.sock:/var/run/docker.sock` is granting a privilege nothing reads.
+#
+# The platform's public domain; release recipes pass `--opt build-arg:QITS_DOMAIN`. Global (above
+# every FROM) so a FROM line can read it too — a stage-scoped ARG is invisible to the instruction
+# that starts the next stage.
+ARG QITS_DOMAIN=wohlben.eu
+
+# --- stage `build`: native-compile ----------------------------------------------------------------
+# The builder JDK MUST be 25: native-image cannot read bytecode newer than its own JDK, and this
+# project targets release 25.
+#
+# `mirror.qits.${QITS_DOMAIN}/quay/…` is qits-mirror's pull-through mirror of quay.io: the
+# first build fetches the image from upstream and caches it, every later build is served from local
+# disk. The tag is upstream's, unchanged — the mirror revalidates it, so `jdk-25` still moves when
+# quay moves it.
+FROM mirror.qits.${QITS_DOMAIN}/quay/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25 AS build
+USER root
+WORKDIR /src
+
+# Fetch the Maven distribution first, keyed only on the wrapper files, so a source-only change does
+# not re-download it.
+COPY mvnw .
+COPY .mvn/ .mvn/
+RUN ./mvnw --version
+
+# The whole reactor, not a module list. `-am` builds `service`'s dependencies from source —
+# `qits-workspaces-domain` and `qits-workspaces-gitmirror` are this reactor's own modules, which this
+# repo never publishes, so a builder container with an empty ~/.m2 has nowhere else to get them.
+# (`qits-workspaces-daemon-protocol` used to be on that list and is not a module any more: the wire
+# contract is the released `eu.wohlben.qits:qits-workspace-daemon-protocol`, resolved from the
+# platform registry like every other pinned coordinate, and its version is the workspace image this
+# service starts. The root pom says why.) Copying module by module would mean editing this file every
+# time one is added, and forgetting to would fail the build with an unresolved dependency rather than
+# anything that names the real cause. `.dockerignore` is what keeps this cheap — without it this line
+# drags in every target/ dir, and a stale one can shadow what this stage compiles.
+COPY . .
+
+# -Dnative flips quarkus.native.enabled (the `native` profile lives in service/pom.xml, since only
+# that module is an application). Cap native-image RAM so the build is deterministic on small
+# machines.
+#
+# `-pl service -am` names the APP module, not a list of modules: it is stable across modules being
+# added, because anything `service` needs arrives through `-am` and anything it does not need has no
+# business in the image. A module added tomorrow is still COPYed in and still parsed by Maven — it is
+# simply not compiled, which is the correct outcome for a module the deployable does not depend on.
+#
+# Tests are skipped because `./mvnw verify` on a clone is their gate (AGENTS.md) and re-running them
+# here proves the same thing more slowly. Note this repo's `native` profile deliberately does NOT
+# flip `skipITs` — its *IT.java are the docker-backed `extended` suite — so there is nothing at
+# `verify` that `package` misses here.
+#
+# There is no node in this stage and none is needed: the service serves no web client (qits-1245 —
+# the workspace pages are qits-landing-app's), so there is no Quinoa, no bundle and no npm.
+#
+# --- where the platform's own Maven artifacts come from -------------------------------------------
+# Both platform hosts are code plus one input, the public domain:
+#
+#   https://registry.qits.$QITS_DOMAIN/artifacts/maven/maven   hosted Maven (qits-artifacts)
+#   https://mirror.qits.$QITS_DOMAIN/mirror/maven/central      Maven Central cache (qits-mirror)
+#
+# The RUN below derives both and exports them for that RUN alone; `.qits-maven-settings.xml` reads
+# them as ${env.…}, mirroring the `qits-maven` repository id onto the first and Central onto the
+# second. The CI recipe passes QITS_DOMAIN; the default is the live platform's.
+ARG QITS_DOMAIN=wohlben.eu
+#
+# --- and how Maven authenticates, once that repository stops answering anonymously ----------------
+# The two secret mounts put the CI run's commissioned client into THIS `RUN`'s environment and
+# nowhere else — not a layer, not the image history. That is why they are not build args: this image
+# is pullable, and a build arg is recorded where anyone who pulls it can read it.
+# `.qits-maven-settings.xml` reads the two variables as the `qits-maven-network` server.
+# The `RUN` reads the two mounted files itself: docker 26's BuildKit has no `env=` mount option.
+#
+# FILE FORM, NOT `env=`, AND THAT IS A CHANGE. The `env=` mount has the frontend put the value
+# straight into the instruction's environment — convenient, and coupled to a dockerfile-frontend
+# version. Under the platform builder the frontend is the BUILDER's to choose rather than this
+# file's, and the bare file mount (`/run/secrets/<id>`, read into the one command's own
+# environment) is the shape every frontend version serves identically. The variables are set on the
+# `./mvnw` invocation alone rather than exported, so their scope is the same one command it was.
+#
+# Absent secrets leave both variables empty, so a hand build without them still starts and fails at
+# the first 401 with Maven naming the host.
+#
+# The cache mount keeps the downloaded Maven repository in the builder's own state volume across
+# builds (qits-1655: a cold build was spending ~6-8 of its ~12 minutes just downloading, holding the
+# target's single-operation builder while other CI leases queued behind it). `sharing=shared`, plus
+# the resolver's own named file locks below, make two concurrent builds on that shared cache safe. The
+# mount is not part of the image or its layer cache key's content — only `/root/.m2/repository`, not
+# the image.
+RUN --mount=type=secret,id=qits-client-id \
+    --mount=type=secret,id=qits-client-secret \
+    --mount=type=cache,id=qits-maven-repository,target=/root/.m2/repository,sharing=shared \
+    QITS_MAVEN_AUTH_USR="$(cat /run/secrets/qits-client-id 2>/dev/null || true)" \
+    QITS_MAVEN_AUTH_PSW="$(cat /run/secrets/qits-client-secret 2>/dev/null || true)" \
+    QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$QITS_DOMAIN/artifacts/maven/maven" \
+    QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$QITS_DOMAIN/mirror/maven/central" \
+    ./mvnw -B -ntp -s .qits-maven-settings.xml -pl service -am package -Dnative -DskipTests \
+      -Dqits.maven.repository.url="https://registry.qits.$QITS_DOMAIN/artifacts/maven/maven" \
+      -Dquarkus.native.native-image-xmx=4g \
+      -Daether.syncContext.named.factory=file-lock -Daether.syncContext.named.nameMapper=file-gav \
+      org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeBom \
+      -DoutputFormat=json -DoutputName=sbom -DschemaVersion=1.6 \
+      -Dcyclonedx.skipNotDeployed=false
+# cyclonedx.skipNotDeployed=false is LOAD-BEARING, measured on qits-artifacts' first SBOM release
+# (2026.902.45658): the service module skips maven-deploy — it ships as this image, not as a jar —
+# and the plugin SKIPS deploy-skipping modules by default, with a green build and one INFO line. The
+# sbom stage's COPY then fails on a file nothing wrote. The property spelling matters too: the bare
+# -DskipNotDeployed=false is silently ignored; only the cyclonedx.-prefixed one reaches the plugin.
+
+# --- sbom -----------------------------------------------------------------------------------------
+# The service module's CycloneDX document, exported so the release step can PUT it to the artifacts
+# store. A stage rather than a layer of the runtime image, and BEFORE the runtime stage on purpose:
+# the last stage is what a plain `docker build` builds, and that must stay the image. The release
+# step reaches this one with `--opt target=sbom --output type=local` using the SAME args and secrets
+# as the image build, so every layer above is a cache hit in the same builder and the export costs
+# seconds. `makeBom` rides
+# on the mvnw invocation above rather than a second one, for the same cache reason — one RUN, one
+# layer, one truth.
+FROM scratch AS sbom
+COPY --from=build /src/service/target/sbom.json /sbom.json
+
+# --- runtime --------------------------------------------------------------------------------------
+# `mirror.qits.${QITS_DOMAIN}/redhat/…` is the same mirror, pointed at registry.access.redhat.com.
+FROM mirror.qits.${QITS_DOMAIN}/redhat/ubi9/ubi-minimal:9.6
+WORKDIR /work
+
+# git-core rather than git: this service runs plumbing, branch and transport commands against its own
+# mirrors and the git host, and nothing that needs perl, the extra remote helpers or the docs — see
+# the header for why the package is not optional. It is the only program installed here: a docker CLI
+# used to come from Docker's own repository beside it, and went with the socket.
+RUN microdnf -y --setopt=install_weak_deps=0 --nodocs install git-core \
+ && microdnf -y clean all
+
+# `quarkus.package.output-name` names the binary `qits-workspaces` (no -runner suffix), so the
+# process is identifiable in `ps`/`docker top` — which matters more here than elsewhere, since this
+# host process sits beside a container per workspace and every one of those is also a qits binary.
+# That name is spelled a third time in service/pom.xml as failsafe's `native.image.path`; all three
+# move together.
+COPY --from=build --chown=1001:root /src/service/target/qits-workspaces /work/qits-workspaces
+RUN chmod +x /work/qits-workspaces
+
+# The mount point for the data paths in the header, created here so it is OWNED. Docker seeds a
+# fresh named volume from whatever the image has at the mount path, ownership included; with no such
+# directory it makes one root-owned 0755 and the boot dies on an AccessDeniedException instead of the
+# config error, which reads like a bug in this image and is not one. Group-writable and group-root
+# because a ubi image is meant to survive being assigned an arbitrary UID with GID 0. (A bind mount
+# still takes its ownership from the host — nothing in an image can fix that.)
+#
+# Creating the mount point is not the same as defaulting a data directory into existence: nothing
+# writes here until a deployment has supplied the database triples, and with no volume mounted the
+# service still refuses to start.
+RUN mkdir -p /data && chown -R 1001:root /data && chmod -R 775 /data
+
+# This service's OWN tree, on the volume mounted at /data: the per-repository git mirrors, the
+# worktrees a merge is built in, and the workspace metadata sidecars. Private and rebuildable, and
+# deliberately NOT the bare origins qits-artifacts serves — that separation is what makes
+# receive-pack the sole writer of every ref in a served repository. Not in the RUN mkdir above: a
+# named volume mounted at /data masks whatever the image put there, so the code creates it on first
+# use.
+ENV QITS_WORKSPACES_DATA_DIR=/data/workspaces
+
+# The event outbox's database WAS named here, and the line is gone rather than moved.
+#
+# It had to be named while the outbox was a file H2: the qits-eventstream jar's own default rooted
+# that file at `${user.home}`, which in this image resolves to `?` (no passwd entry for uid 1001 —
+# the header argues that at length), so an unnamed outbox was a boot failure on the next redeploy.
+# Naming it here was the fix, and it was an image working around a library's default.
+#
+# The outbox is a PostgreSQL database of its own now, and the library reads
+# QITS_RESOURCE_EVENTSTREAM_URL / _USERNAME / _PASSWORD — injected by qits-deployments from the
+# `resources: … postgresql:eventstream:qits_workspaces_eventstream` line in .config/qits/deployments.yml.
+# There is no file, no `${user.home}`, and nothing for this image to declare. An ENV here would be
+# worse than redundant: it would override the injected credential with a dead one.
+#
+# The same is now true of this service's own store, which is why no datasource url is set anywhere in
+# this file. Both refuse to boot on an unset variable, naming what is missing.
+
+EXPOSE 8080
+USER 1001
+
+# Quarkus binds 127.0.0.1 outside dev mode, which inside a container means nothing can reach it —
+# not the gateway, not a peer on qits-net. Note also that the daemon control socket at
+# /workspaces/daemon/ must be allow-listed unauthenticated at whatever fronts this: its callers are
+# daemons inside workspace containers, holding no user token.
+ENTRYPOINT ["/work/qits-workspaces", "-Dquarkus.http.host=0.0.0.0"]

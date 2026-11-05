@@ -1,0 +1,51 @@
+# THE WHOLE RELEASE CYCLE OF THIS REPOSITORY, and it is one line because none of the rest was ever
+# this repository's to state.
+#
+# `.config/qits/ci-event-release-request.yml` used to spell all of it here: the trigger, the fold's
+# checkout, the lockfile origin rewrite, `npm ci` against the two registries, lint, test, build.
+# Thirteen of the fifteen SPA files on this platform were byte-identical to it modulo one line,
+# which is the measurement that says it is platform process rather than configuration. qits-ci now
+# compiles its own `.config/qits/release-archetypes/spa-frontend.yml` — shipped in qits-ci-service —
+# into the QA pipeline at evaluation time, so a change to the release cycle is ONE commit in
+# qits-ci-service rather than a sweep across fifteen repositories — and what is left here is the one
+# fact only this repository knows: which recipe it runs.
+#
+# NO `release:` SLOT AND NO `artifacts:`, which is the point rather than an omission. This
+# repository publishes nothing: qits-observability carries it as a Quinoa submodule at
+# `service/src/main/webui` and builds the bundle into its own image, so a release here is a TAG and
+# what acts on the tag is the consuming service's own maintenance pipeline. A phase nobody declares
+# steps for gets no trigger document and therefore no run — exactly what having no
+# `ci-event-release.yml` meant before.
+#
+# THE LINT AND TEST CHECKS ARE ON, and nothing here says so. The recipe calls
+# `npm run --if-present lint` and `npm run --if-present test` so that one recipe covers fifteen
+# repositories that do not all carry the same scripts; this one carries both (`ng lint`, `ng test`
+# in package.json, with an eslint.config.js behind the first), so both run exactly as the deleted
+# file's hard `npm run lint` / `npm run test` did. ADDING or removing a script is what turns a check
+# on or off from here — never a pipeline edit.
+#
+# THE PACTS (qits-1284) are the REST calls @qits/ui-components makes on this SPA's behalf, declared
+# as contracts keyed by the provider's repository name. They sit flat in `pacts/` as
+# `qits-observability-frontend_qits-ui-components-jslib_<provider>.json`, written by
+# `src/app/ui-components.pact.spec.ts` (regenerate with `QITS_GOLDEN_UPDATE=true npm test`); qits-ci
+# packs `pacts/*_<provider>.json` into the maven jar
+# eu.wohlben.qits:qits-observability-frontend-pacts-<provider>, which that provider verifies in its
+# own gate. A contract package is `if-changed` by definition: a release whose pact with a provider
+# did not change publishes nothing for it.
+#
+# `contracts.application:` IS THE APPLICATION THIS SPA BELONGS TO, `qits-observability` — the same
+# application named above, repeated here because the pacts' coordinates are spelled with the
+# REPOSITORY name, never the application's; `application:` only names it in the packages'
+# description.
+#
+# NO `release:` SLOT. `spa-frontend` has none, and since qits-1149 it needs none: qits-ci
+# synthesises a release step for every composition without one, and its postlude packs and
+# publishes the committed pacts. The step builds nothing, because there is nothing to build.
+archetype: spa-frontend
+
+contracts:
+  application: qits-observability
+  pacts:
+    qits-edge-service: { packages: [maven] }
+    qits-projects-service: { packages: [maven] }
+    qits-ci-service: { packages: [maven] }

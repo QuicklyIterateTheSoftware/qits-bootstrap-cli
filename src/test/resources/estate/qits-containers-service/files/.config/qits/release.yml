@@ -1,0 +1,199 @@
+archetype: java-service
+artifacts:
+  - { type: maven, name: "eu.wohlben.qits:qits-containers-client", path: client, sbom: client/target/sbom.json }
+  - { type: maven, name: "eu.wohlben.qits:qits-containers-client-contracts", path: client-contracts, sbom: client-contracts/target/sbom.json }
+  - { type: docker, name: qits/qits-containers, sbom: .sbom/sbom.json }
+userflows: qits-containers
+# The provider golden masters (qits-1149): the platform packages `golden-masters/` as
+# `eu.wohlben.qits:qits-containers-golden-masters` and `@qits/containers-golden-masters`, each
+# published only when its content changed. `GoldenMasterRecordingTest` records them. Its one
+# consumer pact, pacts/qits-containers-service_qits-idp-service.json (quarkus-oidc's discovery and
+# JWKS reads), is published for qits-idp-service to verify; `IdpPactTest` writes it.
+contracts:
+  application: qits-containers
+  golden-masters: { from: golden-masters/, packages: [maven, npm] }
+  pacts:
+    qits-idp-service: { packages: [maven] }
+
+# JARS AND AN IMAGE. maven-library's header names this repository as the case that is neither
+# archetype: the image half is java-service's and the jar half is maven-library's, and no recipe
+# does both. The QA half is three steps rather than two — a unit gate on `maven-base` as `build`
+# BEFORE the image builds, because a broken jar must not cost a native compile.
+#
+# TWO JARS SINCE qits-1163: the client, and client-contracts — the consumer pact kit a consumer of
+# the client writes its pact with (rows, drives, the usage scan). Both are reactor modules at the
+# root version, so the release's pom stamping covers both; both are built and makeBom'd by the last
+# release step below, which is where the postlude publishes each declared artifact from.
+#
+# THE CLIENT IS THE JAR CONSUMERS CALL WITH. `core` is not published (qits-795): it is an internal
+# module carrying the registry, the entities and the Flyway lineage, and nothing outside this
+# repository consumes it
+# — qits-workspaces and qits-projects take only `qits-containers-client`. Its spec types and docker
+# layer moved to qits-containers-driver (qits-794), which is what a runner embeds instead. The image
+# still builds `core` from source (`-pl service -am` in docker/Dockerfile); only publishing stopped.
+# Its released versions age out through the SBOM-closure collection, never by hand.
+#
+# THE MAVEN STEP IS THE LAST RELEASE STEP ON PURPOSE: qits-ci submits each declared `sbom:` from
+# whichever release step holds the file, so the jar step runs after the image step and makeBom
+# writes `client/target/sbom.json` and `client-contracts/target/sbom.json` there for the postlude
+# to submit. The image's SBOM is declared and submitted by the postlude from the image step, as
+# before.
+release-request:
+  - image: qits/build-images/maven-base:latest
+    user: build
+    timeout-seconds: 1800
+    script: |
+      # Both addresses are code under the platform's public domain (qits-731); `wohlben.eu` covers a
+      # qits-ci too old to inject $QITS_DOMAIN.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      export QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$qits_domain/artifacts/maven/maven"
+      export QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central"
+      ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
+        -Dqits.maven.repository.url="$QITS_MAVEN_REPOSITORY_URL"
+
+  - image: qits/build-images/ci-base:latest
+    build: true
+    timeout-seconds: 3600
+    script: |
+      # THE ADDRESSES ARE CODE (qits-731): the platform's public domain is the one input, and every
+      # host and path below is a constant under it. `wohlben.eu` covers a qits-ci too old to inject
+      # $QITS_DOMAIN. `QITS_DOMAIN` rides beside the two maven urls, which stay for the Dockerfile
+      # until it declares that ARG alone.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --opt build-arg:QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$qits_domain/artifacts/maven/maven" \
+        --opt build-arg:QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret
+
+  - image: qits/build-images/maven-base:latest
+    user: build
+    timeout-seconds: 2400
+    qits-cli: true
+    script: |
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      export QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$qits_domain/artifacts/maven/maven"
+      export QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central"
+      # EVERY DEPLOYED CONSUMER'S PACT, NOT ONLY THE POM'S (qits-1765). Mirrors the packaged
+      # `java-service` release archetype's release-request verify step
+      # (ci/src/main/resources/release-archetypes/java-service.yml in qits-ci-service) — see that
+      # recipe for the full rationale. A provider also asks qits-maintenance which consumer
+      # versions are deployed and verifies each of those pacts, not only the pinned one.
+      repo=${QITS_CI_REPO_NAME:?this step was told no QITS_CI_REPO_NAME}
+      deployed_pacts_dir=""
+      declared_consumers=""
+      poms=$(find . -name pom.xml -not -path '*/target/*' -not -path '*/node_modules/*')
+      for pom in $poms; do
+        found=$(sed -n "s|.*<artifactId>\([A-Za-z0-9._-]*\)-pacts-$repo</artifactId>.*|\1|p" "$pom") || {
+          echo "deployed pacts: could not read $pom to tell whether $repo is a pact provider" >&2
+          exit 1
+        }
+        declared_consumers="$declared_consumers $found"
+      done
+      declared_consumers=" $(printf '%s' "$declared_consumers" | tr '\n' ' ') "
+      case "$declared_consumers" in
+        *[!\ ]*) deployed_pacts_dir="$PWD/target/deployed-pacts" ;;
+      esac
+      if [ -n "$deployed_pacts_dir" ]; then
+        rm -rf "$deployed_pacts_dir"
+        mkdir -p "$deployed_pacts_dir"
+        echo "deployed pacts: $repo is a pact provider; fetching every deployed consumer's pact"
+        qits artifacts fetch deployed-pacts --provider "$repo" --out "$deployed_pacts_dir" || {
+          echo "deployed pacts: could not fetch the deployed consumers' pacts for $repo, so this" \
+            "gate cannot verify them" >&2
+          exit 1
+        }
+        for consumer_dir in "$deployed_pacts_dir"/*/; do
+          [ -d "$consumer_dir" ] || continue
+          consumer=$(basename "$consumer_dir")
+          case "$declared_consumers" in
+            *" $consumer "*) ;;
+            *)
+              rm -rf "$consumer_dir"
+              echo "deployed pacts: $consumer is not a consumer this repository pins; not verified" ;;
+          esac
+        done
+      fi
+
+      env ${deployed_pacts_dir:+"QITS_DEPLOYED_PACTS_DIR=$deployed_pacts_dir"} \
+        ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
+        -Dqits.maven.repository.url="$QITS_MAVEN_REPOSITORY_URL" \
+        -DskipITs=false \
+        "-Dit.test=TokenValidationBootstrapIT,HostBootstrapIT,WorkloadLifecycleIT,OwnershipBoundaryIT,WorkloadReapIT,AccessRefusalIT"
+      stories_dir=$(find . -maxdepth 3 -type d -path '*/target/userstories' | head -1)
+      : "${stories_dir:?the verify produced no */target/userstories}"
+      tar -czf /tmp/userstories.tgz -C "$stories_dir" .
+      publish_token=""
+      if [ -n "${QITS_PUBLISH_TOKEN_COMMAND:-}" ] \
+        && command -v "$QITS_PUBLISH_TOKEN_COMMAND" >/dev/null 2>&1; then
+        publish_token=$("$QITS_PUBLISH_TOKEN_COMMAND" 2>/dev/null) || publish_token=""
+      fi
+      set --
+      if [ -n "$publish_token" ]; then
+        set -- -H "Authorization: Bearer $publish_token"
+      fi
+
+      status=$(curl -sS -o /tmp/docs-publish.out -w '%{http_code}' \
+        -X PUT --data-binary @/tmp/userstories.tgz "$@" \
+        -H "X-Artifacts-Meta-git.branch.name: $QITS_CI_BRANCH" \
+        -H "X-Artifacts-Meta-git.commit.hash: $QITS_CI_SHA" \
+        -H "X-Artifacts-Meta-git.repository.name: qits-containers" \
+        "https://registry.qits.$qits_domain/artifacts/docs/docs/@userflows/qits-containers/-/$QITS_CI_SHA")
+      case "$status" in
+        201) echo "published userflows for qits-containers@$QITS_CI_SHA ($QITS_CI_BRANCH)" ;;
+        409) echo "userflows for qits-containers@$QITS_CI_SHA are already published — skipping" ;;
+        *)   echo "docs publish failed: HTTP $status"; cat /tmp/docs-publish.out; exit 1 ;;
+      esac
+
+release:
+  - image: qits/build-images/ci-base:latest
+    build: true
+    timeout-seconds: 3600
+    script: |
+      declared=$(sed -n \
+        's/^[[:space:]]*-[[:space:]]*{[[:space:]]*type:[[:space:]]*docker[[:space:]]*,[[:space:]]*name:[[:space:]]*\([^,}[:space:]]*\).*/\1/p' \
+        .config/qits/release.yml)
+      image=${declared#*/}
+      # THE ADDRESSES ARE CODE (qits-731): the platform's public domain is the one input, and every
+      # host and path below is a constant under it. `wohlben.eu` covers a qits-ci too old to inject
+      # $QITS_DOMAIN.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      ref="registry.qits.$qits_domain/$QITS_IMAGE_REPOSITORY/$image:$QITS_VERSION"
+      echo "releasing $ref"
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --opt build-arg:QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$qits_domain/artifacts/maven/maven" \
+        --opt build-arg:QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret \
+        --output "type=image,name=$ref,push=true"
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt target=sbom \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --opt build-arg:QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$qits_domain/artifacts/maven/maven" \
+        --opt build-arg:QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret \
+        --output type=local,dest=.sbom
+
+  - image: qits/build-images/maven-base:latest
+    timeout-seconds: 1800
+    script: |
+      # NO LONGER A DEPLOY: the CLI publishes the client coordinate from the postlude, off the
+      # jar this step leaves in target/. This step only has to build it, and it moves after
+      # the image step so it is the LAST release step, which is where the postlude publishes from.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      export QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$qits_domain/artifacts/maven/maven"
+      export QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central"
+      # ONE invocation since client-contracts (qits-1163): it depends on the client at this
+      # release's version, which no registry holds yet, so makeBom has to resolve it from the
+      # reactor that just packaged it — a second invocation would look for it remotely.
+      ./mvnw -B -ntp -s .qits-maven-settings.xml -pl client,client-contracts -am -DskipTests \
+        package org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeBom \
+        -DoutputFormat=json -DoutputName=sbom -DschemaVersion=1.6 \
+        -Dqits.maven.repository.url="$QITS_MAVEN_REPOSITORY_URL"
+

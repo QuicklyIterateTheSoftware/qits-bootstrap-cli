@@ -1,0 +1,116 @@
+# How qits-platform-deployments deploys this repo. It reads this file from the git host at
+# the built sha, so the answer is carried along with the commit.
+#
+# CARRYING THE FILE AT ALL is the other thing it says. The release flow reads it to decide whether
+# this repository deploys — a repo without one is finalized on `main` the moment it releases, and a
+# library or an SPA carries none. What a deploy pulls is the VERSION COORDINATE the release
+# published. There is no promotion and no branch to promote onto: the entry branch
+# (`qits.workspaces.release.entry-branch`) and the `deploy_branches` that used to name it here, in
+# thirteen copies of one platform-wide answer, went with the release door.
+#
+# THE NAME THIS DEPLOYS AS, spelled because the repository is renamed and the application is not.
+# Every derivation the deployer makes hangs off this name — the wire alias peers dial, the container
+# it manages, the extras family, the database — so letting it follow the repository would
+# decommission the running service and start a stranger beside it.
+application: qits-edge
+
+# WHAT THIS APPLICATION USED TO BE CALLED. See qits-376: this transfers the database claim and the
+# credential with it, so the predecessor keeps serving on its open pools while the successor comes up.
+renamed_from: qits-platform-edge
+
+# THE EDGE IS THE ONE RENAME WITH A HOST-PORT HANDOVER, and the order matters more than it looks.
+#
+# This service publishes 8080 and 443 in ingress mode, and two swarm services cannot hold one ingress
+# port. So the successor's task cannot be SCHEDULED while the predecessor runs — but its service can
+# be CREATED, and that distinction is the whole plan.
+#
+# WHY THE PORTS MUST BE ON THE FIRST DEPLOY. A swarm service keeps its published ports across an
+# update: `buildUpdateArgv` changes the image, the labels, the environment and the update policy and
+# nothing else, so "another port" is a change of SHAPE, and a change of shape is a `service rm` and a
+# create rather than a deployment. A successor created without its ports could therefore never gain
+# them through the ordinary flow — only by removing the service by hand. The create path DOES apply
+# them, and extras are read at deploy time, so they have to be in the store before this deploys.
+#
+# WHAT THEREFORE HAPPENS, deliberately: this deploy creates dev-qits-edge with both ports, swarm
+# accepts the spec, and the task sits Pending because the predecessor holds them. The deployment row
+# goes FAILED on convergence — which is the expected reading, not a fault. The SERVICE survives, with
+# the right shape. Scaling the predecessor to zero then lets swarm place the task it is already
+# trying to place, and the door comes back on the new service within seconds. A rerun of the deploy
+# phase afterwards records the ACTIVE row.
+#
+# AND THE PREDECESSOR CANNOT GO FIRST. It fronts `registry.qits.<domain>`, which is what the docker
+# daemon pulls every image through, and the deployer runs an explicit `docker pull` whose failure is
+# a FAILED deployment with no local-image fallback. Stop the edge before the image is on the host and
+# the successor's own pull fails. Creating the service first is what puts the image there.
+#
+# ACME IS OFF ON THE SUCCESSOR for this deploy, and it can be turned on by an ordinary redeploy
+# afterwards because environment IS something an update carries. Both services mount the one
+# qits-edge-letsencrypt volume and ACME here is mode=production against a real domain with a DNS
+# token: two reconcilers would order against Let's Encrypt production at once, where the weekly
+# duplicate-certificate limit is five and a shared account directory written by two processes is not
+# something a redeploy repairs. Off, the successor still serves TLS — it reads the certificate the
+# predecessor renews.
+
+# The edge is now a durable projection consumer. `edge` holds its active endpoint snapshots;
+# `eventstream` is qits-eventstream's claim ledger and catch-up watermark. They cannot share a
+# database or Flyway history: both start at V1 and both must survive an edge replacement. The names
+# become QITS_RESOURCE_EDGE_* and QITS_RESOURCE_EVENTSTREAM_* respectively, which the two shipped
+# datasource blocks read. Explicit database names keep this platform-wide process from colliding
+# with the per-environment edge test/projection stores or a future edge variant.
+#
+# idp:client ASKS QITS-DEPLOYMENTS TO PROVISION THIS APPLICATION'S OWN QITS-IDP SERVICE CLIENT — id
+# `dev-qits-edge` (derived from env + application), roles `qits:system`, fixed in qits-idp code. The
+# deployer stores the secret the way it stores a database password, and injects
+# QITS_RESOURCE_IDP_URL, QITS_RESOURCE_IDP_CLIENT_ID and QITS_RESOURCE_IDP_CLIENT_SECRET. The edge
+# reads the client pair only — there is no fallback any more (qits-540). It does NOT read the URL:
+# that is idp's public name, served by this very process, so the edge dials idp on its internal
+# alias instead (qits.edge.idp.dial-url, qits-1403).
+#
+# Ticket qits-162, epic qits-540 contract C3.
+resources: postgresql:edge:qits_platform_edge, postgresql:eventstream:qits_platform_edge_eventstream, idp:client
+
+# The default would be /platform-edge/q/health/ready, derived from the name with the qits- prefix
+# dropped. The edge owns the root path space and has no segment, so that path would be proxied to an
+# environment gateway and 404 — the health gate would fail a perfectly healthy edge.
+health_path: /q/health/ready
+
+# INGRESS MODE, which is what retires the stop-first landmine here. A HOST-mode published port is
+# bound on the node by the task itself, so two tasks cannot hold it across a rolling update and a
+# one-node swarm deadlocks in Pending — that is why this said `update_order: stop-first`, measured
+# live on qits-platform-mirror's 2026.813.163303 deploy. In INGRESS mode the port is held by the
+# swarm routing mesh rather than by the container, so the successor starts while the predecessor
+# still serves and start-first (the default, and lossless rollback) works again.
+#
+# It is the enabler for the rest of the unify-ingress campaign, not a tidy-up: with the registry
+# behind this edge, an edge redeploy has to pull its own new image THROUGH the still-running old
+# edge. Under stop-first there is no old edge at that moment, which is the circularity that made
+# "registry behind edge" look impossible.
+#
+# What ingress does NOT change is exposure: swarm's publish syntax has no host-IP field in either
+# mode, so this still binds 0.0.0.0. Scoping is a host firewall's job, not this file's.
+publish_mode: ingress
+
+# TEN MINUTES BETWEEN SIGTERM AND SIGKILL, where the deployer's default is thirty seconds (qits-1170).
+# The old task has to be allowed to finish what it is carrying: a CI download of a 201 MB jar or a
+# docker layer through this edge used to be cut by the redeploy that replaced it. Swarm takes the
+# task out of the ingress balancer at SIGTERM, so it receives no new connections while it drains —
+# the grace only lets the transfers already in flight complete. It does not hold the edge up for ten
+# minutes: on SIGTERM the edge closes its SSE and WebSocket streams at once (their clients reconnect
+# to the new task) and exits as soon as the ordinary transfers end. Its own drain bound,
+# `quarkus.shutdown.timeout` in application.properties, is 9m30s — just under this, so the process
+# always exits on its own before swarm would kill it. Change the two together.
+stop_grace_period: 10m
+
+# THE CERTIFICATE VOLUME, declared here rather than in deployment config (qits-1391): the ACME
+# account, every issued generation and the `current` link the TLS PEM paths point into. A private
+# volume is named `<application>-<name>`, so under `application: qits-edge` this is exactly
+# `qits-edge-letsencrypt` — the volume the bootstrap seeded and the live edge already mounts here.
+# A different name would be an empty volume, and an edge on an empty one has no certificate to serve
+# and orders a new one against Let's Encrypt's weekly limit. The deployer drops the config mount of
+# the same target, and a live service already mounting it is updated in place, not recreated.
+# The host ports are declared below (qits-765); `${QITS_PORT}` is the install's host HTTP port, which
+# the deployer holds (default 8080). NO extra wire aliases any more (qits-1433): the edge answers no
+# machine name — `registry.<env>.localhost`, `githost.<env>.internal` and the rest are a 404 like
+# any name outside the domain — and every client dials `<app>.qits.<domain>`.
+volumes: private:letsencrypt:/work/.letsencrypt
+publishes: ${QITS_PORT}:8080, 443:8443

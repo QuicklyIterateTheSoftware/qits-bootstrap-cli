@@ -1,0 +1,442 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Standalone parent for the qits-idp repo: the platform's own identity provider, for MACHINES
+         and for PEOPLE. The machine half is an RS256 signing key that survives restarts, a JWKS, an
+         OIDC discovery document, a `client_credentials` token endpoint and the commission API. The
+         user half is accounts: a one-time register token, WebAuthn passkeys with an optional
+         password, and opaque sessions the edge introspects. There is no OAuth dance for the
+         first-party UI — the edge is the single ingress and terminates the browser session here.
+
+         The qits-cd/qits-ci case exactly: DELIBERATELY ITS OWN GAV, no <parent>, versions that must
+         stay in step with the platform (Quarkus, JDK release) duplicated on purpose — a clone of
+         THIS repo alone must build, with no monorepo and no parent to inherit from. The directories
+         are `idp/` and `service/`; the coordinates are namespaced (`eu.wohlben.qits:qits-idp-*`) so
+         generic module names cannot collide in a shared ~/.m2.
+
+         THE CLIENT EXISTS NOW, so Quinoa is here: qits-platform-spa-idp is a submodule at
+         service/src/main/webui and Quinoa builds it during `package` and serves it at /idp/. That
+         makes `./mvnw verify` need BOTH a node on PATH and an initialised submodule — `verify` runs
+         `package` on its way to failsafe, and an empty webui/ stops it at "No package.json found in
+         Web UI directory". `./mvnw test` still needs neither, because Quinoa is off in test mode.
+
+         WHAT THE SIBLINGS HAVE AND THIS STILL DOES NOT: no Lombok, no MapStruct. There is no DTO
+         layer worth a mapper — the whole output is two JSON documents, a JWT and a small commission
+         API. Each comes back the day something here needs it, not before. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-idp</artifactId>
+    <version>2026.1105.133136</version>
+    <packaging>pom</packaging>
+    <name>qits-idp</name>
+
+    <modules>
+        <!-- Listed first: `service` depends on it. -->
+        <module>idp</module>
+        <module>service</module>
+    </modules>
+
+    <properties>
+        <!-- THE PLATFORM'S OWN MAVEN REPOSITORY, and this repo's first two artifacts from it:
+             qits-db-core (PatientPgDriver, which the idp datasource opens every connection through)
+             and qits-arch-rules (the test that refuses to let the datasource baseline go missing).
+             Both are published by qits-integrations-quarkus. The url is a property so the image
+             build can point it at the address the builder container can actually reach — see
+             docker/Dockerfile and .qits-maven-settings.xml. -->
+        <qits.db-core.version>2026.1002.70617</qits.db-core.version>
+        <qits.arch-rules.version>2026.1030.30851</qits.arch-rules.version>
+        <!-- CallerServerFilter/CallerClientFilter: jandex-indexed filters that record inbound
+             X-Qits-Caller as the qits.caller span attribute and stamp it on outgoing REST-client
+             calls. Also published by qits-integrations-quarkus. -->
+        <qits.http-core.version>2026.1103.132907</qits.http-core.version>
+        <!-- qits-telemetry-core (epic qits-428): the three OTLP/HTTP exporters as CDI beans whose
+             header supplier carries the `qits` oidc client's current bearer, so spans, logs and
+             metrics reach qits-observability at its edge host. Published by
+             qits-integrations-quarkus, like qits-http-core above. -->
+        <qits.telemetry-core.version>2026.1103.201640</qits.telemetry-core.version>
+        <!-- The user-story framework (test scope): this module's story catalogue —
+             api/TokenIssuanceBootstrapIT plus the classes under api/../stories/ — is written as
+             @UserStory methods, so a run that boots the packaged artifact also regenerates
+             service/target/userstories/: the stories' documentation, network diagram included.
+             Released out of libs/qits-userflows into the platform's own Maven repository, which is
+             the same place the two jars above come from, so nothing new had to be arranged to
+             resolve it.
+
+             NO qits-service-mock BESIDE IT, unlike every sibling's copy of this block. A mock is
+             what a service under test stands where its upstream is, and this service HAS none: it
+             is the issuer, it validates nothing against an OIDC tenant, and the only host it dials
+             is the postgres its own datasource names. So the catalogue registers no
+             NetworkCapture.source at all — the shipped RestAssured tap is the whole diagram, every
+             arrow points IN, and the one dependency this process does have arrives as a DECLARED
+             jdbc edge in the two commissioning stories. -->
+        <qits.userflows.version>2026.1028.231715</qits.userflows.version>
+        <!-- THE CONSUMER PACTS this provider verifies (epic qits-546, ticket qits-1149): one jar
+             per consumer, each carrying `pacts/<consumer>_qits-idp-service.json`, and
+             ConsumerPactVerificationTest loads every such resource off the test classpath. Test
+             scope at the declaration site; a pin in <properties> like every other qits jar, so
+             qits-maintenance bumps it when the consumer releases a changed pact (its PomParser
+             reads pins regardless of scope).
+
+             qits-system-runner-daemon (qits-1163) pins a THREE-part pact name,
+             `pacts/qits-system-runner-daemon_qits-runner-javalib_qits-idp-service.json`: the daemon
+             mints its commissioned-client token through qits-runner-toolkit, a shared library,
+             rather than hand-rolling the request, so its name sits in the middle segment.
+             ClasspathPactLoader matches by the `_qits-idp-service.json` suffix alone, so the extra
+             segment loads exactly like qits-ci-service's two-part one. -->
+        <qits.artifacts-service-pacts-qits-idp-service.version>2026.1103.235223</qits.artifacts-service-pacts-qits-idp-service.version>
+        <qits.bootstrap-cli-pacts-qits-idp-service.version>2026.1019.121537</qits.bootstrap-cli-pacts-qits-idp-service.version>
+        <qits.ci-service-pacts-qits-idp-service.version>2026.1102.40410</qits.ci-service-pacts-qits-idp-service.version>
+        <qits.containers-service-pacts-qits-idp-service.version>2026.1103.143113</qits.containers-service-pacts-qits-idp-service.version>
+        <qits.deployments-service-pacts-qits-idp-service.version>2026.1103.124004</qits.deployments-service-pacts-qits-idp-service.version>
+        <qits.edge-service-pacts-qits-idp-service.version>2026.1103.181625</qits.edge-service-pacts-qits-idp-service.version>
+        <qits.events-service-pacts-qits-idp-service.version>2026.1103.222809</qits.events-service-pacts-qits-idp-service.version>
+        <qits.githost-service-pacts-qits-idp-service.version>2026.1103.125031</qits.githost-service-pacts-qits-idp-service.version>
+        <qits.maintenance-service-pacts-qits-idp-service.version>2026.1102.15751</qits.maintenance-service-pacts-qits-idp-service.version>
+        <qits.mirror-service-pacts-qits-idp-service.version>2026.1103.231918</qits.mirror-service-pacts-qits-idp-service.version>
+        <qits.observability-service-pacts-qits-idp-service.version>2026.1010.143256</qits.observability-service-pacts-qits-idp-service.version>
+        <qits.orchestrator-service-pacts-qits-idp-service.version>2026.1102.54443</qits.orchestrator-service-pacts-qits-idp-service.version>
+        <qits.platform-access-monorepo-pacts-qits-idp-service.version>2026.1103.101116</qits.platform-access-monorepo-pacts-qits-idp-service.version>
+        <qits.projects-service-pacts-qits-idp-service.version>2026.1102.92522</qits.projects-service-pacts-qits-idp-service.version>
+        <qits.system-runner-daemon-pacts-qits-idp-service.version>2026.1105.111737</qits.system-runner-daemon-pacts-qits-idp-service.version>
+        <qits.system-service-pacts-qits-idp-service.version>2026.1103.220115</qits.system-service-pacts-qits-idp-service.version>
+        <qits.workspaces-service-pacts-qits-idp-service.version>2026.1102.24458</qits.workspaces-service-pacts-qits-idp-service.version>
+        <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.version>3.34.6</quarkus.platform.version>
+
+        <!-- Quinoa is a Quarkiverse extension: not in quarkus-bom, and its version does NOT track
+             the platform's. 2.8.2 is built against Quarkus 3.27.3 LTS — older than the 3.34.6
+             above, which is the direction that works, since an extension compiled against an older
+             core runs on a newer one. 2.8.3 is built against 3.36.2 and would be an extension
+             asking this core for API it may not have. Bump it only past a platform bump. Same pin
+             as qits-platform-mirror and every other SPA-serving service. -->
+        <quinoa.version>2.8.2</quinoa.version>
+
+        <!-- Embedded PostgreSQL for the suite. The signing keys live in postgres now, so the tests
+             that open the store have to run against one — and the first rule here is that a clone
+             tests green with NO DOCKER, which rules out Testcontainers and Quarkus dev services
+             alike. Zonky resolves real postgres binaries as ordinary Maven artifacts and spawns
+             them as a child process: a maven dependency, not a container.
+
+             Two coordinates, on purpose. The BOM pins which POSTGRES the binaries are (18.4.0 —
+             the platform's own postgres tag), the library version is the harness around them, and
+             they move independently. Every architecture the suite may run on is named explicitly
+             in the module that uses it: the binaries are per-arch artifacts, and a missing one
+             fails at test time rather than at resolution. -->
+        <zonky.embedded-postgres.version>2.2.2</zonky.embedded-postgres.version>
+        <zonky.postgres-binaries.version>18.4.0</zonky.postgres-binaries.version>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+        <failsafe-plugin.version>3.5.4</failsafe-plugin.version>
+        <jandex-plugin.version>3.4.0</jandex-plugin.version>
+
+        <!-- pact-jvm's JUnit 5 provider, for ConsumerPactVerificationTest: the version
+             qits-projects-service verifies with, so a consumer's pact is read the same way at
+             every provider. -->
+        <pact.version>4.6.21</pact.version>
+
+        <!-- `mvn verify` must be green on a clone with nothing installed. The packaged-artifact ITs
+             run with -DskipITs=false, and `service`'s `native` profile flips it so a -Dnative
+             build exercises the binary it just compiled instead of packaging it and asserting
+             nothing.
+
+             IT STAYS TRUE FOR THE USERFLOW RUN TOO, rather than the module opting itself back in
+             the way qits-githost does. .config/qits/ci-event-userflows.yml wants exactly one of
+             this module's two ITs — TokenIssuanceBootstrapIT, the userflow — and builds WITHOUT
+             Quinoa, because the qits-platform-spa-idp submodule arrives EMPTY in a step container.
+             A blanket -DskipITs=false would also run IdpPackagedSurfaceIT, half of which is about
+             the client that run deliberately does not build (the base href, the deep links, the
+             fallback that must not swallow a machine path), and would make a quinoa-less run red
+             on a test that is right. The pipeline names the class instead:
+             `-DskipITs=false "-Dit.test=TokenIssuanceBootstrapIT"`. Keeping this property's
+             meaning ("run everything") intact is what makes that spelling readable. -->
+        <skipITs>true</skipITs>
+
+        <!-- Surefire's @{argLine} has no value unless something (jacoco/quarkus) sets it. -->
+        <argLine/>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-artifacts-service-pacts-qits-idp-service</artifactId>
+                <version>${qits.artifacts-service-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-ci-service-pacts-qits-idp-service</artifactId>
+                <version>${qits.ci-service-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-containers-service-pacts-qits-idp-service</artifactId>
+                <version>${qits.containers-service-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-deployments-service-pacts-qits-idp-service</artifactId>
+                <version>${qits.deployments-service-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-edge-service-pacts-qits-idp-service</artifactId>
+                <version>${qits.edge-service-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-events-service-pacts-qits-idp-service</artifactId>
+                <version>${qits.events-service-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-githost-service-pacts-qits-idp-service</artifactId>
+                <version>${qits.githost-service-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-maintenance-service-pacts-qits-idp-service</artifactId>
+                <version>${qits.maintenance-service-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-mirror-service-pacts-qits-idp-service</artifactId>
+                <version>${qits.mirror-service-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-observability-service-pacts-qits-idp-service</artifactId>
+                <version>${qits.observability-service-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. Through qits-runner-toolkit (qits-1163): a
+                     three-part `pacts/qits-system-runner-daemon_qits-runner-javalib_qits-idp-service.json`. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-system-runner-daemon-pacts-qits-idp-service</artifactId>
+                <version>${qits.system-runner-daemon-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-system-service-pacts-qits-idp-service</artifactId>
+                <version>${qits.system-service-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-bootstrap-cli-pacts-qits-idp-service</artifactId>
+                <version>${qits.bootstrap-cli-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-orchestrator-service-pacts-qits-idp-service</artifactId>
+                <version>${qits.orchestrator-service-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-platform-access-monorepo-pacts-qits-idp-service</artifactId>
+                <version>${qits.platform-access-monorepo-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-projects-service-pacts-qits-idp-service</artifactId>
+                <version>${qits.projects-service-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-workspaces-service-pacts-qits-idp-service</artifactId>
+                <version>${qits.workspaces-service-pacts-qits-idp-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site. -->
+                <groupId>au.com.dius.pact.provider</groupId>
+                <artifactId>junit5</artifactId>
+                <version>${pact.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <!-- Which postgres the embedded binaries ARE — 18.4.0, the tag the platform's own
+                     qits-oci-postgresql image is built from, so the suite opens the same engine the
+                     deployment does. Imported as a BOM because the per-arch artifacts are separate
+                     coordinates. -->
+                <groupId>io.zonky.test.postgres</groupId>
+                <artifactId>embedded-postgres-binaries-bom</artifactId>
+                <version>${zonky.postgres-binaries.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.zonky.test</groupId>
+                <artifactId>embedded-postgres</artifactId>
+                <version>${zonky.embedded-postgres.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <!-- The reactor's own module, so `service` depends on it version-less. -->
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-idp-domain</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <!-- PatientPgDriver, named by the datasource's `jdbc.driver` line, and DbRetry,
+                     which SigningKeys is compiled against. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-db-core</artifactId>
+                <version>${qits.db-core.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The platform's shared rules, test scope. DatasourceBaselineRules is what this
+                     repo takes them for. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-arch-rules</artifactId>
+                <version>${qits.arch-rules.version}</version>
+            </dependency>
+            <dependency>
+                <!-- CallerServerFilter: having the jar on the deployable's classpath records
+                     inbound X-Qits-Caller as the qits.caller span attribute. Compile scope in
+                     `service` only; this repo builds no HttpClient of its own. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-http-core</artifactId>
+                <version>${qits.http-core.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The OTLP exporters that carry this service's own bearer (epic qits-428).
+                     Compile scope in `service` only. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-telemetry-core</artifactId>
+                <version>${qits.telemetry-core.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The user-story framework, test scope at the use site. Same platform repository
+                     as the two above. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-userflows</artifactId>
+                <version>${qits.userflows.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Managed here rather than versioned at the use site because Quinoa is in no BOM;
+                     the pin and its reasoning stay in one place. -->
+                <groupId>io.quarkiverse.quinoa</groupId>
+                <artifactId>quarkus-quinoa</artifactId>
+                <version>${quinoa.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <repositories>
+        <repository>
+            <!-- Where the two qits jars above come from. Named `qits-maven` because the image
+                 build's settings file mirrors exactly that id — see .qits-maven-settings.xml. The
+                 host answers 401 anonymously: build with `-s .qits-maven-settings.xml` and the
+                 QITS_MAVEN_* variables it reads, or give ~/.m2/settings.xml a `qits-maven` server. -->
+            <id>qits-maven</id>
+            <url>${qits.maven.repository.url}</url>
+        </repository>
+    </repositories>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>${quarkus.platform.group-id}</groupId>
+                    <artifactId>quarkus-maven-plugin</artifactId>
+                    <version>${quarkus.platform.version}</version>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${compiler-plugin.version}</version>
+                    <configuration>
+                        <parameters>true</parameters>
+                        <!-- The siblings disable incremental compilation because it leaves stale
+                             generated classes behind; kept here so the modules behave alike. -->
+                        <useIncrementalCompilation>false</useIncrementalCompilation>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${surefire-plugin.version}</version>
+                    <configuration>
+                        <systemPropertyVariables>
+                            <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                        </systemPropertyVariables>
+                        <!-- The platform injects QITS_DOMAIN into CI steps and agent containers; a
+                             test JVM that inherits it picks up the live domain instead of the
+                             suite's domain-less default. Keep it out. -->
+                        <excludedEnvironmentVariables>
+                            <excludedEnvironmentVariable>QITS_DOMAIN</excludedEnvironmentVariable>
+                        </excludedEnvironmentVariables>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <version>${failsafe-plugin.version}</version>
+                    <configuration>
+                        <!-- Same reasoning as the surefire plugin above: don't let the platform's
+                             QITS_DOMAIN leak into the forked test JVM. -->
+                        <excludedEnvironmentVariables>
+                            <excludedEnvironmentVariable>QITS_DOMAIN</excludedEnvironmentVariable>
+                        </excludedEnvironmentVariables>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>io.smallrye</groupId>
+                    <artifactId>jandex-maven-plugin</artifactId>
+                    <version>${jandex-plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>make-index</id>
+                            <goals>
+                                <goal>jandex</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

@@ -1,0 +1,54 @@
+{
+  "name": "qits-platform-spa-system",
+  "version": "2026.1105.121705",
+  "private": true,
+  "description": "The system frontend: an Angular application that shows the machine the platform runs on — a live glances terminal, the swarm, and each node's docker resources with a shell into any container. It ships no image — qits-platform-system serves it via Quinoa at the root of its own host.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/QuicklyIterateTheSoftware/qits-platform-spa-system.git"
+  },
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve",
+    "build": "ng build",
+    "watch": "ng build --watch --configuration development",
+    "test": "ng test",
+    "lint": "ng lint"
+  },
+  "dependencies": {
+    "@angular/common": "^21.2.0",
+    "@angular/compiler": "^21.2.0",
+    "@angular/core": "^21.2.0",
+    "@angular/forms": "^21.2.0",
+    "@angular/platform-browser": "^21.2.0",
+    "@angular/router": "^21.2.0",
+    "@qits/ui-components": "^2026.1103.133955",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@angular-eslint/builder": "^21.4.0",
+    "@angular/build": "^21.2.6",
+    "@angular/cli": "^21.2.6",
+    "@angular/compiler-cli": "^21.2.0",
+    "@eslint/js": "^10.0.1",
+    "@ngrx/signals": "^21.1.1",
+    "@pact-foundation/pact": "17.1.4",
+    "@qits/angular": "2026.1103.125108",
+    "@qits/ci-golden-masters": "2026.1102.180015",
+    "@qits/edge-golden-masters": "2026.1010.182320",
+    "@qits/projects-golden-masters": "2026.1105.84836",
+    "@qits/system-golden-masters": "2026.1102.183359",
+    "@types/node": "^20.19.43",
+    "angular-eslint": "^21.4.0",
+    "eslint": "^10.8.0",
+    "jsdom": "^28.0.0",
+    "prettier": "^3.8.1",
+    "typescript": "~5.9.2",
+    "typescript-eslint": "^8.59.2",
+    "vitest": "^4.0.8"
+  }
+}

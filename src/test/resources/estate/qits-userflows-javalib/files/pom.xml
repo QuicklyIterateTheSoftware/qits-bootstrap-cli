@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Standalone parent for the extracted qits-userflows repo. Its coordinates are namespaced
+         so publishing this reactor cannot collide with the old monorepo parent, while the child
+         still resolves it through ../pom.xml and a clone remains self-contained.
+         qits-backend monorepo root. Trimmed to only what this library needs — the quarkus-bom
+         import (for its jackson-databind / junit-jupiter versions) and the compiler/surefire
+         plugin pins. The monorepo's app-wide machinery (spotless, the :8080 dev-guard,
+         isolated-test chunking, enforcer, jandex) is intentionally omitted. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-userflows-parent</artifactId>
+    <version>2026.1028.231715</version>
+    <packaging>pom</packaging>
+
+    <modules>
+        <module>qits-userflows</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.version>3.34.6</quarkus.platform.version>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Supplies the managed versions the child leaves unversioned: jackson-databind and
+                 the junit-jupiter aggregator (via the BOM's junit-bom import). Playwright is pinned
+                 in the child itself (not managed here). -->
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${compiler-plugin.version}</version>
+                    <configuration>
+                        <parameters>true</parameters>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${surefire-plugin.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

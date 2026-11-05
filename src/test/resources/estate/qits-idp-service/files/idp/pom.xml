@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-idp</artifactId>
+        <version>2026.1105.133136</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The issuer domain: the persisted signing keys, the static client registry read from config,
+         the minting of a token, and the accounts — users, roles, passkey rows, register tokens and
+         sessions. A plain library jar: entity, persistence, control — NO web/JAX-RS (that is
+         `service`). The WebAuthn ceremony itself is not here for exactly that reason: it takes a
+         RoutingContext and rides a cookie, so it lives at the boundary and hands its verified
+         result down.
+
+         It owns its OWN named datasource + persistence unit + Flyway lineage — a postgres database
+         of its own, provisioned for this application and handed to it as the generic resource
+         triple (see src/main/resources/META-INF/microprofile-config.properties). Signing keys live
+         there and nowhere else, which is the whole reason validation survives a restart.
+
+         The directory is `idp/` (the ci/cd/service shape of the sibling repos) while the artifactId
+         is `qits-idp-domain`: this module is the domain layer of the qits-idp repo, and
+         `eu.wohlben.qits:qits-idp-idp` would be nonsense. -->
+    <artifactId>qits-idp-domain</artifactId>
+    <name>qits-idp :: domain</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm-panache</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The store. It was a file H2 until the platform grew resource provisioning; the
+                 signing keys now live in a postgres database created for this application before
+                 its container starts. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Two things from one jar. PatientPgDriver, which the datasource this module ships
+                 opens every connection through — named only by the `jdbc.driver` line in
+                 META-INF/microprofile-config.properties, and the dependency sits beside that line
+                 so the two cannot drift apart. And DbRetry, which SigningKeys.reload holds the key
+                 load through a cutover with: that one is compiled against, which is why the scope
+                 is no longer `runtime`. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-db-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Flyway 10 split its database support out of the core: without this module Flyway
+                 refuses a postgres url with "no database found to handle". It sits here because
+                 this module owns the lineage. -->
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The token minting itself: Jwt.claims()...sign(privateKey). This is the only reason
+                 the domain module knows anything about JWT at all. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-jwt-build</artifactId>
+        </dependency>
+        <dependency>
+            <!-- BcryptUtil, and nothing else from this jar. A user's password is the one credential
+                 here that a HUMAN chose, so it is the one the plain SHA-256 argument in ClientSecret
+                 does not cover — see PasswordHash for the whole of it.
+
+                 It is a dependency of the DOMAIN module rather than `service` because hashing a
+                 password is not a web concern: it happens in `control`, beside the store that holds
+                 the result. The extension brings elytron's bcrypt implementation and no web stack,
+                 so the rule this module keeps — no JAX-RS, no HTTP — is untouched. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-elytron-security-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- The consuming Quarkus app needs an index of this jar's beans and entities. -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

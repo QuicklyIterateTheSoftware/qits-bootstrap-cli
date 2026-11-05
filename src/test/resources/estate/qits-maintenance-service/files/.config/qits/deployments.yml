@@ -1,0 +1,108 @@
+# How qits-deployments deploys this repo. It reads this file from the git host at the built
+# sha, so the answer travels with the commit.
+#
+# CARRYING THE FILE AT ALL is the other thing it says. The release flow reads it to decide whether
+# this repository deploys — a library or an SPA carries none, and its `main` is finalized at the
+# release itself rather than after a deployment — and where it does deploy, a Deployment Request
+# carries the released VERSION.
+#
+# THE NAME THIS DEPLOYS AS, spelled because the repository is renamed and the application is not.
+# Every derivation the deployer makes hangs off this name — the wire alias peers dial, the container
+# it manages, the extras family, the database — so letting it follow the repository would
+# decommission the running service and start a stranger beside it.
+application: qits-maintenance
+
+# WHAT THIS APPLICATION USED TO BE CALLED, and the one thing a rename is allowed to move.
+#
+# A renamed application is a NEW application to the deployer: services are keyed by name, swarm
+# cannot rename one, and pd_service / pd_deployment / pd_resource all hold an application name and no
+# repository identity. So this deploys BESIDE qits-platform-maintenance and an operator retires the
+# predecessor afterwards. That half is unchanged.
+#
+# What this line moves is the DATABASE CLAIM. Without it the successor's first deploy is refused —
+# "the database qits_platform_maintenance is already provisioned for qits-platform-maintenance" — which is the
+# right refusal in general, because two unrelated repositories sharing a store is worse than a loud
+# failure. Naming the predecessor narrows that check to this one row rather than weakening it.
+#
+# It also preserves the CREDENTIAL: the claim row is read one statement later to decide whether to
+# send the stored password or a fresh one, so transferring it first means the predecessor — still
+# running, with open pools on that role — keeps working. Removing this line after the rename does not
+# tidy anything up; it re-arms the refusal.
+renamed_from: qits-platform-maintenance
+
+# One route for the whole WIRE segment: the API at /maintenance/api and the document at
+# /maintenance/q. The edge path-routes verbatim by prefix on every vhost, so this one line reaches
+# both from anywhere. The client is no longer under it — it is served at the root of this service's
+# own host, which the edge derives from the application name.
+routes: /maintenance
+
+# WHERE THE EDGE APPEARS THIS APPLICATION IN THE SIDEBAR. One entry per slot: `platform` is the
+# project-scoped group, and this is its second row. The label and the position are the whole
+# statement — the host is derived from the application name (`qits-maintenance` minus its
+# `qits-` prefix is `maintenance`), so there is no `host:` line to keep in step.
+#
+# This replaces `navigation: Maintenance:13`, the flat list every application shared. The old key
+# still parses — a spec is read at the built sha, so it can never become unknown — and maps to
+# `system.Maintenance`, which is the wrong group for pages a project scopes.
+navigation-entries: platform.Maintenance:2
+
+# THE STORE, DECLARED RATHER THAN CONFIGURED. The line below is what provisions it: a role and a
+# database of its own on the tier's postgres, created before the successor container starts and
+# injected as QITS_RESOURCE_DB_URL / _USERNAME / _PASSWORD — the generic contract the maintenance
+# jar's datasource defaults read verbatim.
+#
+# `db` omits the third segment, so the database is the default derivation: the application name minus
+# its `qits-` prefix, dashes to underscores, under a `qits_` prefix — `qits_platform_maintenance`.
+#
+# WHAT IS IN IT is half cache and half log. The inventory — pins, groups, latest versions — is a
+# cache of the git host's files and the registries' metadata, and a fresh scan rebuilds it. The bump
+# log is not: it is the only record of which branches this service pushed and on the strength of
+# which pins, and nothing else on the platform holds it.
+#
+# THE SECOND RESOURCE IS THE EVENT BUS'S, and it is mandatory rather than an optimisation. Joining
+# qits-eventstream in service/pom.xml made this deployable a subscriber, and that jar owns its own
+# datasource, its own Flyway lineage and the durable-consumer tables (`consumed_event`,
+# `consumer_watermark`) — never this service's database and never its migration history.
+#
+# THE NAME `eventstream` IS LOAD-BEARING. The deployer derives the injected variable names from the
+# resource name, and the jar's shipped defaults read exactly QITS_RESOURCE_EVENTSTREAM_URL /
+# _USERNAME / _PASSWORD. Rename it here and nothing matches — the expressions stay unresolvable and
+# the process dies at Flyway, which is the loud half of the failure; the quiet half would be a
+# fallback store nobody meant, and there is deliberately none.
+#
+# It cannot omit the third segment: the default derivation would be `qits_platform_maintenance` too,
+# and one database cannot be two stores with two Flyway lineages.
+#
+# Provisioning is idempotent and the credential lives in the deployer's registry, so a redeploy finds
+# the existing rows and injects the passwords this process is already connected with.
+# THE DATABASE IS NAMED EXPLICITLY, AND IT IS A SAFETY PIN RATHER THAN A PREFERENCE.
+# `postgresql:db` with no third segment DERIVES the database from the APPLICATION name —
+# `qits_` plus the name minus its `qits-` prefix. This application is STILL TO BE renamed
+# (qits-platform-maintenance -> qits-maintenance, blocked on qits-376), and a derived name would follow it: the deployment would provision a
+# BRAND NEW EMPTY `qits_maintenance` and start against it, on a green deploy, with nothing failing.
+# Naming the database this application already uses makes the rename a rename of the
+# APPLICATION alone, which is the whole intent — and this line has to OUTLIVE the rename rather
+# than merely precede it. Removing it later is not a tidy-up; it is a silent migration to an
+# empty store on a deploy that goes green.
+#
+# VERIFIED AGAINST THE SERVER, not derived: `qits_platform_maintenance` is in pg_database on
+# qits-oci-postgresql today, and `qits_maintenance` is not.
+#
+# idp:client ASKS QITS-DEPLOYMENTS TO PROVISION THIS APPLICATION'S OWN QITS-IDP SERVICE CLIENT — id
+# `dev-qits-maintenance` (derived from env + application), roles `qits:system`, fixed in qits-idp
+# code. The deployer stores the secret the way it stores a database password, and injects
+# QITS_RESOURCE_IDP_URL, QITS_RESOURCE_IDP_CLIENT_ID and QITS_RESOURCE_IDP_CLIENT_SECRET, which the
+# `qits` oidc client reads alone now — the old `projects` fallback keys are gone.
+#
+# Ticket qits-162, epic qits-540 contract C3.
+resources: postgresql:db:qits_platform_maintenance, postgresql:eventstream:qits_platform_maintenance_eventstream, idp:client
+
+# The readiness endpoint the deployer's health gate curls. The convention derives it from the
+# repository name and would land on exactly this path; it is written out because a probe that 404s
+# fails a deployment for a reason nobody would look for in a config file.
+health_path: /maintenance/q/health/ready
+
+# Where the browsable API document lives: swagger-ui under this service's non-application
+# root, which sits under the primary route above. The shell's Api Docs viewer reads it off
+# /main-navigation and frames it for this repository.
+api-docs: /maintenance/q/swagger-ui

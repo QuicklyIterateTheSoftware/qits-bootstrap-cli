@@ -1,0 +1,250 @@
+# qits-observability as a GraalVM-native container IMAGE — the same shape as qits-gateway's and
+# qits-workspace-daemon's docker/Dockerfile: a Mandrel builder stage compiles the binary, a minimal
+# runtime stage carries only it.
+#
+# This file is not how the binary is built; it is how the binary is SHIPPED. `.sdkmanrc` names a
+# GraalVM (25.0.2-graalce), so `sdk env && ./mvnw package -Dnative` produces
+# service/target/qits-observability in about 80 seconds with no container involved. What this
+# Dockerfile adds is the image around it — and, incidentally, a way for a machine with no GraalVM (a
+# CI runner, a laptop on a plain OpenJDK) to still get a binary, since the builder stage brings its
+# own native-image.
+#
+# Build from the repo root:
+#
+#     git submodule update --init service/src/main/webui
+#     (cd service/src/main/webui && npm ci && npm run build)
+#     docker build -t qits/observability:latest -f docker/Dockerfile .
+#
+# The first two lines are not optional and are not a convenience: this image carries the client
+# (service/src/main/webui = the qits-spa-observability submodule), and the builder stage below
+# packages a bundle that was ALREADY BUILT rather than building one. See the Quinoa flags on the
+# mvnw line for why the build cannot happen inside this stage.
+#
+# --- stage `build`: native-compile ----------------------------------------------------------------
+# The builder JDK MUST be 25: native-image cannot read bytecode newer than its own JDK, and this
+# project targets release 25.
+#
+# `mirror.qits.${QITS_DOMAIN}/quay/…` is qits-mirror's pull-through mirror of quay.io: the
+# first build fetches the image from upstream and caches it, every later build is served from local
+# disk. The tag is upstream's, unchanged — the mirror revalidates it, so `jdk-25` still moves when
+# quay moves it.
+#
+# QITS_DOMAIN is the platform's public domain; the release recipes pass --opt build-arg:QITS_DOMAIN.
+# Declared global (above this first FROM) so FROM lines can read it.
+ARG QITS_DOMAIN=wohlben.eu
+FROM mirror.qits.${QITS_DOMAIN}/quay/quarkus/ubi9-quarkus-mandrel-builder-image:jdk-25 AS build
+USER root
+WORKDIR /src
+
+# Fetch the Maven distribution first, keyed only on the wrapper files, so a source-only change does
+# not re-download it.
+COPY mvnw .
+COPY .mvn/ .mvn/
+RUN ./mvnw --version
+
+# The whole tree, not a module list. Every module here is an unpublished 1.0.0-SNAPSHOT (no
+# distributionManagement, no <repositories>), so a builder container with an empty ~/.m2 has nowhere
+# to get one but the sources beside it. Copying module by module would mean editing this file every
+# time one is added, and forgetting to would fail the build with an unresolved dependency rather than
+# anything that names the real cause. `.dockerignore` is what keeps this cheap — without it this line
+# drags in the ~119 MB of target/ output sitting next to it, and a stale target/ can shadow what this
+# stage compiles.
+COPY . .
+
+# The platform's own Maven repository. Both hosts are code plus one input, the public domain:
+#
+#   https://registry.qits.$QITS_DOMAIN/artifacts/maven/maven   hosted Maven (qits-artifacts)
+#   https://mirror.qits.$QITS_DOMAIN/mirror/maven/central      Maven Central cache (qits-mirror)
+#
+# The RUN below derives both and exports them for that RUN alone; `.qits-maven-settings.xml` reads
+# them as ${env.…}, mirroring the `qits-maven` repository id onto the first and Central onto the
+# second. The CI recipe passes QITS_DOMAIN; the default is the live platform's.
+ARG QITS_DOMAIN=wohlben.eu
+
+# `-pl service -am` builds the app and its dependency closure, not the whole reactor. That is not a
+# module list — it names the one module this image ships, which the COPY below already names anyway,
+# so leaving it out gains nothing. What it buys: this repo will publish libraries as well as an
+# image, and a reactor then holds modules that exist for consumers rather than for the binary. On a
+# whole-reactor build a compile error in one of those would block deploying this service, and build
+# time would grow with the published surface instead of with the app. The image build should depend
+# on exactly what the image contains.
+#
+# -Dnative flips quarkus.native.enabled (this project carries its own `native` profile). Cap
+# native-image RAM so the build is deterministic on small machines.
+#
+# -DskipTests because the suite is not this stage's gate — `./mvnw verify` on a clone is, and it is
+# the declared one (AGENTS.md: a clone of this repo alone builds and tests green). Note the `native`
+# profile also flips skipITs to false, but `package` stops short of the integration-test phase, so
+# OtelReceiverIT does not run here either; `./mvnw verify -Dnative` is what exercises the binary
+# against real OTLP bodies.
+#
+# --- the Quinoa flags, and why they are HERE and not in application.properties --------------------
+#
+# package-manager-install: the Mandrel builder image ships no node at all, so this stage installs its
+# own — from nodejs.org, which a docker build can reach. It lives here rather than in
+# application.properties on purpose: a local or CI `mvnw` build must use the node on PATH, so that no
+# build silently downloads a toolchain. The version is pinned so the image build is reproducible, not
+# "whatever nodejs.org calls current"; 22.22.0 is the PLATFORM pin, the node every other qits
+# service's builder stage installs and the version a developer's host carries. Note it is
+# deliberately NOT the step container's node: node-docker-base is node:24-alpine, and the bundle this
+# image consumes was built there. The two do not have to agree, because this stage does not build the
+# bundle — the commands below are neutered to `--version`, so the only thing node does here is exist
+# and prove its package manager runs.
+#
+# The three command overrides are the load-bearing part, and the reason this repo deviates from the
+# platform's Quinoa recipe (docs/project-setup-quinoa-angular.md in the qits monorepo, which has the
+# builder run the client's real install and build):
+#
+#   service/src/main/webui is qits-spa-observability, and it depends on @qits/ui-components. That
+#   package exists ONLY on the platform's own npm registry (qits-artifacts), which answers 401
+#   without a credential, and this stage is handed only the Maven one. An install that "worked" here
+#   without it would have resolved the @qits scope against npmjs.org, where that name does not exist.
+#
+# The bundle is therefore built BEFORE this image, by the pipeline step in
+# .config/qits/ci-post-receive.yml, which runs on qits-net where the registry is reachable, and
+# arrives in the build context as service/src/main/webui/dist/ (see .dockerignore). `--version` is
+# the null command: it proves the package manager is really there and does nothing else.
+#
+# THIS DOES NOT FAIL QUIETLY. The `test -f` below stops a context with no bundle before the
+# multi-minute native compile, and Quinoa's own build-dir check would stop it after. A forgotten
+# `npm run build` in the step is a red build, not a service that ships without its client.
+#
+# A build context whose webui submodule is NOT initialised fails this stage with `No package.json
+# found in Web UI directory: 'src/main/webui'` — git leaves the gitlink as an empty directory, and an
+# empty directory is the one case Quinoa treats as a misconfiguration rather than as "no client".
+# The repo's own CI initialises it in .config/qits/ci-post-receive.yml before `docker build`.
+#
+# --- and why the bundle is copied onto itself first -----------------------------------------------
+# Quinoa does not copy build-dir into target/quinoa/build, it MOVES it, and overlayfs cannot rename a
+# directory that still lives in a LOWER image layer. It answers EXDEV, the JDK falls back to its
+# cross-file-store path, and that path refuses a non-empty directory — the build dies seconds in with
+# `DirectoryNotEmptyException: …/dist/qits-spa-observability/browser`, which names the source and
+# explains nothing. Every other Quinoa build in the platform is immune by accident: their builder
+# stage *creates* dist itself, so it is in the upper layer already. Ours arrives by COPY.
+#
+# One `cp` re-materialises it in the layer that is about to move it. It has to be in THIS `RUN` and
+# not a tidier one of its own — a layer boundary is exactly what it is undoing.
+#
+# --- the two secrets, in FILE FORM rather than `env=` ----------------------------------------------
+# The mounts are bare (`/run/secrets/<id>`, read into this command's own environment by the two
+# `cat`s) rather than the `env=` mount form they used to be: `env=` needs a dockerfile frontend that
+# supports it, and under the platform's own buildkitd the frontend is the BUILDER's to pick rather
+# than this file's, while the bare file mount is served identically by every frontend version. See
+# qits-buildkit-plan.md in the wrapper. Absent secrets leave both variables empty — the `|| true`,
+# every hand build's state — which `.qits-maven-settings.xml` reads exactly as it reads unset.
+#
+# --- three attempts, and why only at a transport failure -------------------------------------------
+# qits-artifacts — the maven repository this resolves against — declares `update_order: stop-first`,
+# so on every one of its several daily deploys the `dev-qits-artifacts` swarm alias resolves to
+# nothing for ~10 seconds. Maven asks once, records the failed release resolution and the gate goes
+# red on a commit that was fine (2026-09-21). Three attempts 30s apart cover that window twice over.
+#
+# `-U` on attempts 2 and 3 is the load-bearing half, not a flourish. The failed resolution is cached
+# in the local repository, and the local repository lives on across attempts because they are all in
+# one layer, so a plain re-run re-reads the cached failure and the loop is over in under a second
+# having changed nothing. Attempt 1 goes without it: no reason to force update checks on a build
+# that is about to succeed.
+#
+# The grep is narrow on purpose — the mirror id AND a transport-level phrase, on the same line. A
+# compilation error, a failing test or a genuine 404 for a version nobody published carries neither,
+# so it leaves with maven's own exit code on the first attempt and a real red build stays red in
+# seconds instead of costing three native compiles. The rc file is how that exit code survives the
+# pipe: `./mvnw … | tee` yields tee's status, and `set -o pipefail` is a bashism this stage must not
+# bet on (a `SHELL` instruction would fix the shell but leak into the runtime stage below).
+#
+# One failure a retry cannot repair: a transport error late enough that Quinoa has already MOVED the
+# bundle out of dist/, where the next attempt dies on the missing bundle instead. The loop does not
+# make that worse — that death carries no transport signature, so it exits on its own terms — and
+# every failure observed so far is in dependency collection, well before Quinoa runs.
+RUN --mount=type=secret,id=qits-client-id \
+    --mount=type=secret,id=qits-client-secret \
+    export QITS_MAVEN_AUTH_USR="$(cat /run/secrets/qits-client-id 2>/dev/null || true)"; \
+    export QITS_MAVEN_AUTH_PSW="$(cat /run/secrets/qits-client-secret 2>/dev/null || true)"; \
+    export QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$QITS_DOMAIN/artifacts/maven/maven"; \
+    export QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$QITS_DOMAIN/mirror/maven/central"; \
+    d=service/src/main/webui/dist/qits-spa-observability/browser; \
+    test -f "$d/index.html" || { \
+      echo "No built client at $d." >&2; \
+      echo "The build context must carry one: run 'npm ci && npm run build'" >&2; \
+      echo "in service/src/main/webui first — this stage cannot, see the Quinoa flags above." >&2; \
+      exit 1; }; \
+    cp -a "$d" "$d.layer" && rm -rf "$d" && mv "$d.layer" "$d" && \
+    n=1 && \
+    t='Name or service not known|Connection refused|Connection reset|No route to host|Read timed out' && \
+    while :; do \
+      u=; [ "$n" -gt 1 ] && u=-U; \
+      { ./mvnw -B -ntp -s .qits-maven-settings.xml $u -pl service -am \
+          org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeBom \
+          -DoutputFormat=json -DoutputName=sbom -DschemaVersion=1.6 \
+          -Dcyclonedx.skipNotDeployed=false \
+          package -Dnative -DskipTests \
+          -Dqits.maven.repository.url="$QITS_MAVEN_REPOSITORY_URL" \
+          -Dquarkus.native.native-image-xmx=4g \
+          -Dquarkus.quinoa.package-manager-install=true \
+          -Dquarkus.quinoa.package-manager-install.node-version=22.22.0 \
+          -Dquarkus.quinoa.package-manager-command.install=--version \
+          -Dquarkus.quinoa.package-manager-command.ci=--version \
+          -Dquarkus.quinoa.package-manager-command.build=--version; \
+        echo $? >/tmp/mvn.rc; } 2>&1 | tee /tmp/mvn.log; \
+      rc=$(cat /tmp/mvn.rc); \
+      [ "$rc" = 0 ] && break; \
+      [ "$n" -ge 3 ] && exit "$rc"; \
+      grep -Eq "from/to qits-maven-network.*($t)" /tmp/mvn.log || exit "$rc"; \
+      echo "the qits-maven repository was unreachable; retrying in 30s (attempt $((n + 1)) of 3)" >&2; \
+      sleep 30; \
+      n=$((n + 1)); \
+    done
+# makeBom goes FIRST, BEFORE `package`, and the order is LOAD-BEARING (qits-441). Quinoa's node
+# install (package-manager-install=true, inside quarkus:build) runs the embedded frontend-plugin
+# `VertxFileDownloader`, whose first line is `System.setProperty("https.protocols", "TLSv1.2")` —
+# JVM-wide, for the rest of this Maven process. Every HTTPS connection Maven opens after it offers
+# TLS 1.2 only. The public edge (mirror.qits.wohlben.eu, which a remote runner's build resolves
+# Central through) speaks TLS 1.3 only, so each of those handshakes dies at once with `Received
+# fatal alert: protocol_version`, and makeBom's plugin dependencies — resolved lazily, when the
+# goal runs — fail as five "Failed to read artifact descriptor" lines with no HTTP status. The
+# in-network mirror is plain http:// and never notices, which is why only EDGE-plane runs failed.
+# Ahead of `package`, makeBom resolves before Quinoa has touched the property; the SBOM is the
+# same, since it reads the dependency graph and not the build's output.
+#
+# cyclonedx.skipNotDeployed=false is LOAD-BEARING, measured on qits-artifacts-service's first SBOM
+# release (2026.902.45658): the service module skips maven-deploy — it ships as this image, not as a
+# jar — and the plugin SKIPS deploy-skipping modules by default, with a green build and one INFO
+# line. The sbom stage's COPY then fails on a file nothing wrote. The property spelling matters too:
+# the bare -DskipNotDeployed=false is silently ignored; only the cyclonedx.-prefixed one reaches the
+# plugin.
+
+# --- sbom -----------------------------------------------------------------------------------------
+# The service module's CycloneDX document, exported so the release step can PUT it to the platform's
+# SBOM store. A stage rather than a layer of the runtime image, and BEFORE the runtime stage on
+# purpose: the last stage is what a plain `docker build` builds, and that must stay the image. The
+# release step reaches this one with `--opt target=sbom --output type=local` using the SAME
+# build-args and secrets as the image build, so every layer above is a cache hit and the export costs
+# seconds.
+# `makeBom` rides on the mvnw invocation above rather than a second one, for the same cache reason —
+# one RUN, one layer, one truth.
+FROM scratch AS sbom
+COPY --from=build /src/service/target/sbom.json /sbom.json
+
+# --- runtime --------------------------------------------------------------------------------------
+# `mirror.qits.${QITS_DOMAIN}/redhat/…` is the same mirror, pointed at registry.access.redhat.com.
+FROM mirror.qits.${QITS_DOMAIN}/redhat/ubi9/ubi-minimal:9.6
+WORKDIR /work
+
+# `quarkus.package.output-name` names the binary `qits-observability` — the deployable's name, not
+# the module's (the module is `qits-telemetry`, in service/) — so the process is identifiable in
+# `ps` / `docker top` as the thing the gateway routes to.
+COPY --from=build --chown=1001:root /src/service/target/qits-observability /work/qits-observability
+RUN chmod +x /work/qits-observability
+
+# One port, and it is the only one: the OTLP receiver is in-process JAX-RS on the ordinary HTTP port
+# (`POST /observability/api/otel/v1/{traces,logs,metrics}`), not a collector's 4317/4318 listener.
+# Nothing here enables a separate management interface either, so 8080 carries ingest, the REST query
+# surface and /observability/q alike. Exporters are pointed at a
+# literal URL under that same port — see application.properties on `quarkus.rest.path`.
+EXPOSE 8080
+USER 1001
+
+# -Dquarkus.http.host=0.0.0.0 because Quarkus binds 127.0.0.1 by default, which inside a container
+# means reachable by nothing. Unlike the workspace-daemon, that is the wanted posture here: this
+# service is addressed by its peers on qits-net.
+ENTRYPOINT ["/work/qits-observability", "-Dquarkus.http.host=0.0.0.0"]

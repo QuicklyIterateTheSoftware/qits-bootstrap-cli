@@ -1,0 +1,468 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Standalone parent for the extracted qits-ci repo (docs/epics/qits-ci/ in the qits
+         monorepo). The in-repo CI pipeline: a repository opts in by committing
+         `.config/qits/ci-post-receive.yml`, qits-githost publishes an SCMPublishCommit for the
+         push, ci reads the config back out of the pushed commit over the git host's content
+         routes, runs each step's script in a fresh container, and records an advisory pass/fail
+         per push.
+
+         This context is HOST-SIDE by design and lives outside any workspace container: it starts
+         one ephemeral step container per step on its own network — each running a qits-ci-daemon
+         that dials back and executes the step as its own child — and GitConfigFetcher keeps its own
+         bare git cache. qits-ci itself executes nothing. That is the boundary, not an accident of
+         the monorepo.
+
+         DELIBERATELY ITS OWN GAV, the qits-workspaces case rather than the qits-workspace-daemon
+         one. The child directories are `ci` and `service`, generic names that would collide in the
+         shared ~/.m2 (and the qits_shared_m2 volume every workspace container mounts) with the
+         monorepo's own `eu.wohlben:ci` / `eu.wohlben:service`. So the coordinates are namespaced
+         (`eu.wohlben.qits:qits-ci-*`) while the DIRECTORIES stay `ci/` and `service/` — the
+         filtered git history is anchored to those paths and renaming them would sever it.
+
+         Versions that must stay in step with qits (Quarkus platform, JDK release, MapStruct,
+         Lombok) are duplicated here on purpose: a clone of THIS repo alone must build, with no
+         monorepo and no parent to inherit from.
+
+         Trimmed to what these two modules actually need. The monorepo's app-wide machinery is
+         intentionally omitted: spotless, enforcer, the :8080 dev-mode port guard, isolated-test
+         surefire chunking, the derive-fixture-bares antrun step, the maven build-cache extension,
+         and the mandatory -Dqits.variant=oauth|forwardauth|local auth profiles. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-ci</artifactId>
+    <version>2026.1104.173648</version>
+    <packaging>pom</packaging>
+    <name>qits-ci</name>
+
+    <modules>
+        <!-- Listed in dependency order for readability; Maven computes reactor order itself.
+
+             `ci-daemon-protocol` was the FIRST entry here and is gone: the wire contract was a
+             vendored copy of qits-ci-daemon's module of the same name, carried because that module
+             was published to no registry. It is published now, so the copy's own pom comment came
+             true — deleting the module and adding a <dependency> was the whole change, with no
+             source edit anywhere, because the java package was identical by construction. See
+             qits.ci-daemon-protocol.version below for what that dependency's VERSION now decides. -->
+        <module>ci-events</module>
+        <module>ci</module>
+        <module>service</module>
+    </modules>
+
+    <properties>
+        <!-- THIS IS NOT AN ORDINARY LIBRARY VERSION. It is the qits-ci-daemon BINARY that every CI
+             step container this deployment launches downloads and executes: the same release that
+             publishes this jar PUTs the bare binary to
+             `…/artifacts/daemons/qits-ci-daemon/<version>`, and CiDaemonBinary.VERSION — filtered
+             out of that release's own ${project.version} — is the path segment the bootstrap
+             composes. So bumping this line changes what runs inside every step of every build on
+             the platform, and it does so with the wire contract in the same jar: a daemon that
+             broke the protocol cannot arrive without the classes qits-ci compiles against arriving
+             with it.
+
+             It replaced `qits.ci.daemon-version`, a qits-configuration entry a release listener
+             rewrote the moment qits-ci-daemon published — so a new daemon reached every step
+             container with qits-ci's own suite never having run against it, and the only gate was
+             an adoption probe the released service ran on itself in production. The ladder and the
+             probe are retired (V18); what gates a bump now is CiDaemonPinIT, which downloads the
+             binary this property names and drives a real run through it on this repository's own
+             branch, before the merge.
+
+             MOVED BY qits-platform-maintenance's bump train, on a `maintenance/*` branch, folded
+             into a release request and gated by this repository's own CI like any other content.
+             Do NOT hand-edit it to chase a release you just made: a hand-written pin asserts a
+             pairing nobody gated, and the next bump overwrites it regardless. -->
+        <qits.ci-daemon-protocol.version>2026.1102.152240</qits.ci-daemon-protocol.version>
+        <qits.eventstream.version>2026.1103.231226</qits.eventstream.version>
+        <!-- qits-githost's event vocabulary: the SCM records a push announces. qits-ci consumes
+             SCMPublishCommit and nothing else, but the jar is the whole vocabulary — it is a data
+             module with one dependency (qits-eventstream) and no container.
+
+             THE CUTOVER THE PREVIOUS COMMENT WAITED FOR HAS HAPPENED. This was 1.0.0-SNAPSHOT
+             against a warning that "a build against the platform Maven repository cannot resolve a
+             snapshot nobody published"; qits-githost released the jar on 2026-08-12 and this is that
+             release. What kept the snapshot working until then was the bootstrap seed-publishing it
+             into the registry, which is not a release and does not survive one being re-seeded. -->
+        <qits.githost-events.version>2026.1104.22323</qits.githost-events.version>
+        <qits.auth-core.version>2026.1031.63225</qits.auth-core.version>
+        <!-- qits-http-core's QitsHttpClients: every hand-rolled java.net.http client under
+             service/…/{githost,projects,registry,idp}/ is wrapped through it, so the CLIENT span and
+             X-Qits-Caller travel with an internal call the same way the REST client already carries
+             them. Its own property, separate from qits.integrations-quarkus.version, because this
+             reactor pins each library released out of that reactor independently (qits.auth-core.version
+             beside it is the precedent). -->
+        <qits.http-core.version>2026.1103.132907</qits.http-core.version>
+        <!-- qits-telemetry-core (epic qits-428): the three OTLP/HTTP exporters as CDI beans whose
+             header supplier carries the `qits` oidc client's current bearer, so spans, logs and
+             metrics reach qits-observability at its edge host. Published by
+             qits-integrations-quarkus, like qits-http-core above. -->
+        <qits.telemetry-core.version>2026.1103.201640</qits.telemetry-core.version>
+        <!-- The platform's datasource resilience, released out of libs/qits-integrations-quarkus
+             together with the two above, which is why the strings match: qits-db-core carries
+             PatientPgDriver — the pool opens its connections through it, and a request is HELD
+             while postgres comes back rather than failed — and qits-arch-rules carries the
+             assertion that this service configured it. They move together, because the rule names
+             the driver as a STRING: a driver that moved without the rule would pass a build it
+             should fail. -->
+        <qits.db-core.version>2026.1002.70617</qits.db-core.version>
+        <qits.arch-rules.version>2026.1030.30851</qits.arch-rules.version>
+        <!-- The user-story framework (test scope): TokenValidationBootstrapIT is written as a
+             @UserStory, so a run of that IT also regenerates service/target/userstories/ — the
+             story's documentation, network diagram included — OBSERVED rather than narrated, since
+             this version is the one that dropped Interactions.happened. It carries its OWN version
+             rather than riding the three above, because it is released out of libs/qits-userflows
+             and not out of the qits-integrations-quarkus reactor. -->
+        <qits.userflows.version>2026.1028.231715</qits.userflows.version>
+        <!-- The recording service mocks the same IT boots against (the generic MockService plus
+             idp.MockIdp), released out of libs/qits-integrations-quarkus like qits-auth-core,
+             qits-db-core and qits-arch-rules above — so the same-string policy applies the day this
+             repo consumes a newer reactor, and until then it names the release the mock idp
+             actually shipped in. -->
+        <qits.service-mock.version>2026.1002.70617</qits.service-mock.version>
+        <!-- THE qits CLI PIN, AND IT IS NOT AN ORDINARY LIBRARY VERSION. This artifact's version IS
+             the daemons-store coordinate of the `qits` binary, and StepContainerSettings carries that
+             string into every step container as $QITS_ARTIFACTS_CLI_VERSION — so THIS LINE DECIDES
+             WHICH qits CLI EVERY COMPOSED RELEASE STEP ON THE PLATFORM RUNS.
+
+             Before it, a release-phase step downloaded whatever was latest in the daemons store at
+             the moment it started: a shared, unversioned, unreviewed input to every release at once.
+             On 2026-09-13 one bad CLI release broke all of them, with nothing changed in any
+             consumer's tree and no line anybody could revert. A dependency cannot fail that way: it
+             has to RESOLVE for this reactor to build, QitsCliPinIT proves the version it names is
+             really in the store, and a bad CLI is then one repository's red gate rather than every
+             release on the platform.
+
+             qits-platform-maintenance moves it like any internal pin, on a maintenance/* branch, and
+             THIS repository's own release request is what gates the move. Do not hand-edit it to
+             chase a release. -->
+        <qits.platform-access-cli-binary.version>2026.1104.165639</qits.platform-access-cli-binary.version>
+        <!-- pact-jvm's JUnit 5 provider, for contracts/ConsumerPactVerificationTest: the version every
+             provider on the estate verifies with, so a consumer's pact is read the same way. -->
+        <pact.version>4.7.5</pact.version>
+        <!-- The other providers' golden masters (qits-1149), test scope: what this repository's
+             consumer pacts against qits-projects, qits-githost, qits-artifacts and qits-idp are
+             built from (contracts/consumer/). Bumped like every internal pin. -->
+        <qits.projects-golden-masters.version>2026.1104.114635</qits.projects-golden-masters.version>
+        <qits.githost-golden-masters.version>2026.1020.204038</qits.githost-golden-masters.version>
+        <qits.artifacts-golden-masters.version>2026.1029.125556</qits.artifacts-golden-masters.version>
+        <qits.idp-golden-masters.version>2026.1027.165632</qits.idp-golden-masters.version>
+        <!-- The shared consumer-pact helper (golden-master reader, row builder, pact file) the rows
+             above are written with. Released out of the qits-integrations-quarkus reactor. -->
+        <qits.pact-consumer.version>2026.1019.82625</qits.pact-consumer.version>
+        <!-- The consumer pacts contracts/ConsumerPactVerificationTest verifies (qits-1149): each
+             consumer publishes `pacts/<consumer>_qits-ci-service.json` as a jar, pinned here in test
+             scope and bumped by qits-maintenance when the consumer releases a changed pact. -->
+        <qits.landing-app-pacts-qits-ci-service.version>2026.1027.141236</qits.landing-app-pacts-qits-ci-service.version>
+        <qits.artifacts-service-pacts-qits-ci-service.version>2026.1018.153037</qits.artifacts-service-pacts-qits-ci-service.version>
+        <qits.bootstrap-cli-pacts-qits-ci-service.version>2026.1023.225504</qits.bootstrap-cli-pacts-qits-ci-service.version>
+        <qits.maintenance-service-pacts-qits-ci-service.version>2026.1026.180147</qits.maintenance-service-pacts-qits-ci-service.version>
+        <qits.orchestrator-service-pacts-qits-ci-service.version>2026.1018.172917</qits.orchestrator-service-pacts-qits-ci-service.version>
+        <qits.platform-access-monorepo-pacts-qits-ci-service.version>2026.1103.101116</qits.platform-access-monorepo-pacts-qits-ci-service.version>
+        <qits.projects-service-pacts-qits-ci-service.version>2026.1018.195756</qits.projects-service-pacts-qits-ci-service.version>
+        <!-- qits-workspaces-service's consumer pact (epic qits-1681): the run read a declared wait on a
+             run makes (getRun). The first pin is set by hand; later ones are maintenance bumps. -->
+        <qits.workspaces-service-pacts-qits-ci-service.version>2026.1028.174331</qits.workspaces-service-pacts-qits-ci-service.version>
+        <!-- The frontends' pacts of what @qits/ui-components asks qits-ci for them (qits-1284): one
+             jar per frontend, `pacts/<frontend>_qits-ui-components-jslib_qits-ci-service.json`,
+             bumped like the rows above when the frontend releases a changed pact. -->
+        <qits.ci-frontend-pacts-qits-ci-service.version>2026.1103.145359</qits.ci-frontend-pacts-qits-ci-service.version>
+        <qits.projects-frontend-pacts-qits-ci-service.version>2026.1103.141410</qits.projects-frontend-pacts-qits-ci-service.version>
+        <qits.docs-frontend-pacts-qits-ci-service.version>2026.1103.140427</qits.docs-frontend-pacts-qits-ci-service.version>
+        <qits.events-frontend-pacts-qits-ci-service.version>2026.1103.172940</qits.events-frontend-pacts-qits-ci-service.version>
+        <qits.githost-frontend-pacts-qits-ci-service.version>2026.1103.140926</qits.githost-frontend-pacts-qits-ci-service.version>
+        <qits.maintenance-frontend-pacts-qits-ci-service.version>2026.1103.172943</qits.maintenance-frontend-pacts-qits-ci-service.version>
+        <qits.artifacts-frontend-pacts-qits-ci-service.version>2026.1103.141143</qits.artifacts-frontend-pacts-qits-ci-service.version>
+        <qits.deployments-frontend-pacts-qits-ci-service.version>2026.1103.172937</qits.deployments-frontend-pacts-qits-ci-service.version>
+        <qits.mirror-frontend-pacts-qits-ci-service.version>2026.1103.172944</qits.mirror-frontend-pacts-qits-ci-service.version>
+        <qits.observability-frontend-pacts-qits-ci-service.version>2026.1103.151444</qits.observability-frontend-pacts-qits-ci-service.version>
+        <qits.orchestrator-frontend-pacts-qits-ci-service.version>2026.1103.172942</qits.orchestrator-frontend-pacts-qits-ci-service.version>
+        <qits.system-frontend-pacts-qits-ci-service.version>2026.1103.172958</qits.system-frontend-pacts-qits-ci-service.version>
+        <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.version>3.40.1</quarkus.platform.version>
+
+        <!-- Embedded PostgreSQL for the suites. Both stores this repo boots are postgres now — its
+             own `ci` datasource and the qits-eventstream jar's `eventstream` outbox — so every test
+             that starts a persistence unit runs against one, and the first rule here is still that
+             a CLONE TESTS GREEN WITH NO DOCKER. That rules out Testcontainers and Quarkus dev
+             services alike. Zonky resolves real postgres binaries as ordinary Maven artifacts and
+             spawns them as a child process: a dependency, not a container.
+
+             Two coordinates, on purpose. The BOM pins which POSTGRES the binaries are (18.4.0 — the
+             tag the platform's own qits-oci-postgresql image is built from), the library version is
+             the harness around them, and they move independently. Every architecture the suites may
+             run on is named explicitly in the modules: the binaries are per-arch artifacts, and a
+             missing one fails in the middle of a suite rather than during resolution. -->
+        <zonky.embedded-postgres.version>2.2.2</zonky.embedded-postgres.version>
+        <zonky.postgres-binaries.version>18.6.0</zonky.postgres-binaries.version>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+        <failsafe-plugin.version>3.5.4</failsafe-plugin.version>
+        <jandex-plugin.version>3.4.0</jandex-plugin.version>
+        <lombok.version>1.18.48</lombok.version>
+        <!-- Quinoa is a quarkiverse extension and is not in the platform BOM, so it carries its own
+             version. Used by `service` only; see the dependency's comment there for why 2.8.2 and
+             not the newer 2.8.3. -->
+        <quinoa.version>2.9.2</quinoa.version>
+        <lombok-mapstruct-binding.version>0.2.0</lombok-mapstruct-binding.version>
+        <mapstruct.version>1.6.3</mapstruct.version>
+
+        <!-- ITs are skipped by default. The docker-backed ones this was written for
+             (CiDaemonHandshakeIT, CiDaemonGateIT) went with the in-process executor in qits-506 — a
+             step container is the runner's to start now — but the packaged ITs still want a built
+             artifact and git, and `mvn verify` must be green without them — the same default the monorepo and qits-workspaces
+             carry. Run them with -DskipITs=false. `service`'s `native` profile also flips it, so a
+             `-Dnative` build exercises the binary it just compiled instead of packaging it and
+             asserting nothing. -->
+        <skipITs>true</skipITs>
+
+        <!-- JUnit tags failsafe must NOT run, empty by default so `-DskipITs=false` still means
+             "run everything", which is what AGENTS.md documents. Only the `native` profile sets it,
+             to `extended`: that build wants the @QuarkusIntegrationTest against the binary, and the
+             docker-backed ITs — tagged `extended`, needing real docker AND a step container that can
+             route back to the JVM — are infrastructure tests that have nothing to say about
+             native-image and fail rather than skip on a plain WSL2 host. Excluding them there keeps
+             the native gate about the binary; they are still run, unchanged, by -DskipITs=false. -->
+        <qits.it.excluded-groups/>
+        <!-- Surefire's @{argLine} has no value unless something (jacoco/quarkus) sets it. -->
+        <argLine/>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <!-- Which postgres the embedded binaries ARE — 18.4.0, the tag the platform's own
+                     qits-oci-postgresql image is built from, so the suites prove the lineage
+                     against the engine it ships on. Imported as a BOM because the per-arch
+                     artifacts the modules name are separate coordinates. -->
+                <groupId>io.zonky.test.postgres</groupId>
+                <artifactId>embedded-postgres-binaries-bom</artifactId>
+                <version>${zonky.postgres-binaries.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.zonky.test</groupId>
+                <artifactId>embedded-postgres</artifactId>
+                <version>${zonky.embedded-postgres.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok</artifactId>
+                <version>${lombok.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.mapstruct</groupId>
+                <artifactId>mapstruct</artifactId>
+                <version>${mapstruct.version}</version>
+            </dependency>
+            <!-- org.yaml:snakeyaml (CiConfigParser's SafeConstructor) is managed by the Quarkus
+                 BOM, so it stays version-less in the child pom exactly as in the monorepo. -->
+            <!-- The reactor's own modules, so `service` depends on them version-less. -->
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-ci-domain</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <!-- Not `${project.version}` any more, and the difference is the whole ticket: this is
+                 a RELEASED sibling artifact now, not a module of this reactor. Its version is the
+                 daemon binary's — see the property's own comment. -->
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-ci-daemon-protocol</artifactId>
+                <version>${qits.ci-daemon-protocol.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-eventstream</artifactId>
+                <version>${qits.eventstream.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The eventstream pact kit (qits-1163): contracts/consumer/EventstreamPactTest pacts
+                     what qits-eventstream asks qits-events on this service's behalf. Always the
+                     same version as qits-eventstream itself. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-eventstream-contracts</artifactId>
+                <version>${qits.eventstream.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-ci-events</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-githost-events</artifactId>
+                <version>${qits.githost-events.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-auth-core</artifactId>
+                <version>${qits.auth-core.version}</version>
+            </dependency>
+            <dependency>
+                <!-- QitsHttpClients: wraps every hand-rolled java.net.http client service/ builds, so
+                     an internal call opens a CLIENT span and carries X-Qits-Caller like the REST
+                     client already does. Compile scope wherever a client is built, and in the
+                     Quarkus application module too, so CallerServerFilter/CallerClientFilter are on
+                     the classpath and active. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-http-core</artifactId>
+                <version>${qits.http-core.version}</version>
+            </dependency>
+            <dependency>
+                <!-- OTLP export to qits-observability through the edge (epic qits-428): replaces all
+                     three of Quarkus' own OTLP exporters with CDI beans that attach the `qits` oidc
+                     client's bearer on every export. qits.telemetry.endpoint in application.properties;
+                     quarkus.otel.exporter.otlp.* no longer reaches anything. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-telemetry-core</artifactId>
+                <version>${qits.telemetry-core.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The platform's shared ArchUnit rules, test scope wherever entities live. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-arch-rules</artifactId>
+                <version>${qits.arch-rules.version}</version>
+            </dependency>
+            <dependency>
+                <!-- PatientPgDriver, named by config and reached by no code, plus DbRetry, which
+                     the read seams call. COMPILE scope since the second one arrived: a runtime-only
+                     jar cannot be imported. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-db-core</artifactId>
+                <version>${qits.db-core.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site, like qits-arch-rules. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-userflows</artifactId>
+                <version>${qits.userflows.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site, like qits-arch-rules. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-service-mock</artifactId>
+                <version>${qits.service-mock.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The qits CLI's coordinate: three strings and no bytes of the binary — the
+                     daemons-store name, the command name, and the version the same release
+                     published the binary under. Compile scope and one class with no transitive
+                     dependency of its own: a consumer that pins the CLI must not inherit a
+                     classpath for it. See the property above for why the pin exists. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-platform-access-cli-binary</artifactId>
+                <version>${qits.platform-access-cli-binary.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <repositories>
+        <repository>
+            <!-- The platform's hosted Maven. Named `qits-maven` because .qits-maven-settings.xml
+                 mirrors exactly that id. The host answers 401 anonymously: build with
+                 `-s .qits-maven-settings.xml` and the QITS_MAVEN_* variables it reads, or give
+                 ~/.m2/settings.xml a `qits-maven` server. -->
+            <id>qits-maven</id>
+            <url>${qits.maven.repository.url}</url>
+        </repository>
+    </repositories>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>${quarkus.platform.group-id}</groupId>
+                    <artifactId>quarkus-maven-plugin</artifactId>
+                    <version>${quarkus.platform.version}</version>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${compiler-plugin.version}</version>
+                    <configuration>
+                        <parameters>true</parameters>
+                        <!-- Incremental compilation leaves stale MapStruct *Impl classes behind
+                             when a mapper's shape changes; the monorepo disables it for the same
+                             reason. -->
+                        <useIncrementalCompilation>false</useIncrementalCompilation>
+                        <annotationProcessorPaths>
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                                <version>${lombok.version}</version>
+                            </path>
+                            <path>
+                                <groupId>org.mapstruct</groupId>
+                                <artifactId>mapstruct-processor</artifactId>
+                                <version>${mapstruct.version}</version>
+                            </path>
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok-mapstruct-binding</artifactId>
+                                <version>${lombok-mapstruct-binding.version}</version>
+                            </path>
+                        </annotationProcessorPaths>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${surefire-plugin.version}</version>
+                    <configuration>
+                        <systemPropertyVariables>
+                            <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                        </systemPropertyVariables>
+                        <!-- The platform injects QITS_DOMAIN into CI steps and agent containers; a
+                             test JVM that inherits it picks up the live domain instead of the
+                             suite's domain-less default. Keep it out. -->
+                        <excludedEnvironmentVariables>
+                            <excludedEnvironmentVariable>QITS_DOMAIN</excludedEnvironmentVariable>
+                        </excludedEnvironmentVariables>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <version>${failsafe-plugin.version}</version>
+                    <configuration>
+                        <!-- Same reasoning as the surefire plugin above: don't let the platform's
+                             QITS_DOMAIN leak into the forked test JVM. -->
+                        <excludedEnvironmentVariables>
+                            <excludedEnvironmentVariable>QITS_DOMAIN</excludedEnvironmentVariable>
+                        </excludedEnvironmentVariables>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>io.smallrye</groupId>
+                    <artifactId>jandex-maven-plugin</artifactId>
+                    <version>${jandex-plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>make-index</id>
+                            <goals>
+                                <goal>jandex</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

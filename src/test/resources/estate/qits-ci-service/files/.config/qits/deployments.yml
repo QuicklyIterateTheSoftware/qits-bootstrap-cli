@@ -1,0 +1,70 @@
+# How qits-platform-deployments deploys this repo. It reads this file from the git host at
+# the built sha, so the answer travels with the commit.
+#
+# CARRYING THE FILE AT ALL is the other thing it says. The release flow reads it to decide whether
+# this repository deploys — a library or an SPA carries none, and its `main` is finalized the moment
+# the release is stamped rather than after a deployment. Carrying one makes the release the front
+# half: qits-deployments opens a Deployment Request for the published version coordinate, and `main`
+# is finalized only once that deployment succeeds.
+#
+# It used to be qits-workspaces that read this on a release, promoting onto the branch it was
+# configured with (`qits.workspaces.release.entry-branch`), and `deploy_branches` used to name that
+# branch here, in thirteen copies of one platform-wide answer. Both went with the release door.
+#
+# WHAT THIS REPOSITORY DEPLOYS AS, held still across the repository rename. The repository is
+# qits-ci-service now; the application is still qits-ci, so nothing that is running moves: the swarm
+# service and its wire alias, the container, the image qits/qits-ci the build pushes, the
+# provisioned database, the derived host label, the extras family and the QITS_APPLICATION the
+# container boots with all keep the names they have. Omitted, this name would be DERIVED from the
+# repository, and the rename would read as a decommission plus a new application rather than a
+# rename. Changing the value later is exactly that decommission, so it does not change again.
+application: qits-ci
+
+# The path prefix the edge routes here on EVERY host, browser and machine alike. The client itself
+# is served at `/` on this service's own host (ci.<env>.<domain>), so this covers the machine surface
+# only: /ci/api, /ci/q and /ci/daemon.
+routes: /ci
+
+# Where this application appears in the chrome's navigation tree. `<slot>.<Label>:<position>`, and
+# the slot is what places it: `<category>.details` is a child of a repository in scope, so CI shows
+# up under every repository whatever kind it is — a library has runs exactly like a service does.
+# Position 5 is per slot, and it is the platform's fixed order of the per-repository applications
+# (Api Docs 1, Docs 2, Release Requests 3, Code 4, CI 5, Artifacts 6, Configuration 7, Workspaces 8).
+#
+# CI MOVED 4 -> 5 ON 2026-09-01, and nothing about this application changed. qits-projects put a
+# Release Requests row at position 3, above Code, and every entry from Code down moved up one in the
+# same change — this file, qits-githost, qits-artifacts, qits-configuration and qits-workspaces, one
+# line each. The order is stated in integers rather than left to the edge's position-then-label
+# tie-break so that renaming a row cannot silently reorder the group.
+navigation-entries: services.details.CI:5, daemons.details.CI:5, libs.details.CI:5, apps.details.CI:5, frontends.details.CI:5, cli.details.CI:5, images.details.CI:5
+
+# TWO DATABASES, because this deployable joins two jars that each own a store, and each one maps the
+# generic contract in its own shipped defaults. qits-platform-deployments creates a role and a
+# database per entry on the tier's postgres before the successor container starts, and injects
+# QITS_RESOURCE_<NAME>_URL / _USERNAME / _PASSWORD. The NAMES are what the variable names follow, so
+# they are not free: `db` is what the ci jar's microprofile-config.properties reads, `eventstream` is
+# what the qits-eventstream jar's does, and renaming either here silently stops matching.
+#
+# `db` takes the derived default database — `qits_` + the application name minus its `qits-` prefix,
+# so qits_ci — and says so by omitting the third segment. `eventstream` cannot: the default would be
+# qits_ci too, and one database cannot be two stores with two Flyway lineages, so it is named. The
+# name carries this repository, because every consumer of that jar declares a resource called
+# `eventstream` and they must not collide on one postgres.
+#
+# idp:client ASKS QITS-DEPLOYMENTS TO PROVISION THIS APPLICATION'S OWN QITS-IDP SERVICE CLIENT — id
+# `dev-qits-ci` (derived from env + application), roles `qits:system`, fixed in qits-idp code. The
+# deployer stores the secret the way it stores a database password, and injects
+# QITS_RESOURCE_IDP_URL, QITS_RESOURCE_IDP_CLIENT_ID and QITS_RESOURCE_IDP_CLIENT_SECRET, which the
+# `qits` oidc client reads before its old fallback keys.
+#
+# Ticket qits-162, epic qits-540 contract C3.
+resources: postgresql:db, postgresql:eventstream:qits_ci_eventstream, idp:client
+
+# STOP-FIRST: one CI process at a time. A start-first successor swept while the predecessor was
+# still claiming queued rows, and left a RUNNING run no worker owned (2026-08-23).
+update_order: stop-first
+
+# Where the browsable API document lives: swagger-ui under this service's non-application
+# root, which sits under the primary route above. The shell's Api Docs viewer reads it off
+# /main-navigation and frames it for this repository.
+api-docs: /ci/q/swagger-ui

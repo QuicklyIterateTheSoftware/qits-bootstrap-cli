@@ -1,0 +1,153 @@
+archetype: java-service
+artifacts:
+  # THE IMAGE ENTRY AND THE DAEMON ENTRY NAME THE SAME DOCUMENT ON PURPOSE, which is what the
+  # hand-written file PUT twice: one build produces both, so one bill of materials describes both.
+  # The postlude submits it once per entry, under two artifact identities, as before.
+  - { type: docker, name: qits/workspace, sbom: .sbom/sbom.json }
+  - { type: daemon, name: qits-workspace-daemon, sbom: .sbom/sbom.json }
+  # THE PROTOCOL MODULE, published from the maven step below. qits-ci submits this `sbom:` from
+  # whichever release step holds the file — that maven step, where `makeBom` writes it — and checks
+  # on the last step that it reached the store.
+  - { type: maven, name: "eu.wohlben.qits:qits-workspace-daemon-protocol", path: workspace-daemon-protocol, sbom: workspace-daemon-protocol/target/sbom.json }
+
+# The provider golden masters (ticket qits-1149): the platform packages `golden-masters/` as
+# `eu.wohlben.qits:qits-workspace-daemon-golden-masters` and its npm twin, each published only when
+# its content changed. GoldenMasterRecordingTest keeps the directory current. This daemon calls no
+# REST provider, so it publishes no consumer pact of its own.
+contracts:
+  application: qits-workspace-daemon
+  golden-masters: { from: golden-masters/, packages: [maven, npm] }
+
+# THREE ARTIFACTS OF THREE DIFFERENT TYPES OUT OF ONE TREE — an image, a daemon jar and a published
+# protocol module. No archetype publishes more than one kind, so both slots are this repository's
+# and the archetype is named for the family only.
+release-request:
+  - image: qits/build-images/maven-base:latest
+    timeout-seconds: 1800
+    qits-cli: true
+    script: |
+      # THE ADDRESSES ARE CODE (qits-731): hosted Maven on registry.qits.<domain>, Central through
+      # mirror.qits.<domain>. `wohlben.eu` covers a qits-ci too old to inject $QITS_DOMAIN.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      export QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central"
+      export QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$qits_domain/artifacts/maven/maven"
+      # EVERY DEPLOYED CONSUMER'S PACT, NOT ONLY THE POM'S (qits-1765). Mirrors the packaged
+      # `java-service` release archetype's release-request verify step
+      # (ci/src/main/resources/release-archetypes/java-service.yml in qits-ci-service) — see that
+      # recipe for the full rationale. A provider also asks qits-maintenance which consumer
+      # versions are deployed and verifies each of those pacts, not only the pinned one.
+      repo=${QITS_CI_REPO_NAME:?this step was told no QITS_CI_REPO_NAME}
+      deployed_pacts_dir=""
+      declared_consumers=""
+      poms=$(find . -name pom.xml -not -path '*/target/*' -not -path '*/node_modules/*')
+      for pom in $poms; do
+        found=$(sed -n "s|.*<artifactId>\([A-Za-z0-9._-]*\)-pacts-$repo</artifactId>.*|\1|p" "$pom") || {
+          echo "deployed pacts: could not read $pom to tell whether $repo is a pact provider" >&2
+          exit 1
+        }
+        declared_consumers="$declared_consumers $found"
+      done
+      declared_consumers=" $(printf '%s' "$declared_consumers" | tr '\n' ' ') "
+      case "$declared_consumers" in
+        *[!\ ]*) deployed_pacts_dir="$PWD/target/deployed-pacts" ;;
+      esac
+      if [ -n "$deployed_pacts_dir" ]; then
+        rm -rf "$deployed_pacts_dir"
+        mkdir -p "$deployed_pacts_dir"
+        echo "deployed pacts: $repo is a pact provider; fetching every deployed consumer's pact"
+        qits artifacts fetch deployed-pacts --provider "$repo" --out "$deployed_pacts_dir" || {
+          echo "deployed pacts: could not fetch the deployed consumers' pacts for $repo, so this" \
+            "gate cannot verify them" >&2
+          exit 1
+        }
+        for consumer_dir in "$deployed_pacts_dir"/*/; do
+          [ -d "$consumer_dir" ] || continue
+          consumer=$(basename "$consumer_dir")
+          case "$declared_consumers" in
+            *" $consumer "*) ;;
+            *)
+              rm -rf "$consumer_dir"
+              echo "deployed pacts: $consumer is not a consumer this repository pins; not verified" ;;
+          esac
+        done
+      fi
+
+      env ${deployed_pacts_dir:+"QITS_DEPLOYED_PACTS_DIR=$deployed_pacts_dir"} \
+        ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
+        -Dqits.maven.repository.url="$QITS_MAVEN_REPOSITORY_URL"
+
+  - image: qits/build-images/ci-base:latest
+    build: true
+    timeout-seconds: 7200
+    script: |
+      # BYTE-IDENTICAL TO THE RELEASE SLOT'S BUILD but for the tag it pushes. Change one, change the
+      # other: that is what makes a release following a green fold a stack of cache hits.
+      #
+      # THE ADDRESSES ARE CODE (qits-731). `wohlben.eu` covers a qits-ci too old to inject
+      # $QITS_DOMAIN.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      ref="registry.qits.$qits_domain/$QITS_IMAGE_REPOSITORY/workspace:$QITS_CI_SHA"
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret \
+        --output "type=image,name=$ref,push=true"
+
+release:
+  - image: qits/build-images/ci-base:latest
+    build: true
+    timeout-seconds: 7200
+    script: |
+      # THE ADDRESSES ARE CODE (qits-731). `wohlben.eu` covers a qits-ci too old to inject
+      # $QITS_DOMAIN.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      ref="registry.qits.$qits_domain/$QITS_IMAGE_REPOSITORY/workspace:$QITS_VERSION"
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret \
+        --output "type=image,name=$ref,push=true"
+
+      # GENERATED, NEVER SUBMITTED — the postlude PUTs it for the two artifacts that declare it. It
+      # comes out of the same build as the image, on build args byte-identical to the push above, so
+      # it describes the very resolve that produced those bytes and costs a cache hit rather than a
+      # second compile.
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt target=sbom \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret \
+        --output type=local,dest=.sbom
+
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt target=binary \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret \
+        --output type=local,dest=.binary
+
+      # THE FILENAME IS NOT THE ARTIFACT NAME: the daemon is published as `qits-workspace-daemon`
+      # from a file called `qits-workspace-daemon.jar`. Spelled out rather than found, because this
+      # export directory also holds nothing else worth guessing at.
+      qits-publish daemon submit \
+        --name qits-workspace-daemon --version "$QITS_VERSION" \
+        --file .binary/qits-workspace-daemon.jar
+
+  - image: qits/build-images/maven-base:latest
+    timeout-seconds: 1800
+    script: |
+      # NO LONGER A DEPLOY: the CLI publishes this coordinate from the postlude, off the jar this
+      # step leaves in target/. This step only has to build it.
+      ./mvnw -B -ntp -s .qits-maven-settings.xml -pl workspace-daemon-protocol -am package -DskipTests
+      # THE ADDRESSES ARE CODE (qits-731). `wohlben.eu` covers a qits-ci too old to inject
+      # $QITS_DOMAIN.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central" \
+      ./mvnw -B -ntp -s .qits-maven-settings.xml -pl workspace-daemon-protocol -DskipTests \
+        -Dqits.maven.repository.url="https://registry.qits.$qits_domain/artifacts/maven/maven" \
+        org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeBom \
+        -DoutputFormat=json -DoutputName=sbom -DschemaVersion=1.6

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- The consumer half of the platform's contracts (ticket qits-1149): reads a provider's
+         golden masters off the test classpath and turns a (provider state, operation) into a
+         pact-jvm V4 interaction that binds only what the consumer reads. One shared copy in place
+         of the per-repository GoldenMasters classes round 1 wrote.
+
+         A consumer declares THIS module in test scope. Its dependencies are compile scope on
+         purpose (as in qits-arch-rules), so the consumer gets pact-jvm and JUnit transitively.
+         Not a Quarkus module: the pacts run on plain JUnit 5. -->
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-integrations-quarkus</artifactId>
+        <version>2026.1105.105731</version>
+    </parent>
+
+    <artifactId>qits-pact-consumer</artifactId>
+    <packaging>jar</packaging>
+    <name>qits-pact-consumer</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>au.com.dius.pact.consumer</groupId>
+            <artifactId>junit5</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

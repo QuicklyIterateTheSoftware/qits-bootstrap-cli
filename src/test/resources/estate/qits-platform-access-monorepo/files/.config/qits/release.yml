@@ -1,0 +1,242 @@
+archetype: daemon
+artifacts:
+  - { type: daemon, name: qits-platform-access-cli, sbom: out/sbom.json }
+  # THE MCP SERVICE'S IMAGE, from the same release as the binary: `docker/Dockerfile`'s `service`
+  # target, pushed by the release step below and deployed by qits-deployments as the application
+  # `qits-platform-access-mcp-service` (`.config/qits/deployments.yml`). ONE FLOW LINE, the fleet's
+  # spelling. Its SBOM sits beside the binary's because the composed postlude submits every declared
+  # `sbom:` from ONE step, the last `build: true` one, so the image is built in that same step.
+  - { type: docker, name: qits/qits-platform-access-mcp-service, sbom: out/service/sbom.json }
+  # THE PIN, AND IT IS NOT OPTIONAL. One class, three strings, no bytes of the binary: the daemons-
+  # store name, the command name, and the version this same release published the binary under.
+  # qits-ci's pom depends on it and injects the version it names, which is what stopped every
+  # composed release step on the platform from downloading whatever was latest in the daemons store
+  # at step start. Dropping it would leave qits-ci pinning a coordinate that stops advancing.
+  #
+  # SINCE 2026-09-18 THIS ENTRY ALSO KEEPS THE BINARY ABOVE ALIVE, and that is the second reason it
+  # is not optional. The two entries are one release stamped twice, and qits-platform-maintenance
+  # now reads them that way: `control/CarriedDaemons` resolves a pinned maven coordinate to the
+  # repository that released it and serves every DAEMON artifact of that same release as a `daemon`
+  # row on `GET /maintenance/api/pins`, which qits-artifacts files as a keep. Before that, nothing
+  # named the binary at all — `daemon-binaries` collect at `window=P0D` behind the last two
+  # versions, so the version qits-ci's pom still pinned was evicted by the second release after it
+  # and every composed release step 404'd on the fetch. The pair below is therefore load-bearing in
+  # both directions: the maven entry is how the version is bumped AND how the bytes survive. Ticket
+  # d0b1965f-ca40-4780-8ee1-9be56851b465.
+  #
+  # qits-ci submits this `sbom:` from whichever release step holds the file — the maven step below,
+  # where `makeBom` writes it — and checks on the last step that it reached the store.
+  - { type: maven, name: "eu.wohlben.qits:qits-platform-access-cli-binary", path: platform-access-cli-binary, sbom: platform-access-cli-binary/target/sbom.json }
+# THE CONSUMER PACTS (epics qits-546 and qits-965, ticket qits-1149): what the commands ask each qits
+# service, one file per provider, written by that provider's *ConsumerPactTest from its golden masters
+# and committed at pacts/qits-platform-access-monorepo_<provider>.json (since qits-1835 the files name
+# the consumer qits-platform-access-monorepo, the repository's new name; qits-ci picks them by the
+# `_<provider>.json` suffix alone). The platform packs each as
+# `eu.wohlben.qits:qits-platform-access-monorepo-pacts-<provider>` (the coordinate is named by this
+# repository and the provider's, so it moved with the qits-631 rename), only when it changed, from
+# the release slot's LAST step — the pin jar's step below — exactly as for an archetype recipe:
+# qits-ci reads `contracts:` from this file whichever recipe the slots come from. Each provider pins its jar and verifies it.
+# ClientCallsGuardTest fails when a contract with a recorded row is missing here.
+contracts:
+  # The REPOSITORY's name (qits-631): qits-ci's release-QA consistency check accepts the
+  # deployments.yml application or the repository name here, and the old name is neither.
+  application: qits-platform-access-monorepo
+  pacts:
+    qits-projects-service: { packages: [maven] }
+    qits-workspaces-service: { packages: [maven] }
+    qits-workspace-daemon: { packages: [maven] }
+    qits-artifacts-service: { packages: [maven] }
+    qits-ci-service: { packages: [maven] }
+    qits-maintenance-service: { packages: [maven] }
+    qits-observability-service: { packages: [maven] }
+    qits-events-service: { packages: [maven] }
+    qits-idp-service: { packages: [maven] }
+
+# THE daemon ARCHETYPE'S OWN HEADER NAMES THIS REPOSITORY AS THE ONE THAT RIDES ITS OWN RECIPES, and
+# the reason is the build: there is no `docker/Dockerfile.musl-builder` here, so the archetype's
+# guarded toolchain half never fires, and `docker/Dockerfile` takes MUSL_URL and ZLIB_URL directly
+# rather than the BUILDER_IMAGE the archetype passes. It would pass an argument this Dockerfile does
+# not take from a build arg and omit the two it needs.
+release-request:
+    # THE CLONE-ALONE GATE FIRST, so a broken test costs no native compile. A ROOT invocation, so it
+    # builds the whole reactor: the application and the pin jar. Nothing is deployed from here.
+  - image: qits/build-images/maven-base:latest
+    timeout-seconds: 1800
+    script: |
+      # The addresses are code under the platform's public domain (qits-731); qits-ci injects
+      # $QITS_DOMAIN into every step unconditionally, so a missing value is a configuration bug,
+      # never a default to fall back on.
+      qits_domain=${QITS_DOMAIN:?QITS_DOMAIN is not set}
+      export QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central"
+      # The platform's own Maven, for qits-projects' golden masters jar, which the commands' consumer
+      # pact test reads (the java-service archetype's QA step passes it the same way).
+      export QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$qits_domain/artifacts/maven/maven"
+      ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
+        -Dqits.maven.repository.url="$QITS_MAVEN_REPOSITORY_URL"
+
+    # Then the shipping forms: the static musl binary and the MCP service image, on the platform's
+    # builder, with no socket. Two native compiles, hence the release step's 5400.
+  - image: qits/build-images/ci-base:latest
+    build: true
+    timeout-seconds: 5400
+    script: |
+      # qits_domain, musl_url, zlib_url and tarball_auth: the same arguments for every build of
+      # docker/Dockerfile, worked out in one file that tapes/prepare.sh sources too. It says why the
+      # tarball ADD needs the run's token on the EDGE plane only (qits-441).
+      #
+      # THE MAVEN STAGE'S CREDENTIAL IS UNCONDITIONAL, unlike the tarball's: the two files qits-ci's
+      # prelude writes become QITS_MAVEN_AUTH_USR/PSW inside the mvnw RUN (docker/Dockerfile) — the
+      # run's token on the EDGE plane, where the public mirror challenges, and the commissioned pair
+      # on the INTERNAL one, where the in-network mirror never does, so Maven never sends it.
+      . docker/buildctl-args.sh
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt target=binary \
+        --opt build-arg:MUSL_URL="$musl_url" \
+        --opt build-arg:ZLIB_URL="$zlib_url" \
+        $tarball_auth \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret \
+        --output type=local,dest=out
+      # THE BINARY IS `out/qits` AND THE ARTIFACT IS `qits-platform-access-cli`. The mismatch is the
+      # ordinary case rather than a slip — qits-workspace-oci fetches the artifact by its name and
+      # writes it into its build context as `qits` — and this migration touches neither name.
+      chmod +x out/qits
+      ./out/qits --help >/dev/null
+      # A binary that prints Quarkus build-time configuration on --help is unusable as a CLI.
+      noise=$(QUARKUS_ANALYTICS_DISABLED=true ./out/qits --help 2>&1) || true
+      case "$noise" in
+        *ConfigRecorder*|*"Build time property"*)
+          echo "$noise" >&2
+          echo "the binary prints Quarkus configuration noise under QUARKUS_ANALYTICS_DISABLED" >&2
+          exit 1 ;;
+      esac
+      echo "qits built: $(sha256sum out/qits | cut -d' ' -f1)"
+      # THE SERVICE IMAGE, BUILT AND NOT PUSHED, so a native break in the MCP service fails the
+      # request rather than the release. No `--output` at all: buildctl solves the graph and exports
+      # nothing, as the java-service archetype's QA build does. The same args and secrets as every
+      # other invocation here, so the release step's image build is cache hits.
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt target=service \
+        --opt build-arg:MUSL_URL="$musl_url" \
+        --opt build-arg:ZLIB_URL="$zlib_url" \
+        $tarball_auth \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret
+
+    # THE TAPES CHECK (epic qits-881). This repository declares its own `release-request:` (see
+    # above: archetype daemon, on its own recipes), and a declared slot replaces the archetype's
+    # whole, so nothing gives it the `cli` archetype's second step; this step is that step, opted
+    # into by hand. Its script only says what it checks: the check is `check-outputs: [cli-tapes]`,
+    # which runs qits-ci's cli-tapes generator after the script (qits-ci-service,
+    # platform-pipelines/automations/cli-tapes.yml): it sources tapes/prepare.sh, which builds the
+    # Dockerfile's `tapes-kit` target (the binary above and the fake platform's class path) with the
+    # QA build's own arguments, so the native compile is a cache hit; plays every tapes/*.tape into
+    # tapes/golden/<tape>.txt, renders tapes/recordings/<tape>.gif only for a changed golden or a
+    # missing GIF; and then fails the step as stale on any change under those two directories,
+    # naming `qits release-request regenerate --kind cli-tapes`. Nothing is committed here; the
+    # goldens and GIFs come from that automation, never by hand.
+    #
+    # A step of its own, after the build, so a red unit suite, a broken native build and a stale
+    # golden are told apart by the step that failed. `build: true` because prepare.sh builds through
+    # the platform's builder. `image:` is ignored — every step runs in the run's
+    # qits/build-images/ci-slot container, which carries vhs, ttyd, ffmpeg and a chromium (qits-1544)
+    # — and kept for the record of what the step needs.
+  - image: qits/build-images/vhs-base:latest
+    build: true
+    timeout-seconds: 3600
+    check-outputs: [cli-tapes]
+    script: |
+      # The check itself is the cli-tapes generator, run by `check-outputs` after this script.
+      echo "checking the VHS tapes: tapes/*.tape against tapes/golden/ and tapes/recordings/"
+
+release:
+    # Two native compiles in one step — the binary and the MCP service — one after the other, each
+    # inside the 4g cap; 5400 rather than 3600 for the second.
+  - image: qits/build-images/ci-base:latest
+    build: true
+    timeout-seconds: 5400
+    script: |
+      # The QA step's arguments, from the same file: the tarball credential on the EDGE plane only.
+      . docker/buildctl-args.sh
+      # BYTE-IDENTICAL BUILD ARGS ACROSS THE FOUR INVOCATIONS, and across the QA builds above, or an
+      # sbom stage is a second native compile instead of a cache hit on the resolve that produced
+      # the bytes.
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt target=binary \
+        --opt build-arg:MUSL_URL="$musl_url" \
+        --opt build-arg:ZLIB_URL="$zlib_url" \
+        $tarball_auth \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret \
+        --output type=local,dest=out
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt target=sbom \
+        --opt build-arg:MUSL_URL="$musl_url" \
+        --opt build-arg:ZLIB_URL="$zlib_url" \
+        $tarball_auth \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret \
+        --output type=local,dest=out
+      # THE MCP SERVICE IMAGE, pushed: `push=true` IS THE PUBLISH, from the builder straight to the
+      # registry. The host is code under the platform's public domain (qits-731), the same as
+      # `maven_root` above; the declaration's `qits/` namespace is re-supplied as
+      # `$QITS_IMAGE_REPOSITORY`. Before the daemon submit, so the order is: binary built, image
+      # pushed, binary submitted. The postlude then submits both declared SBOMs, out/sbom.json and
+      # out/service/sbom.json, from this step.
+      ref="registry.qits.$qits_domain/$QITS_IMAGE_REPOSITORY/qits-platform-access-mcp-service:$QITS_VERSION"
+      echo "releasing $ref"
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt target=service \
+        --opt build-arg:MUSL_URL="$musl_url" \
+        --opt build-arg:ZLIB_URL="$zlib_url" \
+        $tarball_auth \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret \
+        --output "type=image,name=$ref,push=true"
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt target=service-sbom \
+        --opt build-arg:MUSL_URL="$musl_url" \
+        --opt build-arg:ZLIB_URL="$zlib_url" \
+        $tarball_auth \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret \
+        --output type=local,dest=out/service
+      # `chmod +x` IS NOT OPTIONAL: the local export loses the mode bit, and a static binary that
+      # cannot be executed is a green build that publishes nothing runnable.
+      chmod +x out/qits
+      ./out/qits --help >/dev/null
+      qits-publish daemon submit \
+        --name qits-platform-access-cli --version "$QITS_VERSION" --file out/qits
+
+    # --- the pin jar --------------------------------------------------------------------------
+    # A SECOND STEP AND A DIFFERENT IMAGE, because this one needs maven and the one above needs
+    # buildctl. It is deliberately AFTER the binary publish: the jar is what tells qits-ci which
+    # binary to fetch, so a jar resolvable before its binary is published would be a pin pointing at
+    # nothing — briefly, but a release is exactly the moment somebody is watching.
+  - image: qits/build-images/maven-base:latest
+    timeout-seconds: 1800
+    script: |
+      # NO LONGER A DEPLOY: the CLI publishes this coordinate from the postlude, off the jar
+      # this step leaves in target/. This step only has to build it. The QITS_MAVEN_* prefix
+      # stays: `-am` still resolves the parent and junit off qits-maven's mirror of Central.
+      qits_domain=${QITS_DOMAIN:?QITS_DOMAIN is not set}
+      QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central" \
+      QITS_MAVEN_AUTH_USR="${QITS_MAVEN_AUTH_USR-}" \
+      QITS_MAVEN_AUTH_PSW="${QITS_MAVEN_AUTH_PSW-}" \
+      ./mvnw -B -ntp -s .qits-maven-settings.xml -pl platform-access-cli-binary -am package -DskipTests
+      QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central" \
+      ./mvnw -B -ntp -s .qits-maven-settings.xml -pl platform-access-cli-binary -DskipTests \
+        org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeBom \
+        -DoutputFormat=json -DoutputName=sbom -DschemaVersion=1.6

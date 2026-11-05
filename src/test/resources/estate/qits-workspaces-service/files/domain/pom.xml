@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-workspaces</artifactId>
+        <version>2026.1104.202345</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The workspaces DOMAIN: entity, persistence, dto, mapper, control, and the framework-free
+         SPIs the in-container workspace-daemon implements from the service side. Six of the
+         monorepo's aggregates collapsed onto one package per layer: the workspace half of
+         domain.repository, plus domain.service (host-side dev-server supervision), domain.bootstrap,
+         domain.process, domain.capture and domain.workspace. A plain library
+         jar in the shape of the monorepo's `artifacts`/`ci`/`epics` modules — NO web, NO JAX-RS,
+         NO websockets; those live in the sibling `service` module.
+
+         It owns its OWN named datasource + persistence unit + Flyway lineage (its own PostgreSQL
+         database, provisioned by the platform's `resources:` mechanism — see
+         src/main/resources/META-INF/microprofile-config.properties),
+         and it references repositories by *String id*, never a JPA @ManyToOne into qits' tables.
+         That is what makes this repo a standalone deployable rather than a checkout of the monorepo.
+
+         Deliberately absent vs. the monorepo's `domain`: snakeyaml (that was QitsConfigParser, a
+         duplicate of the daemon's own ConfigParser — the daemon owns config reading now) and pty4j
+         (server-side PTY belongs to the command context). -->
+    <artifactId>qits-workspaces-domain</artifactId>
+    <name>qits-workspaces :: domain</name>
+
+    <dependencies>
+        <dependency>
+            <!-- The git substrate. A plain library, so nothing in it is a bean and the one CDI
+                 producer that builds it from config lives here, in `wiring`'s sibling. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-workspaces-gitmirror</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The event vocabulary (qits-1236). `control` builds the records at each lifecycle
+                 write and hands them to the `LifecycleAnnouncer` port; publishing them is
+                 `service`'s, so the bus seam stays out of this module. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-workspaces-events</artifactId>
+        </dependency>
+        <dependency>
+            <!-- WHICH WORKSPACE IMAGE THIS SERVICE STARTS, and the wire contract that image's daemon
+                 speaks — one artifact, because they are one release. `domain` needs it for the first
+                 half alone (WorkspaceContainerFactory composes the image reference out of
+                 WorkspaceImage.VERSION); `service` needs it for the second, and states it itself
+                 rather than leaning on this transitive. Framework-free, so it adds no beans here. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-workspace-daemon-protocol</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm-panache</artifactId>
+        </dependency>
+        <dependency>
+            <!-- ObjectMapper bean availability: the workspace metadata sidecars and the daemon's
+                 ConfigView JSON are both read with it. No REST needed. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <!-- This context's store. It was a file H2 until the platform grew resource
+                 provisioning; the `workspaces` datasource is a PostgreSQL database of its own now,
+                 created by qits-deployments before the container starts. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <!-- PatientPgDriver, which the `workspaces` datasource names in this module's shipped
+                 config, and DbRetry for the read seams that must survive a postgres cutover. The
+                 driver is loaded by name, so the class has to be on the running app's classpath;
+                 pgjdbc itself stays the one quarkus-jdbc-postgresql above already ships. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-db-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Flyway 10 split its database support out of the core: without this module Flyway
+                 refuses a postgres url with "no database found to handle". It sits here because
+                 this module owns the lineage. -->
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-validator</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The openapi ANNOTATIONS only (epic qits-1681): `dto/WaitView` is answered both by the
+                 wait doors and inside every AgentDto, so it lives here with its @Schema. No scanner,
+                 no endpoint: `service`'s quarkus-smallrye-openapi reads this module's index. Version
+                 from the Quarkus BOM, the one `service` already resolves. -->
+            <groupId>org.eclipse.microprofile.openapi</groupId>
+            <artifactId>microprofile-openapi-api</artifactId>
+        </dependency>
+        <dependency>
+            <!-- CausedRow + CausationStamp + @Uncaused, and NOTHING else out of this jar here: the
+                 persistence vocabulary, not the bus. `Workspace` and `WorkspaceEvent` record the
+                 event they were written because of in the platform's generic causation_id column;
+                 the other four entities opt out in one reviewable line each. The jar rides into
+                 this module's OWN tests too — the eventstream persistence unit boots whether the
+                 bus is enabled or not — so testdb/EmbeddedPgConfigSource feeds it a database and
+                 the test properties keep it dark, exactly the consumer contract the eventstream
+                 README states and the `service` module has always honoured. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-eventstream</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.mapstruct</groupId>
+            <artifactId>mapstruct</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The platform's shared ArchUnit rules; ArchRulesTest points them at this repo's
+                 packages, where the entities live. A new @Entity that neither implements CausedRow
+                 nor declares @Uncaused fails this build naming the class. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-arch-rules</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The store every @QuarkusTest here boots against. Zonky spawns real postgres binaries
+                 as a child process — a maven dependency rather than a container — which is what
+                 keeps the clone-alone, docker-free rule true now that the store is postgres.
+                 EmbeddedPg + EmbeddedPgConfigSource hand the running instance to Quarkus. -->
+            <groupId>io.zonky.test</groupId>
+            <artifactId>embedded-postgres</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Named per architecture on purpose: the binaries are separate artifacts and zonky
+                 picks one at run time, so an unnamed arch fails in the middle of a suite rather than
+                 during resolution. These three are what this platform is built and developed on. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The fourth arch, and it is CI's. .config/qits/ci-event-userflows.yml runs
+                 `mvn verify` over the whole reactor inside maven-base as `user: build`, and those
+                 step containers are Alpine (musl) — zonky picks the -alpine binaries there at run
+                 time, so without this line this module's suite dies before the packaged IT two
+                 modules later ever gets a chance to run. qits-db-core's pom carries the same
+                 fourth arch for the same pipeline. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64-alpine</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-darwin-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+            <plugin>
+                <!-- Index the jar so a consuming app discovers its CDI beans and entities without
+                     needing a quarkus.index-dependency entry. -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

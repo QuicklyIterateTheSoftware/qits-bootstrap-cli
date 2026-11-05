@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- The environment tier as an ambient value: which tier this process serves (`dev`, or the
+         literal `platform` for a service that serves every tier), read from `qits.environment` —
+         the MicroProfile spelling of the QITS_ENVIRONMENT the deployer injects — and carried
+         across REST hops as the X-Qits-Environment header by a pair of @Provider filters, the
+         exact arrangement qits-eventstream's causation filters settled.
+
+         THE PACKAGING BARGAIN, restated from there: the JAX-RS API jar and never quarkus-rest. The
+         API is what lets the filters compile here and stay inert elsewhere — a consumer with
+         quarkus-rest or quarkus-rest-client discovers them through the jandex index, a consumer
+         with neither never instantiates them — where a compile-scope extension would bolt an HTTP
+         server onto every consumer, including the daemons that deliberately serve nothing. -->
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-integrations-quarkus</artifactId>
+        <version>2026.1105.105731</version>
+    </parent>
+
+    <artifactId>qits-environment-core</artifactId>
+    <packaging>jar</packaging>
+    <name>qits-environment-core</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>jakarta.ws.rs</groupId>
+            <artifactId>jakarta.ws.rs-api</artifactId>
+        </dependency>
+        <dependency>
+            <!-- @Priority. The ws.rs API references it without carrying it. -->
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+        </dependency>
+        <dependency>
+            <!-- ConfigProvider and nothing more. The implementation is the consuming Quarkus
+                 app's smallrye-config, which every Quarkus app has; the API jar keeps this module
+                 free of any extension the way the ws.rs API above does. -->
+            <groupId>org.eclipse.microprofile.config</groupId>
+            <artifactId>microprofile-config-api</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The far end the filters need under test: a real resource behind a real HTTP
+                 request, because the load-bearing assumption is a THREAD one — RESTEasy Reactive
+                 runs both filters and a blocking resource method on one worker — and only the wire
+                 can prove it. Test scope for the reason the API jars above are compile scope. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-rest</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-rest-client</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- The consuming app discovers the two filters from this index. Without it the
+                     jar is inert on a consumer's classpath and says nothing about why. -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -1,0 +1,110 @@
+# THE WHOLE RELEASE CYCLE OF THIS REPOSITORY, in one declaration and two slots.
+#
+# `ci-event-release-request.yml` and `ci-event-release.yml` used to spell it here: two triggers, two
+# checkouts that had to be kept matched by discipline alone, the CalVer dug out of
+# `$QITS_EVENT_PAYLOAD` with a `sed` because the bootstrap ci-base had no jq, and ~100 lines of
+# `sed`/`case`/`printf` hand-writing five CycloneDX documents out of five Dockerfiles' `FROM` lines,
+# ending in a `docker run … ci-base:$version` whose only purpose was to borrow a `curl` for the PUT.
+# All of that is platform process now: qits-ci compiles the wrapper's
+# `.config/qits/release-archetypes/oci.yml` into both pipelines at evaluation time, the composed
+# prelude fetches the tag and puts the `qits` CLI on PATH, `qits-publish sbom from-dockerfile` is
+# that generator with a real parser behind it, and the composed postlude submits one document per
+# declared artifact after the script and before the step's exit code — so the SBOM-before-green
+# ordering the deleted file argued at length holds by construction rather than by a PUT we wrote.
+#
+# EIGHT IMAGES OUT OF ONE TREE, WHICH IS WHY BOTH SLOTS ARE THIS REPOSITORY'S. The `oci` archetype
+# builds and pushes exactly one image, and its extractor refuses a second docker entry outright.
+# This repository declares eight and builds all eight in one step, so it spells its own
+# `release-request:` and `release:`. A declared slot replaces the archetype's entirely — there is no
+# per-step merging — and the two must stay the same build, which is why the loops below differ only
+# in the `--output`.
+#
+# IT RUNS ON ci-base WITH `build: true` (qits-1540, epic qits-1481 "CI in a slot"). It used to run on
+# upstream `docker:28-dind` with `docker: true`, to keep the images this repository builds out of its
+# own pipeline after the 2026-08-20 `docker system prune` deleted them all. Once CI runs in a slot a
+# `docker: true` step is a CONFIG_ERROR, and the images live in the registry, not in a host's local
+# store a prune can empty — so the build moves to buildctl against the platform buildkitd like every
+# other image on the estate. The bootstrap from a cold machine is the README's loop, by hand.
+#
+# `:latest` IS A SECOND NAME AND IT IS LOAD-BEARING. Every archetype has retired the alias, and here
+# it is the coordinate every other repository's steps name — `qits/build-images/<x>:latest`. Both
+# names go out of ONE buildctl build, one quoted `name=` holding both, so they cannot be two
+# different images. The QA half pushes nothing at all: an unreviewed Dockerfile must never become
+# the thing the whole platform builds on, silently, from the moment it lands.
+#
+# THE TOOL CHECK GATES THE PUSH. ci-slot's `check` target runs ci-slot/check-tools.sh on top of the
+# exact stage that is pushed, in both halves, and the release builds it before any `--output` — so a
+# ci-slot missing a tool a recipe calls fails the release and never reaches `:latest`.
+#
+# REGISTRY AUTH IS THE PLATFORM'S: a `build: true` step gets `$DOCKER_CONFIG` and the run's login in
+# `$QITS_CI_REGISTRY_AUTH_CONFIG`, which the bootstrap writes to `$DOCKER_CONFIG/config.json` — the
+# file buildctl reads for the push. Nothing here logs in.
+#
+# THE REGISTRY IS CODE, under the platform's public domain (qits-731): `registry.qits.$QITS_DOMAIN`,
+# with `wohlben.eu` covering a qits-ci too old to inject `QITS_DOMAIN`. Every consumer dials the same
+# public name now, including the platform builder — hairpin resolves it from inside the platform
+# network like any other address — so there is no push-path/build-path distinction to spell here.
+#
+# THE `sbom:` PATHS ARE WHERE THE STEP WRITES, NOT WHERE IT PUTS. One document per image, each at
+# the path its artifact entry declares, generated in the same single step the postlude appends to —
+# which is the only place those files exist, since steps share no working directory.
+archetype: oci
+artifacts:
+  - { type: docker, name: qits/build-images/ci-base, sbom: sbom-ci-base.json }
+  - { type: docker, name: qits/build-images/maven-base, sbom: sbom-maven-base.json }
+  - { type: docker, name: qits/build-images/userflows-base, sbom: sbom-userflows-base.json }
+  - { type: docker, name: qits/build-images/node-base, sbom: sbom-node-base.json }
+  - { type: docker, name: qits/build-images/node-docker-base, sbom: sbom-node-docker-base.json }
+  - { type: docker, name: qits/build-images/node-browser-base, sbom: sbom-node-browser-base.json }
+  - { type: docker, name: qits/build-images/vhs-base, sbom: sbom-vhs-base.json }
+  - { type: docker, name: qits/build-images/ci-slot, sbom: sbom-ci-slot.json }
+
+release-request:
+  - image: qits/build-images/ci-base:latest
+    build: true
+    timeout-seconds: 3600
+    script: |
+      : "${BUILDKIT_HOST:?the platform builder is off or not injected; this step builds only through it}"
+      # NOTHING IS PUBLISHED, SO THERE IS NO `--output`: buildctl solves each graph and exports
+      # nothing. ci-slot is built at its pushed target and then at `check`, which runs
+      # check-tools.sh on top of it.
+      images='ci-base maven-base userflows-base node-base node-docker-base node-browser-base vhs-base ci-slot'
+      for image in $images; do
+        target=''
+        if [ "$image" = ci-slot ]; then target='--opt target=ci-slot'; fi
+        # shellcheck disable=SC2086 # $target is zero or two words on purpose
+        buildctl build --frontend dockerfile.v0 \
+          --local context=. --local dockerfile="$image" $target
+      done
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=ci-slot --opt target=check
+
+release:
+  - image: qits/build-images/ci-base:latest
+    build: true
+    timeout-seconds: 3600
+    script: |
+      : "${BUILDKIT_HOST:?the platform builder is off or not injected; this step builds only through it}"
+      qits_domain=${QITS_DOMAIN:?this step was told no QITS_DOMAIN}
+      images='ci-base maven-base userflows-base node-base node-docker-base node-browser-base vhs-base ci-slot'
+      # THE TOOL CHECK FIRST, before anything is pushed: a ci-slot missing a tool fails here.
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=ci-slot --opt target=check
+      # `push=true` IS THE PUBLISH: each image goes from the builder straight to the registry, under
+      # both names at once — the quoted `name=` is buildctl's CSV spelling of a multi-name output.
+      for image in $images; do
+        repository="registry.qits.$qits_domain/$QITS_IMAGE_REPOSITORY/build-images/$image"
+        target=''
+        if [ "$image" = ci-slot ]; then target='--opt target=ci-slot'; fi
+        echo "releasing $repository:$QITS_VERSION and :latest"
+        # shellcheck disable=SC2086 # $target is zero or two words on purpose
+        buildctl build --frontend dockerfile.v0 \
+          --local context=. --local dockerfile="$image" $target \
+          --output "type=image,\"name=$repository:$QITS_VERSION,$repository:latest\",push=true"
+      done
+      for image in $images; do
+        qits-publish sbom from-dockerfile \
+          --root-name "qits/build-images/$image" --root-version "$QITS_VERSION" \
+          --dockerfile "$image/Dockerfile" \
+          -o "sbom-$image.json"
+      done

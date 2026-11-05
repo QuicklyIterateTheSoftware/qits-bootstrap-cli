@@ -1,0 +1,413 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-idp</artifactId>
+        <version>2026.1105.133136</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The idp HTTP boundary: `eu.wohlben.qits.idp.api` — the discovery document, the JWKS, the
+         token endpoint, the commission API, and the user surface (register, login, logout,
+         password, session introspection, register-token minting). Everything below it (keys,
+         clients, minting, accounts, sessions) is `qits-idp-domain`. This module also carries the
+         client: Quinoa builds the SPA submodule at src/main/webui during augmentation and serves it
+         at /idp/.
+
+         A DEPLOYABLE APP, not a library JAR — <packaging>quarkus</packaging> binds augmentation
+         into the lifecycle so it cannot be silently misplaced (the migration-deployables-plan.md
+         reasoning, verbatim from the siblings).
+
+         NEVER let quarkus-undertow onto this classpath. It was the sibling rule kept on principle
+         while there was no client; now it is load-bearing here too — see the quinoa dependency
+         below. -->
+    <artifactId>qits-idp-service</artifactId>
+    <name>qits-idp :: service</name>
+    <packaging>quarkus</packaging>
+
+    <dependencies>
+        <dependency>
+            <!-- /<segment>/q/health/ready - the readiness endpoint qits-cd's health gate curls;
+                 the deployment convention every service answers. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-health</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-idp-domain</artifactId>
+        </dependency>
+        <dependency>
+            <!-- CallerServerFilter: jandex-indexed, so merely being on this deployable's classpath
+                 records inbound X-Qits-Caller as the qits.caller span attribute. This service
+                 builds no HttpClient of its own, so nothing here calls QitsHttpClients.wrap. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-http-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The instrumentation. The extension makes the spans, log records and metrics; the
+                 exporters that ship them are qits-telemetry-core's, below. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-opentelemetry</artifactId>
+        </dependency>
+        <dependency>
+            <!-- OTLP export to qits-observability through the edge (epic qits-428): replaces all
+                 three of Quarkus' own OTLP exporters with CDI beans that attach the `qits` oidc
+                 client's bearer on every export. The receiver is the module's default,
+                 qits.telemetry.endpoint; quarkus.otel.exporter.otlp.* no longer reaches anything. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-telemetry-core</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The named client `qits` (qits-428): this service's own qits:system bearer, minted by
+                 client credentials FROM THIS VERY PROCESS — its auth-server-url is
+                 http://localhost:8080/idp, a call to itself that never crosses the edge
+                 (quarkus.oidc-client.qits in application.properties). Its reader is
+                 qits-telemetry-core above, which brings the extension anyway; declared here because
+                 the client is this service's configuration, not the library's. No quarkus-oidc
+                 tenant comes with it: this service IS the issuer and validates its own tokens. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-oidc-client</artifactId>
+        </dependency>
+        <dependency>
+            <!-- JSON out (the discovery document, the JWKS, the token response) and the
+                 form-urlencoded reader the token endpoint needs — quarkus-rest comes with it. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-rest-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The API document at /idp/q/openapi. Every route names its operationId, the name
+                 consumer pacts and the golden masters use for it. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-openapi</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The idp client. Quinoa runs the npm build in src/main/webui (the
+                 qits-platform-spa-idp submodule) during augmentation and serves the result as
+                 static resources at /idp/ — see the quarkus.quinoa.* block in
+                 application.properties. Version from the root pom's dependencyManagement.
+
+                 IT IS WHY quarkus-undertow MUST STAY OUT. Quinoa's production static serving goes
+                 through Quarkus' own static-resource route, which undertow's servlet stack takes
+                 over and then cannot find — a packaged process that answers the protocol correctly
+                 and the SPA with a 404. Nothing here needs a servlet: the whole surface is
+                 quarkus-rest. Check `dependency:tree` before adding anything that sounds like a web
+                 framework. -->
+            <groupId>io.quarkiverse.quinoa</groupId>
+            <artifactId>quarkus-quinoa</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The WebAuthn ceremony: challenge generation, attestation and assertion verification,
+                 webauthn4j underneath. In quarkus-bom, so no version here.
+
+                 THIS SERVICE USES IT AS A LIBRARY, NOT AS A LOGIN. WebAuthnSecurity is called
+                 programmatically from IdpAuthController and the idp issues its OWN opaque session;
+                 the extension's own `quarkus-credential` cookie is never written, because
+                 rememberUser() is never called. Its two built-in POST endpoints stay off (their
+                 defaults, restated in application.properties) — they would register and log in on
+                 their own terms, with no register token and no idp session.
+
+                 It belongs to `service` and not to the domain jar because it is a web stack: it
+                 depends on quarkus-vertx-http, its ceremony calls take a RoutingContext, and the
+                 challenge it issues rides a cookie. The store behind it is the domain's; the bridge
+                 between the two is WebAuthnCredentials in this module. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-security-webauthn</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- WebAuthnHardware: an emulated authenticator that produces real attestations and real
+                 assertions with a real EC keypair. It is what lets the @QuarkusTest suite run the
+                 whole ceremony — the alternative would be recorded fixtures, which stop being valid
+                 the moment a challenge is random, which it is.
+
+                 Note it hard-codes `localhost` as the relying party it hashes into its authenticator
+                 data, which is why the suite's rp id has to be that and is. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-test-security-webauthn</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The platform's shared rules. DatasourceBaselineRules is what this repo takes them
+                 for, and it lives here because this module's config is the deployable's whole
+                 config — the `idp` datasource is declared in the domain jar. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-arch-rules</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The user-story framework: this module's six story classes are written as @UserStory
+                 methods, so the packaged proofs double as documentation — steps, notes and an
+                 OBSERVED network diagram emitted under target/userstories/. The diagram's one feed
+                 is the framework's SHIPPED RestAssured tap (NetworkTaps.restAssured, installed via
+                 stories/support/StoryNetwork); the hand-copied api/StoryNetworkFilter this repo
+                 carried was deleted when the catalogue was written. There is no far side to record,
+                 because this service is the issuer and dials nobody but its own datasource — which
+                 the commissioning stories declare rather than observe. Every story is browserless
+                 (an Interactions parameter and no Flow), so the framework's transitive Playwright
+                 never launches anything and no browser is ever downloaded — which is what lets the
+                 userflow pipeline run in a step container with no Chromium in it. Version pinned in
+                 the parent.
+
+                 There is deliberately no qits-service-mock beside it: this service is the issuer and
+                 has no upstream to stand in for. See the parent's property comment. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-userflows</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The consumer pacts ConsumerPactVerificationTest verifies: each jar carries one
+                 `pacts/<consumer>_qits-idp-service.json`, and the test reads them off the
+                 classpath. The pinned jar IS the source of the pact; nothing is copied into this
+                 tree. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-artifacts-service-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-ci-service-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-containers-service-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-deployments-service-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-edge-service-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-events-service-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-githost-service-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-maintenance-service-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-mirror-service-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-observability-service-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Through qits-runner-toolkit (qits-1163): a three-part
+                 `pacts/qits-system-runner-daemon_qits-runner-javalib_qits-idp-service.json`. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-system-runner-daemon-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-system-service-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-bootstrap-cli-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-orchestrator-service-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-platform-access-monorepo-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-projects-service-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-workspaces-service-pacts-qits-idp-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- ConsumerPactVerificationTest: verifies the consumer pacts this provider pins. -->
+            <groupId>au.com.dius.pact.provider</groupId>
+            <artifactId>junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The store every @QuarkusTest here boots against. Zonky spawns real postgres
+                 binaries as a child process — a maven dependency rather than a container — which
+                 is what keeps the clone-alone, docker-free rule true now that the store is
+                 postgres. EmbeddedPg + EmbeddedPgConfigSource hand the running instance to
+                 Quarkus. -->
+            <groupId>io.zonky.test</groupId>
+            <artifactId>embedded-postgres</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Named per architecture on purpose: the binaries are separate artifacts and zonky
+                 picks one at run time, so an unnamed arch fails in the middle of a suite rather
+                 than during resolution. These are what this platform is built, developed and now
+                 also CI-tested on. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- THE FOURTH ARCH, AND IT IS THE CI ONE. The step containers are Alpine (musl):
+                 .config/qits/ci-event-userflows.yml runs `mvn verify` in maven-base as
+                 `user: build`, TokenIssuanceBootstrapIT hands the launched artifact an embedded
+                 postgres, and zonky picks the -alpine binaries there at run time. Without this
+                 entry that pipeline resolves green and dies mid-suite on a missing artifact —
+                 qits-githost's service pom carries the same fourth arch for the same pipeline. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64-alpine</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-darwin-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- The suite verifies an issued token against what /idp/jwks published rather than against
+             the signing key it could reach in-process — the only check that proves a consumer could
+             do it. It uses jose4j, which arrives transitively (compile scope) with
+             smallrye-jwt-build. Do NOT re-declare it here at test scope: the nearest declaration
+             wins, and jose4j would then be missing from the packaged runtime classpath. -->
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <!-- This module is the DEPLOYABLE, not a library jar, and <packaging>quarkus</packaging>
+                     above is what says so: it binds generate-code, generate-code-tests and build into
+                     the lifecycle, so augmentation stops being an execution block that can be
+                     misplaced. Requires <extensions>true</extensions>; drop it and the build stops at
+                     "Unknown packaging: quarkus" rather than failing quietly. Version comes from the
+                     root pom's pluginManagement. -->
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>quarkus-maven-plugin</artifactId>
+                <extensions>true</extensions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- IdpPackagedSurfaceIT and TokenIssuanceBootstrapIT bind here. skipITs=true is
+                     the parent's default, so a fresh clone's `mvn verify` is green; `-DskipITs=false`
+                     runs both against the fast-jar and the `native` profile flips it to run them
+                     against the binary. They launch SEPARATE processes against SEPARATE databases
+                     on the one embedded postgres — see each profile's database name — so neither
+                     can see the other's signing key.
+
+                     The userflow pipeline runs exactly one of them by name
+                     (`-Dit.test=TokenIssuanceBootstrapIT`), because it builds without Quinoa and
+                     IdpPackagedSurfaceIT is half about the client; the parent's skipITs comment
+                     carries the whole reasoning. -->
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <systemPropertyVariables>
+                        <!-- How @QuarkusIntegrationTest finds the compiled binary in a `-Dnative`
+                             build; without it the native run has nothing to launch. The name is
+                             `quarkus.package.output-name` from application.properties, NOT maven's
+                             finalName. The two spellings move together. -->
+                        <native.image.path>${project.build.directory}/qits-idp</native.image.path>
+                        <!-- Launch the packaged app on a free port instead of the default 8081 —
+                             the @QuarkusTest port, which surefire's last Quarkus instance can still
+                             hold when failsafe starts, and which on the deployment host is the
+                             platform's own npm registry. -->
+                        <quarkus.http.test-port>0</quarkus.http.test-port>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                    </systemPropertyVariables>
+                    <!-- QITS_DOMAIN carries no default in the shipped qits.idp.endpoint-base
+                         (qits-1406: https://idp.qits.${QITS_DOMAIN}/idp), and the launched packaged
+                         artifact runs the prod profile and reads src/main/resources only. The
+                         deployer states it on every container; here the forked JVM states it and
+                         the launch inherits it. `localhost` is exactly what an unstated domain
+                         already derived (PlatformHostname.domainOrLocal), so the issuer, the
+                         browser origin and the WebAuthn relying party the ITs assert are unchanged. -->
+                    <environmentVariables>
+                        <QITS_DOMAIN>localhost</QITS_DOMAIN>
+                    </environmentVariables>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!-- GraalVM native build (the profile every deployable sibling carries): `-Dnative` turns
+             the fast-jar off and the native image on. It lives in THIS module, not the root pom,
+             because only this module is an application — `idp` is a library jar with nothing to
+             native-compile. skipITs flips with it so the build runs both ITs against the binary it
+             just produced rather than packaging one nobody starts — and TokenIssuanceBootstrapIT
+             earns its place there twice over, since minting and JWKS publication are JCA end to end
+             and a native image is exactly where a lost provider hides. -->
+        <profile>
+            <id>native</id>
+            <activation>
+                <property>
+                    <name>native</name>
+                </property>
+            </activation>
+            <properties>
+                <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
+                <skipITs>false</skipITs>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+            </properties>
+        </profile>
+    </profiles>
+</project>

@@ -1,0 +1,197 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- The reactor of qits-eventstream: the event bus client and the contracts kit that pacts what
+         the client sends on a consuming service's behalf.
+
+         TWO MODULES SINCE qits-1163. This used to be one module at the root, because the repository
+         produced one jar. It now produces two that are released together:
+
+           qits-eventstream/            eu.wohlben.qits:qits-eventstream            the library
+           qits-eventstream-contracts/  eu.wohlben.qits:qits-eventstream-contracts  test-scope kit
+
+         Since qits-1770 the library is a Quarkus extension, which adds two more:
+
+           qits-eventstream-deployment/    eu.wohlben.qits:qits-eventstream-deployment    its build half
+           qits-eventstream-consumer-test/ (not published)                               a stand-in consumer
+
+         The deployment module records the consuming application's groupId:artifactId as the
+         default of qits.eventstream.publisher; the stand-in consumer is the only place that can be
+         tested, because a module's own @QuarkusTest never runs its own extension. Reactor order
+         matters: the runtime's extension plugin validates against the deployment module, and the
+         stand-in consumer's suite augments against it.
+
+         The library's coordinates did not change. This parent is NOT published (maven-library
+         archetype: the platform uploads flattened poms, so an internal parent is nobody's
+         dependency) and is not declared in .config/qits/release.yml. The release stamp rewrites
+         this pom's <version> and each module's <parent><version>; the inter-module dependency
+         spells ${project.version}, which follows by itself.
+
+         Versions are duplicated out of the rest of the platform on purpose, for the reason
+         qits-ci's own pom gives: A CLONE OF THIS REPO ALONE MUST BUILD, with no monorepo, no
+         parent to inherit from, and no prior `mvn install` anywhere. `./mvnw verify` is the gate,
+         and the suite is self-contained enough to meet it — the stub qits-events is a JDK
+         `HttpServer` the tests start themselves, the outbox runs on a postgres the suite spawns
+         itself from Maven artifacts (zonky), never a container, and the contracts kit's pact tests
+         run against pact-jvm's own mock server.
+
+         Trimmed to what library modules actually need. The monorepo's app-wide machinery is
+         intentionally absent (spotless, enforcer, surefire chunking, the build-cache extension),
+         and so is `quarkus-maven-plugin`: nothing here is packaged as an application, and
+         `quarkus-junit5` augments from the classpath at test time without it. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-eventstream-parent</artifactId>
+    <version>2026.1103.231226</version>
+    <packaging>pom</packaging>
+    <name>qits-eventstream-parent</name>
+
+    <modules>
+        <module>qits-eventstream</module>
+        <module>qits-eventstream-deployment</module>
+        <module>qits-eventstream-consumer-test</module>
+        <module>qits-eventstream-contracts</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.version>3.34.6</quarkus.platform.version>
+
+        <!-- Embedded PostgreSQL for the library's suite. The outbox's store IS postgres, so every
+             test that boots the persistence unit runs against one — and the first rule here is that
+             a clone tests green with NO DOCKER, which rules out Testcontainers and Quarkus dev
+             services alike. Zonky resolves real postgres binaries as ordinary Maven artifacts and
+             spawns them as a child process: a dependency, not a container.
+
+             Two coordinates, on purpose. The BOM pins which POSTGRES the binaries are (18.4.0 — the
+             platform's own postgres tag), the library version is the harness around them, and they
+             move independently. Every architecture the suite may run on is named explicitly in
+             qits-eventstream/pom.xml: the binaries are per-arch artifacts, and a missing one fails
+             in the middle of a suite rather than during resolution. -->
+        <zonky.embedded-postgres.version>2.2.2</zonky.embedded-postgres.version>
+        <zonky.postgres-binaries.version>18.4.0</zonky.postgres-binaries.version>
+
+        <!-- PatientPgDriver, which the library's shipped datasource defaults NAME. That is what makes
+             it a runtime dependency of the library rather than a line in each consumer's pom: a
+             default naming a class every consumer must have is only a default if the jar brings the
+             class along. Published by libs/qits-integrations-quarkus, which is why the
+             <repositories> block below exists. A clone still tests green with that repository
+             reachable, or offline once the jar is in ~/.m2. -->
+        <qits.db-core.version>2026.1002.70617</qits.db-core.version>
+        <!-- qits-http-core (qits-1198): QitsHttpClients wraps EventsPublisher's and EventsQuery's
+             HttpClient so a publish or a catch-up read opens a CLIENT span and carries X-Qits-Caller,
+             instead of the receiver seeing a parentless SERVER span. Compile scope in the library,
+             so a consuming service's Quarkus module gets CallerServerFilter transitively too. -->
+        <qits.http-core.version>2026.1103.132907</qits.http-core.version>
+        <!-- The contracts kit (qits-1149, qits-1163): pact-jvm's consumer half, on the version every
+             provider on the estate verifies with, and qits-events' recorded answers
+             (golden-masters/index.json + one JSON per state and operation), read by
+             EventsGoldenMasters. COMPILE scope in qits-eventstream-contracts, so a service that adds
+             the kit at test scope gets both transitively. The recordings come from the same
+             platform repository as qits-db-core, so they add no new address. -->
+        <pact.version>4.6.21</pact.version>
+        <qits.events-golden-masters.version>2026.1031.124054</qits.events-golden-masters.version>
+        <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+        <jandex-plugin.version>3.4.0</jandex-plugin.version>
+
+        <!-- Surefire's @{argLine} has no value unless something (jacoco/quarkus) sets it. -->
+        <argLine/>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <!-- Which postgres the embedded binaries ARE — 18.4.0, the tag the platform's own
+                     qits-oci-postgresql image is built from, so the suite proves the lineage
+                     against the engine it ships on. Imported as a BOM because the per-arch
+                     artifacts are separate coordinates. -->
+                <groupId>io.zonky.test.postgres</groupId>
+                <artifactId>embedded-postgres-binaries-bom</artifactId>
+                <version>${zonky.postgres-binaries.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.zonky.test</groupId>
+                <artifactId>embedded-postgres</artifactId>
+                <version>${zonky.embedded-postgres.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-eventstream</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>au.com.dius.pact.consumer</groupId>
+                <artifactId>junit5</artifactId>
+                <version>${pact.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-events-golden-masters</artifactId>
+                <version>${qits.events-golden-masters.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <repositories>
+        <!-- The platform's own Maven repository, where qits-db-core is published. The id is what a
+             locally cached copy is recorded under, so it has to stay `qits-maven` or an offline
+             build refuses an artifact it already has. -->
+        <repository>
+            <id>qits-maven</id>
+            <url>${qits.maven.repository.url}</url>
+        </repository>
+    </repositories>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>io.smallrye</groupId>
+                    <artifactId>jandex-maven-plugin</artifactId>
+                    <version>${jandex-plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>make-index</id>
+                            <goals>
+                                <goal>jandex</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${compiler-plugin.version}</version>
+                <configuration>
+                    <parameters>true</parameters>
+                </configuration>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${surefire-plugin.version}</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>

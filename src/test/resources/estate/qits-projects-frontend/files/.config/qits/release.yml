@@ -1,0 +1,51 @@
+# How this repository releases: the `spa-frontend` archetype's QA slot (`release-request:`, from
+# `.config/qits/release-archetypes/spa-frontend.yml` in qits-ci) — install, lint, test (the pact
+# specs included), build — plus a `release:` slot of its own, which exists ONLY to publish the
+# contracts below.
+#
+# THE DIRECT PACT (epic qits-965) is this SPA's own consumer contract with qits-projects-service.
+# It sits in `pacts/` as `qits-projects-frontend_qits-projects-service.json`, written by the
+# `src/app/api/*.pact.spec.ts` specs (regenerate with `QITS_GOLDEN_UPDATE=true npm test`).
+#
+# THE UI-COMPONENTS PACTS (qits-1284) are the REST calls @qits/ui-components makes on this SPA's
+# behalf, declared as contracts keyed by the provider's repository name. They sit flat in `pacts/`
+# as `qits-projects-frontend_qits-ui-components-jslib_<provider>.json` (qits-edge-service,
+# qits-projects-service, qits-ci-service, qits-githost-service), written by
+# `src/app/ui-components.pact.spec.ts` (regenerate with `QITS_GOLDEN_UPDATE=true npm test`). The
+# `..._qits-ui-components-jslib_qits-projects-service.json` file is a second pact with the same
+# provider, so it rides the existing `qits-projects-service` jar below rather than adding one.
+#
+# qits-ci packs `pacts/*_<provider>.json` into the maven jar
+# eu.wohlben.qits:qits-projects-frontend-pacts-<provider>, which that provider verifies in its own
+# gate. A contract package is `if-changed` by definition: a release whose pact with a provider did
+# not change publishes nothing for it.
+#
+# `application:` IS THE APPLICATION THIS SPA BELONGS TO, `qits-projects`. The SPA ships no image and
+# is no deployable of its own: qits-projects-service carries it as its Quinoa `webui` submodule and
+# serves it from the `qits-projects` application. The pact packages' coordinates are spelled with
+# the REPOSITORY names, never this one; `application:` only names the application in the packages'
+# description.
+#
+# WHY THERE IS A `release:` SLOT. The platform publishes contract packages from the release slot's
+# last step (the composed postlude), and `spa-frontend` has no release slot — a frontend publishes
+# nothing else — so `contracts:` alone composes to UNCOMPOSABLE ("declares contracts but neither it
+# nor its archetype declares any 'release' step") and no run at all. Declaring the slot replaces
+# only the archetype's (empty) release phase; the QA slot is still the archetype's. The step builds
+# nothing: every pact is committed, and the postlude packs and publishes it.
+archetype: spa-frontend
+
+contracts:
+  application: qits-projects
+  pacts:
+    qits-projects-service: { packages: [maven] }
+    qits-edge-service: { packages: [maven] }
+    qits-ci-service: { packages: [maven] }
+    qits-githost-service: { packages: [maven] }
+
+release:
+
+  - image: qits/build-images/node-base:latest
+    timeout-seconds: 600
+    script: |
+      # The committed pact is the whole input; the platform postlude below publishes it.
+      ls pacts/*_qits-projects-service.json

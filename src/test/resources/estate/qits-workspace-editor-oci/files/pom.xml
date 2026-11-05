@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- A MAVEN REACTOR IN AN IMAGE REPOSITORY, which reads like a category error and is the point.
+         This repository's product is an image, and a consumer that starts a container from it has
+         to know WHICH version. That knowledge used to travel as `env.QITS_EDITOR_IMAGE_VERSION`, a
+         qits-configuration entry rewritten by a release listener on every push here — so a new
+         editor image reached the next workspace without qits-workspaces' gate ever having seen it,
+         and the shipped fallback in its properties file quietly aged until it named an image the
+         registry's retention had already deleted.
+
+         So the version travels as a released coordinate instead: one tiny jar, whose own version IS
+         the image tag, that qits-workspaces depends on. The maintenance train moves the pom line
+         like any internal library, the consumer's release request gates it, and the image a
+         deployed qits-workspaces starts is a reviewed line in its own tree rather than a value
+         written underneath it. See WorkspaceEditorImage.
+
+         ONE MODULE, NOT A PARENT PLUS MODULES. There is exactly one jar here and there will not be
+         a second — the repository's product is the image. qits-eventstream's pom has the same
+         shape for the same reason: parent and module at once.
+
+         A CLONE OF THIS REPO ALONE MUST BUILD. `./mvnw verify` resolves junit and nothing else;
+         there is no parent to inherit from, no platform registry to reach and no prior install
+         anywhere. That is why the versions below are literal rather than imported from a BOM. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-workspace-editor-image</artifactId>
+    <!-- Stamped by the release: qits-projects rewrites the root pom's <version> with the version it
+         is about to tag, and the same release pushes `qits/workspace-editor:<that version>`. That
+         is what makes the jar's version and the image tag one string rather than two things to keep
+         in step. A working tree therefore names the PREVIOUS release, which is honest — nothing has
+         been published for the tree in hand. -->
+    <version>2026.1105.121522</version>
+    <packaging>jar</packaging>
+    <name>qits-workspace-editor-image</name>
+    <description>The coordinate of the qits/workspace-editor image this release published.</description>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <junit.version>6.1.3</junit.version>
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+        <!-- Where a deployment resolves this platform's own artifacts. Nothing here needs it to
+             build — the jar depends on nothing — but the settings file mirrors this repository id
+             onto the in-network address inside a CI step, and a declared repository is what gives
+             it something to mirror. -->
+        <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
+    </properties>
+
+    <repositories>
+        <repository>
+            <id>qits-maven</id>
+            <url>${qits.maven.repository.url}</url>
+        </repository>
+    </repositories>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <!-- FILTERING FOR THIS MODULE'S ONE RESOURCE AND NOTHING ELSE, the arrangement
+             qits-workspace-daemon-protocol uses: the version is resolved into the jar at build time
+             rather than written down twice. WorkspaceEditorImage refuses an unfiltered value, so
+             deleting this block fails loudly instead of shipping the literal `${project.version}`
+             as an image tag. -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>eu/wohlben/qits/workspaceeditor/workspace-editor-image.properties</include>
+                </includes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <excludes>
+                    <exclude>eu/wohlben/qits/workspaceeditor/workspace-editor-image.properties</exclude>
+                </excludes>
+            </resource>
+        </resources>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${compiler-plugin.version}</version>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${surefire-plugin.version}</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>

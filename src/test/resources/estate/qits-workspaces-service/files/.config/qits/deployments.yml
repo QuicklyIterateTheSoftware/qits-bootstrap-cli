@@ -1,0 +1,103 @@
+# How qits-platform-deployments deploys this repo. It reads this file from the git host at
+# the built sha, so the answer travels with the commit.
+#
+# CARRYING THE FILE AT ALL is the other thing it says: a repository with no deployments.yml deploys
+# nowhere, and the release flow reads its presence to tell a deployable from a library. That read
+# used to be qits-workspaces' — the release door stat'ed it to decide whether to promote the
+# released sha onto `qits.workspaces.release.entry-branch` — and both the door and the entry branch
+# are gone: deployment follows the `SoftwareRelease` event now, and qits-projects makes the
+# deployable/non-deployable call off this file at the released tag.
+#
+# The path prefix the edge routes here on EVERY host, browser and machine alike. This service serves
+# no web client (qits-1245), so this is its whole surface: /workspaces/api, /workspaces/q and the
+# literal wire routes under it.
+routes: /workspaces
+
+# THE BROWSER HOST IS STATED, because nothing else asks for it any more (qits-1245). It used to be
+# derived from `navigation-entries:`; with those gone qits-deployments published no browserHost and
+# the edge stopped routing workspaces.<env>.<domain> at all, while qits-landing-app reaches this
+# service there (`PlatformOrigins.api('workspaces')`): its REST, its event streams and the container
+# proxy's terminal and chat sockets.
+host: workspaces
+
+# WHAT THIS REPOSITORY DEPLOYS AS, held still across the repository rename. The repository is
+# qits-workspaces-service now; the application is still qits-workspaces, so nothing that is running
+# moves: the swarm service and its wire alias, the container, the image qits/qits-workspaces the
+# build pushes, the provisioned database, the derived host label, the extras family and the
+# QITS_APPLICATION the container boots with all keep the names they have. Omitted, this name would
+# be DERIVED from the repository, and the rename would read as a decommission plus a new application
+# rather than a rename. Changing the value later is exactly that decommission, so it does not change
+# again.
+application: qits-workspaces
+
+# NO `navigation-entries:` (qits-1245). The Workspaces rows under every repository kind and under
+# the Project node pointed at this service's own host, where the qits-workspaces-frontend SPA used to
+# answer. The SPA is gone and the workspace pages are qits-landing-app's
+# (`/projects/<slug>/workspaces…` on the apex domain), so a row here would lead to a 404.
+
+# ONE KEY, AND IT ASKS FOR TWO DATABASES, because two jars in this deployable each own one.
+#
+#   postgresql:db                                     the `workspaces` datasource, this context's
+#                                                     own store. No third segment, so the database
+#                                                     name is derived: `qits_workspaces`.
+#   postgresql:eventstream:qits_workspaces_eventstream the outbox's, declared by the qits-eventstream
+#                                                     jar. Named explicitly, because the derived
+#                                                     default would collide with every other
+#                                                     consumer of that library on the same postgres.
+#
+# The deployer creates a role and a database for each before the successor container starts and
+# injects QITS_RESOURCE_DB_URL / _USERNAME / _PASSWORD and QITS_RESOURCE_EVENTSTREAM_* into it. The
+# variable names follow the resource NAME, so `eventstream` is not a label chosen here — it is what
+# the library's own shipped defaults read back, and renaming it stops matching them.
+#
+# Nothing in the deployer is workspaces-specific: an application maps the generic variables in its
+# own config defaults, which the domain jar's META-INF/microprofile-config.properties does for the
+# first and the qits-eventstream jar does for the second.
+#
+# idp:client ASKS QITS-DEPLOYMENTS TO PROVISION THIS APPLICATION'S OWN QITS-IDP SERVICE CLIENT — id
+# `dev-qits-workspaces` (derived from env + application), roles `qits:system`, fixed in qits-idp
+# code. The deployer stores the secret the way it stores a database password, and injects
+# QITS_RESOURCE_IDP_URL, QITS_RESOURCE_IDP_CLIENT_ID and QITS_RESOURCE_IDP_CLIENT_SECRET, which the
+# `qits` oidc client reads before its old fallback keys.
+#
+# Ticket qits-162, epic qits-540 contract C3.
+resources: postgresql:db, postgresql:eventstream:qits_workspaces_eventstream, idp:client
+
+# THE STORAGE THIS SERVICE NEEDS, declared the same way the databases above are: the application
+# says what it needs, the deployer attaches it.
+#
+#   private:data:/data                              this application's own volume. The NAME IS
+#                                                   DERIVED — `<application>-<name>`, so this is
+#                                                   `qits-workspaces-data` — exactly as
+#                                                   `postgresql:db` derives `qits_workspaces`. A
+#                                                   repository cannot state a literal private volume
+#                                                   name, which is what stops one application
+#                                                   mounting another's storage. It holds the
+#                                                   per-repository git mirrors, the merge worktrees,
+#                                                   the workspace metadata
+#                                                   (QITS_WORKSPACES_DATA_DIR=/data/workspaces) and
+#                                                   the transcript store the workspace-daemons ship
+#                                                   agent sessions into
+#                                                   (/data/workspaces/transcripts).
+#
+# No shared volume (qits-368): agent transcripts are read from the transcript store alone, so the
+# harness volume qits_shared_dot_claude, and the estate-wide credential on it, is not mounted here.
+# Workspace containers still mount it themselves (qits.workspace.claude-volume).
+#
+# WHY THIS IS HERE AND NOT IN CONFIG. The line is identical in every environment — it is a
+# property of what this service IS, not of where it runs. Mounts arrived as
+# `qits.deployments.extras.qits-workspaces.mounts[i]`, an indexed list authored in
+# qits-bootstrap-cli and stored in qits-configuration, which made attaching a volume an operator's
+# write in another repository and left the index as the only identity a mount had. Ticket qits-291
+# is where that cost something: the reader shipped, deployed and correct, and unable to read
+# anything, because the volume it needs could not be attached by releasing the code that needs it.
+#
+# HOST BINDS ARE NOT THIS. `bind:/var/run/docker.sock:…` on qits-containers and its two siblings
+# stays in extras config, because a host path is a fact about the machine rather than about the
+# application. That is the line, and the grammar here deliberately cannot express a bind.
+volumes: private:data:/data
+
+# Where the browsable API document lives: swagger-ui under this service's non-application
+# root, which sits under the primary route above. The shell's Api Docs viewer reads it off
+# /main-navigation and frames it for this repository.
+api-docs: /workspaces/q/swagger-ui

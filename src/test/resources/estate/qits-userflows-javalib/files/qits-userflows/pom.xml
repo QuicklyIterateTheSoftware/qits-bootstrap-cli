@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-userflows-parent</artifactId>
+        <version>2026.1028.231715</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The userflows FRAMEWORK: the @UserStory/@UserflowPrecondition/@UserflowRunsAfter
+         annotations, the Flow recording facade, the passive network capture, the JUnit 5 extension
+         + class orderer, the shared UserflowContext, and the report model/renderers (whose sidecar
+         contract is docs/report-contract.md) — everything except the stories themselves, which live
+         in the sibling `userflows` module. A plain library jar
+         depending on none of the other qits modules (it drives the app by URL only). This split is
+         deliberate and TEMPORARY: it keeps the framework separate from the stories ahead of its
+         eventual extraction into a standalone repo (epic part 4). Never needs -Dqits.variant. -->
+    <artifactId>qits-userflows</artifactId>
+
+    <properties>
+        <!-- Match the JS `playwright@1.61.0` baked into docker/qits/Dockerfile's `workspace` stage
+             (Chromium rev 1228) so the Java driver finds the pinned browser at
+             PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright instead of downloading its own. Not managed by
+             quarkus-bom, so pinned here; bump in lockstep with the Dockerfile's ARG PLAYWRIGHT_VERSION. -->
+        <playwright.version>1.61.0</playwright.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.microsoft.playwright</groupId>
+            <artifactId>playwright</artifactId>
+            <version>${playwright.version}</version>
+        </dependency>
+        <dependency>
+            <!-- The canonical userflow.json is written with Jackson; version comes from quarkus-bom. -->
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The shipped RestAssured tap (NetworkTaps.restAssured). OPTIONAL: only a consumer
+                 that already drives its service through RestAssured references it, and an optional
+                 dependency is not transitive — so a story module without RestAssured on its
+                 classpath resolves this jar exactly as it did before the tap existed, and fails
+                 (NoClassDefFoundError) only if it calls the tap regardless. Version managed by
+                 quarkus-bom (5.5.6), which is the version the services already test with. -->
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <!-- RestAssured's HTTP client logs through commons-logging, which quarkus-bom EXCLUDES
+                 from rest-assured: in a consumer's Quarkus test JVM this jboss-logging bridge
+                 supplies the `org.apache.commons.logging` API instead. This module runs no Quarkus,
+                 so without it merely loading io.restassured.RestAssured — which NetworkTapsTest
+                 does — dies on NoClassDefFoundError: org/apache/commons/logging/LogFactory. Test
+                 scope: what it reproduces is the consumer's classpath, not the framework's. -->
+            <groupId>org.jboss.logging</groupId>
+            <artifactId>commons-logging-jboss-logging</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- JUnit 5 aggregator: the framework references the JUnit API directly (@UserStory is a
+                 meta-@Test, the extension implements JUnit SPIs, ReportAssertions uses Assertions), so
+                 it's a COMPILE dependency. Version managed by quarkus-bom's junit-bom import. -->
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <!-- Runs the framework's own self-test harness stories (src/test, *Test): they drive a
+                 bundled static page (no running qits) and cover step recording, the failure path, and
+                 the ordering/skip/runs-after dependency machinery on every default build. -->
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

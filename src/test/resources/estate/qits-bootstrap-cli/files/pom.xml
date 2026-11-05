@@ -1,0 +1,367 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- qits-cli-bootstrap: the platform's cold bootstrap as a Quarkus command-mode CLI.
+         It replaces the wrapper repo's qits-local-up.sh and its 50-minute silences with a
+         live-progress terminal UI.
+
+         PARENTLESS on purpose, like every other qits repo: a clone of this repo alone must build
+         with no monorepo and no parent to inherit from. Versions that must stay in step with the
+         platform (Quarkus, the JDK release) are duplicated here deliberately.
+
+         ONE form. `./mvnw package -Dnative -DskipTests` makes the native binary, which is what
+         this program is — there is no jar, in development or anywhere else. Three lines below
+         keep it that way; the comment on the first says how they fit together. `./mvnw clean
+         verify` runs the tests and packages nothing. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-cli-bootstrap</artifactId>
+    <version>2026.1105.121413</version>
+    <name>qits-cli-bootstrap</name>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <!-- The platform's Quarkus. Moves with the platform, not ahead of it. -->
+        <quarkus.platform.version>3.34.6</quarkus.platform.version>
+
+        <!-- The terminal library. In NO BOM, so it is pinned here. 3.30.x is the current 3.x
+             line. `jline-terminal`, not the aggregate `jline`: see the dependency below. -->
+        <jline.version>3.30.16</jline.version>
+
+        <!-- What a repository declares, read from its files, and the project graph over it
+             (qits-3): the library qits-maintenance-service reads the same declarations with.
+             Released by qits-bootstrap-javalib; qits-maintenance bumps it. -->
+        <qits.bootstrap-graph.version>2026.1105.144428</qits.bootstrap-graph.version>
+
+        <!-- Not in any BOM, so it is pinned here. -->
+        <assertj.version>3.27.4</assertj.version>
+
+        <!-- THE PROVIDERS' RECORDED ANSWERS, read by the consumer pacts in src/test/.../contracts
+             (qits-1149). One pin per provider that publishes golden masters; qits-maintenance
+             bumps them, and a changed answer the bootstrap cannot read goes red here before it
+             ships. Do not hand-edit them to chase a release. -->
+        <qits.projects-golden-masters.version>2026.1105.84836</qits.projects-golden-masters.version>
+        <qits.events-golden-masters.version>2026.1031.124054</qits.events-golden-masters.version>
+        <qits.ci-golden-masters.version>2026.1102.180015</qits.ci-golden-masters.version>
+        <qits.deployments-golden-masters.version>2026.1010.145913</qits.deployments-golden-masters.version>
+        <qits.idp-golden-masters.version>2026.1027.165632</qits.idp-golden-masters.version>
+        <qits.githost-golden-masters.version>2026.1020.204038</qits.githost-golden-masters.version>
+        <qits.artifacts-golden-masters.version>2026.1029.125556</qits.artifacts-golden-masters.version>
+        <!-- qits-system's (qits-1535): the targets doors the target-* phases call. The pinned
+             release predates the targets module, so every row against it is pending until a
+             qits-maintenance bump brings its states. qits-workspaces has no pin any more: the
+             bootstrap calls none of its doors since the target replaced its runner. -->
+        <qits.system-golden-masters.version>2026.1102.183359</qits.system-golden-masters.version>
+        <qits.containers-golden-masters.version>2026.1019.103940</qits.containers-golden-masters.version>
+        <!-- pact-jvm, test scope only. An external library, so it moves by hand; the same version
+             as the providers' verifiers and every other consumer on the estate. -->
+        <pact-jvm.version>4.6.21</pact-jvm.version>
+        <!-- Where the golden masters jars come from: the platform's hosted Maven. The public
+             address by default; the profile `qits-maven-from-env` below takes
+             QITS_MAVEN_REPOSITORY_URL instead whenever it is set, which the cli archetype's QA step
+             does (and .qits-maven-settings.xml mirrors the `qits-maven` repository to it as well).
+             The name must never spell the archetype's dotted qits.* property: the step passes that
+             one as -D when a pom mentions it, surefire hands every -D to the test JVM, and Quarkus
+             refuses a qits.* key BootstrapConfig does not map (SRCFG00050). -->
+        <qitsMavenRepositoryUrl>https://registry.qits.wohlben.eu/artifacts/maven/maven</qitsMavenRepositoryUrl>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+        <failsafe-plugin.version>3.5.4</failsafe-plugin.version>
+
+        <!-- Surefire's @{argLine} has no value unless something (jacoco/quarkus) sets it. -->
+        <argLine/>
+
+        <!-- No runnable jar, ever, and here rather than in the native profile so an ordinary
+             `./mvnw package` cannot make one either. A jar would be a second form of this program
+             that nothing runs: the payload image builds the binary from source, the wrapper's shim
+             runs the binary, and a workstation is handed that one file.
+
+             The two lines here go together, and the third is maven-jar-plugin's `default-jar`
+             below. Quarkus' build goal fails outright when it is asked for
+             neither a jar nor a binary — "No artifact results were produced" — so a JVM build has
+             to skip the goal rather than run it empty. The native profile turns it back on, and
+             that is the only build that produces anything. Nothing is lost by skipping it here:
+             the augmentation the goal performs is performed again by every @QuarkusTest, so a
+             build-time break still fails `./mvnw clean verify`. -->
+        <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
+        <quarkus.build.skip>true</quarkus.build.skip>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <dependency>
+            <!-- Command mode: picocli owns argument parsing and the subcommand tree, Quarkus owns
+                 the lifecycle and configuration. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-picocli</artifactId>
+        </dependency>
+        <dependency>
+            <!-- JSON for the ci/cd/idp/registry APIs, which are called with java.net.http. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The browser view's HTTP server. Command mode does not stop the server starting:
+                 it serves for as long as the boot runs and goes when the process does.
+
+                 The bare vertx-http extension, not a REST one — three routes registered on the
+                 Router are the whole surface, and a JAX-RS stack would only add to the native
+                 image. Off entirely with QITS_WEB=0, which stops it binding at all. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-vertx-http</artifactId>
+        </dependency>
+        <dependency>
+            <!-- PostgreSQL over plain JDBC: the seed-postgres phase creates the deployer's role
+                 and database with a handful of idempotent statements.
+
+                 The EXTENSION rather than the bare org.postgresql:postgresql driver, because the
+                 native-image metadata the driver needs (reflection on the driver class, the
+                 SPI file, the SASL/SCRAM classes) is maintained by Quarkus rather than by hand
+                 here. NO datasource is configured and no DataSource is injected — this CLI opens
+                 its own connections with DriverManager, so nothing in the extension's runtime is
+                 used beyond the driver itself.
+
+                 Dev services are off in application.properties for the same reason: an extension
+                 with no datasource would otherwise start a postgres container in test mode, and
+                 `./mvnw clean verify` must need no docker. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Only the terminal module, and only its `exec` provider.
+
+                 The aggregate `jline` artifact carries every provider: jni, ffm, jansi and jna.
+                 A native image has to analyse all of them, and two cannot be analysed on this
+                 GraalVM — jni's initializer unpacks libjlinenative.so at class-init time, and the
+                 ffm provider's downcall handles stop the analysis dead ("linkToNative"). The exec
+                 provider needs neither: it shells /bin/stty, which a program that already shells
+                 docker and git can certainly do.
+
+                 `jline-terminal` holds the exec and dumb providers, Display and AttributedString
+                 — everything this CLI uses — and ships the native-image reflection and resource
+                 config the exec provider needs. Its `jline-native` dependency comes along and is
+                 never called; the native profile keeps its initializer off the build. -->
+            <groupId>org.jline</groupId>
+            <artifactId>jline-terminal</artifactId>
+            <version>${jline.version}</version>
+        </dependency>
+        <dependency>
+            <!-- The manifest readers and ProjectGraph/Walk behind `order` (qits-3). Plain Java:
+                 its own runtime dependencies are jackson-databind (JsonNode trees only) and
+                 snakeyaml (SafeConstructor into a Map only), both already aligned by quarkus-bom,
+                 so the native image needs no reflection registration for it. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-bootstrap-graph</artifactId>
+            <version>${qits.bootstrap-graph.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The consumer half of every contract this CLI has with a qits service. -->
+            <groupId>au.com.dius.pact.consumer</groupId>
+            <artifactId>junit5</artifactId>
+            <version>${pact-jvm.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Recordings a test reads, never code: test scope only. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-projects-golden-masters</artifactId>
+            <version>${qits.projects-golden-masters.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-events-golden-masters</artifactId>
+            <version>${qits.events-golden-masters.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-ci-golden-masters</artifactId>
+            <version>${qits.ci-golden-masters.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-deployments-golden-masters</artifactId>
+            <version>${qits.deployments-golden-masters.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-idp-golden-masters</artifactId>
+            <version>${qits.idp-golden-masters.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-githost-golden-masters</artifactId>
+            <version>${qits.githost-golden-masters.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-artifacts-golden-masters</artifactId>
+            <version>${qits.artifacts-golden-masters.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-system-golden-masters</artifactId>
+            <version>${qits.system-golden-masters.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-containers-golden-masters</artifactId>
+            <version>${qits.containers-golden-masters.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <repositories>
+        <!-- The one repository beside Central: the platform's, for the golden masters jars. -->
+        <repository>
+            <id>qits-maven</id>
+            <url>${qitsMavenRepositoryUrl}</url>
+        </repository>
+    </repositories>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>quarkus-maven-plugin</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <extensions>true</extensions>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>build</goal>
+                            <goal>generate-code</goal>
+                            <goal>generate-code-tests</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${compiler-plugin.version}</version>
+                <configuration>
+                    <parameters>true</parameters>
+                </configuration>
+            </plugin>
+            <plugin>
+                <!-- Maven's own classes jar, off. It is not a form of this program — it holds no
+                     dependency and starts nothing — but it sat in target/ beside the binary, and
+                     "which jar do I run" has to have no answer to find. The native build does not
+                     need it: `clean package -Dnative` leaves the binary alone in target/.
+
+                     The one jar left anywhere is native-image's own input, staged under
+                     target/*-native-image-source-jar/ and read by the build that makes the
+                     binary. That is a compiler's scratch space, not a form of this program.
+
+                     Nothing installs or deploys this artifact — it is a CLI, in no repository's
+                     dependencies — so having no attached artifact costs nothing. -->
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-jar</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${surefire-plugin.version}</version>
+                <configuration>
+                    <systemPropertyVariables>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+            <plugin>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>${failsafe-plugin.version}</version>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <!-- The QA step's registry, from its environment rather than a -D. -->
+            <id>qits-maven-from-env</id>
+            <activation>
+                <property>
+                    <name>env.QITS_MAVEN_REPOSITORY_URL</name>
+                </property>
+            </activation>
+            <properties>
+                <qitsMavenRepositoryUrl>${env.QITS_MAVEN_REPOSITORY_URL}</qitsMavenRepositoryUrl>
+            </properties>
+        </profile>
+        <profile>
+            <!-- `./mvnw package -Dnative -DskipTests` builds the binary. Everything the native
+                 build needs is here, so that command needs no flags of its own. It needs a
+                 GraalVM on JAVA_HOME; the JDK that runs the tests does not have to be one. -->
+            <id>native</id>
+            <activation>
+                <property>
+                    <name>native</name>
+                </property>
+            </activation>
+            <properties>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+
+                <!-- The one build that produces something, so the goal the JVM build skips runs
+                     here. -->
+                <quarkus.build.skip>false</quarkus.build.skip>
+
+                <!-- Empty for the binary people run on this host. The payload image's build
+                     (docker/Dockerfile.bootstrap) sets it to the musl-static flags, which that
+                     image needs and this host's binary must not have. Quarkus reads
+                     additional-build-args from ONE config source, so an image command line naming
+                     its flags whole would silently drop the jline flag below. Appending keeps that
+                     flag in this file alone. An XML comment cannot hold two dashes, which is why
+                     the flags are not spelled out here. -->
+                <native.extra-build-args></native.extra-build-args>
+
+                <!-- org.jline.nativ is jline-terminal's unused half: a JNI loader whose class
+                     initializer unpacks libjlinenative.so into /tmp. Run at build time it fails
+                     outright ("Content differs"), and this CLI's exec provider never calls it.
+                     Deferring the initializer to run time is enough to keep it out of the way. -->
+                <quarkus.native.additional-build-args>--initialize-at-run-time=org.jline.nativ,--initialize-at-run-time=eu.wohlben.qits.cli.bootstrap.workstation.Pkce${native.extra-build-args}</quarkus.native.additional-build-args>
+            </properties>
+        </profile>
+    </profiles>
+</project>

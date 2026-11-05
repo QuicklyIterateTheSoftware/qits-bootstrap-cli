@@ -1,0 +1,216 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben</groupId>
+        <artifactId>qits</artifactId>
+        <version>2026.1105.104934</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>workspace-daemon</artifactId>
+    <packaging>quarkus</packaging>
+
+    <properties>
+        <!-- Build identity baked into the native binary and announced in the daemon's Hello
+             (docs/epics/qits-workspace-registry/): project.version distinguishes numbered releases,
+             the build timestamp distinguishes floating -SNAPSHOT builds. `timestamp` aliases
+             maven.build.timestamp so it can be referenced with the @-delimited filtering below
+             (maven.build.timestamp is not itself interpolable as a resource token). -->
+        <timestamp>${maven.build.timestamp}</timestamp>
+        <maven.build.timestamp.format>yyyy-MM-dd'T'HH:mm:ss'Z'</maven.build.timestamp.format>
+    </properties>
+
+    <!-- The in-container client daemon (docs/epics/qits-workspace-daemon/): a Quarkus command-mode
+         app compiled to a GraalVM native binary (Dockerfile `workspace-daemon-build` stage) that becomes each
+         workspace container's process. It dials home over a WebSocket and, part by part, takes over
+         what qits does via `docker exec`. Part 1 is behaviour-neutral: it holds the socket open and
+         is otherwise idle. Deps are deliberately minimal — quarkus-arc (CDI + command mode) +
+         quarkus-vertx (a managed Vertx with NO HTTP server extension, for the Vert.x-core WebSocket
+         client and the two raw vertx-core listeners this module binds itself) + the shared wire
+         contract + the two framework-free capability jars (files, detection). It does NOT depend on
+         `domain` (Panache/Hibernate/JGit would bloat the native image), so it never needs
+         -Dqits.variant, and it carries no quarkus-rest/JAX-RS and no Jackson. -->
+
+    <dependencies>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-workspace-daemon-protocol</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The read-only filesystem capability (WorkspaceFiles seam + path-safety policy) the
+                 daemon serves over WorkspaceApi. Framework-free, so it adds nothing the native-image
+                 builder has to be told about. -->
+            <groupId>eu.wohlben</groupId>
+            <artifactId>workspace-daemon-files</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Framework detection + the Angular component map, over the same seam. Pulls
+                 workspace-daemon-files transitively; declared explicitly because this module
+                 compiles against both. -->
+            <groupId>eu.wohlben</groupId>
+            <artifactId>workspace-daemon-detection</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Launching and supervising processes in the workspace, served over WorkspaceApi.
+                 Framework-free like files/detection, so it adds nothing the native-image builder
+                 has to be told about — except its own FFM downcalls, which the jar's own
+                 META-INF/native-image metadata registers (see ForeignPty).
+
+                 A RELEASED JAR, not a module of this reactor, since the harness library was
+                 unified. Its native-image metadata rides in the jar, so nothing here has to be
+                 told about it. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-commands</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The Claude Code and Kimi harnesses: launch rendering, the ACP chat transport,
+                 transcript import off the shared /claude-home volume, the capability probes, and
+                 the agent surface served over WorkspaceApi. Depends on qits-commands (a launch
+                 becomes a command), never the other way round. Framework-free for the same
+                 native-image reason. Declared explicitly beside qits-commands because this module
+                 compiles against both. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-coding-agents</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Managed Vertx + vertx-core WebSocketClient; brings no HTTP server (unlike
+                 websockets-next), which is exactly right for a client-only container process. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-vertx</artifactId>
+        </dependency>
+        <dependency>
+            <!-- YAML parse for the in-container `.qits-config.yml` read (docs/epics/qits-workspace-daemon/
+                 Part 2). We use SafeConstructor only (plain maps/lists, never instantiates classes from
+                 repo content), which is native-image friendly. Version managed by the Quarkus BOM. -->
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The provider half of the contract: ConsumerPactVerificationTest. Test scope, so its
+                 Kotlin and HTTP client tree never reaches the native image. -->
+            <groupId>au.com.dius.pact.provider</groupId>
+            <artifactId>junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The landing app's consumer pact against this daemon (ticket qits-1230), verified by
+                 ConsumerPactVerificationTest. Pulled in purely for the pact file it carries on its
+                 classpath. The pinned jar IS the source of the pact; nothing is copied into this
+                 tree. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-landing-app-pacts-qits-workspace-daemon</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- qits-platform-access-cli's and qits-workspaces-service's pacts against this daemon
+                 (ticket qits-1149), verified the same way. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-platform-access-monorepo-pacts-qits-workspace-daemon</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-workspaces-service-pacts-qits-workspace-daemon</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The platform's shared rules, test scope (qits-1754). ProviderStateCoverageRules is
+                 what this daemon takes it for. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-arch-rules</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- ProviderStateCoverageRules declares jackson-databind `provided` and parses
+                 golden-masters/index.json with it; this daemon otherwise only has jackson-core
+                 (netty's) on its classpath, not jackson-databind, so it is added here explicitly
+                 (qits-1754). The quarkus-bom import above manages the version. -->
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <!-- Filter ONLY application.properties, so `@project.version@` / `@timestamp@` in it are
+             replaced at build time and baked into the native image as MicroProfile config (read via
+             @ConfigProperty in ControlSocket). Every other resource stays unfiltered. -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>application.properties</include>
+                </includes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <excludes>
+                    <exclude>application.properties</exclude>
+                </excludes>
+            </resource>
+        </resources>
+        <plugins>
+            <plugin>
+                <!-- @-only delimiters: never expand ${...}, which would clobber Quarkus's own
+                     ${config.expression} references in application.properties. -->
+                <artifactId>maven-resources-plugin</artifactId>
+                <configuration>
+                    <useDefaultDelimiters>false</useDefaultDelimiters>
+                    <delimiters>
+                        <delimiter>@</delimiter>
+                    </delimiters>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>quarkus-maven-plugin</artifactId>
+                <extensions>true</extensions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- CommandsApiTest and CommandSocketsTest launch real commands, which reach
+                         ForeignPty's java.lang.foreign downcalls through CommandRegistry. Same
+                         restricted-method flag its own module sets; see application.properties for
+                         why a JVM-mode run needs it on the command line instead. -->
+                    <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!-- GraalVM native build (mirrors service/pom.xml): `-Dnative` disables the jar and enables
+             the native image. The root pom has no native profile to inherit, so it lives here. The
+             Dockerfile `workspace-daemon-build` stage runs `-pl workspace-daemon -am package -Dnative`. -->
+        <profile>
+            <id>native</id>
+            <activation>
+                <property>
+                    <name>native</name>
+                </property>
+            </activation>
+            <properties>
+                <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
+                <skipITs>false</skipITs>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+            </properties>
+        </profile>
+    </profiles>
+</project>

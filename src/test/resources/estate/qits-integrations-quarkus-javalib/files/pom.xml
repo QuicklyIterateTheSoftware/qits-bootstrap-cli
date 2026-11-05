@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- The platform's Quarkus glue: code every qits service needs and no service owns. The
+         aggregator exists because there is more than one module, and because a consuming service
+         lists THIS directory as a reactor module and gets whatever is inside it without editing
+         its pom again.
+
+         A PARENT PLUS MODULES, not qits-eventstream's single root module. That repo produces one
+         jar and always will, so its pom is parent and module at once. This one is a category, so
+         the shared versions sit here and each module states only its dependencies.
+
+         Versions are duplicated out of the rest of the platform on purpose, for the reason qits-ci's
+         pom gives: A CLONE OF THIS REPO ALONE MUST BUILD, with no monorepo, no parent to inherit
+         from, and no prior `mvn install`. `./mvnw verify` is the gate. Keep the Quarkus platform
+         version and the JDK release in step with the services — a consuming reactor imports the
+         service's BOM, not this one, and a drift shows up there as a resolution surprise.
+
+         Trimmed to what library modules need. The monorepo's app-wide machinery is intentionally
+         absent (spotless, enforcer, surefire chunking, the build-cache extension), and so is
+         `quarkus-maven-plugin`: nothing here is packaged as an application, and `quarkus-junit5`
+         augments from the classpath at test time without it. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-integrations-quarkus</artifactId>
+    <version>2026.1105.105731</version>
+    <packaging>pom</packaging>
+    <name>qits-integrations-quarkus</name>
+
+    <modules>
+        <module>qits-auth-core</module>
+        <module>qits-arch-rules</module>
+        <module>qits-db-core</module>
+        <module>qits-environment-core</module>
+        <module>qits-http-core</module>
+        <module>qits-telemetry-core</module>
+        <module>qits-service-mock</module>
+        <module>qits-pact-consumer</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.version>3.34.6</quarkus.platform.version>
+
+        <!-- Real postgres for qits-db-core's proof rig, as Maven artifacts rather than a container.
+             The binaries version is the postgres MAJOR the platform runs, so the suite proves the
+             classification against the engine it ships on; the two versions move independently. -->
+        <zonky.embedded-postgres.version>2.2.2</zonky.embedded-postgres.version>
+        <zonky.postgres-binaries.version>18.4.0</zonky.postgres-binaries.version>
+
+        <!-- pact-jvm, for qits-pact-consumer: the version every provider on the estate verifies
+             with, so a consumer's pact is written the way the provider reads it. -->
+        <pact.version>4.6.21</pact.version>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+        <jandex-plugin.version>3.4.0</jandex-plugin.version>
+
+        <!-- Surefire's @{argLine} has no value unless something (jacoco/quarkus) sets it. -->
+        <argLine/>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <!-- Imported as a BOM because the per-arch binaries below are separate coordinates
+                     and each one would otherwise carry its own version. -->
+                <groupId>io.zonky.test.postgres</groupId>
+                <artifactId>embedded-postgres-binaries-bom</artifactId>
+                <version>${zonky.postgres-binaries.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>au.com.dius.pact.consumer</groupId>
+                <artifactId>junit5</artifactId>
+                <version>${pact.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-pact-consumer</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${compiler-plugin.version}</version>
+                    <configuration>
+                        <parameters>true</parameters>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${surefire-plugin.version}</version>
+                    <configuration>
+                        <systemPropertyVariables>
+                            <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                        </systemPropertyVariables>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>io.smallrye</groupId>
+                    <artifactId>jandex-maven-plugin</artifactId>
+                    <version>${jandex-plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>make-index</id>
+                            <goals>
+                                <goal>jandex</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

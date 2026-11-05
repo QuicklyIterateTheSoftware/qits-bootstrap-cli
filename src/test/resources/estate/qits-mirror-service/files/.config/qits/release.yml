@@ -1,0 +1,216 @@
+archetype: java-service
+artifacts:
+  - { type: docker, name: qits/qits-mirror, sbom: .sbom/sbom.json }
+# The provider golden masters (ticket qits-1149): the platform packages `golden-masters/` as
+# `eu.wohlben.qits:qits-mirror-golden-masters` and `@qits/mirror-golden-masters`, each published
+# only when its content changed. `contracts/GoldenMasterRecordingTest` records them.
+contracts:
+  application: qits-mirror
+  golden-masters: { from: golden-masters/, packages: [maven, npm] }
+  # The consumer pacts (ticket qits-1149): contracts/IdpPactTest writes pacts/<this>_<provider>.json.
+  pacts:
+    qits-idp-service: { packages: [maven] }
+# THE SITE IS SPELLED, AND IT NAMES THE COMPONENT. `true` derives it from the REPOSITORY name,
+# which would put the retired tier modifier in a storage id and then MOVE that id the day the
+# repository is renamed — a bundle's history stranded under a name nothing publishes to any
+# more. Every other service on the estate already spells the component (@userflows/qits-ci,
+# @userflows/qits-projects, @userflows/qits-observability); `true` survived only here, where the
+# derived value happened to be tolerable. Spelled, the rename costs the bundle nothing.
+userflows: qits-mirror
+
+# THE MIRROR MAY NOT BUILD THROUGH THE MIRROR. Both builds pass
+# `--opt build-arg:QITS_MAVEN_CENTRAL_URL=""` — a LITERAL empty string — which deactivates the
+# settings profile so Central is dialled directly. The proxy is this service itself: a deployment
+# being replaced would be asked to proxy its own replacement's build. The empty value is the off
+# switch and it is the whole reason both slots are here. The QA story step also wants 3600s rather
+# than 2400 (the pull-through suites are slow).
+release-request:
+  - image: qits/build-images/node-docker-base:latest
+    build: true
+    timeout-seconds: 3600
+    script: |
+      origin_parent="${QITS_CI_REPOSITORY_URL%/*}"
+      webui_dirs=""
+      if [ -f .gitmodules ]; then
+        for key in $(git config -f .gitmodules --name-only --get-regexp '^submodule\..*\.path$'); do
+          name=${key#submodule.}
+          name=${name%.path}
+          path=$(git config -f .gitmodules --get "$key")
+          git -c "submodule.$name.url=$origin_parent/$name" submodule update --init "$path"
+          if [ -f "$path/package.json" ]; then
+            webui_dirs="$webui_dirs $path"
+          fi
+        done
+      fi
+      # THE ADDRESSES ARE CODE (qits-731): the platform's public domain is the one input, and the
+      # hosts and paths below are constants — registry.qits.<domain> serves the hosted @qits scope,
+      # mirror.qits.<domain> the npmjs cache (THIS service). `wohlben.eu` covers a qits-ci too old to
+      # inject $QITS_DOMAIN.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      npm_hosted_origin="https://registry.qits.$qits_domain"
+      npm_proxy_origin="https://mirror.qits.$qits_domain"
+      npm_hosted_path=/artifacts/npm/npm/
+      for dir in $webui_dirs; do
+        (
+          cd "$dir"
+          # The lockfile is installed exactly as committed, no rewrite: it names only the two
+          # public hosts (qits-731), and `npm ci` is pointed at them directly.
+          env npm_config_registry="$npm_proxy_origin/npm/npmjs/" \
+              "npm_config_@qits:registry=$npm_hosted_origin$npm_hosted_path" \
+              npm ci --no-audit --no-fund
+          npm run build
+        )
+      done
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --opt build-arg:QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$qits_domain/artifacts/maven/maven" \
+        --opt build-arg:QITS_MAVEN_CENTRAL_URL="" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret
+
+  # THE VERIFY DOES NOT GO THROUGH THE MIRROR EITHER, for the same reason the builds do not: an
+  # empty QITS_MAVEN_CENTRAL_URL leaves the settings profile inactive and Central is dialled
+  # directly. Set explicitly rather than left unset so no ambient value can switch it back on.
+  - image: qits/build-images/maven-base:latest
+    user: build
+    timeout-seconds: 3600
+    qits-cli: true
+    script: |
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      export QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$qits_domain/artifacts/maven/maven"
+      export QITS_MAVEN_CENTRAL_URL=""
+      # EVERY DEPLOYED CONSUMER'S PACT, NOT ONLY THE POM'S (qits-1765). Mirrors the packaged
+      # `java-service` release archetype's release-request verify step
+      # (ci/src/main/resources/release-archetypes/java-service.yml in qits-ci-service) — see that
+      # recipe for the full rationale. A provider also asks qits-maintenance which consumer
+      # versions are deployed and verifies each of those pacts, not only the pinned one.
+      repo=${QITS_CI_REPO_NAME:?this step was told no QITS_CI_REPO_NAME}
+      deployed_pacts_dir=""
+      declared_consumers=""
+      poms=$(find . -name pom.xml -not -path '*/target/*' -not -path '*/node_modules/*')
+      for pom in $poms; do
+        found=$(sed -n "s|.*<artifactId>\([A-Za-z0-9._-]*\)-pacts-$repo</artifactId>.*|\1|p" "$pom") || {
+          echo "deployed pacts: could not read $pom to tell whether $repo is a pact provider" >&2
+          exit 1
+        }
+        declared_consumers="$declared_consumers $found"
+      done
+      declared_consumers=" $(printf '%s' "$declared_consumers" | tr '\n' ' ') "
+      case "$declared_consumers" in
+        *[!\ ]*) deployed_pacts_dir="$PWD/target/deployed-pacts" ;;
+      esac
+      if [ -n "$deployed_pacts_dir" ]; then
+        rm -rf "$deployed_pacts_dir"
+        mkdir -p "$deployed_pacts_dir"
+        echo "deployed pacts: $repo is a pact provider; fetching every deployed consumer's pact"
+        qits artifacts fetch deployed-pacts --provider "$repo" --out "$deployed_pacts_dir" || {
+          echo "deployed pacts: could not fetch the deployed consumers' pacts for $repo, so this" \
+            "gate cannot verify them" >&2
+          exit 1
+        }
+        for consumer_dir in "$deployed_pacts_dir"/*/; do
+          [ -d "$consumer_dir" ] || continue
+          consumer=$(basename "$consumer_dir")
+          case "$declared_consumers" in
+            *" $consumer "*) ;;
+            *)
+              rm -rf "$consumer_dir"
+              echo "deployed pacts: $consumer is not a consumer this repository pins; not verified" ;;
+          esac
+        done
+      fi
+
+      env ${deployed_pacts_dir:+"QITS_DEPLOYED_PACTS_DIR=$deployed_pacts_dir"} \
+        ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
+        -Dqits.maven.repository.url="$QITS_MAVEN_REPOSITORY_URL" \
+        -Dquarkus.quinoa=false \
+        -DskipITs=false \
+        "-Dit.test=PullThroughBootstrapIT,MavenPullThroughIT,NpmInstallThroughTheMirrorIT,ImagePullThroughIT,CacheInventoryIT,StaleThroughAnOutageIT,UpstreamRefusalIT"
+      # SINGLE-MODULE: the stories land in target/userstories.
+      tar -czf /tmp/userstories.tgz -C target/userstories .
+      publish_token=""
+      if [ -n "${QITS_PUBLISH_TOKEN_COMMAND:-}" ] \
+        && command -v "$QITS_PUBLISH_TOKEN_COMMAND" >/dev/null 2>&1; then
+        publish_token=$("$QITS_PUBLISH_TOKEN_COMMAND" 2>/dev/null) || publish_token=""
+      fi
+      set --
+      if [ -n "$publish_token" ]; then
+        set -- -H "Authorization: Bearer $publish_token"
+      fi
+
+      status=$(curl -sS -o /tmp/docs-publish.out -w '%{http_code}' \
+        -X PUT --data-binary @/tmp/userstories.tgz "$@" \
+        -H "X-Artifacts-Meta-git.branch.name: $QITS_CI_BRANCH" \
+        -H "X-Artifacts-Meta-git.commit.hash: $QITS_CI_SHA" \
+        -H "X-Artifacts-Meta-git.repository.name: qits-mirror" \
+        "https://registry.qits.$qits_domain/artifacts/docs/docs/@userflows/qits-mirror/-/$QITS_CI_SHA")
+      case "$status" in
+        201) echo "published userflows@$QITS_CI_SHA ($QITS_CI_BRANCH)" ;;
+        409) echo "userflows@$QITS_CI_SHA are already published — skipping" ;;
+        *)   echo "docs publish failed: HTTP $status"; cat /tmp/docs-publish.out; exit 1 ;;
+      esac
+
+release:
+  - image: qits/build-images/node-docker-base:latest
+    build: true
+    timeout-seconds: 3600
+    script: |
+      declared=$(sed -n \
+        's/^[[:space:]]*-[[:space:]]*{[[:space:]]*type:[[:space:]]*docker[[:space:]]*,[[:space:]]*name:[[:space:]]*\([^,}[:space:]]*\).*/\1/p' \
+        .config/qits/release.yml)
+      image=${declared#*/}
+      # The addresses are code under the platform's public domain (qits-731); `wohlben.eu` covers a
+      # qits-ci too old to inject $QITS_DOMAIN — which is the one that runs this file for the release
+      # that teaches qits-ci to inject it.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      ref="registry.qits.$qits_domain/$QITS_IMAGE_REPOSITORY/$image:$QITS_VERSION"
+      echo "releasing $ref"
+
+      origin_parent="${QITS_CI_REPOSITORY_URL%/*}"
+      webui_dirs=""
+      if [ -f .gitmodules ]; then
+        for key in $(git config -f .gitmodules --name-only --get-regexp '^submodule\..*\.path$'); do
+          name=${key#submodule.}
+          name=${name%.path}
+          path=$(git config -f .gitmodules --get "$key")
+          git -c "submodule.$name.url=$origin_parent/$name" submodule update --init "$path"
+          if [ -f "$path/package.json" ]; then
+            webui_dirs="$webui_dirs $path"
+          fi
+        done
+      fi
+      npm_hosted_origin="https://registry.qits.$qits_domain"
+      npm_proxy_origin="https://mirror.qits.$qits_domain"
+      npm_hosted_path=/artifacts/npm/npm/
+      for dir in $webui_dirs; do
+        (
+          cd "$dir"
+          # The lockfile is installed exactly as committed, no rewrite: it names only the two
+          # public hosts (qits-731), and `npm ci` is pointed at them directly.
+          env npm_config_registry="$npm_proxy_origin/npm/npmjs/" \
+              "npm_config_@qits:registry=$npm_hosted_origin$npm_hosted_path" \
+              npm ci --no-audit --no-fund
+          npm run build
+        )
+      done
+
+      # BYTE-IDENTICAL TO THE QA BUILD ABOVE, EMPTY CENTRAL URL INCLUDED, plus the --output.
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --opt build-arg:QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$qits_domain/artifacts/maven/maven" \
+        --opt build-arg:QITS_MAVEN_CENTRAL_URL="" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret \
+        --output "type=image,name=$ref,push=true"
+
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt target=sbom \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --opt build-arg:QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$qits_domain/artifacts/maven/maven" \
+        --opt build-arg:QITS_MAVEN_CENTRAL_URL="" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret \
+        --output type=local,dest=.sbom

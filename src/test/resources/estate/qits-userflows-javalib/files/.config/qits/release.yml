@@ -1,0 +1,28 @@
+archetype: maven-library
+artifacts:
+  - { type: maven, name: "eu.wohlben.qits:qits-userflows", path: qits-userflows, sbom: qits-userflows/target/sbom.json }
+
+# BOTH SLOTS ARE OVERRIDDEN AND NEITHER IS OPTIONAL. This repository has no `mvnw` wrapper and no
+# `.qits-maven-settings.xml` in its tree, and it builds on `userflows-base` rather than `maven-base`
+# — the archetype's `./mvnw … -s .qits-maven-settings.xml` would fail on a missing file twice over.
+# The day the wrapper and the settings file land, delete both slots and this file is three lines.
+release-request:
+  - image: qits/build-images/userflows-base:latest
+    timeout-seconds: 1800
+    script: |
+      mvn -B -ntp verify
+
+release:
+  - image: qits/build-images/userflows-base:latest
+    timeout-seconds: 1800
+    script: |
+      # BUILD ONLY. The platform publishes: qits-ci's postlude runs `qits artifacts publish maven`
+      # for the declared entry after this script, from qits-userflows/pom.xml and the jar under
+      # qits-userflows/target/, with a flattened pom (no <parent>). So this step packages and
+      # writes the SBOM, and never deploys (qits-620).
+      mvn -B -ntp package -DskipTests
+      # `-pl qits-userflows` because the jar is the module and the root is a `pom` parent. The
+      # composed postlude submits qits-userflows/target/sbom.json for the artifact above.
+      mvn -B -ntp -DskipTests -pl qits-userflows \
+        org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeBom \
+        -DoutputFormat=json -DoutputName=sbom -DschemaVersion=1.6

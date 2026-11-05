@@ -1,0 +1,382 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>eu.wohlben</groupId>
+    <artifactId>qits-docs</artifactId>
+    <version>2026.1105.103637</version>
+    <packaging>quarkus</packaging>
+
+    <name>qits-docs</name>
+    <description>The reading surface over the documentation sites qits-artifacts holds: readable
+        URLs, `latest` resolved by query, and the bytes streamed through. Holds no state of its own.
+    </description>
+
+    <!-- DELIBERATELY PARENT-LESS, the rule qits-gateway states: this repository lives on its own
+         (github.com/QuicklyIterateTheSoftware/qits-docs) and the qits monorepo consumes it
+         as a git submodule, but it is NOT a module of qits' Maven reactor. A clone of this repo
+         alone must build. Versions that have to stay in step with the platform (the Quarkus
+         platform, the JDK release) are duplicated here on purpose. -->
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <!-- Keep in step with the qits monorepo's quarkus.platform.version. -->
+        <quarkus.platform.version>3.40.1</quarkus.platform.version>
+
+        <!-- Quinoa is a Quarkiverse extension, in NO BOM, and its version does not track the
+             platform's. 2.8.2 is the platform-wide pin: the last release built against a Quarkus
+             OLDER than 3.34.6 (3.27.3 LTS — the compatible direction), while 2.8.3 is built against
+             3.36.2, ahead of us. Bump it only past a platform bump, and everywhere at once. -->
+        <quinoa.version>2.9.2</quinoa.version>
+
+        <!-- The user-story framework (TEST SCOPE ONLY): every integration test in this repository
+             is a userflow, so a `mvn verify` also regenerates target/userstories/ — the stories'
+             documentation, their observed network diagrams included. Published out of
+             libs/qits-userflows into the platform's own Maven repository, which is why the
+             <repositories> block below exists: this pom used to resolve everything from Maven
+             Central.
+
+             qits-service-mock USED to sit beside it and no longer does. It is a GENERIC recording
+             mock — exact-path stubs, canned JSON, query-blind — and qits-docs is a pass-through
+             over ONE specific API whose every interesting property lives exactly where a generic
+             mock cannot go: a `/-/`-separated multi-segment site grammar, a `?meta.…` filter whose
+             whole point is that it is forwarded rather than applied, per-file content types and
+             ETags, and an upload route. stories/support/StoryStore is that API, standing in for it
+             the way every sibling repository's peer stub stands in for its peers. -->
+        <qits.userflows.version>2026.1028.231715</qits.userflows.version>
+        <!-- The platform's shared rules (test scope only), qits-1754: ProviderStateCoverageTest
+             checks that every state golden-masters/index.json records has its @State callback on
+             ConsumerPactVerificationTest. Published out of libs/qits-integrations-quarkus, like
+             qits-userflows above. -->
+        <qits.arch-rules.version>2026.1030.30851</qits.arch-rules.version>
+        <!-- Where it comes from. The default is the public host, https://registry.qits.wohlben.eu,
+             which answers 401 without the commissioned client; docker/Dockerfile derives the same
+             address from its QITS_DOMAIN build arg for every build that runs elsewhere. -->
+        <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+        <failsafe-plugin.version>${surefire-plugin.version}</failsafe-plugin.version>
+        <spotless-plugin.version>2.44.5</spotless-plugin.version>
+        <google-java-format.version>1.28.0</google-java-format.version>
+        <!-- INTEGRATION TESTS RUN BY DEFAULT HERE, unlike most siblings, and the reason is what
+             they cost: no docker, no database, no spawned process and no network beyond a loopback
+             stub — six userflow stories against one launched artifact, and they are also the
+             GENERATOR of the userstories documentation. The qits-githost shape: a repository whose
+             ITs are cheap opts in, one whose suite carries a heavyweight sibling names the class on
+             the command line instead.
+
+             They share ONE @TestProfile (stories/support/StoryProfile) and are therefore ONE
+             launched process; a second profile would be a second qits-docs, and a diagram whose
+             traffic landed in whichever one happened to be running.
+
+             docker/Dockerfile is unaffected: its builder stage stops at `package`, which is before
+             the integration-test phase, so the image build never launches the artifact. -->
+        <skipITs>false</skipITs>
+
+        <!-- pact-jvm, TEST SCOPE (ticket qits-1149, epic qits-546): the version every repository on
+             the estate writes and verifies pacts with. The consumer half is ArtifactsContract (this
+             service's calls to qits-artifacts); the provider half is contracts/
+             ConsumerPactVerificationTest. -->
+        <pact.version>4.7.5</pact.version>
+        <!-- The consumer pact's two inputs (qits-1149), both test scope and both EXACT, never a
+             range: a newer recording is a pact change. qits-pact-consumer is the estate's shared
+             golden-master reader (out of qits-integrations-quarkus-javalib);
+             qits-artifacts-golden-masters is what qits-artifacts-service answers in each state. -->
+        <qits.pact-consumer.version>2026.1019.82625</qits.pact-consumer.version>
+        <qits.artifacts-golden-masters.version>2026.1029.125556</qits.artifacts-golden-masters.version>
+        <!-- qits-idp's recorded answers (test scope): IdpConsumerPactTest's token-mint row
+             (qits-1419), the same pin qits-githost-service reads its own mint row from. -->
+        <qits.idp-golden-masters.version>2026.1027.165632</qits.idp-golden-masters.version>
+        <!-- qits-http-core: QitsHttpClients.wrap puts a CLIENT span and X-Qits-Caller on the one
+             outbound java.net.http.HttpClient this service builds, to qits-artifacts — the same
+             way quarkus-opentelemetry already does for the REST client. Published by
+             qits-integrations-quarkus, like qits-userflows above. -->
+        <qits.http-core.version>2026.1103.132907</qits.http-core.version>
+        <!-- qits-telemetry-core (epic qits-428): the three OTLP/HTTP exporters as CDI beans whose
+             header supplier carries the `qits` oidc client's current bearer, so spans, logs and
+             metrics reach qits-observability at its edge host. Published by
+             qits-integrations-quarkus, like qits-http-core above. -->
+        <qits.telemetry-core.version>2026.1103.201640</qits.telemetry-core.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- The dependency set is deliberately minimal, for the reason qits-gateway's is: this compiles
+         to a GraalVM native binary and every extension is image size, build time and reflection
+         surface. NO REST layer, NO datasource, NO ORM — this service holds no state at all, and the
+         one thing it does is resolve a path and stream bytes. The upstream client is
+         java.net.http, hand-rolled, because a REST client library would be a second reflection
+         surface for four requests. -->
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The HTTP server and the Vert.x `Router` the routes are registered on. Raw routes
+                 only, like qits-artifacts' own wire stacks: responses are built with JsonObject and
+                 nothing is serialised by binding, so this stack adds zero native-image
+                 configuration. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-vertx-http</artifactId>
+        </dependency>
+        <dependency>
+            <!-- /docs/q/health/{live,ready} — the readiness endpoint the deployment's
+                 health gate curls, the convention every qits service answers. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-health</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The instrumentation. The extension makes the spans, log records and metrics; the
+                 exporters that ship them are qits-telemetry-core's, below. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-opentelemetry</artifactId>
+        </dependency>
+        <dependency>
+            <!-- OTLP export to qits-observability through the edge (epic qits-428): replaces all
+                 three of Quarkus' own OTLP exporters with CDI beans that attach the `qits` oidc
+                 client's bearer on every export. qits.telemetry.endpoint in application.properties;
+                 quarkus.otel.exporter.otlp.* no longer reaches anything. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-telemetry-core</artifactId>
+            <version>${qits.telemetry-core.version}</version>
+        </dependency>
+        <dependency>
+            <!-- QitsHttpClients wraps DocsUpstream's outbound HttpClient to qits-artifacts, and
+                 this is also the app module whose jandex index CallerServerFilter /
+                 CallerClientFilter need to be discovered from, so the inbound request this service
+                 serves records its own X-Qits-Caller too. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-http-core</artifactId>
+            <version>${qits.http-core.version}</version>
+        </dependency>
+
+        <dependency>
+            <!-- The named oidc client `qits` (qits-1419): this service's own qits:system bearer,
+                 minted by client credentials from the deployer's idp:client resource, which every
+                 read of qits-artifacts carries now that the store is dialled at its edge host. A
+                 client only — no tenant, no inbound check. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-oidc-client</artifactId>
+        </dependency>
+
+        <dependency>
+            <!-- The client. Quinoa builds src/main/webui (the qits-spa-docs submodule)
+                 during augmentation and registers the bundle as build-time static resources, so
+                 there is no runtime machinery and no second process — the reading room is served
+                 by the same binary that streams the bundles it links to.
+
+                 quarkus-undertow must never join this pom: its presence breaks Quinoa's production
+                 static serving (the qits-artifacts README carries that history). -->
+            <groupId>io.quarkiverse.quinoa</groupId>
+            <artifactId>quarkus-quinoa</artifactId>
+            <version>${quinoa.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The user-story framework: every IT here is written as a @UserStory method, so the
+                 packaged-boot proof doubles as documentation — steps, notes and an OBSERVED network
+                 diagram emitted under target/userstories/. Every story is browserless (an
+                 Interactions parameter and no Flow), so the transitive Playwright never launches
+                 anything and no browser is downloaded.
+
+                 It also ships NetworkTaps.restAssured, which is the incoming half of every diagram
+                 here; the hand-copied StoryNetworkFilter this repository used to carry beside its
+                 story is gone.
+
+                 NOTE THE GROUP ID. This project is `eu.wohlben`, the platform's libraries are
+                 `eu.wohlben.qits`, so this cannot be spelled with ${project.groupId} the way a
+                 sibling in the qits reactor spells it. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-userflows</artifactId>
+            <version>${qits.userflows.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The consumer pact against qits-artifacts (ArtifactsContract,
+                 ArtifactsConsumerPactTest, ArtifactsPactFileTest). Plain JUnit 5: DocsUpstream
+                 talks over the JDK's HttpClient and needs no Quarkus application to build. -->
+            <groupId>au.com.dius.pact.consumer</groupId>
+            <artifactId>junit5</artifactId>
+            <version>${pact.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Reads qits-artifacts' recordings off the test classpath and turns each
+                 (state, operation) into a pact row that binds only what DocsUpstream reads. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-pact-consumer</artifactId>
+            <version>${qits.pact-consumer.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-artifacts-golden-masters</artifactId>
+            <version>${qits.artifacts-golden-masters.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- IdpConsumerPactTest's mint row is built from qits-idp's recordings (qits-1419). -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-idp-golden-masters</artifactId>
+            <version>${qits.idp-golden-masters.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The provider half: contracts/ConsumerPactVerificationTest replays every consumer
+                 pact against /docs/api/* on the golden-master states. -->
+            <groupId>au.com.dius.pact.provider</groupId>
+            <artifactId>junit5</artifactId>
+            <version>${pact.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- ProviderStateCoverageTest (qits-1754): the platform's shared rules. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-arch-rules</artifactId>
+            <version>${qits.arch-rules.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <repositories>
+        <!-- The platform's own Maven repository, where the test-scope jar above is published and
+             where nothing else in this pom comes from. The id is what a locally cached copy is
+             recorded under, so it has to stay `qits-maven` or an offline build refuses an artifact
+             it already has — and it is also the id .qits-maven-settings.xml mirrors, which is the
+             one thing that outranks Maven's external-http blocker for an http:// URL. -->
+        <repository>
+            <id>qits-maven</id>
+            <url>${qits.maven.repository.url}</url>
+        </repository>
+    </repositories>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>quarkus-maven-plugin</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <extensions>true</extensions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${compiler-plugin.version}</version>
+                <configuration>
+                    <parameters>true</parameters>
+                </configuration>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${surefire-plugin.version}</version>
+                <configuration>
+                    <systemPropertyVariables>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                        <maven.home>${maven.home}</maven.home>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+            <plugin>
+                <!-- The story catalogue binds here. There was no failsafe wiring in this
+                     repository at all before userflows — this pom had no integration test to run —
+                     so the executions are declared rather than inherited from anywhere. With
+                     skipITs false above, a plain `mvn verify` launches the packaged fast-jar; the
+                     `native` profile runs the same stories against the binary. -->
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>${failsafe-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <systemPropertyVariables>
+                        <!-- How @QuarkusIntegrationTest finds the compiled binary in a `-Dnative`
+                             build; without it the native run has nothing to launch. The name is
+                             `quarkus.package.output-name` from application.properties (and the
+                             Dockerfile's COPY line), NOT maven's finalName — all three spellings
+                             move together. -->
+                        <native.image.path>${project.build.directory}/qits-docs</native.image.path>
+                        <!-- Launch the packaged app on a free port instead of the default 8081,
+                             which on the deployment host is the platform's own npm registry. -->
+                        <quarkus.http.test-port>0</quarkus.http.test-port>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                    </systemPropertyVariables>
+                    <environmentVariables>
+                        <!-- QITS_DOMAIN carries no default (qits-1419): the store's address and the
+                             qits oidc client's idp fallback both expand it, so the LAUNCHED packaged
+                             artifact refuses to boot without one. Never dialled: StoryProfile points
+                             the store at its loopback stand-in and switches the client off. -->
+                        <QITS_DOMAIN>example.test</QITS_DOMAIN>
+                    </environmentVariables>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>${spotless-plugin.version}</version>
+                <configuration>
+                    <java>
+                        <googleJavaFormat>
+                            <version>${google-java-format.version}</version>
+                        </googleJavaFormat>
+                    </java>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>apply</goal>
+                        </goals>
+                        <phase>process-sources</phase>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>native</id>
+            <activation>
+                <property>
+                    <name>native</name>
+                </property>
+            </activation>
+            <properties>
+                <skipITs>false</skipITs>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+            </properties>
+        </profile>
+    </profiles>
+</project>

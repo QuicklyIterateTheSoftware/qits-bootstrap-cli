@@ -1,0 +1,541 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Standalone parent for qits-platform-maintenance — the MAINTENANCE context: the dependency
+         inventory of every repository in the catalog, the latest version of every dependency it
+         pins, and the maintenance branches that close the gap between the two.
+
+         WHAT IT DOES. It scans every repository's manifests at `main`, records each direct pin,
+         asks the registries what the newest version of each dependency is, groups the pending
+         upgrades per the repository's own `.config/qits/maintenance.yml`, and asks qits-ci to apply
+         one group as one branch.
+
+         WHAT IT DOES NOT DO. It edits no file and pushes no branch. A bump is a request to qits-ci,
+         which runs the platform-level `MaintenanceBump` pipeline in a step container; this service
+         decides WHAT changes and records WHAT happened. It also reads no transitive dependency: a
+         manifest holds direct pins and only those move.
+
+         DELIBERATELY ITS OWN GAV, the qits-configuration case: the child directories are
+         `maintenance` and `service`, and `eu.wohlben:service` would collide in the shared ~/.m2
+         every workspace container mounts. So the coordinates are namespaced
+         (`eu.wohlben.qits:qits-platform-maintenance-*`) while the directories stay short. The
+         `maintenance/` module's artifactId is `qits-platform-maintenance-domain` — the directory
+         names the context, the artifactId names the layer.
+
+         Versions that must stay in step with the platform (Quarkus, JDK release, MapStruct, Lombok)
+         are duplicated here on purpose: a clone of THIS repo alone must build, with no monorepo and
+         no parent to inherit from. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-platform-maintenance</artifactId>
+    <!-- A PLACEHOLDER until this repo's first release train runs. The platform's release flow stamps
+         a calver version onto the merge commit, as every released sibling carries, so nothing here
+         is meant to be edited by hand. Deliberately NOT a -SNAPSHOT: the image build resolves this
+         reactor from source, so a snapshot coordinate would only invite a resolver to look for one
+         in a repository that will never hold it. -->
+    <version>2026.1104.183930</version>
+    <packaging>pom</packaging>
+    <name>qits-platform-maintenance</name>
+
+    <modules>
+        <!-- Listed first: `service` depends on it. -->
+        <module>maintenance</module>
+        <module>service</module>
+    </modules>
+
+    <properties>
+        <!-- pact-jvm's JUnit 5 provider, for ConsumerPactVerificationTest: the version every
+             provider on the estate verifies with, so a consumer's pact is read the same way. The
+             consumer half (au.com.dius.pact.consumer:junit5, ProjectsConsumerPactTest/
+             ProjectsPactFileTest in maintenance/, epic qits-965/qits-974) moves on this same
+             property — one external library, one version. -->
+        <pact.version>4.6.21</pact.version>
+        <!-- THE PROVIDER'S GOLDEN MASTERS (epic qits-546/qits-965), test scope: qits-projects
+             records what it answers for each provider state and publishes the tree as
+             eu.wohlben.qits:qits-projects-golden-masters, read off the classpath by
+             maintenance/src/test/.../testing/contracts/GoldenMasters for TicketClient's own
+             consumer pact (contracts/ProjectsContract, ProjectsConsumerPactTest, ProjectsPactFileTest). Moves
+             like every internal pin — a qits-maintenance bump on this property, gated here, where a
+             changed answer that breaks the pact goes red before it ships. Do not hand-edit it to
+             chase a release.
+             First carries /work (qits-965/qits-974) at 2026.1007.25926; 2026.1007.35430 only adds
+             getWork recordings. -->
+        <qits.projects-golden-masters.version>2026.1104.114635</qits.projects-golden-masters.version>
+        <!-- THE OTHER PROVIDERS' GOLDEN MASTERS (ticket qits-1149), test scope, read off the classpath
+             by qits-pact-consumer for this repository's consumer pacts against each of them
+             (maintenance/src/test/.../contracts/*Contract, PeerConsumerPactTest). Each moves like
+             every internal pin: a qits-maintenance bump on its property, gated here. Do not
+             hand-edit one to chase a release. -->
+        <qits.ci-golden-masters.version>2026.1102.180015</qits.ci-golden-masters.version>
+        <qits.deployments-golden-masters.version>2026.1010.145913</qits.deployments-golden-masters.version>
+        <qits.artifacts-golden-masters.version>2026.1029.125556</qits.artifacts-golden-masters.version>
+        <qits.githost-golden-masters.version>2026.1020.204038</qits.githost-golden-masters.version>
+        <qits.idp-golden-masters.version>2026.1027.165632</qits.idp-golden-masters.version>
+        <qits.mirror-golden-masters.version>2026.1018.160931</qits.mirror-golden-masters.version>
+        <qits.system-golden-masters.version>2026.1102.183359</qits.system-golden-masters.version>
+        <!-- The shared JVM consumer helper (qits-integrations-quarkus-javalib): golden-master reader,
+             row builder, pact-file compare. Test scope. -->
+        <qits.pact-consumer.version>2026.1019.82625</qits.pact-consumer.version>
+        <!-- THE CONSUMER PACTS this provider verifies (epic qits-546, ticket qits-1149): each
+             consumer publishes its pact against qits-maintenance as
+             eu.wohlben.qits:<consumer>-pacts-qits-maintenance-service, and
+             service/.../contracts/ConsumerPactVerificationTest verifies every one pinned here.
+             Test scope; qits-maintenance bumps it when the consumer releases a changed pact. -->
+        <qits.projects-service-pacts-qits-maintenance-service.version>2026.1031.33239</qits.projects-service-pacts-qits-maintenance-service.version>
+        <qits.artifacts-service-pacts-qits-maintenance-service.version>2026.1018.153037</qits.artifacts-service-pacts-qits-maintenance-service.version>
+        <qits.orchestrator-service-pacts-qits-maintenance-service.version>2026.1018.172917</qits.orchestrator-service-pacts-qits-maintenance-service.version>
+        <qits.platform-access-monorepo-pacts-qits-maintenance-service.version>2026.1103.101116</qits.platform-access-monorepo-pacts-qits-maintenance-service.version>
+        <!-- THE PLATFORM'S OWN MAVEN REPOSITORY, and this repo's artifacts from it: qits-db-core
+             (PatientPgDriver, which the datasource opens every connection through, and
+             DbRetry.inNewTx, which every write path runs in), qits-auth-core (the forward-auth
+             mechanism and the machine-token gate), qits-arch-rules (the test that refuses to let
+             the datasource baseline go missing), and — test scope, service/ only — qits-userflows
+             and qits-service-mock, the story framework and the recording mocks its far side is. All
+             five come from qits-integrations-quarkus except qits-userflows, which publishes itself.
+             The url is a property so the image build can point it at the address the builder
+             container can actually reach — see docker/Dockerfile and .qits-maven-settings.xml. -->
+        <qits.db-core.version>2026.1002.70617</qits.db-core.version>
+        <qits.auth-core.version>2026.1031.63225</qits.auth-core.version>
+        <qits.arch-rules.version>2026.1030.30851</qits.arch-rules.version>
+        <!-- Service-to-service HTTP that says who is calling: QitsHttpClients.wrap turns a raw
+             java.net.http.HttpClient into one that opens a CLIENT span and sends traceparent plus
+             X-Qits-Caller; the server filter (jandex-discovered off this jar alone) records an
+             inbound caller on the server span. Not released yet (qits-1198). -->
+        <qits.http-core.version>2026.1103.132907</qits.http-core.version>
+        <!-- qits-telemetry-core (epic qits-428): the three OTLP/HTTP exporters as CDI beans whose
+             header supplier carries the `qits` oidc client's current bearer, so spans, logs and
+             metrics reach qits-observability at its edge host. Published by
+             qits-integrations-quarkus, like qits-http-core above. -->
+        <qits.telemetry-core.version>2026.1103.201640</qits.telemetry-core.version>
+        <!-- The user-story framework (test scope, service/ only). The five story classes under
+             service/src/test/.../stories/ plus TokenValidationBootstrapIT are userflows, so a
+             `mvn verify -DskipITs=false -Dit.test=<the list>` also regenerates
+             service/target/userstories/ — the stories' documentation, network diagrams included.
+             Published by qits-userflows into the same platform Maven repository as the three above.
+
+             Two floors, both hard:
+               - 2026.829 REMOVED Interactions.happened(). An edge is observed now (the shipped
+                 RestAssured tap for what arrives here, a recording for what left) or explicitly
+                 declared (the JDBC read of this service's own store, which no tap can stand in
+                 front of), never narrated.
+               - 2026.829.201516 is where NetworkTaps.restAssured lives, which replaced the
+                 hand-copied StoryNetworkFilter this repository used to carry beside its IT.
+             Do not go back below it — the catalogue will not compile. -->
+        <qits.userflows.version>2026.1028.231715</qits.userflows.version>
+        <!-- The recording service mocks the story catalogue boots against (the generic MockService
+             plus idp.MockIdp), published by qits-integrations-quarkus beside qits-auth-core and
+             qits-arch-rules. -->
+        <qits.service-mock.version>2026.1002.70617</qits.service-mock.version>
+        <!-- THE PLATFORM EVENT BUS (qits-eventstream), released out of
+             components/qits-eventstream/qits-eventstream-javalib into the same platform Maven
+             repository as the four jars above. This service SUBSCRIBES and publishes nothing: two
+             durable listeners in `service/…/bus/` turn qits-ci's `SoftwareRelease` into a forward
+             move of mt_latest, and qits-workspaces'/qits-githost's three SCM events into branch
+             state and a single-repository rescan.
+
+             It is a RELEASED CALVER PIN and never a snapshot — the same string qits-configuration
+             and qits-projects carry. A snapshot resolves from a developer's ~/.m2 and fails to
+             resolve in the release pipeline's own step container, which is a red release rather
+             than a guard.
+
+             The jar brings a THIRD thing besides the client: its own datasource, its own Flyway
+             lineage and the durable-consumer tables — so joining it added
+             `postgresql:eventstream:qits_platform_maintenance_eventstream` to
+             .config/qits/deployments.yml. See service/pom.xml. -->
+        <qits.eventstream.version>2026.1103.231226</qits.eventstream.version>
+        <!-- The manifest parsers, the discovery over one repository's files and the project graph
+             BumpOrder walks (qits-3), released out of components/qits-bootstrap/qits-bootstrap-javalib.
+             Plain Java over jackson-databind and snakeyaml, both aligned by the same quarkus-bom. -->
+        <qits.bootstrap-graph.version>2026.1105.144428</qits.bootstrap-graph.version>
+        <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.version>3.34.6</quarkus.platform.version>
+
+        <!-- Quinoa is a Quarkiverse extension: not in quarkus-bom, and its version does NOT track
+             the platform's. 2.8.2 is built against Quarkus 3.27.3 LTS — older than the 3.34.6
+             above, which is the direction that works, since an extension compiled against an older
+             core runs on a newer one. Bump it only past a platform bump. Same pin as
+             qits-platform-orchestrator and every other SPA-serving service. -->
+        <quinoa.version>2.8.2</quinoa.version>
+
+        <!-- MAVEN'S OWN VERSION ORDER, not a home-grown one. `ComparableVersion` is the class every
+             maven resolver ranks versions with, and "which release is newer" is exactly the
+             question this service asks of a `maven-metadata.xml`. A re-implementation would differ
+             from the resolver on the qualifiers that actually occur (`-alpha`, `.RELEASE`, a
+             four-segment calver against a three-segment one) and be wrong in the direction nobody
+             tests. plexus-utils is excluded at the use site: ComparableVersion imports nothing
+             outside java.*. -->
+        <maven-artifact.version>3.9.12</maven-artifact.version>
+
+        <!-- Embedded PostgreSQL for the suites. This service's store IS postgres, so every test that
+             touches SQL has to run against one — and the first rule here is that a clone tests green
+             with NO DOCKER, which rules out Testcontainers and Quarkus dev services alike. Zonky
+             resolves real postgres binaries as ordinary Maven artifacts and spawns them as a child
+             process: a maven dependency, not a container.
+
+             Two coordinates, on purpose. The BOM pins which POSTGRES the binaries are (18.4.0 — the
+             platform's own postgres tag), the library version is the harness around them, and they
+             move independently. Every architecture the suite may run on is named explicitly in the
+             modules that use it: the binaries are per-arch artifacts, and a missing one fails in the
+             middle of a suite rather than during resolution. -->
+        <zonky.embedded-postgres.version>2.2.2</zonky.embedded-postgres.version>
+        <zonky.postgres-binaries.version>18.4.0</zonky.postgres-binaries.version>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+        <failsafe-plugin.version>3.5.4</failsafe-plugin.version>
+        <jandex-plugin.version>3.4.0</jandex-plugin.version>
+        <jar-plugin.version>3.4.2</jar-plugin.version>
+        <lombok.version>1.18.38</lombok.version>
+        <lombok-mapstruct-binding.version>0.2.0</lombok-mapstruct-binding.version>
+        <mapstruct.version>1.6.3</mapstruct.version>
+
+        <!-- PackagedSurfaceIT runs against the BUILT artifact, so it needs a `package` to have
+             happened. `-DskipITs=false` (or `-Dnative`, which flips this in service/pom.xml's
+             profile) is how you ask for the artifact to be probed; a plain `./mvnw verify` on a
+             fresh clone stays green without it. -->
+        <skipITs>true</skipITs>
+        <!-- Surefire's @{argLine} has no value unless something (jacoco/quarkus) sets it. -->
+        <argLine/>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site. -->
+                <groupId>au.com.dius.pact.provider</groupId>
+                <artifactId>junit5</artifactId>
+                <version>${pact.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The consumer half: ProjectsConsumerPactTest (maintenance/) writes this
+                     repository's consumer pact against qits-projects
+                     (pacts/qits-maintenance-service_qits-projects-service.json), and
+                     ProjectsPactFileTest compares it to the committed file. Test scope at every
+                     declaration site. -->
+                <groupId>au.com.dius.pact.consumer</groupId>
+                <artifactId>junit5</artifactId>
+                <version>${pact.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: recordings a test reads, never code. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-projects-golden-masters</artifactId>
+                <version>${qits.projects-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: recordings a test reads, never code. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-ci-golden-masters</artifactId>
+                <version>${qits.ci-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: recordings a test reads, never code. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-deployments-golden-masters</artifactId>
+                <version>${qits.deployments-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: recordings a test reads, never code. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-artifacts-golden-masters</artifactId>
+                <version>${qits.artifacts-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: recordings a test reads, never code. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-githost-golden-masters</artifactId>
+                <version>${qits.githost-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: recordings a test reads, never code. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-idp-golden-masters</artifactId>
+                <version>${qits.idp-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: recordings a test reads, never code. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-mirror-golden-masters</artifactId>
+                <version>${qits.mirror-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: recordings a test reads, never code. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-system-golden-masters</artifactId>
+                <version>${qits.system-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-pact-consumer</artifactId>
+                <version>${qits.pact-consumer.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-projects-service-pacts-qits-maintenance-service</artifactId>
+                <version>${qits.projects-service-pacts-qits-maintenance-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-artifacts-service-pacts-qits-maintenance-service</artifactId>
+                <version>${qits.artifacts-service-pacts-qits-maintenance-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-orchestrator-service-pacts-qits-maintenance-service</artifactId>
+                <version>${qits.orchestrator-service-pacts-qits-maintenance-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: a consumer's pact, verified by
+                     ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-platform-access-monorepo-pacts-qits-maintenance-service</artifactId>
+                <version>${qits.platform-access-monorepo-pacts-qits-maintenance-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Which postgres the embedded binaries ARE — 18.4.0, the tag the platform's own
+                     qits-oci-postgresql image is built from. The suites migrate and query against
+                     the same major version the deployment runs, which is the whole reason a real
+                     server is spawned rather than an in-memory stand-in. Imported as a BOM because
+                     the per-arch artifacts are separate coordinates. -->
+                <groupId>io.zonky.test.postgres</groupId>
+                <artifactId>embedded-postgres-binaries-bom</artifactId>
+                <version>${zonky.postgres-binaries.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.zonky.test</groupId>
+                <artifactId>embedded-postgres</artifactId>
+                <version>${zonky.embedded-postgres.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok</artifactId>
+                <version>${lombok.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.mapstruct</groupId>
+                <artifactId>mapstruct</artifactId>
+                <version>${mapstruct.version}</version>
+            </dependency>
+            <dependency>
+                <!-- ComparableVersion and nothing else. See the property above for why maven's own
+                     class rather than a comparator of ours. -->
+                <groupId>org.apache.maven</groupId>
+                <artifactId>maven-artifact</artifactId>
+                <version>${maven-artifact.version}</version>
+                <exclusions>
+                    <exclusion>
+                        <groupId>org.codehaus.plexus</groupId>
+                        <artifactId>plexus-utils</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+            <!-- The reactor's own module, so `service` depends on it version-less. -->
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-platform-maintenance-domain</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Published by qits-integrations-quarkus into the platform Maven repository. The
+                     forward-auth mechanism that turns qits-gateway's X-Qits-User / X-Qits-Roles into
+                     an identity, and the machine-token gate beside it. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-auth-core</artifactId>
+                <version>${qits.auth-core.version}</version>
+            </dependency>
+            <dependency>
+                <!-- PatientPgDriver, named only by the datasource's `jdbc.driver` line, and
+                     DbRetry.inNewTx, which every inventory and bump write goes through. The second
+                     is why `maintenance` declares it at compile scope rather than runtime. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-db-core</artifactId>
+                <version>${qits.db-core.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The platform's shared rules, test scope. DatasourceBaselineRules is what this
+                     repo takes them for. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-arch-rules</artifactId>
+                <version>${qits.arch-rules.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-http-core</artifactId>
+                <version>${qits.http-core.version}</version>
+            </dependency>
+            <dependency>
+                <!-- OTLP export to qits-observability through the edge (epic qits-428): replaces all
+                     three of Quarkus' own OTLP exporters with CDI beans that attach the `qits` oidc
+                     client's bearer on every export. qits.telemetry.endpoint in application.properties;
+                     quarkus.otel.exporter.otlp.* no longer reaches anything. -->
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-telemetry-core</artifactId>
+                <version>${qits.telemetry-core.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The userflow framework. Test scope, in `service/` only: the story runs against
+                     the PACKAGED artifact, and that is the one module that produces one. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-userflows</artifactId>
+                <version>${qits.userflows.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The recording mocks the story's far side is. Test scope, `service/` only, for
+                     the same reason. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-service-mock</artifactId>
+                <version>${qits.service-mock.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The manifest parsers, ManifestReader and ProjectGraph/Walk (qits-3). Compile scope
+                     in `maintenance/`: the scanner and BumpOrder are built on it. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-bootstrap-graph</artifactId>
+                <version>${qits.bootstrap-graph.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The platform event bus client. Compile scope in `service/` only: `bus/` is an
+                     inbound adapter like `api/` is, and the jar brings a second datasource with a
+                     Flyway lineage of its own — putting it on `maintenance`'s classpath would make
+                     every one of that module's @QuarkusTests boot an outbox they have no use for. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-eventstream</artifactId>
+                <version>${qits.eventstream.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: the kit that pacts what qits-eventstream
+                     asks qits-events on this service's behalf (qits-1163), at the same version. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-eventstream-contracts</artifactId>
+                <version>${qits.eventstream.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Managed here rather than versioned at the use site because Quinoa is in no BOM;
+                     the pin and its reasoning stay in one place. -->
+                <groupId>io.quarkiverse.quinoa</groupId>
+                <artifactId>quarkus-quinoa</artifactId>
+                <version>${quinoa.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <repositories>
+        <repository>
+            <!-- Where the three qits jars above come from. Named `qits-maven` because the image
+                 build's settings file mirrors exactly that id — see .qits-maven-settings.xml. The
+                 host answers 401 anonymously: build with `-s .qits-maven-settings.xml` and the
+                 QITS_MAVEN_* variables it reads, or give ~/.m2/settings.xml a `qits-maven` server. -->
+            <id>qits-maven</id>
+            <url>${qits.maven.repository.url}</url>
+        </repository>
+    </repositories>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>${quarkus.platform.group-id}</groupId>
+                    <artifactId>quarkus-maven-plugin</artifactId>
+                    <version>${quarkus.platform.version}</version>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${compiler-plugin.version}</version>
+                    <configuration>
+                        <parameters>true</parameters>
+                        <!-- Incremental compilation leaves stale MapStruct *Impl classes behind
+                             when a mapper's shape changes; the siblings disable it for the same
+                             reason. -->
+                        <useIncrementalCompilation>false</useIncrementalCompilation>
+                        <annotationProcessorPaths>
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                                <version>${lombok.version}</version>
+                            </path>
+                            <path>
+                                <groupId>org.mapstruct</groupId>
+                                <artifactId>mapstruct-processor</artifactId>
+                                <version>${mapstruct.version}</version>
+                            </path>
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok-mapstruct-binding</artifactId>
+                                <version>${lombok-mapstruct-binding.version}</version>
+                            </path>
+                        </annotationProcessorPaths>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${surefire-plugin.version}</version>
+                    <configuration>
+                        <systemPropertyVariables>
+                            <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                        </systemPropertyVariables>
+                        <!-- The platform injects QITS_DOMAIN into CI steps and agent containers; a
+                             test JVM that inherits it picks up the live domain instead of the
+                             suite's domain-less default. Keep it out. -->
+                        <excludedEnvironmentVariables>
+                            <excludedEnvironmentVariable>QITS_DOMAIN</excludedEnvironmentVariable>
+                        </excludedEnvironmentVariables>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <version>${failsafe-plugin.version}</version>
+                    <configuration>
+                        <!-- Same reasoning as the surefire plugin above: don't let the platform's
+                             QITS_DOMAIN leak into the forked test JVM. -->
+                        <excludedEnvironmentVariables>
+                            <excludedEnvironmentVariable>QITS_DOMAIN</excludedEnvironmentVariable>
+                        </excludedEnvironmentVariables>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <version>${jar-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>io.smallrye</groupId>
+                    <artifactId>jandex-maven-plugin</artifactId>
+                    <version>${jandex-plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>make-index</id>
+                            <goals>
+                                <goal>jandex</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

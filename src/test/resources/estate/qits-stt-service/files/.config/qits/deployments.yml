@@ -1,0 +1,60 @@
+# How qits-platform-deployments deploys this repo. It reads this file from the git host at
+# the built sha, so the answer travels with the commit.
+#
+# CARRYING THE FILE AT ALL is the other thing it says. qits-projects reads it at the release tag to
+# decide whether this repository deploys — a library or an SPA carries none, and its release
+# finalizes `main` there and then, while a deployable one waits for the deployment to succeed. What
+# deploys is the VERSION COORDINATE the release build published. `deploy_branches` used to name a
+# branch to deploy from here, in thirteen copies of one platform-wide answer, and it went with the
+# entry-branch promotion and the release door.
+#
+# WHAT THIS REPOSITORY DEPLOYS AS, held still across the repository rename. The repository is
+# qits-stt-service now; the application is still qits-stt, so nothing that is running moves: the
+# swarm service and its wire alias, the container, the image qits/qits-stt the build pushes, the
+# provisioned database, the derived host label, the extras family and the QITS_APPLICATION the
+# container boots with all keep the names they have. Omitted, this name would be DERIVED from the
+# repository, and the rename would read as a decommission plus a new application rather than a
+# rename. Changing the value later is exactly that decommission, so it does not change again.
+application: qits-stt
+
+# qits-766's LIVE RENAME TEST, second half: the application went qits-stt -> qits-speech on
+# 2026-10-31 and is renamed back here, through the same cutover (AGENTS.md, qits-deployments-service:
+# "Renaming an application"). Once `qits-speech` is retired this key is inert, and it can go.
+renamed_from: qits-speech
+
+# THE HEALTH PATH DOES NOT FOLLOW THE RENAME BY ITSELF, AND THAT IS THE TRAP. `resolveHealthPath`
+# falls back to `DeployService.conventionHealthPath(applicationName)` — derived from the
+# APPLICATION name, never the repository's — which for `qits-speech` would derive
+# `/speech/q/health/ready`. This service's actual route is still `/stt` (`routes:` and
+# `quarkus.rest.path` below are both unchanged), so the derived path would 404 and the health gate
+# would fail a container that is perfectly healthy. Pinning the path this repository already serves
+# keeps the probe correct through the rename.
+health_path: /stt/q/health/ready
+
+# The speech API still has no browser surface of its own, so it still has no navigation entry. But
+# it is no longer reached only by the edge's cross-host path routing — that is being removed. It now
+# has its own host, stt.<domain>, and the workspaces and projects SPAs call it cross-origin there;
+# the edge answers the CORS preflight.
+routes: /stt
+host: stt
+
+# Where the browsable API document lives: swagger-ui under this service's non-application
+# root, which sits under the primary route above. The shell's Api Docs viewer reads it off
+# /main-navigation and frames it for this repository.
+api-docs: /stt/q/swagger-ui
+
+# THE SPEECH HOME'S VOLUME (qits-1391): the venv and the ~700 MB model cache the image points
+# QITS_SPEECH_HOME and HF_HOME at (/data/speech, see docker/Dockerfile), kept across a recreate. A
+# private volume is named `<application>-<name>`, so this is `qits-stt-data` again — the volume the
+# service ran on before the qits-766 rename test, kept while it was `qits-speech` (whose
+# `qits-speech-data` is now left behind). A rename does not move a private volume.
+volumes: private:data:/data
+
+# idp:client ASKS QITS-DEPLOYMENTS TO PROVISION THIS APPLICATION'S OWN QITS-IDP SERVICE CLIENT — id
+# `<env>-qits-stt` (derived from env + application), roles fixed in qits-idp code. The deployer
+# stores the secret and injects QITS_RESOURCE_IDP_URL, QITS_RESOURCE_IDP_CLIENT_ID and
+# QITS_RESOURCE_IDP_CLIENT_SECRET, which the `qits` oidc client in application.properties reads. It
+# is the bearer qits-telemetry-core attaches to every OTLP export, now that this service ships its
+# telemetry to qits-observability's edge host, where the edge refuses an anonymous request (epic
+# qits-428). Validating the bearers callers present needs no resource; presenting one does.
+resources: idp:client

@@ -1,0 +1,48 @@
+{
+  "name": "qits-platform-spa-idp",
+  "version": "2026.1103.172941",
+  "private": true,
+  "description": "The identity provider's frontend: an Angular application that consumes @qits/ui-components from qits' own npm registry. It ships no image — qits-platform-idp serves it via Quinoa at /idp/.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/QuicklyIterateTheSoftware/qits-platform-spa-idp.git"
+  },
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve",
+    "build": "ng build",
+    "watch": "ng build --watch --configuration development",
+    "test": "ng test",
+    "lint": "ng lint"
+  },
+  "dependencies": {
+    "@angular/common": "^21.2.0",
+    "@angular/compiler": "^21.2.0",
+    "@angular/core": "^21.2.0",
+    "@angular/forms": "^21.2.0",
+    "@angular/platform-browser": "^21.2.0",
+    "@angular/router": "^21.2.0",
+    "@qits/ui-components": "^2026.1103.133955",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@angular-eslint/builder": "^21.4.0",
+    "@angular/build": "^21.2.6",
+    "@angular/cli": "^21.2.6",
+    "@angular/compiler-cli": "^21.2.0",
+    "@eslint/js": "^10.0.1",
+    "@ngrx/signals": "^21.1.1",
+    "@pact-foundation/pact": "17.1.4",
+    "@qits/angular": "2026.1103.125108",
+    "@qits/edge-golden-masters": "2026.1010.182320",
+    "angular-eslint": "^21.4.0",
+    "eslint": "^10.8.0",
+    "jsdom": "^28.0.0",
+    "prettier": "^3.8.1",
+    "typescript": "~5.9.2",
+    "typescript-eslint": "^8.59.2",
+    "vitest": "^4.0.8"
+  }
+}

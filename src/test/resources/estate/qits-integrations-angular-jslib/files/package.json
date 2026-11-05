@@ -1,0 +1,76 @@
+{
+  "name": "qits-integrations-angular",
+  "version": "2026.1103.125108",
+  "private": true,
+  "description": "Angular workspace that builds @qits/angular. The published package is the ng-packagr output in dist/qits-integrations-angular; this manifest is the harness and stays unpublishable.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/QuicklyIterateTheSoftware/qits-integrations-angular.git"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "ng": "ng",
+    "build": "ng build qits-integrations-angular",
+    "test": "pnpm test:eslint && pnpm test:screenshots && ng test qits-integrations-angular",
+    "test:eslint": "node --test 'projects/qits-integrations-angular/eslint/test/*.test.mjs'",
+    "test:screenshots": "node --test projects/qits-integrations-angular/screenshots/test/screenshots.test.mjs",
+    "test:browser": "ng run qits-integrations-angular:test-browser && node --test projects/qits-integrations-angular/screenshots/test/vitest-run.test.mjs",
+    "lint": "prettier --check . && ng lint qits-integrations-angular",
+    "check-exports": "node scripts/check-exports.mjs",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/api-logs": "^0.220.0",
+    "@opentelemetry/exporter-logs-otlp-proto": "^0.220.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "^0.220.0",
+    "@opentelemetry/instrumentation": "^0.220.0",
+    "@opentelemetry/instrumentation-document-load": "^0.65.0",
+    "@opentelemetry/instrumentation-fetch": "^0.220.0",
+    "@opentelemetry/instrumentation-user-interaction": "^0.64.0",
+    "@opentelemetry/resources": "^2.9.0",
+    "@opentelemetry/sdk-logs": "^0.220.0",
+    "@opentelemetry/sdk-trace-web": "^2.9.0",
+    "tslib": "^2.3.0"
+  },
+  "pnpm": {
+    "packageExtensions": {
+      "@opentelemetry/instrumentation-user-interaction": {
+        "peerDependenciesMeta": {
+          "zone.js": {
+            "optional": true
+          }
+        }
+      }
+    }
+  },
+  "devDependencies": {
+    "@angular-eslint/builder": "22.5.0",
+    "@angular/build": "^22.1.8",
+    "@angular/cli": "^22.1.8",
+    "@angular/common": "^22.1.0",
+    "@angular/compiler": "^22.1.0",
+    "@angular/compiler-cli": "^22.1.0",
+    "@angular/core": "^22.1.0",
+    "@angular/forms": "^22.1.0",
+    "@angular/platform-browser": "^22.1.0",
+    "@angular/router": "^22.1.0",
+    "@eslint/js": "^10.0.1",
+    "@ngrx/signals": "^22.0.1",
+    "@pact-foundation/pact": "17.1.4",
+    "@types/node": "^24.19.1",
+    "@vitest/browser": "^4.1.9",
+    "@vitest/browser-playwright": "^4.1.9",
+    "angular-eslint": "22.5.0",
+    "eslint": "^10.3.0",
+    "jsdom": "^28.0.0",
+    "ng-packagr": "^22.1.0",
+    "playwright": "^1.61.0",
+    "prettier": "^3.8.1",
+    "rxjs": "~7.8.0",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "8.59.2",
+    "vitest": "^4.1.9"
+  }
+}

@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben</groupId>
+        <artifactId>qits</artifactId>
+        <version>2026.1105.92857</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- PUBLISHED COORDINATES, and they do not inherit the parent's. `eu.wohlben.qits:qits-*` is
+         what every artifact this platform releases is called (qits-auth-core, qits-db-core,
+         qits-workspace-daemon-protocol), and this module joined them the day qits-ci started taking
+         the `qits` binary's version from a released dependency instead of downloading whatever the
+         daemons store had latest. The reactor root stays `eu.wohlben:qits`, the aggregator
+         coordinate every standalone repository here uses; only what is DEPLOYED carries the
+         platform's published grammar. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-platform-access-cli-binary</artifactId>
+    <packaging>jar</packaging>
+    <name>qits-platform-access-cli-binary</name>
+    <description>The coordinate of the qits binary this release published.</description>
+
+    <!-- THE PIN, AND NOTHING ELSE. Not one byte of the binary is in here: the jar carries three
+         strings — the daemons-store name, the command name, and the version the same release
+         published under. PlatformAccessCliBinary's javadoc has the whole reasoning; the short form
+         is that qits-ci's release steps used to download whatever was latest at step start, so a
+         bad CLI release broke every composed release at once.
+
+         NO MAIN-SCOPE DEPENDENCY, EVER. A consumer that pins the CLI must not inherit a
+         classpath for it. junit is test-scoped and is the only entry below; the day this module
+         grows a compile dependency it has stopped being a pin. -->
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <!-- FILTERING IS ON FOR THIS MODULE'S ONE RESOURCE AND NOTHING ELSE. The include/exclude
+             pair is not belt-and-braces: filtering every resource would rewrite any future fixture
+             that happens to contain `${`. PlatformAccessCliBinary refuses an unfiltered value, so
+             switching this block off fails loudly rather than shipping the literal
+             `${project.version}` as the version qits-ci downloads. -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>eu/wohlben/qits/platformaccess/cli/platform-access-cli-binary.properties</include>
+                </includes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <excludes>
+                    <exclude>eu/wohlben/qits/platformaccess/cli/platform-access-cli-binary.properties</exclude>
+                </excludes>
+            </resource>
+        </resources>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-containers</artifactId>
+        <version>2026.1104.205759</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The domain: the registry rows, the sweeps and the spec fingerprint, over the workload spec
+         and the docker seam that qits-containers-driver provides. Internal, not published
+         (qits-795): `service` builds it from source and nothing outside this repository consumes
+         it.
+
+         It owns its OWN named datasource + persistence unit + Flyway lineage — its own postgres
+         database, provisioned by the platform's `resources:` mechanism before the process boots (see
+         src/main/resources/META-INF/microprofile-config.properties). The module is
+         extraction-shaped from day one, which is the arrangement every sibling repo uses.
+
+         The directory is `core/` while the artifactId is `qits-containers-core`: generic
+         coordinates like `eu.wohlben:core` would collide in the shared ~/.m2 that every workspace
+         container mounts. -->
+    <artifactId>qits-containers-core</artifactId>
+    <name>qits-containers :: core</name>
+
+    <dependencies>
+        <dependency>
+            <!-- The docker layer this module's registry and sweeps drive: ContainerSpec and its
+                 siblings, LabelNamespace, DockerArgv, ContainerProcess, the ContainersDriver seam,
+                 the constructor-built DockerContainersDriver, and the pure GC decisions. Compile
+                 scope, because the spec types are this module's API and `service` produces the
+                 driver from it. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-containers-driver</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm-panache</artifactId>
+        </dependency>
+        <dependency>
+            <!-- ObjectMapper bean availability for consumers (no REST needed). The spec is stored
+                 as JSON, so this module serializes without the service being involved. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The module's store: a postgres role and database of this application's own, created
+                 before the container starts and handed over as QITS_RESOURCE_DB_URL / _USERNAME /
+                 _PASSWORD. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <!-- COMPILE scope now, and both halves of the pair are why. PatientPgDriver is named as
+                 a string by the datasource block, so the class has to be on the runtime classpath
+                 of whatever ships this jar; it keeps a request WAITING while postgres comes back
+                 instead of failing at once. DbRetry is the other half and it IS imported since this
+                 module gained writes to wrap: every state transition in `control` is a
+                 DbRetry.inNewTx and every read is a DbRetry.call, so a connection lost mid-sweep
+                 costs a pause rather than a row that stops describing a live container. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-db-core</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The causation persistence trio — CausedRow, CausationStamp, @Uncaused — which every
+                 entity here has to decide about and ArchRulesTest makes mandatory. Three
+                 jakarta-persistence-shaped types with no publish, no subscribe and no wire in them,
+                 which is why taking the jar here is a narrowing of the module boundary rather than
+                 a hole in it: no listener, no publisher and no QitsEventBus may appear in `core`.
+
+                 It is paid for in the suite rather than for free: the jar brings its own datasource,
+                 persistence unit and Flyway lineage, and dark is not absent — so this module's own
+                 @QuarkusTest classes owe the outbox a database (testdb/EmbeddedPgConfigSource) and
+                 keep the bus dark in src/test/resources/application.properties. The same contract
+                 qits-ci's domain module honours. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-eventstream</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Flyway 10 split its database support out of the core: without this module Flyway
+                 refuses a postgres url with "no database found to handle". It sits here because
+                 this module owns the lineage. -->
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <!-- This module's suite is BOTH KINDS. The primitives — the argv renderer, the
+                 identifiers, the scripted fake — are pure functions and stay plain JUnit. The
+                 registry, the boot sweep and the observer are a state machine over real rows, and
+                 the only honest way to say what they do is to boot the application against a real
+                 database, so those are @QuarkusTest. The dependency is the Quarkus one either way,
+                 because that is what the platform BOM manages junit-jupiter through. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The store this module's @QuarkusTest classes boot against. Zonky spawns real
+                 postgres binaries as a child process — a maven dependency rather than a container —
+                 which is what keeps the clone-alone, docker-free rule true in the one repository
+                 where docker is the subject. testdb/EmbeddedPg + EmbeddedPgConfigSource in the test
+                 sources hand the running instance to Quarkus, and they are a COPY of the pair in
+                 `service` naming DIFFERENT databases: the house duplicate-not-share stance, and two
+                 modules meaning one database is exactly what the different names prevent. -->
+            <groupId>io.zonky.test</groupId>
+            <artifactId>embedded-postgres</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Named per architecture on purpose: the binaries are separate artifacts and zonky
+                 picks one at run time, so an unnamed arch fails in the middle of a suite rather
+                 than during resolution. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The musl build, for the platform's own CI: the step container is Alpine, where the
+                 glibc binaries above cannot start and the whole suite dies at the config source
+                 naming zonky. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64-alpine</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-darwin-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- QITS_DOMAIN carries no default in the shipped properties file (qits-1402).
+                         BuildkitShippedConfigTest reads qits.containers.buildkit.registry-mirrors
+                         and http-registries through a bare ConfigProvider.getConfig() — no Quarkus
+                         bootstrap, so this module's own application.properties convention (it ships
+                         none; it is a library) cannot supply it. An environment variable on this
+                         forked JVM is what SmallRye Config's own discovery sees. -->
+                    <environmentVariables>
+                        <QITS_DOMAIN>wohlben.eu</QITS_DOMAIN>
+                    </environmentVariables>
+                </configuration>
+            </plugin>
+            <plugin>
+                <!-- The consuming Quarkus app needs an index of this jar's beans and entities;
+                     without it `service` boots with none of them, and the failure is a runtime
+                     "unknown entity" rather than a build error. -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

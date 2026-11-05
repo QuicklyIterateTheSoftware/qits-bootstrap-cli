@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Standalone parent for the extracted qits-observability repo (docs/epics/qits-observability
+         in the qits monorepo). The TELEMETRY context: the in-process OTLP/HTTP receiver, the
+         bounded in-memory per-workspace buffer it fills, the query surface over that buffer (REST
+         for the UI and the qits CLI), the upstream tee, and the managed-app config relay.
+         Everything that produces telemetry — the workspaces, containers and services being
+         observed — belongs to their own contexts and is deliberately absent.
+
+         DELIBERATELY ITS OWN GAV, for the reason qits-workspaces states: the qits-workspace-daemon
+         extraction could keep eu.wohlben:qits because its child artifactId (`workspace-daemon`) is
+         globally unique. That does not hold here — the child directory is `service`, and installing
+         eu.wohlben:service:1.0.0-SNAPSHOT would clobber the monorepo's jar in the shared ~/.m2 that
+         every workspace container mounts.
+
+         REPO NAME AND MODULE NAME DIFFER ON PURPOSE. `qits-observability` is the submodule (the
+         bounded context, the deployable, the gateway route); `qits-telemetry` is the maven module
+         and java package inside it (the thing the context is made of). Settled in the superproject
+         as commit 1919396 "Settle the observability naming question" — both names, at different
+         levels. The seed README's `qits-otel` is retired.
+
+         ONE CHILD MODULE, and the directory is `service/` rather than anything more descriptive:
+         this is the one qits context whose business logic lives entirely in the monorepo's
+         `service` module (there is no domain/telemetry), and the replayed git history is anchored
+         to those paths. Renaming the directory would break `git log` history-following across the
+         extraction, which is the whole point of replaying rather than copying. Only the coordinates
+         are namespaced.
+
+         Versions that must stay in step with qits (Quarkus platform, JDK release,
+         opentelemetry-proto) are duplicated here on purpose: a clone of THIS repo alone
+         must build, with no monorepo and no parent to inherit from.
+
+         Trimmed to what this module actually needs. The monorepo's app-wide machinery is
+         intentionally omitted: spotless, the :8080 dev-mode port guard, isolated-test surefire
+         chunking, enforcer, the derive-fixture-bares antrun step, the maven build-cache extension,
+         and the mandatory -Dqits.variant=oauth|forwardauth|local auth profiles. So is Flyway and
+         any datasource: this context owns no tables (migration-plan.md §3.6 — the store is the
+         in-memory, deliberately ephemeral TelemetryStore). -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-observability</artifactId>
+    <version>2026.1105.134910</version>
+    <packaging>pom</packaging>
+    <name>qits-observability</name>
+
+    <modules>
+        <module>service</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.version>3.34.6</quarkus.platform.version>
+        <qits.auth-core.version>2026.1105.105731</qits.auth-core.version>
+        <!-- Service-to-service HTTP that says who is calling: QitsHttpClients.wrap turns a raw
+             java.net.http.HttpClient into one that opens a CLIENT span and sends traceparent plus
+             X-Qits-Caller; the server filter (jandex-discovered off this jar alone) records an
+             inbound caller on the server span. OtelForwarder's own client stays unwrapped
+             (@RawHttpClient) — this service still takes the dependency so the server filter is
+             active. Not released yet (qits-1198). -->
+        <qits.http-core.version>2026.1103.132907</qits.http-core.version>
+        <!-- The user-story framework (test scope): the seven @UserStory classes under
+             service/src/test/java/…/telemetry/stories (plus TelemetryBootstrapIT, which owns the
+             boot) are written against it, so a run that boots the packaged artifact also
+             regenerates service/target/userstories/ — the stories' documentation, their observed
+             network diagrams included. The framework SHIPS the RestAssured tap those diagrams' near
+             side comes from (NetworkTaps.restAssured), which is why this repository no longer
+             carries a hand-copied StoryNetworkFilter.
+             Released out of libs/qits-userflows into the platform's own Maven repository, which is
+             the same place qits-auth-core above comes from. -->
+        <qits.userflows.version>2026.1028.231715</qits.userflows.version>
+        <!-- The platform's shared ArchUnit rules (test scope), carrying DeskAdminParityRules —
+             epic qits-1621's check that every route admitting qits:admin-agent also admits
+             qits:desk-admin. This context did not depend on qits-arch-rules before. -->
+        <qits.arch-rules.version>2026.1030.30851</qits.arch-rules.version>
+        <!-- The consumer half of the contracts (ticket qits-1149): qits-pact-consumer reads the idp's
+             golden masters and writes pacts/qits-observability-service_qits-idp-service.json.
+             Exact pins: a newer recording is a deliberate bump. -->
+        <qits.pact-consumer.version>2026.1019.82625</qits.pact-consumer.version>
+        <qits.idp-golden-masters.version>2026.1027.165632</qits.idp-golden-masters.version>
+        <!-- THE PROVIDER HALF (ticket qits-1163): the first published
+             `eu.wohlben.qits:<consumer>-pacts-qits-observability-service` jar,
+             `pacts/qits-system-runner-daemon_qits-runner-javalib_qits-observability-service.json`
+             — the system runner daemon's call through qits-runner-toolkit's `Telemetry`, against
+             the OTLP logs receiver's exportLogs operationId. ConsumerPactVerificationTest verifies
+             it off the test classpath; qits-maintenance bumps the pin when the daemon publishes a
+             changed pact. -->
+        <!-- qits-platform-access-cli's `qits observe` (ticket qits-1149):
+             `pacts/qits-platform-access-cli_qits-observability-service.json`. -->
+        <qits.platform-access-monorepo-pacts-qits-observability-service.version>2026.1103.101116</qits.platform-access-monorepo-pacts-qits-observability-service.version>
+        <qits.system-runner-daemon-pacts-qits-observability-service.version>2026.1105.111737</qits.system-runner-daemon-pacts-qits-observability-service.version>
+        <pact.version>4.6.21</pact.version>
+        <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
+
+        <!-- Not in the platform BOM, so pinned here: opentelemetry-proto's "alpha" refers to Java
+             API stability only — the OTLP wire format itself is Stable. Don't auto-bump it. -->
+        <opentelemetry-proto.version>1.7.0-alpha</opentelemetry-proto.version>
+
+        <!-- Also outside the platform BOM, and pinned for the same reason. 2.8.2 rather than the
+             newer 2.8.3: quinoa's parent pom names the Quarkus it is built and tested against, and
+             2.8.3 moved that to 3.36.2 — ahead of our 3.34.6. An extension built against a LATER
+             core may reach for deployment APIs this platform does not have, and the failure lands
+             at augmentation, not at resolution. 2.8.2 is built against 3.27.3, comfortably below
+             us, which is the direction Quarkus keeps compatible. Re-check this pom's baseline
+             before bumping, not just the version number. -->
+        <quinoa.version>2.8.2</quinoa.version>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+        <failsafe-plugin.version>3.5.4</failsafe-plugin.version>
+        <jandex-plugin.version>3.4.0</jandex-plugin.version>
+
+        <!-- Surefire's @{argLine} has no value unless something (jacoco/quarkus) sets it. -->
+        <argLine/>
+
+        <!-- Integration tests run against a PACKAGED artifact, so a plain `mvn verify` — which
+             produces the fast-jar — skips them; `service`'s `native` profile flips this to false so
+             a `-Dnative` build exercises the binary it just compiled. Same default the gateway
+             carries, and it is what keeps "mvn verify is runnable anywhere" true (AGENTS.md) now
+             that there is an IT.
+
+             IT STAYS TRUE FOR THE USERFLOW RUN TOO, unlike qits-githost which opts its module back
+             in. .config/qits/ci-event-userflows.yml wants seven of the nine ITs — the story
+             catalogue — and builds WITHOUT Quinoa, so a blanket `-DskipITs=false` would also run
+             PackagedSurfaceIT, half of which is about the client that run deliberately does not
+             build. The pipeline names the classes instead, in one comma-separated `-Dit.test`;
+             see that file for the list, and add every new story class to it in the same commit.
+             Keeping the property's meaning ("run everything") intact is what makes that spelling
+             readable, and is what the `native` profile relies on when it flips it. -->
+        <skipITs>true</skipITs>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-auth-core</artifactId>
+                <version>${qits.auth-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-userflows</artifactId>
+                <version>${qits.userflows.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site, like qits-userflows. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-arch-rules</artifactId>
+                <version>${qits.arch-rules.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-http-core</artifactId>
+                <version>${qits.http-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.opentelemetry.proto</groupId>
+                <artifactId>opentelemetry-proto</artifactId>
+                <version>${opentelemetry-proto.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.quarkiverse.quinoa</groupId>
+                <artifactId>quarkus-quinoa</artifactId>
+                <version>${quinoa.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site. The version every provider verifies with. -->
+                <groupId>au.com.dius.pact.consumer</groupId>
+                <artifactId>junit5</artifactId>
+                <version>${pact.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-pact-consumer</artifactId>
+                <version>${qits.pact-consumer.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-idp-golden-masters</artifactId>
+                <version>${qits.idp-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: qits-platform-access-cli's pact,
+                     verified by ConsumerPactVerificationTest. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-platform-access-monorepo-pacts-qits-observability-service</artifactId>
+                <version>${qits.platform-access-monorepo-pacts-qits-observability-service.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The consumer pact ConsumerPactVerificationTest verifies: it carries
+                     pacts/qits-system-runner-daemon_qits-runner-javalib_qits-observability-service.json,
+                     and the test reads it off the test classpath. The pinned jar IS the source of
+                     the pact; nothing is copied into this tree. Test scope at every declaration
+                     site. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-system-runner-daemon-pacts-qits-observability-service</artifactId>
+                <version>${qits.system-runner-daemon-pacts-qits-observability-service.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <repositories>
+        <repository>
+            <id>qits-maven</id>
+            <url>${qits.maven.repository.url}</url>
+        </repository>
+    </repositories>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>${quarkus.platform.group-id}</groupId>
+                    <artifactId>quarkus-maven-plugin</artifactId>
+                    <version>${quarkus.platform.version}</version>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${compiler-plugin.version}</version>
+                    <configuration>
+                        <parameters>true</parameters>
+                        <!-- The monorepo disables incremental compilation reactor-wide (stale
+                             MapStruct *Impl classes). Kept for parity even though this context has
+                             no mappers, so a mapper added later doesn't reintroduce the bug. -->
+                        <useIncrementalCompilation>false</useIncrementalCompilation>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${surefire-plugin.version}</version>
+                    <configuration>
+                        <!-- The platform injects QITS_DOMAIN into CI steps and agent containers; a
+                             test JVM that inherits it picks up the live domain instead of the
+                             suite's domain-less default. Keep it out. -->
+                        <excludedEnvironmentVariables>
+                            <excludedEnvironmentVariable>QITS_DOMAIN</excludedEnvironmentVariable>
+                        </excludedEnvironmentVariables>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <version>${failsafe-plugin.version}</version>
+                    <configuration>
+                        <!-- Same reasoning as the surefire plugin above: don't let the platform's
+                             QITS_DOMAIN leak into the forked test JVM. -->
+                        <excludedEnvironmentVariables>
+                            <excludedEnvironmentVariable>QITS_DOMAIN</excludedEnvironmentVariable>
+                        </excludedEnvironmentVariables>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>io.smallrye</groupId>
+                    <artifactId>jandex-maven-plugin</artifactId>
+                    <version>${jandex-plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>make-index</id>
+                            <goals>
+                                <goal>jandex</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

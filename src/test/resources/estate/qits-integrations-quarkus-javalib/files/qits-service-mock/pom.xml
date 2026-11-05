@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Recording mocks of platform services for cross-service integration tests. The generic
+         core, MockService, is stubs plus recordings: a test fakes ANY service with canned JSON
+         routes and afterwards asserts the interaction on BOTH ends — the consumer acted on the
+         response, and recordedRequests() proves this side served it. A service whose behavior
+         canned JSON cannot fake gets a thin specialization in a subpackage: idp.MockIdp adds only
+         the key material (JWKS for a generated keypair, RS256 token minting).
+
+         DELIBERATELY NOT A QUARKUS MODULE. It backs @QuarkusIntegrationTest test profiles, which
+         run in a plain JVM before and beside the launched application — so the server is JDK
+         com.sun.net.httpserver, the crypto is JCA, and the JWS is hand-assembled (the jose4j
+         self-test pins its correctness against the verifier quarkus-oidc itself builds on).
+         Jackson is the one dependency: hand-rolled JSON escaping is where mocks rot. -->
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-integrations-quarkus</artifactId>
+        <version>2026.1105.105731</version>
+    </parent>
+
+    <artifactId>qits-service-mock</artifactId>
+    <packaging>jar</packaging>
+    <name>qits-service-mock</name>
+
+    <dependencies>
+        <dependency>
+            <!-- Compile scope on purpose (same reasoning as qits-arch-rules): a consumer declares
+                 THIS module in test scope and gets everything it needs transitively. -->
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <dependency>
+            <!-- The verifier quarkus-oidc itself is built on. The self-test resolving our JWKS and
+                 verifying our tokens through jose4j is the interop proof that matters. -->
+            <groupId>org.bitbucket.b_c</groupId>
+            <artifactId>jose4j</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

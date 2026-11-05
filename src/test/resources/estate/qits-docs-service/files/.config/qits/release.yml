@@ -1,0 +1,90 @@
+archetype: java-service
+artifacts:
+  - { type: docker, name: qits/qits-docs, sbom: .sbom/sbom.json }
+  - { type: docs, name: "@guides/qits-platform" }
+userflows: qits-docs
+# THE CONTRACT (ticket qits-1149). Provider half: /docs/api/*'s recorded answers, for a consumer's
+# pact to take its responses from; npm too, because the expected consumer is the Angular client.
+# Consumer half: pacts/qits-docs-service_qits-artifacts-service.json, this service's calls to
+# qits-artifacts, built from its golden masters (ArtifactsContract); and
+# pacts/qits-docs-service_qits-idp-service.json, the `qits` client's token mint (qits-1419).
+contracts:
+  application: qits-docs
+  golden-masters: { from: golden-masters/, packages: [maven, npm] }
+  pacts:
+    qits-artifacts-service: { packages: [maven] }
+    qits-idp-service: { packages: [maven] }
+
+# A SECOND PUBLICATION BESIDE THE IMAGE: `docs/guides/` is the platform's contract pages, and this
+# is the one repository that may publish them. The site is the PLATFORM'S name, not this
+# repository's, which is exactly why the entry is spelled. java-service publishes one image and
+# nothing else, so the whole release slot is here.
+release:
+  - image: qits/build-images/node-docker-base:latest
+    build: true
+    timeout-seconds: 3600
+    script: |
+      declared=$(sed -n \
+        's/^[[:space:]]*-[[:space:]]*{[[:space:]]*type:[[:space:]]*docker[[:space:]]*,[[:space:]]*name:[[:space:]]*\([^,}[:space:]]*\).*/\1/p' \
+        .config/qits/release.yml)
+      image=${declared#*/}
+      # The addresses are code under the platform's public domain (qits-731); `wohlben.eu` covers a
+      # qits-ci too old to inject $QITS_DOMAIN — which is the one that runs this file for the release
+      # that teaches qits-ci to inject it.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      ref="registry.qits.$qits_domain/$QITS_IMAGE_REPOSITORY/$image:$QITS_VERSION"
+      echo "releasing $ref"
+
+      origin_parent="${QITS_CI_REPOSITORY_URL%/*}"
+      webui_dirs=""
+      if [ -f .gitmodules ]; then
+        for key in $(git config -f .gitmodules --name-only --get-regexp '^submodule\..*\.path$'); do
+          name=${key#submodule.}
+          name=${name%.path}
+          path=$(git config -f .gitmodules --get "$key")
+          git -c "submodule.$name.url=$origin_parent/$name" submodule update --init "$path"
+          if [ -f "$path/package.json" ]; then
+            webui_dirs="$webui_dirs $path"
+          fi
+        done
+      fi
+      npm_hosted_origin="https://registry.qits.$qits_domain"
+      npm_proxy_origin="https://mirror.qits.$qits_domain"
+      npm_hosted_path=/artifacts/npm/npm/
+      for dir in $webui_dirs; do
+        (
+          cd "$dir"
+          # The lockfile is installed exactly as committed, no rewrite: it names only the two
+          # public hosts (qits-731), and `npm ci` is pointed at them directly.
+          env npm_config_registry="$npm_proxy_origin/npm/npmjs/" \
+              "npm_config_@qits:registry=$npm_hosted_origin$npm_hosted_path" \
+              npm ci --no-audit --no-fund
+          npm run build
+        )
+      done
+
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --opt build-arg:QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$qits_domain/artifacts/maven/maven" \
+        --opt build-arg:QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret \
+        --output "type=image,name=$ref,push=true"
+
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=docker \
+        --opt target=sbom \
+        --opt build-arg:QITS_DOMAIN="$qits_domain" \
+        --opt build-arg:QITS_MAVEN_REPOSITORY_URL="https://registry.qits.$qits_domain/artifacts/maven/maven" \
+        --opt build-arg:QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central" \
+        --secret id=qits-client-id,src=/tmp/qits-client-id \
+        --secret id=qits-client-secret,src=/tmp/qits-client-secret \
+        --output type=local,dest=.sbom
+
+      # THE GUIDES BUNDLE. `-C docs/guides .` so the pages are the bundle's roots.
+      tar -czf /tmp/guides.tgz -C docs/guides .
+      qits artifacts publish docs submit \
+        --site "@guides/qits-platform" --version "$QITS_VERSION" --archive /tmp/guides.tgz \
+        --meta git.commit.hash="$QITS_CI_SHA" \
+        --meta git.repository.name=qits-docs

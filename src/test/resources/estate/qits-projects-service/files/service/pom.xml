@@ -1,0 +1,646 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-projects</artifactId>
+        <version>2026.1105.133119</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The projects SERVICE layer: the technical half. JAX-RS route definitions for projects,
+         repositories, submodules and epics, the remote-login
+         terminal websocket, and the exception mapper that turns this context's DomainException into
+         its HTTP status. Everything that needs a web stack and therefore cannot live in `domain`.
+
+         A DEPLOYABLE APP, not a library JAR. It was extracted as a library — "a consuming Quarkus
+         application pulls it in and gets the routes" — because packaging it would have needed an
+         auth variant, a webui and a main class. All three reasons have lapsed: authentication
+         terminates at qits-gateway and this module reads a header (see security/), Quarkus supplies
+         the main class, and the webui is qits-spa-projects — a submodule at src/main/webui that
+         Quinoa builds into this artifact.
+
+         src/main/resources/application.properties now exists and is THIS APP's config, not a
+         consuming one's. quarkus.rest.path used to live only in the test
+         resources, which is why the suite could be green about paths the packaged app would not
+         have served.
+
+         See migration-deployables-plan.md in the superproject. -->
+    <artifactId>qits-projects-service</artifactId>
+    <name>qits-projects :: service</name>
+    <packaging>quarkus</packaging>
+
+    <dependencies>
+        <dependency>
+            <!-- /<segment>/q/health/ready - the readiness endpoint qits-cd's health gate curls;
+                 the deployment convention every service answers. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-health</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-projects-domain</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-projects-entities</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The projects-daemon wire contract, spoken by the agent harness in agenthost/. A
+                 RELEASED JAR now, not a source copy in this reactor: qits-projects-daemon publishes
+                 it, and its version is the `qits/project-agent` tag AgentContainerFactory starts
+                 containers from (ProjectAgentImage.VERSION). The pin and the reasoning are in the
+                 root pom's qits.projects-daemon-protocol.version.
+
+                 The groupId is the literal `eu.wohlben.qits` and not ${project.groupId}, although
+                 the two resolve to the same string. The expression would say "a module of this
+                 build"; this coordinate is precisely the one the deleted module used to occupy, and
+                 spelling it out is how a reader can tell at a glance which side of that change this
+                 line is on. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-projects-daemon-protocol</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The workspace daemon's wire contract — what a refinement container's dial-home
+                 speaks (refinementhost/). Released by qits-workspace-daemon and no longer vendored
+                 here; its version is the `qits/workspace` image pin, see the root pom. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-workspace-daemon-protocol</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The platform event bus. It arrives HERE and not in `domain` on purpose, twice over:
+                 `bus/` is an inbound adapter like `api/` and `wiring/`, and this jar brings a THIRD
+                 datasource with its own Flyway lineage — putting it on domain's classpath would make
+                 every one of that module's @QuarkusTests boot an outbox they have no use for.
+
+                 IT ADDS A MANDATORY DEPLOYMENT RESOURCE. `.config/qits/deployments.yml` declares
+                 `postgresql:eventstream:qits_projects_eventstream` for it; the jar's own shipped
+                 defaults map QITS_RESOURCE_EVENTSTREAM_* onto quarkus.datasource.eventstream.*, and
+                 an unset variable leaves the expression unresolvable so the process refuses to boot
+                 rather than opening some fallback store. Being dark in %test does not change that:
+                 qits.eventstream.enabled=false stops publishing, sweeping and dialling, never the
+                 datasource — hence the third database in ServiceEmbeddedPgConfigSource. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-eventstream</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The git host's event vocabulary: the four SCM records bus/ScmBackupTriggerListener
+                 subscribes to. Declared explicitly rather than taken transitively through the bus,
+                 because this module uses the classes by name (the signature set and the reflection
+                 registration both spell them) and a compile-time use belongs in the pom that makes
+                 it. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-githost-events</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The orchestrator's client jar: how this service starts, stops and lists project
+                 agent containers now that it holds no docker socket. A client rather than a
+                 vocabulary, so "Adding a dependency on another context" in CLAUDE.md has to be read
+                 against it — and the answer is the one the eventstream jar already gets: this is
+                 PLATFORM INFRASTRUCTURE, not another bounded context's SDK. No domain model
+                 crosses (images, environment and lifetimes, never a Project), every call is
+                 synchronous, bounded and CANNOT THROW, and the jar brings no framework at all.
+
+                 A native consumer owes the wire records a registration:
+                 containershost/ContainersWireReflection, the second member of
+                 bus/EventWireReflection's family and there for the identical reason. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-containers-client</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The credential the client above presents. qits-containers guards every route —
+                 reads included — on the caller's own identity: its OwnerGuard compares the token's
+                 `sub` to the owner in the path, so quarkus.oidc-client.client-id is not a label
+                 here, it IS this service's owner string.
+
+                 Shipped OFF: quarkus.oidc-client.client-enabled is false in
+                 application.properties, so the extension builds a disabled client, this process
+                 boots with no secret and dials nothing, and the calls go out bare — which is what
+                 the orchestrator's own gate (qits.auth.machine.required, also off) expects. This
+                 The sibling quarkus-oidc dependency validates the commissioned agent's inbound
+                 control socket; these are independent client and resource-server directions. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-oidc-client</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The project agent dials this service directly on qits-net. Its control WebSocket is
+                 protected by qits:system, so the commissioned Bearer must become a validated
+                 SecurityIdentity here rather than relying on browser forward-auth at the edge. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-oidc</artifactId>
+        </dependency>
+        <dependency>
+            <!-- PatientPgDriver. It arrives transitively through `domain` and `entities` too, and is
+                 declared here because THIS module's application.properties names it as well — for
+                 the eventstream datasource the bus jar brings, whose own defaults do not carry the
+                 baseline yet. A config key naming a class belongs in the pom that spells it. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-db-core</artifactId>
+        </dependency>
+        <dependency>
+            <!-- domain's test-support only (see its jar plugin config): the port implementations
+                 this module's @QuarkusTests need on the classpath, not a second copy of them. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-projects-domain</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The instrumentation. The extension makes the spans, log records and metrics; the
+                 exporters that ship them are qits-telemetry-core's, below. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-opentelemetry</artifactId>
+        </dependency>
+        <dependency>
+            <!-- OTLP export to qits-observability through the edge (epic qits-428): replaces all
+                 three of Quarkus' own OTLP exporters with CDI beans that attach the `qits` oidc
+                 client's bearer on every export. qits.telemetry.endpoint in application.properties;
+                 quarkus.otel.exporter.otlp.* no longer reaches anything. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-telemetry-core</artifactId>
+        </dependency>
+        <dependency>
+            <!-- JDBC spans: a slow request's queries show up as child spans of its SERVER span
+                 instead of disappearing into one opaque duration (qits-1202). quarkus-opentelemetry
+                 does not pull this in on its own — quarkus.datasource.*.jdbc.telemetry=true in
+                 application.properties is the Agroal-side switch, and it is a no-op without this
+                 jar on the classpath. No <version>: the quarkus-bom above manages it at 2.23.0-alpha,
+                 the same io.opentelemetry.instrumentation release train as the extension itself. -->
+            <groupId>io.opentelemetry.instrumentation</groupId>
+            <artifactId>opentelemetry-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-rest-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Multi/BroadcastProcessor: the per-project SSE fan-out (ProjectEventBroadcaster).
+                 quarkus-rest already drags Mutiny in, but the fan-out is written against it
+                 directly, so it is declared rather than inherited. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-mutiny</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The hourly backup sweep (ScheduledBackupSweep). A first-class Quarkus extension, so
+                 it registers its own native-image configuration: the scheduled method is discovered
+                 and wired at BUILD time, which is exactly why an @Scheduled bean survives into the
+                 binary while a reflective scheduler would not. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-scheduler</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The remote-login terminal socket (@WebSocket .../remote-login/{token}). -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-websockets-next</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-validator</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The agent-container reverse proxy (agenthost/ContainerProxyRoute). Quarkus drags
+                 vertx-core in, but not the proxy: HttpProxy.reverseProxy lives here and nothing
+                 else on the classpath pulls it. The raw routes beside it need only vertx-core. -->
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-http-proxy</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The Angular SPA in src/main/webui (a submodule on qits-spa-projects' main): Quinoa
+                 runs its npm build during augmentation and registers the output as static
+                 resources, so the binary serves the UI and the API from one process. Not in the
+                 Quarkus BOM, so the version is pinned explicitly; 2.8.2 is what the
+                 Quarkus extension registry resolves for core 3.34.6 (2.8.3 is built against
+                 3.36.2). Its build needs an npm and a node on PATH — see the note in
+                 application.properties. -->
+            <groupId>io.quarkiverse.quinoa</groupId>
+            <artifactId>quarkus-quinoa</artifactId>
+            <version>2.8.2</version>
+        </dependency>
+        <dependency>
+            <!-- SecurityIdentity (the entities controllers stamp the audit log with the caller) plus
+                 the HttpAuthenticationMechanism SPI, for the single thing this service does about
+                 auth: read qits-gateway's X-Qits-User header into an identity (see
+                 security/ForwardAuthMechanism). NOT an auth variant and NOT an authorization
+                 policy — the monolith's -Dqits.variant auth/* modules do not come here at all;
+                 authentication terminates at the gateway (migration-auth-plan.md). -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-auth-core</artifactId>
+        </dependency>
+        <dependency>
+            <!-- QitsHttpClients.wrap, injected into every host adapter that still builds a raw
+                 java.net.http.HttpClient, and CallerServerFilter/CallerClientFilter, which this
+                 module's jandex index is what makes discoverable — this is the one module that
+                 serves the application's JAX-RS resources. Compile scope: it ships. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-http-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-openapi</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- @TestSecurity, so the entities audit test can name its caller. The monorepo got a
+                 `dev` identity from the forwardauth auth variant; auth is unassigned
+                 (migration-plan.md §4) and no auth/* module is carried here. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-test-security</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- DatasourceBaselineRules, the config half of the platform's shared rules. It lives
+                 HERE and not in the entity modules because this is the only module whose config
+                 sees every datasource the application deploys with — `projects`, `epics` and the
+                 bus's `eventstream` — and the baseline is a property of the deployed application.
+                 The ArchUnit half stays one per entity module (see ArchRulesTest there). -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-arch-rules</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- InMemorySpanExporter, for OtelGitTracingTest (qits-1202): %test disables the Quarkus
+                 SDK, so that test builds an SdkTracerProvider of its own. No <version>: the
+                 quarkus-bom imports the opentelemetry-bom that manages it. -->
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk-testing</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The consumer pacts ConsumerPactVerificationTest verifies: each jar carries one
+                 `pacts/<consumer>_qits-projects-service.json`, and the test reads them off the
+                 classpath. The pinned jar IS the source of the pact; nothing is copied into this
+                 tree. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-workspaces-service-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The consumer pacts ConsumerPactVerificationTest verifies: each jar carries one
+                 `pacts/<consumer>_qits-projects-service.json`, and the test reads them off the
+                 classpath. The pinned jar IS the source of the pact; nothing is copied into this
+                 tree. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-landing-app-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-projects-frontend-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-platform-access-monorepo-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-maintenance-service-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-githost-service-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-artifacts-service-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-bootstrap-cli-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-ci-service-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-orchestrator-service-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The frontends' shell pacts (qits-1284): what @qits/ui-components asks this
+                 provider from inside each frontend, one jar per frontend carrying
+                 `pacts/<frontend>_qits-ui-components-jslib_qits-projects-service.json` — the same
+                 `_qits-projects-service.json` suffix, so the same loader finds them. The projects
+                 frontend's shell pact rides in its existing jar above, beside its direct pact. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-ci-frontend-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-docs-frontend-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-events-frontend-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-githost-frontend-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-maintenance-frontend-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-artifacts-frontend-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-deployments-frontend-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-mirror-frontend-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-observability-frontend-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-orchestrator-frontend-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-system-frontend-pacts-qits-projects-service</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>au.com.dius.pact.provider</groupId>
+            <artifactId>junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- This repository's own consumer pacts (contracts/consumer/): each row runs the real
+                 client against a pact-jvm mock server, and the committed
+                 pacts/qits-projects-service_<provider>.json files are written from them. -->
+            <groupId>au.com.dius.pact.consumer</groupId>
+            <artifactId>junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- qits-events's recorded answers, read by the eventstream kit below. FIRST among the
+                 golden-master jars, and it must stay first (qits-1163): the kit's
+                 EventsGoldenMasters reads the first golden-masters/index.json on the classpath and
+                 fails when that is another provider's. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-events-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- What qits-eventstream asks qits-events for this service (qits-1163): the kit behind
+                 contracts/consumer/EventstreamPactTest, which writes
+                 pacts/qits-projects-service_qits-eventstream-javalib_qits-events-service.json. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-eventstream-contracts</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- qits-githost's recorded answers, for the consumer rows against it. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-githost-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- qits-workspaces's recorded answers, for the consumer rows against it. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-workspaces-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- qits-maintenance's recorded answers, for the consumer rows against it. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-maintenance-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- qits-ci's recorded answers, for the consumer rows against it. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-ci-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- qits-idp's recorded answers, for the consumer rows against it. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-idp-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- qits-deployments's recorded answers, for the consumer rows against it. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-deployments-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- qits-containers's recorded answers, for the consumer rows against it. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-containers-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- What this service's real use of qits-containers-client asks qits-containers
+                 (qits-1163): the kit behind ContainersClientPactTest and
+                 pacts/qits-projects-service_qits-containers-service.json. After the golden-master
+                 jars, so qits-events-golden-masters stays first on the classpath. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-containers-client-contracts</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- qits-projects-daemon's recorded answers, for the consumer rows against it. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-projects-daemon-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- qits-system's recorded answers (epic qits-1481): contracts/consumer/SystemContract's
+                 consumer pact against the lease doors is built from them. Pinned in the root pom. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-system-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The user-story framework: TokenValidationBootstrapIT is written as a @UserStory,
+                 so the packaged-boot proof doubles as documentation — steps, interactions and a
+                 sequence diagram emitted under target/userstories/. The story is browserless
+                 (no Flow parameter), so the transitive Playwright never launches anything. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-userflows</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The recording service mocks. The IT points quarkus.oidc at idp.MockIdp — a
+                 MockService plus key material: it serves the JWKS for a generated keypair, mints
+                 tokens, records what it answered — the far end of the story's interactions. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-service-mock</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The two databases every @QuarkusTest here boots against. Zonky spawns real postgres
+                 binaries as a child process — a maven dependency rather than a container — which is
+                 what keeps the clone-alone, docker-free rule true now that both stores are
+                 postgres. A test-scoped dependency is never transitive, so this is declared here as
+                 well as in `domain`, whose test-jar supplies the EmbeddedPg class itself. -->
+            <groupId>io.zonky.test</groupId>
+            <artifactId>embedded-postgres</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The CI step containers are Alpine (musl): ci-event-userflows.yml runs `mvn verify`
+                 in maven-base as `user: build`, and zonky picks the -alpine binaries there at run
+                 time — an unnamed arch fails in the middle of that suite rather than during
+                 resolution, which is the whole reason the list is spelled out. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64-alpine</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-darwin-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <testResources>
+            <testResource>
+                <directory>src/test/resources</directory>
+            </testResource>
+            <testResource>
+                <!-- The committed bare git fixtures (submodule-*.git) live in the domain module's
+                     test resources, which is where GitFixtures also writes the derived ones. They
+                     are copied rather than pulled from domain's test-jar because git cannot clone
+                     out of a jar: these have to be real directories on disk. -->
+                <directory>../domain/src/test/resources</directory>
+                <includes>
+                    <include>fixtures/**</include>
+                </includes>
+            </testResource>
+        </testResources>
+        <plugins>
+            <plugin>
+                <!-- This module is the DEPLOYABLE, not a library jar, and <packaging>quarkus</packaging>
+                     above is what says so: it binds generate-code, generate-code-tests and build into
+                     the lifecycle, so augmentation is not an execution someone can misplace. It was
+                     one, right here — declared under a <build> whose <testResources> block comes
+                     first — and that is the arrangement in which the goals once silently never
+                     applied while `mvn verify` stayed green (migration-deployables-plan.md records
+                     this module as the case that proved it). A packaging type cannot fail that way:
+                     drop this <extensions>true</extensions> and the build stops at "Unknown
+                     packaging: quarkus" rather than quietly producing nothing. Version comes from
+                     the root pom's pluginManagement. -->
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>quarkus-maven-plugin</artifactId>
+                <extensions>true</extensions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                        <configuration>
+                            <systemPropertyVariables>
+                                <!-- How @QuarkusIntegrationTest finds the compiled binary in a
+                                     `-Dnative` build; without it the native run has nothing to
+                                     launch. The binary's name is quarkus.package.output-name in
+                                     application.properties, NOT the maven finalName — with an
+                                     output-name set, ${project.build.finalName}-runner is a path
+                                     that does not exist, so the two have to be spelled the same
+                                     here or a native IT launches nothing and passes. -->
+                                <native.image.path>${project.build.directory}/qits-projects</native.image.path>
+                                <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                            </systemPropertyVariables>
+                            <!-- QITS_DOMAIN carries no default in the shipped properties (qits-1402:
+                                 the image repositories are registry.qits.${QITS_DOMAIN}), and the
+                                 launched packaged artifact reads src/main/resources only, never the
+                                 test application.properties. The deployer states it on every
+                                 container; here the forked JVM states it, and the launch inherits. -->
+                            <environmentVariables>
+                                <QITS_DOMAIN>example.test</QITS_DOMAIN>
+                            </environmentVariables>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!-- GraalVM native build (the same profile qits-gateway and qits-workspace-daemon carry):
+             `-Dnative` disables the fast-jar and enables the native image. It lives in THIS module,
+             not the root pom, because only this module is an application — `domain` and `entities` are
+             library jars with nothing to native-compile. skipITs flips with it so a native build
+             runs any @QuarkusIntegrationTest against the binary rather than skipping it silently. -->
+        <profile>
+            <id>native</id>
+            <activation>
+                <property>
+                    <name>native</name>
+                </property>
+            </activation>
+            <properties>
+                <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
+                <skipITs>false</skipITs>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+            </properties>
+        </profile>
+    </profiles>
+</project>

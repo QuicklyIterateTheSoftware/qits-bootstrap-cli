@@ -1,0 +1,3 @@
+archetype: npm-library
+artifacts:
+  - { type: npm, name: '@qits/angular', path: dist/qits-integrations-angular, sbom: sbom.json }

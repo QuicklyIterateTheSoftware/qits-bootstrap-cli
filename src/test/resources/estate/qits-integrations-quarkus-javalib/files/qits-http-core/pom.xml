@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Service-to-service HTTP that says who is calling and where in the trace it sits. Most of
+         the platform speaks java.net.http.HttpClient rather than the REST client, and Quarkus'
+         OpenTelemetry instruments only the latter: a raw HttpClient request leaves with no
+         traceparent and nothing naming the caller, and the receiver opens a parentless SERVER
+         span (5077 of them in three hours, measured live). This module closes both gaps — a
+         wrapping HttpClient that opens a CLIENT span and injects the W3C context plus
+         X-Qits-Caller, a REST-client filter for the caller header Quarkus does not send, and a
+         server filter that records an inbound caller on the server span.
+
+         THE PACKAGING BARGAIN is qits-environment-core's: API jars and never an extension. The
+         filters compile against the JAX-RS API and stay inert in a consumer without
+         quarkus-rest/quarkus-rest-client; QitsHttpClients compiles against the CDI and
+         OpenTelemetry APIs and takes whatever OpenTelemetry the consuming app produces — the
+         SDK under quarkus-opentelemetry, a no-op without it. -->
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-integrations-quarkus</artifactId>
+        <version>2026.1105.105731</version>
+    </parent>
+
+    <artifactId>qits-http-core</artifactId>
+    <packaging>jar</packaging>
+    <name>qits-http-core</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>jakarta.ws.rs</groupId>
+            <artifactId>jakarta.ws.rs-api</artifactId>
+        </dependency>
+        <dependency>
+            <!-- @Priority. The ws.rs API references it without carrying it. -->
+            <groupId>jakarta.annotation</groupId>
+            <artifactId>jakarta.annotation-api</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The logging API every Quarkus application already holds, as in qits-db-core: a
+                 retried call says so once, and a retry that says nothing is a service that went
+                 quiet for thirty seconds with no record of why. -->
+            <groupId>org.jboss.logging</groupId>
+            <artifactId>jboss-logging</artifactId>
+        </dependency>
+        <dependency>
+            <!-- ConfigProvider, for the caller's name. The implementation is the consuming app's
+                 smallrye-config, exactly as in qits-environment-core. -->
+            <groupId>org.eclipse.microprofile.config</groupId>
+            <artifactId>microprofile-config-api</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The API, never the SDK, and compile scope on purpose: QitsHttpClients falls back to
+                 OpenTelemetry.noop() in a consumer without quarkus-opentelemetry, and that fallback
+                 is only real if the API classes are there to fall back with. A consumer that does
+                 carry the extension resolves its own BOM's version, so nothing drifts. Version from
+                 the imported Quarkus BOM (1.57.0 under 3.34.6). -->
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-api</artifactId>
+        </dependency>
+        <dependency>
+            <!-- @ApplicationScoped and Instance. PROVIDED: every Quarkus app carries it through
+                 ArC, and nothing outside a Quarkus app instantiates the bean. -->
+            <groupId>jakarta.enterprise</groupId>
+            <artifactId>jakarta.enterprise.cdi-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <!-- Router and RoutingContext, for CallerRouteRecorder. Compile scope, as in
+                 qits-auth-core: ArC registers the Router observer in every consumer, so a module
+                 without an HTTP server of its own (a domain module's @QuarkusTest) fails to boot
+                 when the class is missing. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-vertx-http</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- A real SDK with an in-memory exporter: the tests assert on the spans the wrapper
+                 actually ended, and on the traceparent the real W3C propagator wrote. -->
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk-testing</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- A real JAX-RS client — the one the Quarkus REST client is built on — for
+                 RetryClientFilter's wire tests, standalone with no Quarkus boot. -->
+            <groupId>io.quarkus.resteasy.reactive</groupId>
+            <artifactId>resteasy-reactive-client</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The config implementation the resolution-order tests build their configs with —
+                 Quarkus' own, the library alone, no Quarkus boot. -->
+            <groupId>io.smallrye.config</groupId>
+            <artifactId>smallrye-config</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- The consuming app discovers the filters and the QitsHttpClients bean from this
+                     index. Without it the jar is inert on a consumer's classpath and says nothing
+                     about why. -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

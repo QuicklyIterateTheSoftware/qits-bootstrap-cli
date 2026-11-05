@@ -1,0 +1,41 @@
+# THE WHOLE RELEASE CYCLE OF THIS REPOSITORY, in two declarations.
+#
+# `ci-event-release-request.yml` and `ci-event-release.yml` used to spell it here: two triggers, two
+# checkouts, the `$BUILDKIT_HOST`/`$QITS_BUILD_REGISTRY` guards, the version dug out of
+# `$QITS_EVENT_PAYLOAD` with jq and charset-checked by hand, the tag fetch and detached checkout, two
+# `buildctl` invocations that had to be kept byte-matched by discipline alone, ~100 lines of
+# `sed`/`case`/`printf` hand-writing a CycloneDX document out of the Dockerfile's `FROM` lines, and a
+# `curl` PUT to an artifacts URL derived by chopping `$QITS_NPM_REGISTRY_URL`. Every one of those is
+# platform process: qits-ci compiles the wrapper's `.config/qits/release-archetypes/oci.yml` into
+# both pipelines at evaluation time, the composed prelude carries the guards and the tag checkout,
+# `qits-publish sbom from-dockerfile` is that generator with a real parser behind it, and the
+# composed postlude submits the document for the artifact that declares one. What is left below is
+# the coordinate — which is the one thing about this repository the platform cannot derive.
+#
+# THE IMAGE NAME IS NOT THE REPOSITORY NAME AND MUST NOT BECOME ONE. Every environment spells this
+# database's swarm service, wire alias, container and data volume `qits-oci-postgresql`, the
+# bootstrap writes that host into every consumer's JDBC url, and `deployments.yml` pins
+# `application: qits-oci-postgresql` beside this file so the deployer derives the same image. The
+# repository was renamed; the coordinate did not follow it and does not.
+#
+# THE DECLARATION IS ALSO WHAT THE BUILD PUSHES. The recipe reads the docker entry out of this file
+# and composes the ref from it — first path segment replaced by `$QITS_IMAGE_REPOSITORY`, tag
+# `$QITS_VERSION` — so the ref pushed and the coordinate qits-ci announces the `SoftwareRelease`
+# from are one string and cannot drift. It is read with a `sed` over one line, so the entry stays
+# spelled as ONE flow-style line; zero or two docker entries is a loud failure rather than a ref
+# composed out of an empty string. qits-projects reads the same block at the tag, which is why it
+# must be this repository's own rather than an archetype default.
+#
+# THE `sbom:` PATH IS WHERE THE STEP WRITES, NOT WHERE IT PUTS. The composed postlude submits
+# `.sbom/sbom.json` for this artifact after the script and before the step's exit code, so the
+# SBOM-before-green ordering the deleted file argued at length now holds by construction.
+#
+# THE QA BUILD NO LONGER PUSHES A MERGED-SHA IMAGE, and that is the one behavioural change in this
+# migration. `ci-event-release-request.yml` pushed `qits-oci-postgresql:$QITS_CI_SHA` from the fold;
+# the recipe builds with no `--output` at all, because the build IS the gate on the fold and nothing
+# consumes that coordinate — a deploy pulls the CalVer the release published, as `deployments.yml`
+# and the README's lifecycle both say. The services on this platform retired their own `:$QITS_CI_SHA`
+# QA push for the same reason before this file existed.
+archetype: oci
+artifacts:
+  - { type: docker, name: qits/qits-oci-postgresql, sbom: .sbom/sbom.json }

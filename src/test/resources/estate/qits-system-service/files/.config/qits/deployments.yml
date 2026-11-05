@@ -1,0 +1,86 @@
+# How qits-deployments deploys this repo. It reads this file from the git host at the built
+# sha, so the answer travels with the commit.
+#
+# CARRYING THE FILE AT ALL is the other thing it says. qits-projects reads it at the release tag to
+# decide whether this repository deploys — a library or an SPA carries none, and its release
+# finalizes `main` there and then, while a deployable one waits for the deployment to succeed. What
+# deploys is the VERSION COORDINATE the release build published, never a branch.
+#
+# THE NAME THIS DEPLOYS AS, spelled because the repository is renamed and the application is not.
+# Every derivation the deployer makes hangs off this name — the wire alias peers dial, the container
+# it manages, the extras family, the database — so letting it follow the repository would
+# decommission the running service and start a stranger beside it.
+application: qits-system
+
+# WHAT THIS APPLICATION USED TO BE CALLED, and why it is spelled although nothing here is a database.
+#
+# A renamed application is a NEW application to the deployer, so qits-platform-system's last
+# DeploymentActive still owns /system and the `system` host in the edge's routing projection — and
+# every frame of this one is refused there as a conflict with it. Naming the predecessor makes every
+# cutover of this application first announce qits-platform-system with an empty snapshot, which
+# releases the route and the host before this application's own frame claims them. Ticket qits-1467.
+#
+# It moves no claim: the one claim a rename can move is a postgres one, and the idp:client below is
+# deliberately left alone by it.
+renamed_from: qits-platform-system
+
+# One route for this application's machine surface: the API at /system/api, the terminal WebSocket at
+# /system/api/terminals/{id} and the document at /system/q. The edge path-routes every application's
+# route prefix on EVERY host, so this one line keeps all three reachable wherever a reader is. The
+# client itself is no longer under it — it is served at / on this application's own host.
+routes: /system
+
+# WHERE THIS APPLICATION HANGS IN THE SIDEBAR. `system` is the global group — what this shows is the
+# machine the whole platform runs on, which belongs to no project — and 4 is the position inside it,
+# after Orchestrator:3.
+#
+# The host is not spelled because the derived one is already right: the application name minus its
+# `qits-` prefix is `system`, which is the label this service is served on. The terminal
+# socket's origin check needs that agreement: the page's origin and the forwarded host are the same
+# name, so the handshake passes.
+navigation-entries: system.System:4
+
+# ONE DATABASE, FOR THE TARGETS MODULE ONLY (qits-1481). The docker reads stay stateless — every
+# such answer is read from the daemon at the moment it is asked, and the in-memory terminal registry
+# is MEANT to be dropped by a restart. What is stored is the execution targets: target, lease and
+# work_volume rows (flyway db/system/migration), the one exception to this service's "reads only"
+# rule that qits-system-plan.md records. `postgresql:db` has the deployer provision this
+# application's database and inject QITS_RESOURCE_DB_URL/_USERNAME/_PASSWORD; `postgresql:eventstream`
+# is the qits-eventstream outbox's own (TargetLeaseChanged, TargetLoginChanged,
+# TargetConnectionChanged), injected as QITS_RESOURCE_EVENTSTREAM_*, named as every other service
+# names its outbox. Both are new claims: the renamed_from above moves no postgres claim, because
+# qits-platform-system never had one.
+#
+# idp:client ASKS QITS-DEPLOYMENTS TO PROVISION THIS APPLICATION'S OWN QITS-IDP SERVICE CLIENT — id
+# `dev-qits-system` (derived from env + application), roles fixed in qits-idp code. The deployer
+# injects QITS_RESOURCE_IDP_URL, QITS_RESOURCE_IDP_CLIENT_ID and QITS_RESOURCE_IDP_CLIENT_SECRET; at
+# boot the service writes its own docker config.json from the id and secret (the glances pull through
+# the mirror), and the targets module commissions its runners' credentials with the same pair
+# (kinds target-runner and target-runner-registration).
+#
+# Tickets qits-879, qits-1526.
+resources: postgresql:db, postgresql:eventstream:qits_system_eventstream, idp:client
+#
+# WHAT IT DOES NEED IS NOT DECLARED HERE EITHER, because it is not a resource this deployer
+# provisions: the host's docker socket. This is the third socket holder on the platform, after
+# qits-containers and qits-deployments, and the grant is a deliberate, recorded act in the
+# bootstrap's extras block — `mounts[]=bind:/var/run/docker.sock:/var/run/docker.sock` plus
+# `groups[]=${DOCKER_GID}`, because the socket is root:docker 0660 and this image runs as uid 1001.
+# Without both, the CLI is present and every call is a permission denial.
+
+# The readiness endpoint the deployer's health gate curls. The convention derives it from the
+# repository name and would land on exactly this path; it is written out because a probe that 404s
+# fails a deployment for a reason nobody would look for in a config file.
+#
+# It is deliberately NOT a docker probe. Readiness here means "this process can answer", and the
+# daemon being briefly unreachable is a 503 on a read, not a service that should be taken out of
+# rotation and restarted — a restart would kill every live terminal to fix nothing.
+health_path: /system/q/health/ready
+
+# Where the browsable API document lives: swagger-ui under this service's non-application
+# root, which sits under the primary route above. The shell's Api Docs viewer reads it off
+# /main-navigation and frames it for this repository.
+api-docs: /system/q/swagger-ui
+
+# The docker socket (qits-765): the deployer adds the socket's group, read from the socket itself.
+binds: /var/run/docker.sock:/var/run/docker.sock

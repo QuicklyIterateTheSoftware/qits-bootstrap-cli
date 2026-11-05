@@ -1,0 +1,99 @@
+# How qits-deployments deploys this repo. It reads this file from the git host at the built sha, so
+# the answer travels with the commit.
+#
+# CARRYING THE FILE AT ALL is the other thing it says. The release flow reads it to decide whether
+# this repository deploys — a library or an SPA carries none, and its `main` is finalized at the
+# release itself rather than after a deployment.
+#
+# WHAT THIS REPOSITORY DEPLOYS AS, held still across the repository rename. The repository is
+# qits-githost-service now; the application is still qits-githost, so nothing that is running moves:
+# the swarm service and its wire alias, the container, the image qits/qits-githost the build pushes,
+# the provisioned database, the derived host label, the extras family and the QITS_APPLICATION the
+# container boots with all keep the names they have. Omitted, this name would be DERIVED from the
+# repository, and the rename would read as a decommission plus a new application rather than a
+# rename. Changing the value later is exactly that decommission, so it does not change again.
+application: qits-githost
+
+# `/git` is the smart-HTTP protocol address clients require; `/githost` is this service's machine
+# segment — its API at /githost/api and its health at /githost/q. The edge path-routes every
+# application's route prefixes on EVERY host, so both stay reachable wherever a reader is. The
+# browser surface is no longer under either: the client is served at / on this application's own
+# host.
+routes: /githost,/git
+
+# WHERE THIS APPLICATION HANGS IN THE SIDEBAR. `system.Githost` is the global entry — the storage
+# audit at the root serves every project rather than belonging to one — at position 5, after
+# System:4. The six `Code` entries are the per-repository links: one in every category's details
+# slot, so each service, daemon, lib, frontend, cli tool and image offers its committed contents at
+# `/<slug>/<category>/<repo>/` on this host. Position 4 is Code's place in the platform's fixed
+# order of the per-repository applications (Api Docs 1, Docs 2, Release Requests 3, Code 4, CI 5,
+# Artifacts 6, Configuration 7, Workspaces 8); no subpath, because the Code page IS the repository
+# root.
+#
+# CODE MOVED 3 -> 4 ON 2026-09-01, and nothing about this application changed. qits-projects put a
+# Release Requests row at position 3, above Code, and every entry from Code down moved up one in the
+# same change — this file, qits-ci, qits-artifacts, qits-configuration and qits-workspaces, one line
+# each. The order is stated in integers rather than left to the edge's position-then-label tie-break:
+# equal positions would have sorted "Code" before "Release Requests" anyway, and even where the
+# alphabet happened to agree it would have made the order an accident of the labels.
+#
+# `system.Githost:5` is untouched — that is the GLOBAL group's numbering, a different slot with a
+# different sequence, and the per-repository renumber does not reach it.
+#
+# The host is not spelled because the derived one is already right: the application name minus its
+# `qits-` prefix is `githost`, which is the label every clone url already carries. The browser plane
+# and the git plane land on the same authority by design, not by accident.
+navigation-entries: system.Githost:5, services.details.Code:4, daemons.details.Code:4, libs.details.Code:4, apps.details.Code:4, frontends.details.Code:4, cli.details.Code:4, images.details.Code:4
+
+# TWO DATABASES, because this application opens two datasources with two Flyway lineages.
+# qits-deployments creates a login role and a database for each on the postgres of this tier before
+# the container starts and injects QITS_RESOURCE_<NAME>_URL / _USERNAME / _PASSWORD — the generic
+# contract the application and the qits-eventstream jar map onto quarkus.datasource.* in their own
+# shipped defaults.
+#
+# `db` takes the DERIVED default database, qits_githost: `qits_` plus the application name without
+# its qits- prefix, dashes to underscores. It holds the pack catalog (git_pack, git_pack_file) and
+# the per-repository protection override — the tables that were V4 and V5 of qits-platform-artifacts'
+# chain, restarted here at V1 because a lineage is owned by a service.
+#
+# THE EVENTSTREAM ENTRY IS NOT OPTIONAL AND ITS NAME IS LOAD-BEARING. A push publishes
+# SCMPublishCommit, SCMPublishTag, SCMDeleteBranch and SCMDeleteTag through the qits-eventstream
+# outbox, which is what replaced the post-receive HTTP fan-out that retried in memory and then lost
+# the event. The jar reads QITS_RESOURCE_EVENTSTREAM_*, so the resource NAME here is what makes those
+# variables exist; rename it and the expression is unresolvable and the process refuses to boot at
+# Flyway. Being dark (`qits.eventstream.enabled`) would not save it — dark stops publishing, sweeping
+# and dialling, never the datasource, which Quarkus opens and migrates at boot regardless.
+#
+# It NAMES its database, and has to: the default is derived from the application, so both entries
+# would otherwise have asked for qits_githost and the parser refuses that after resolution.
+#
+# idp:client ASKS QITS-DEPLOYMENTS TO PROVISION THIS APPLICATION'S OWN QITS-IDP SERVICE CLIENT — id
+# `<env>-qits-githost` (derived from env + application), roles fixed in qits-idp code. The deployer
+# stores the secret the way it stores a database password, and injects QITS_RESOURCE_IDP_URL,
+# QITS_RESOURCE_IDP_CLIENT_ID and QITS_RESOURCE_IDP_CLIENT_SECRET, which the `qits` oidc client in
+# application.properties reads (qits-1330; epic qits-543, dossier page "Plan (as of 2026-09-13)").
+# It is the bearer the qits-eventstream library's calls carry once they stop sending an
+# X-Qits-User / X-Qits-Roles pair (qits-1328).
+resources: postgresql:db, postgresql:eventstream:qits_githost_eventstream, idp:client
+
+# THE PROBE THE DEPLOY GATES ON. It is the derived default — /githost/q/health/ready, the repository
+# name minus `qits-` — and it is spelled out anyway, because it was NOT the default for most of this
+# repository's life: the non-application root sat at /git/q while /git was read as this service's
+# whole segment. The gateway settled that the other way (segment /githost, with /git as an extra
+# prefix carried because git owns that spelling), so the root moved with the segment
+# (quarkus.http.non-application-root-path) and this line moved with it. Written out, a future change
+# to either is a diff here rather than a deploy that gates on a 404.
+#
+# Readiness rather than liveness: quarkus-agroal registers a readiness check per datasource as soon
+# as a health extension is present, so this path is red while either database above is unreachable.
+# Liveness answers UP with an empty check list — a git host that boots and cannot read its pack
+# catalog would pass it, and that container serves an empty ref advertisement to every clone.
+health_path: /githost/q/health/ready
+
+# THERE IS DELIBERATELY NO `update_order:` HERE, so the default start-first stands: the successor
+# must pass its readiness probe before the predecessor stops. Under stop-first this service sat at
+# zero tasks for a few seconds per deploy, swarm DNS answered no-such-host for its name and its
+# aliases in that window, and every CI build dialling it then went red (qits-581). The old reason —
+# a published host port — is gone: live `ports: None`, and nothing in the deployer's extras or the
+# bootstrap ComposeTemplate publishes one. No process-wide lock was found either: each request opens
+# its own repository.

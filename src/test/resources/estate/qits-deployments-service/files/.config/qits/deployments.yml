@@ -1,0 +1,172 @@
+# How qits-platform-deployments deploys this repo. It reads this file from the git host at
+# the built sha, so the answer travels with the commit.
+#
+# CARRYING THE FILE AT ALL is the other thing it says. The release flow reads it to decide whether
+# this repository deploys — a library or an SPA carries none, and its `main` is finalized at the
+# release itself rather than after a deployment — and where it does deploy, a Deployment Request
+# carries the released VERSION. `deploy_branches` used to name a branch here, in
+# thirteen copies of one platform-wide answer, and a release pushed onto every entry it named.
+#
+# This component is a PLATFORM service: one instance for the whole platform, deploying every
+# environment. It has been both — platform first, then one deployer per tier — and this is the flip
+# back. Two reasons, and neither is the deployer's own convenience:
+#   * ENVIRONMENTS BECOME CROSS-ENVIRONMENT ENTITIES. A hierarchy like "dev gates prod" is a
+#     relation between tiers, and a deployer that only ever sees its own tier cannot hold one.
+#   * ONE TIER'S BUS CANNOT CARRY THAT EITHER. A per-tier deployer publishes DeploymentActive onto
+#     its own tier's bus alone, so nothing outside that tier hears what it did.
+#
+# `deployment_target` is GONE from this file, with the plane it named. Every application is an
+# environment application in the one tier it is deployed into, so there is no second answer for a
+# key to carry. The parser still ACCEPTS the key, unvalidated and reaching nothing, because a spec is
+# fetched at the BUILT sha and older commits go on presenting it forever — see DeploymentSpecParser.
+
+# THE NAME THIS DEPLOYS AS, spelled because the repository is renamed and the application is not.
+# Every derivation the deployer makes hangs off this name — the wire alias peers dial, the container
+# it manages, the extras family, the database — so letting it follow the repository would
+# decommission the running service and start a stranger beside it.
+#
+# It is the SHORT name, and always has been: the repository was qits-platform-deployments while the
+# catalog row, the wire alias and the qits_deployments database were qits-deployments.
+application: qits-deployments
+
+# TWO DATABASES, and this is the component describing itself with its own mechanism. Each entry is
+# a role and a database of its own on the platform environment's postgres — where a platform
+# service's resources live — created before the successor container starts and injected as
+# QITS_RESOURCE_<NAME>_URL / _USERNAME / _PASSWORD — the generic contract,
+# which the jar that owns each store reads verbatim in its own shipped defaults. THE NAMES ARE NOT
+# FREE: `db` is what the environments jar's datasource reads, `eventstream` is what the
+# qits-eventstream jar's reads, and renaming either here silently stops matching.
+#
+# `db` takes the derived default database — `qits_` + the application name minus its `qits-` prefix,
+# so qits_deployments — and says so by omitting the third segment. `eventstream` cannot: the default
+# would be qits_deployments too, and one database cannot be two stores with two Flyway lineages, so
+# it is named. The name carries this repository, because every consumer of that jar declares a
+# resource called `eventstream` and they must not collide on one postgres.
+#
+# SELF-PROVISIONING WORKS HERE AND IS HOW THE SECOND ENTRY ARRIVES. This component is its own
+# deployer, and the spec is read at the BUILT sha — so the running instance reads this file, creates
+# both role/database pairs, and injects both triples into the successor it starts. Nothing special
+# happens because the successor is itself.
+#
+# The flip re-keys both registry rows: a platform service's resources carry no environment name, so
+# the rows move from ('qits-deployments', '<tier>') to the platform plane's null. The databases do
+# not move — the platform plane provisions on the platform environment's postgres, which is the one
+# they are already on. BootResourceRegistration writes the new key at every boot.
+#
+# ADOPTER #1, AND THE ONE THAT CANNOT PROVISION ITSELF FROM COLD. Only the very first container of a
+# fresh platform has no deployer to do it: the bootstrap creates BOTH roles and databases over plain
+# JDBC before this process exists and passes BOTH triples in deployment config, and
+# BootResourceRegistration records what it was handed at every boot — so the first self-deploy after
+# that finds a registry row per resource, takes the no-op arm, and injects the credentials the
+# instance is already connected with. Without those rows it would rotate its own passwords out from
+# under its own connection pools.
+# THERE IS NO health_path: KEY HERE, AND THAT IS DELIBERATE RATHER THAN AN OVERSIGHT.
+# resolveHealthPath asks four sources in order: this file, then the STORED pd_service.health_path
+# row, then the first `routes:` entry below (qits-1773), then the convention on the APPLICATION
+# name — and all of them name /deployments/q/health/ready now, so an override would only restate
+# what `routes: /deployments` and DeployService.conventionHealthPath("qits-deployments") derive.
+#
+# It was here for one release and it was load-bearing then: the stored row held
+# /platform-deployments/q/health/ready, written when the route really was there, and a stored row
+# beats the convention — so without the key every self-deploy would have curled a path the new image
+# 404s, never converged, and rolled back as unhealthy. The route moved on 2026-09-26, the row was
+# re-registered with the served path (measured live: GET /deployments/api/services answers
+# "healthPath":"/deployments/q/health/ready"), and the override became redundant with the two
+# sources behind it. DO NOT RE-ADD IT to state the convention: it would be a second place for this
+# path to be edited out of step with the route, which is the whole defect it once covered for.
+
+# The edge reads this declaration from DeploymentActive. `routes:` is the WIRE prefix — the API and
+# the health endpoints — path-routed on every vhost. The client is not under it: it is served at the
+# root of this service's own host, which the edge derives from the application name.
+#
+# ONE PREFIX, and it is the one this service serves. There were two for exactly one release: the
+# retired /platform-deployments was declared beside it so the edge kept path-routing the old
+# spelling here while api/LegacyPrefixReroute rewrote it onto the first and WARNed once per request
+# — the inventory the cutover was measured with. The last caller on that inventory was this
+# service's own SPA, which has been released with the new path, so the reroute and this declaration
+# went together. A prefix declared here that nothing serves is a route the edge advertises into a
+# 404.
+routes: /deployments
+
+# WHERE THE EDGE APPEARS THIS APPLICATION IN THE SIDEBAR. One entry per `<slot>.<Label>` pair — an
+# application may hang several rows under one heading, and this one hangs two rows in two different
+# groups. The label and the position are the whole statement — the host is derived from the
+# application name (`qits-platform-deployments` minus its `qits-platform-` prefix is `deployments`),
+# so there is no `host:` line to keep in step.
+#
+# TWO ENTRIES, AND THE SECOND CARRIES A SUBPATH. The `platform` row is the deployments table at this
+# host's root, which is what it always was. The `project.detail` row is the deployment-requests page
+# — `=deployment-requests` is the path under the derived host, appended to whatever project scope
+# the shell is in. They are two rows because they answer two questions: what is RUNNING in a tier,
+# and what a project has ASKED FOR, which is the only place a release the gate refused is visible at
+# all.
+#
+# The pair is `(slot, label)` and not the slot alone, which is what makes two entries legal here:
+# the parser keyed its duplicate check on the slot for one release, and an application asking for
+# two rows failed its deployment with `deployment spec unreadable` while its build stayed green.
+#
+# This replaces `navigation: Deployments:2`, the flat list every application shared. The old key
+# still parses — a spec is read at the built sha, so it can never become unknown — and maps to
+# `system.Deployments`, which is the wrong group for a page a project scopes.
+#
+# THE PARSER SHIPPED FIRST, and so did the SPA. A spec is fetched at the BUILT sha and an unknown key
+# fails a deployment, so this key could only land after the deployer that reads it was released — and
+# a navigation row that leads to a route the embedded client does not have is a 404 in the menu,
+# which is why this line moves in the same commit as the webui gitlink that carries the page.
+navigation-entries: platform.Deployments:4, project.detail.Deployment Requests:5=deployment-requests
+
+# Resources this component declares; qits-deployments provisions them before the container starts
+# and injects QITS_RESOURCE_DB_* / QITS_RESOURCE_EVENTSTREAM_* for the two jars that read them.
+#
+# THIS LINE WAS REMOVED FOR EXACTLY ONE RELEASE AND IS BACK. 2026.925.123951 declared no
+# resources, because the fix it carried — the bridging declaration for
+# qits.deployments.postgres.admin-password, which the namespace rename had left without one —
+# could not otherwise deploy: ResourceProvisioning asks for that password BEFORE it does
+# anything, so the cure was a resource-declaring deployment dying of the defect it cured. See
+# handoff.md §32. That release is out; the running deployer reads the old environment spelling
+# again, so provisioning works and this declaration is safe to restore.
+#
+# It must not be left off: without it this component keeps its credentials only for as long as
+# nothing recreates its service — the update path preserves QITS_RESOURCE_* and a `service rm`
+# does not — and a cold bootstrap would provision nothing at all.
+#
+# idp:client PROVISIONS THIS COMPONENT'S OWN QITS-IDP CLIENT, derived id `<tier>-qits-deployments`
+# (dev-qits-deployments), injected as QITS_RESOURCE_IDP_URL / _CLIENT_ID / _CLIENT_SECRET. It
+# replaces the bootstrap pair — client `qits-deployments`,
+# QUARKUS_OIDC_CLIENT_CONFIGURATION_CLIENT_ID / _CREDENTIALS_SECRET — which stays in the settings store
+# only as the rollback fallback, and the docker config.json in /work/config the same.
+#
+# SELF-PROVISIONING: the running deployer finds BootResourceRegistration's `qits-deployments` row,
+# which no longer matches the derived id, so ResourceProvisioning treats it as no row, creates
+# `dev-qits-deployments`, stores it and injects it into its successor; the rotate guard refuses
+# only the id the process itself is signed in as (D9). At start the successor writes
+# /tmp/qits-docker/config.json from the pair and every docker child pulls with it.
+#
+# THE CODE SHIPPED FIRST (release 2026.1003.201033): a deployer without the mismatched-row check
+# would hand the old secret out under the new id after a rollback.
+#
+# Ticket qits-879.
+resources: postgresql:db, postgresql:eventstream:qits_deployments_eventstream, idp:client
+
+# STOP-FIRST, AND THIS COMPONENT IS THE REASON THE KEY EXISTS. The default is `start-first`: the
+# successor starts beside the predecessor, which is what makes an orchestrator's rollback lossless.
+# This deployer cannot be two processes at once — it holds the deployments config volume, it binds
+# the surface an operator is watching, and its own succession is arbitrated by the swarm manager
+# rather than by either instance. So it takes the gap in service it has today and says so, rather
+# than being the one application an overlap surprises.
+#
+# It is read by the SWARM path (--update-order), which is the only path that deploys this component
+# at all: the docker one has no arbiter for a self-update and refuses it.
+#
+# THE KEY MUST SHIP BEFORE THIS LINE DOES. A spec is fetched at the BUILT sha and an unknown key
+# fails a deployment, so a deployer that predates the parser reads this file and refuses the build
+# that would have taught it the word. Release the parser first, then this line.
+update_order: stop-first
+
+# Where the browsable API document lives: swagger-ui under this service's non-application
+# root, which sits under the primary route above. The shell's Api Docs viewer reads it off
+# /main-navigation and frames it for this repository.
+api-docs: /deployments/q/swagger-ui
+
+# The docker socket (qits-765): the deployer adds the socket's group, read from the socket itself.
+binds: /var/run/docker.sock:/var/run/docker.sock

@@ -1,0 +1,15 @@
+archetype: java-service
+artifacts:
+  - { type: docker, name: qits/qits-observability, sbom: .sbom/sbom.json }
+# The provider golden masters (epic qits-546, ticket qits-1149): the platform packages
+# `golden-masters/` as `eu.wohlben.qits:qits-observability-golden-masters` and
+# `@qits/observability-golden-masters`, each published only when its content changed.
+# `contracts/GoldenMasterRecordingTest` records them.
+contracts:
+  application: qits-observability
+  golden-masters: { from: golden-masters/, packages: [maven, npm] }
+  # The consumer pacts this service writes (ticket qits-1149): IdpConsumerPactTest writes
+  # pacts/qits-observability-service_qits-idp-service.json.
+  pacts:
+    qits-idp-service: { packages: [maven] }
+userflows: qits-observability

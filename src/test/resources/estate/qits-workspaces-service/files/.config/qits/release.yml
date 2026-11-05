@@ -1,0 +1,30 @@
+archetype: java-service
+artifacts:
+  - { type: docker, name: qits/qits-workspaces, sbom: .sbom/sbom.json }
+# The provider golden masters (epic qits-112): the platform packages `golden-masters/` as
+# `eu.wohlben.qits:qits-workspaces-golden-masters` and `@qits/workspaces-golden-masters`, each
+# published only when its content changed. GoldenMasterRecordingTest keeps the directory current.
+contracts:
+  application: qits-workspaces
+  golden-masters: { from: golden-masters/, packages: [maven, npm] }
+  pacts:
+    # qits-events-service's pact is the three-part
+    # pacts/qits-workspaces-service_qits-eventstream-javalib_qits-events-service.json (qits-1163):
+    # what the qits-eventstream library asks on this service's behalf, written by
+    # service/src/test/.../wiring/EventstreamPactTest.
+    # qits-1668: also pacts/qits-workspaces-service_qits-events-service.json, a declared wait's
+    # look-back, written by service/src/test/.../wiring/EventsLogPactTest.
+    qits-events-service: { packages: [maven] }
+    qits-projects-service: { packages: [maven] }
+    # qits-1149: this service's pacts against qits-idp, qits-containers and its workspace daemons
+    # (testing/contracts/ConsumerPactFilesTest keeps each file current).
+    qits-idp-service: { packages: [maven] }
+    qits-containers-service: { packages: [maven] }
+    qits-workspace-daemon: { packages: [maven] }
+    # epic qits-1481: the lease, work-volume and target doors of qits-system
+    # (targethost/SystemContract, kept current by testing/contracts/ConsumerPactFilesTest).
+    qits-system-service: { packages: [maven] }
+    # epic qits-1681: the run read a declared wait on a run makes
+    # (wiring/CiContract, kept current by testing/contracts/ConsumerPactFilesTest).
+    qits-ci-service: { packages: [maven] }
+userflows: qits-workspaces

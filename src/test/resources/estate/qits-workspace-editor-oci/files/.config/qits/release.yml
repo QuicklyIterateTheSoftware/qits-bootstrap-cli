@@ -1,0 +1,257 @@
+archetype: oci
+artifacts:
+  - { type: docker, name: qits/workspace-editor, sbom: sbom.json }
+  # qits-ci submits each declared `sbom:` from whichever release step holds the file: the image's
+  # `sbom.json` from the buildctl step above, and this jar's `target/sbom.json` from the maven step
+  # below, where `makeBom` writes it.
+  - { type: maven, name: "eu.wohlben.qits:qits-workspace-editor-image", sbom: target/sbom.json }
+
+# AN IMAGE AND A JAR OUT OF ONE TREE: the oci archetype pushes exactly one image and publishes
+# nothing else, and its extractor refuses a second entry outright. Both slots are this repository's.
+release-request:
+  - image: qits/build-images/ci-base:latest
+    build: true
+    timeout-seconds: 7200
+    script: |
+      # The registry is code under the platform's public domain (qits-731); `wohlben.eu` covers a
+      # qits-ci too old to inject $QITS_DOMAIN.
+      ref="registry.qits.${QITS_DOMAIN:-wohlben.eu}/$QITS_IMAGE_REPOSITORY/workspace-editor:$QITS_CI_SHA"
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=. \
+        --output "type=image,name=$ref,push=true"
+
+  - image: qits/build-images/maven-base:latest
+    timeout-seconds: 1800
+    script: |
+      # The Central cache's address is code under the platform's public domain (qits-731);
+      # `wohlben.eu` covers a qits-ci too old to inject $QITS_DOMAIN.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      # The credential is what qits-ci already put in QITS_MAVEN_AUTH_USR/PSW — the run's token
+      # subject and token (qits-443) — read straight from the step's environment by
+      # .qits-maven-settings.xml, so nothing here touches it.
+      QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central" \
+      ./mvnw -B -ntp -s .qits-maven-settings.xml verify \
+        -Dqits.maven.repository.url="https://registry.qits.$qits_domain/artifacts/maven/maven"
+
+release:
+  - image: qits/build-images/ci-base:latest
+    build: true
+    timeout-seconds: 7200
+    script: |
+      # The registry is code under the platform's public domain (qits-731); `wohlben.eu` covers a
+      # qits-ci too old to inject $QITS_DOMAIN.
+      ref="registry.qits.${QITS_DOMAIN:-wohlben.eu}/$QITS_IMAGE_REPOSITORY/workspace-editor:$QITS_VERSION"
+      buildctl build --frontend dockerfile.v0 \
+        --local context=. --local dockerfile=. \
+        --output "type=image,name=$ref,push=true"
+      # THE HAND-WRITTEN GENERATOR STAYS, AND THE ARCHETYPE'S `from-dockerfile` IS NOT USED HERE.
+      # `qits-publish sbom from-dockerfile` describes FROM lines and nothing else: DockerfileSbom
+      # collects `ARG` defaults only to resolve a `${...}` inside a FROM, has no ADD or download arm,
+      # and FromDockerfileCommand offers no way to append a component the parser did not find. It
+      # would resolve `FROM ${WORKSPACE_IMAGE}` correctly and then write a document saying the editor
+      # image adds nothing to the workspace — dropping `pkg:generic/openvscode-server` and its
+      # validated SHA-256, which is the single most interesting fact in this document, because the
+      # editor IS the product. So the block below is kept verbatim from the file this one replaces.
+      # Revisit the day the tool grows an ADD-url arm.
+      #
+      # WHAT THE BLOCK LOST IS ONLY THE PARTS THE PLATFORM NOW DOES: `set -eu`, the buildctl guards,
+      # the payload version parse and the tag fetch are the composed prelude's, `$QITS_VERSION` is
+      # injected, and the closing `curl -X PUT .../artifacts/sboms/...` is the postlude's. Nothing
+      # about which components are collected changed.
+      arg_sed='s/^[[:space:]]*[Aa][Rr][Gg][[:space:]]\{1,\}\([A-Za-z_][A-Za-z0-9_]*\)=\([^[:space:]]\{1,\}\)[[:space:]]*$/\1=\2/p'
+      global_args=$(sed -n "/^[[:space:]]*[Ff][Rr][Oo][Mm][[:space:]]/q
+        $arg_sed" Dockerfile)
+      stage_args=$(sed -n "$arg_sed" Dockerfile)
+
+      # One lookup for both, taking the collection it should read as its second argument. There is
+      # no `local` in POSIX sh — the daemon may run this under `sh` — so the helper only reads its
+      # arguments and prints; the `_`-prefixed name keeps it clear of the loop's variables.
+      arg_default() {
+        for _def in $2; do
+          case "$_def" in
+            "$1="*) printf '%s' "${_def#*=}"; return 0 ;;
+          esac
+        done
+        return 1
+      }
+
+      # A multi-stage file names its OWN earlier stages in later `FROM`s, and a stage alias is not
+      # an upstream image. This file has one stage today and the skip below therefore removes
+      # nothing; it is here so the document stays right the day it grows a builder stage.
+      stages=$(sed -n \
+        's/^[[:space:]]*[Ff][Rr][Oo][Mm][[:space:]].*[[:space:]][Aa][Ss][[:space:]]\{1,\}\([^[:space:]]\{1,\}\).*$/\1/p' \
+        Dockerfile)
+      # Every `FROM`'s image ref: drop the keyword, drop any `--platform=`-style flag, keep the
+      # first word — which leaves the ref alone and discards a trailing `AS <stage>`.
+      bases=$(sed -n 's/^[[:space:]]*[Ff][Rr][Oo][Mm][[:space:]]\{1,\}//p' Dockerfile \
+        | sed 's/--[^[:space:]]*[[:space:]]\{1,\}//g' \
+        | sed 's/[[:space:]].*$//')
+
+      components=''
+      depends=''
+      seen=''
+      sep=''
+      for base in $bases; do
+        # THE BASE HERE IS `${WORKSPACE_IMAGE}`, WHICH NEITHER SIBLING HAD TO HANDLE. Taken
+        # literally it would reach the charset guard below and stop the release, and a document
+        # naming a variable would be worse than none. So the expansion is resolved against the
+        # global `ARG` defaults collected above.
+        #
+        # THE DEFAULT IS WHAT THE BUILD RESOLVED, which is the only reason this is truthful rather
+        # than plausible: the `buildctl build` above passes no `--opt build-arg:`, so a release
+        # rebuilds on exactly the workspace image its tree carries — that is the whole point of the
+        # pin being a committed line that qits-maintenance bumps, and it is why this document can be
+        # written from the Dockerfile without asking the builder what it just built.
+        #
+        # Braced form only. `FROM $WORKSPACE_IMAGE` is legal docker and is NOT resolved here; it
+        # falls through to the guard below and stops the release with the ref printed, which is the
+        # right failure — a silent half-resolution would publish an SBOM naming the wrong base. The
+        # counter is the same insurance against a self-referential default.
+        #
+        # Resolved BEFORE the stage-alias skip, so an alias reached through an `ARG` is still
+        # recognised as the alias it is and dropped rather than invented as an upstream.
+        tries=0
+        while :; do
+          case "$base" in
+            *'${'*) : ;;
+            *) break ;;
+          esac
+          tries=$((tries + 1))
+          if [ "$tries" -gt 16 ]; then
+            echo "Dockerfile: FROM '$base' does not resolve" >&2; exit 1
+          fi
+          key=${base#*'${'}
+          key=${key%%'}'*}
+          value=$(arg_default "$key" "$global_args") || {
+            echo "Dockerfile: FROM reads \${$key}, which has no global ARG default" >&2; exit 1
+          }
+          base="${base%%"\${$key}"*}$value${base#*"\${$key}"}"
+        done
+
+        for stage in $stages; do
+          if [ "$base" = "$stage" ]; then base=''; break; fi
+        done
+        [ -n "$base" ] || continue
+        # The ref reaches a JSON document and a purl, so its shape is checked the same way the
+        # version was: a reference is the registry's own charset and nothing else. It is also what
+        # catches an unresolved expansion, since `$`, `{` and `}` are not in that charset.
+        case "$base" in
+          ''|*[!a-zA-Z0-9._:/@-]*)
+            echo "Dockerfile: unusable FROM '$base'" >&2; exit 1 ;;
+        esac
+        # DISTINCT BASES ONLY — two stages built from one upstream are one dependency.
+        case " $seen " in
+          *" $base "*) continue ;;
+        esac
+        seen="$seen $base"
+
+        case "$base" in
+          # A digest ref pins harder than a tag, so the digest IS the version.
+          *@*)
+            name=${base%@*}
+            tag=${base##*@}
+            ;;
+          *)
+            # An untagged `FROM` means `latest` by definition. The colon is not proof of a tag: a
+            # registry host may carry a port, and in `host:5000/image` the colon is the port's —
+            # which is not hypothetical here, the base is `registry.dev.localhost:8080/qits/...`.
+            tag=${base##*:}
+            case "$base" in
+              *:*) : ;;
+              *) tag='' ;;
+            esac
+            case "$tag" in
+              */*) tag='' ;;
+            esac
+            if [ -n "$tag" ]; then
+              name=${base%:*}
+            else
+              name=$base
+              tag=latest
+            fi
+            ;;
+        esac
+
+        purl="pkg:docker/$name@$tag"
+        components="$components$sep$(printf \
+          '{"type":"container","bom-ref":"%s","name":"%s","version":"%s","purl":"%s"}' \
+          "$purl" "$name" "$tag" "$purl")"
+        depends="$depends$sep$(printf '"%s"' "$purl")"
+        sep=','
+      done
+      if [ -z "$components" ]; then
+        echo "Dockerfile declares no base image" >&2; exit 1
+      fi
+
+      # THE BASE IS NOT THE WHOLE STORY HERE, and this is where the document departs from the two
+      # siblings it is modelled on. Their images are a `FROM` plus `apt`/`apk`, and a package
+      # inventory is not something a release step can honestly hand-build; this image is a `FROM`
+      # plus exactly ONE artifact, fetched from a named URL under a committed checksum. Omitting it
+      # would publish a document saying the editor image adds nothing to the workspace — the one
+      # thing about it anybody opens an SBOM to learn.
+      #
+      # THE ARG NAMES ARE A CONTRACT WITH Dockerfile, exactly as the base-pin line is one with
+      # qits-maintenance. Rename or drop either and this step stops the release, rather than quietly
+      # publishing a document that no longer mentions the editor.
+      #
+      # `pkg:generic` because there is no ecosystem to name: this is a GitHub release asset, not a
+      # package in a registry anybody resolves. qits-maintenance stores a purl type it does not
+      # inventory with a null ecosystem — shown, never matched — which is exactly the treatment this
+      # component wants. The checksum travels as a CycloneDX hash instead of a purl qualifier: it is
+      # the stronger identifier, and the URL it would qualify is itself an unexpanded `ARG`.
+      editor_version=$(arg_default OPENVSCODE_VERSION "$stage_args") \
+        || { echo "Dockerfile: no ARG OPENVSCODE_VERSION with a default" >&2; exit 1; }
+      editor_sha=$(arg_default OPENVSCODE_SHA256 "$stage_args") \
+        || { echo "Dockerfile: no ARG OPENVSCODE_SHA256 with a default" >&2; exit 1; }
+      case "$editor_version" in
+        ''|*[!0-9.]*)
+          echo "Dockerfile: unusable OPENVSCODE_VERSION '$editor_version'" >&2; exit 1 ;;
+      esac
+      # 64 lowercase hex and nothing else — the shape `sha256sum -c` in the build already insists
+      # on, checked again because from here it is a JSON value rather than a filename's sum.
+      case "$editor_sha" in
+        *[!0-9a-f]*)
+          echo "Dockerfile: unusable OPENVSCODE_SHA256 '$editor_sha'" >&2; exit 1 ;;
+      esac
+      [ ${#editor_sha} -eq 64 ] \
+        || { echo "Dockerfile: OPENVSCODE_SHA256 is not 64 hex characters" >&2; exit 1; }
+
+      editor_purl="pkg:generic/openvscode-server@$editor_version"
+      components="$components$sep$(printf \
+        '{"type":"application","bom-ref":"%s","name":"openvscode-server","version":"%s",' \
+        "$editor_purl" "$editor_version")$(printf \
+        '"purl":"%s","hashes":[{"alg":"SHA-256","content":"%s"}]}' \
+        "$editor_purl" "$editor_sha")"
+      depends="$depends$sep$(printf '"%s"' "$editor_purl")"
+
+      # CycloneDX 1.6: the image this run pushed as the metadata component, one container component
+      # per distinct base plus the editor, and a single dependency edge from the root to all of
+      # them. Appends rather than one unreadable format string; every value goes through `%s`, so
+      # nothing in a ref can be read as a printf directive.
+      #
+      # THE ROOT IS THE DECLARED NAME, unqualified — `artifacts:` above says
+      # `{type: docker, name: qits/workspace-editor}`, and that is the coordinate a SoftwareRelease
+      # consumer asks for, `packageName` verbatim. The components keep the refs the build actually
+      # resolved, registry host and all, because that is what this image is really made of.
+      root="pkg:docker/qits/workspace-editor@$QITS_VERSION"
+      printf '{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,' > sbom.json
+      printf '"metadata":{"component":{"type":"container","bom-ref":"%s",' "$root" >> sbom.json
+      printf '"name":"qits/workspace-editor","version":"%s","purl":"%s"}},' \
+        "$QITS_VERSION" "$root" >> sbom.json
+      printf '"components":[%s],"dependencies":[{"ref":"%s","dependsOn":[%s]}]}\n' \
+        "$components" "$root" "$depends" >> sbom.json
+
+  - image: qits/build-images/maven-base:latest
+    timeout-seconds: 1800
+    script: |
+      # NO LONGER A DEPLOY: the CLI publishes this coordinate from the postlude, off the jar this
+      # step leaves in target/. This step only has to build it.
+      ./mvnw -B -ntp -s .qits-maven-settings.xml package -DskipTests
+      # The two hosts are code under the platform's public domain (qits-731); `wohlben.eu` covers a
+      # qits-ci too old to inject $QITS_DOMAIN.
+      qits_domain=${QITS_DOMAIN:-wohlben.eu}
+      QITS_MAVEN_CENTRAL_URL="https://mirror.qits.$qits_domain/mirror/maven/central" \
+      ./mvnw -B -ntp -s .qits-maven-settings.xml -DskipTests \
+        -Dqits.maven.repository.url="https://registry.qits.$qits_domain/artifacts/maven/maven" \
+        org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeBom \
+        -DoutputFormat=json -DoutputName=sbom -DschemaVersion=1.6

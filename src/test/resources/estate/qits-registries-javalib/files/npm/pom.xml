@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-registries</artifactId>
+        <version>2026.1103.145246</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The npm registry: both sides of it. NPM_PACKAGES (hosted publish, immutable versions,
+         dist-tags, republish tombstones) and NPM_PROXY (pull-through cache of registry.npmjs.org,
+         TTL-revalidated packuments) share `npm_version` and one set of routes, told apart by the
+         repository row's type — so they ship together and a consuming service enables whichever
+         types it seeds.
+
+         Both halves in one module: the store-side service (eu.wohlben.qits.artifacts.control) and
+         the wire (eu.wohlben.qits.npm, raw Vert.x routes at /artifacts/npm). Package names are
+         unchanged from qits-platform-artifacts. -->
+    <artifactId>qits-registries-npm</artifactId>
+    <name>qits-registries :: npm</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-blobstore</artifactId>
+        </dependency>
+        <dependency>
+            <!-- BlobSender, the backpressured write of a stored blob to a Vert.x response. npm's
+                 tarball route serves blobs like the other two formats, so it takes the same
+                 primitive rather than a fourth copy of the loop. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-registries-common</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-db-core</artifactId>
+        </dependency>
+        <dependency>
+            <!-- @RawHttpClient only (qits-1198): NpmUpstream's HttpClient talks to
+                 registry.npmjs.org, not a qits service. Annotation-only, CLASS retention —
+                 provided from the parent. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-http-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm-panache</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The wire: NpmRoutes registers plain Vert.x routes on the app's Router. No JAX-RS —
+                 an npm client speaks a wire protocol, not an API. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-vertx-http</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The JPA entities only. They are engine-neutral and each consuming service maps them
+                 onto a store of its own; the blob tables below are the half that is not. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The blob store's engine, and its only one. Test scope for the same reason H2 is: a
+                 library must not pick the consuming service's database. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test</groupId>
+            <artifactId>embedded-postgres</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Named per architecture on purpose: the binaries are separate artifacts and zonky
+                 picks one at run time, so an unnamed arch fails in the middle of a suite rather than
+                 during resolution. These three are what this platform is built and developed on. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-darwin-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

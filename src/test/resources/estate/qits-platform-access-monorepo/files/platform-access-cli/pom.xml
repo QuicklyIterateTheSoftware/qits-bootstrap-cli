@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben</groupId>
+        <artifactId>qits</artifactId>
+        <version>2026.1105.92857</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- THE PROGRAM. `eu.wohlben.qits:qits-platform-access-cli` is unchanged from the day this
+         repository was a single module: it is the repository's identity, the name the platform
+         catalog knows, and nothing is gained by moving it because the reactor grew a second module
+         around it.
+
+         ONE FORM. `./mvnw package -Dnative -DskipTests` at the root makes the native binary
+         `platform-access-cli/target/qits`, which is what this program is. There is no jar FROM THIS
+         MODULE — the pin module beside it is the repository's only deployed jar, and it carries
+         three strings rather than any of this code. The three lines that keep it so (the two
+         quarkus properties below and the disabled default-jar execution) are the same three as in
+         qits-bootstrap-cli; its pom says how they fit together. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-platform-access-cli</artifactId>
+    <name>qits-platform-access-cli</name>
+
+    <properties>
+        <!-- The terminal `qits tui` paints on. `jline-terminal`, not the aggregate `jline`: see
+             the dependency below. Not in any BOM, so it is pinned here. -->
+        <jline.version>3.30.16</jline.version>
+
+        <!-- Not in any BOM, so it is pinned here. -->
+        <assertj.version>3.27.4</assertj.version>
+
+        <argLine/>
+
+        <!-- No jar, ever. Quarkus' build goal fails when asked for neither a jar nor a binary, so a
+             JVM build skips the goal; the native profile turns it back on. The @QuarkusMainTest
+             still augments the application, so a build-time break fails `clean verify`. -->
+        <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
+        <quarkus.build.skip>true</quarkus.build.skip>
+
+        <!-- NEVER DEPLOYED TO A MAVEN REPOSITORY. What this module produces is a native binary,
+             published to the artifacts store's `daemons` surface as bytes under a name and a
+             version (.config/qits/ci-event-release.yml). Without this, a `deploy` that reaches the
+             reactor would try to push an artifact that does not exist. -->
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <!-- Every command but `qits tui`: the tree under AccessCli, the session, and the model
+                 the screen walks. In this reactor only; see its pom. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-platform-access-commands</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <!-- Command mode: picocli parses the arguments, Quarkus owns the lifecycle. The library
+                 carries plain picocli; this extension is what makes THIS module the command-mode
+                 application, and application.properties names its top command. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-picocli</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The session file and the idp's token answers. The idp is called with
+                 java.net.http. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+
+        <dependency>
+            <!-- `qits tui`: the terminal, raw mode and Display.
+
+                 The aggregate `jline` artifact carries every provider: jni, ffm, jansi and jna. A
+                 native image has to analyse all of them, and two cannot be analysed on this
+                 GraalVM — jni's initializer unpacks libjlinenative.so at class-init time, and the
+                 ffm provider's downcall handles stop the analysis dead. The exec provider needs
+                 neither: it shells /bin/stty, which a program that already shells git can do.
+                 qits-bootstrap-cli learnt this first; its pom says the same.
+
+                 `jline-terminal` holds the exec and dumb providers, Display and AttributedString —
+                 everything the TUI uses — and ships the native-image reflection and resource config
+                 the exec provider needs. Its `jline-native` dependency comes along and is never
+                 called; the native profile keeps its initializer off the build. -->
+            <groupId>org.jline</groupId>
+            <artifactId>jline-terminal</artifactId>
+            <version>${jline.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>quarkus-maven-plugin</artifactId>
+                <extensions>true</extensions>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>build</goal>
+                            <goal>generate-code</goal>
+                            <goal>generate-code-tests</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- Maven's own classes jar, off: `target/qits` is the only thing a build of this
+                     module leaves. -->
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-jar</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <!-- `./mvnw package -Dnative -DskipTests` builds `target/qits` in this module. It needs
+                 a GraalVM on JAVA_HOME (`sdk env`). -->
+            <id>native</id>
+            <activation>
+                <property>
+                    <name>native</name>
+                </property>
+            </activation>
+            <properties>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+                <quarkus.build.skip>false</quarkus.build.skip>
+
+                <!-- Pkce holds a SecureRandom in a static field. Seeded at build time, every
+                     binary would carry the same seed, so its initializer runs at run time.
+
+                     org.jline.nativ is never called — the exec provider shells /bin/stty — but its
+                     initializer unpacks libjlinenative.so into /tmp. Run at build time it fails the
+                     build; run at run time it is never reached. -->
+                <quarkus.native.additional-build-args>--initialize-at-run-time=eu.wohlben.qits.cli.access.login.Pkce,--initialize-at-run-time=org.jline.nativ</quarkus.native.additional-build-args>
+            </properties>
+        </profile>
+    </profiles>
+</project>

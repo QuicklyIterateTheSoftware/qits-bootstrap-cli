@@ -1,0 +1,49 @@
+# How this repository releases: the `app` archetype's cycle, whole — no `release:` override. The
+# QA slot (`release-request:`) and the release slot (`release:`, the image build) both come from
+# `.config/qits/release-archetypes/app.yml`, which qits-ci ships inside qits-ci-service — or reads
+# from this repository's own copy at that path, at the same revision it reads this file, when one is
+# carried. That is why this file could not say `archetype: app` before qits-ci shipped the recipe:
+# naming an archetype nothing qits-ci carries composes to ARCHETYPE_UNKNOWN — a settled NO_RUN,
+# which is no CI run at all rather than a red one, and a release request parked behind a gate nobody
+# can satisfy.
+#
+# `artifacts:` IS THE ONE THING THIS FILE MUST STILL STATE, and it cannot be defaulted from the
+# archetype. qits-projects reads this block out of THIS repository at `refs/tags/<version>`; it never
+# opens the wrapper and never resolves an archetype, so a coordinate declared there would be
+# invisible to it. The archetype's own release step reads it from here as well, with a `sed -n` that
+# matches only a one-line FLOW mapping with `type:` before `name:`, and fails the release unless
+# exactly one line comes back — so the form below is load-bearing, not a style. `artifacts: []` is a
+# parse error rather than a way to say "nothing".
+#
+# THE COORDINATE IS THE APPLICATION'S NAME, NOT THE REPOSITORY'S. The repository is
+# `qits-landing-app`, and the `-app` suffix is a statement about how it is BUILT; what runs is the
+# application `qits-landing` (`.config/qits/deployments.yml`'s `application:`). The deployer pulls
+# `qits/<application>:<version>` and the release step pushes exactly what this line names, so the two
+# files spell one decision and drift between them is a deployment that pulls an image nobody pushed.
+#
+# `sbom: .sbom/sbom.json` names where the `app` archetype's release step writes the document after
+# the image push, for the composed postlude to submit. No `userflows:` key either: this
+# repository has no IT stories, and `userflows: false` is refused outright, so omitting the key is the
+# only way to say "none".
+#
+# THE PACTS (epics qits-546, qits-112) are declared as contracts, keyed by the provider's repository
+# name. Every pact sits flat in `pacts/` as `qits-landing-app_<provider>.json`; qits-ci packs only
+# `pacts/*_<provider>.json` into that provider's maven jar (at `pacts/<file>` on the classpath),
+# named eu.wohlben.qits:qits-landing-app-pacts-<provider>, and publishes it only when those files
+# changed. So a change to one pact does not republish, and bump, the other provider's jar.
+archetype: app
+
+artifacts:
+  - { type: docker, name: qits/qits-landing, sbom: .sbom/sbom.json }
+
+contracts:
+  application: qits-landing
+  pacts:
+    qits-projects-service: { packages: [maven] }
+    qits-githost-service: { packages: [maven] }
+    qits-events-service: { packages: [maven] }
+    qits-maintenance-service: { packages: [maven] }
+    qits-workspaces-service: { packages: [maven] }
+    qits-ci-service: { packages: [maven] }
+    qits-workspace-daemon: { packages: [maven] }
+    qits-system-service: { packages: [maven] }

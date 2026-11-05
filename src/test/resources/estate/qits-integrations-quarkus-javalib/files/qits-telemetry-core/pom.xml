@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Telemetry export that carries a bearer (epic qits-428). Every service ships its spans, logs
+         and metrics to qits-observability's OTLP receiver; once that traffic goes through the public
+         edge, a POST to a service vhost needs a credential, and Quarkus' own OTLP exporter takes
+         only STATIC headers while a bearer expires. This module replaces the three exporters with
+         CDI beans built on OpenTelemetry's upstream OTLP/HTTP builders, whose header SUPPLIER is
+         asked on every request and answers with the current token of the named oidc client.
+
+         EXTENSIONS AT COMPILE SCOPE, unlike the API-only siblings: quarkus-opentelemetry is what
+         discovers the beans (its "cdi" exporter providers), and quarkus-oidc-client is what mints
+         the token. A consumer without either has nothing for this module to do. Both versions come
+         from the consumer's own imported Quarkus BOM, so nothing here pins them. -->
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-integrations-quarkus</artifactId>
+        <version>2026.1105.105731</version>
+    </parent>
+
+    <artifactId>qits-telemetry-core</artifactId>
+    <packaging>jar</packaging>
+    <name>qits-telemetry-core</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The SDK types the beans implement, the "cdi" exporter providers that pick them up,
+                 and opentelemetry-exporter-otlp (the upstream OTLP/HTTP builders), which this
+                 extension already carries with its okhttp sender excluded. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-opentelemetry</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The java.net.http sender for the upstream builders. quarkus-opentelemetry excludes
+                 the okhttp one, so without this the builders find no HttpSenderProvider at all.
+                 java.net.http is in the JDK and supported by native-image; okhttp would bring kotlin
+                 and its own native story. Version from the Quarkus BOM (1.57.0 under 3.34.6). -->
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-sender-jdk</artifactId>
+        </dependency>
+        <dependency>
+            <!-- OidcClients and TokensHelper: the bearer is the named client's (`qits` by default),
+                 the same one every peer call on the estate mints. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-oidc-client</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- The consuming app discovers the producers from this index. Without it the jar is
+                     inert on a consumer's classpath, Quarkus' own exporters stay in place, and the
+                     export goes out with no bearer and no error. -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

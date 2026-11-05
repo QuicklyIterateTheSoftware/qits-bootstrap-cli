@@ -1,0 +1,79 @@
+# WHAT THIS REPOSITORY DEPLOYS AS. STATED, not defaulted, and the difference is the whole line.
+#
+# The default is the REPOSITORY's name — `qits-landing-app` — and the `-app` suffix is a statement
+# about how this repository is BUILT, not about what runs. Defaulted, that role word would end up in
+# the swarm service, the wire alias (`dev-qits-landing-app`), the derived `host` label
+# (`landing-app`), the image path `qits/qits-landing-app`, the provisioned database name and the
+# `QITS_APPLICATION` the container boots with — six places where the deployed identity would carry a
+# build detail forever, because CHANGING this value later is a decommission and a new application
+# rather than a rename.
+#
+# `qits-landing` is therefore what the image in `.config/qits/release.yml` is called
+# (`qits/qits-landing`), and the two are one decision: the deployer pulls
+# `qits/<application>:<version>` and the release step pushes the coordinate this file names.
+application: qits-landing
+
+# THE PATH PREFIX THE EDGE ROUTES HERE ON EVERY VHOST.
+#
+# `/landing`, and the reasoning is worth writing down because a landing page is the one application
+# on the estate with no machine surface to justify a route.
+#
+# 1. A route is NOT OPTIONAL here. `host:` below is refused by DeploymentSpecParser without at least
+#    one `routes:` entry — "a host with nothing behind it serves nobody" — so the question is which
+#    prefix, never whether.
+# 2. `/` IS SYNTACTICALLY LEGAL AND WOULD BE A DISASTER. The routes regex admits the bare root, and
+#    a route is path-routed on EVERY vhost — so `routes: /` would claim every path of every
+#    application on the platform for this one. It is the one value this file must not hold.
+# 3. `/landing` IS THE APPLICATION'S OWN SEGMENT, the shape every sibling uses: qits-ci takes `/ci`,
+#    qits-artifacts `/artifacts`, qits-configuration `/configuration` — the application name minus
+#    its `qits-` prefix, which is also exactly what `host:` derives to.
+# 4. AND IT RENDERS. `src/app/app.routes.ts` carries a `**` route onto the landing page precisely so
+#    the prefix is not a 404: `<any-vhost>/landing` serves the same server-rendered page the root of
+#    this application's own host does. A declared route that answered nothing would be a name that
+#    leads nowhere, which is the thing rule 1 exists to prevent.
+routes: /landing
+
+# THE DNS LABEL THIS APPLICATION IS SERVED AT — `landing.<env>.<domain>` — and it is the
+# load-bearing line of this file.
+#
+# It is the value the DERIVATION would have produced anyway (`qits-landing` minus the `qits-`
+# prefix), and it is stated all the same, because a later epic reserves this label as the project's
+# ROOT. A derived label is a consequence of a name; a stated one is a claim, and this file is where
+# the claim has to be readable. It also survives a change to the derivation rule, which a default
+# would not.
+host: landing
+
+# HEALTH_PATH, NOT HEALTH_CMD, and a path this server actually serves.
+#
+# The deployer runs `curl` INSIDE the container against this path and rolls the deployment back when
+# it does not answer, so the value and the route in `src/server.ts` are one decision spelled twice.
+# The DERIVED default is `/landing/q/health/ready` — a Quarkus shape, from a service that mounts
+# smallrye-health under its non-application root. Nothing here serves it, and taking the default
+# would fail every deployment as unhealthy after the container had come up perfectly well.
+#
+# `health_cmd:` is the alternative and is wrong for this image: it exists for a deployable with no
+# HTTP surface at all (postgres, which has neither curl nor anything on 8080). A node server answers
+# a path.
+#
+# It sits UNDER the published `/landing` prefix deliberately — the probe runs in the container
+# either way, but a readiness path outside every published route would be answerable from inside the
+# container and from nowhere else, which makes it untestable from a workstation.
+health_path: /landing/health
+
+# NO `upstream_port:`, AND THAT IS DELIBERATE RATHER THAN FORGOTTEN. DeploymentSpecParser's
+# DEFAULT_UPSTREAM_PORT is 8080; `src/server.ts` defaults to 8080 and `docker/Dockerfile` states
+# `ENV PORT=8080`. Three spellings of one number is already one too many, and a fourth that could
+# drift from the other three buys nothing. The scaffold's own default is 4000 — that is what was
+# changed, and this comment is why.
+
+# NO `navigation-entries:` and no `navigation:`. This application is the front door itself, not a
+# row in somebody else's sidebar: an entry would put "Landing" in the chrome of every application
+# the shell draws navigation for.
+
+# NO `update_order:`, so the default `start-first` stands — the successor comes up beside the
+# predecessor and a failed health gate is a lossless rollback. The siblings that say `stop-first` do
+# so because they bind a host port or hold a single-writer store, and this application does neither:
+# it publishes no port of its own, writes nothing, and is reached through the edge on the overlay.
+
+# NO `resources:` and no `volumes:`. The page is static text compiled into the bundle; there is no
+# database to provision and nothing to keep between deployments.

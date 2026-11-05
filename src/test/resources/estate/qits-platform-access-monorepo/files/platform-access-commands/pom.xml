@@ -1,0 +1,309 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben</groupId>
+        <artifactId>qits</artifactId>
+        <version>2026.1105.92857</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- THE COMMANDS. Every `qits` command — the picocli tree under AccessCli, the session and the
+         two homes, and the model the screen walks (tui/api, tui/model) — as a plain jar, so that
+         more than one program can be built from the same tree: the `qits` binary beside it, and the
+         MCP service that serves the same commands as tools.
+
+         A PLAIN JAR, NOT A QUARKUS APPLICATION. It depends on picocli itself and never on
+         quarkus-picocli: that extension makes any application that carries it a command-mode
+         application, which a consumer serving requests must not become. What quarkus-picocli did
+         for the tree the binary needs is therefore done here instead:
+
+           - the top command is named by the consumer (`quarkus.picocli.top-command`), since
+             @TopCommand is a quarkus-picocli annotation and is gone from AccessCli;
+           - picocli-codegen writes the tree's native-image reflection config into this jar, under
+             META-INF/native-image/picocli-generated/qits-platform-access-commands/, so every
+             native build that has the jar on its classpath reads it;
+           - a Jandex index, so Quarkus in a consumer sees the @Command classes and the beans.
+
+         quarkus-arc FOR THE ANNOTATIONS, NOT FOR A CONTAINER OF ITS OWN: the completion sources are
+         @ApplicationScoped beans the screen looks up through CDI, PlatformMode is a @Singleton, and
+         the records Jackson binds (the session, the release reports' payloads) carry
+         @RegisterForReflection. Nothing here starts Quarkus, and every test in this module is plain
+         JUnit.
+
+         NEVER DEPLOYED TO A MAVEN REPOSITORY. Consumed in this reactor only; the owner's call
+         (2026-10-01) is that it stays internal until a real consumer outside this repository
+         appears. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-platform-access-commands</artifactId>
+    <name>qits-platform-access-commands</name>
+
+    <properties>
+        <!-- Not in any BOM, so it is pinned here. -->
+        <assertj.version>3.27.4</assertj.version>
+        <!-- The house's Jandex plugin (qits-integrations-quarkus-javalib, qits-registries-javalib). -->
+        <jandex-plugin.version>3.4.0</jandex-plugin.version>
+        <!-- The coverage kind reads the exec file the archetypes' JaCoCo agent writes. The SAME version
+             as that agent (qits-ci's archetypes pin it), so the exec format matches; 0.8.14 is the
+             first that reads JDK 25 class files. Not in any BOM, so it is pinned here. -->
+        <jacoco.version>0.8.14</jacoco.version>
+
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <!-- The command tree. Plain picocli, the version quarkus-bom manages. -->
+            <groupId>info.picocli</groupId>
+            <artifactId>picocli</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The session file and the platform's answers. The services are called with
+                 java.net.http. -->
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The Instants in the session file and the Git sign-in. -->
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+        </dependency>
+        <dependency>
+            <!-- @ApplicationScoped, @Singleton and @RegisterForReflection; see the header. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+
+        <dependency>
+            <!-- `qits artifacts publish maven` reads a reactor's effective models (parents, BOM
+                 imports, interpolation) the way the reactor build did, and writes the flattened pom
+                 with MavenXpp3Writer. maven's own builder, the 3.9 line every wrapper pins, rather than
+                 a second reading of the pom rules; the version is quarkus-bom's. -->
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-model-builder</artifactId>
+        </dependency>
+
+        <dependency>
+            <!-- `qits ci report submit`'s coverage kind: ExecFileLoader and Analyzer over a
+                 reactor's target/classes, so no `report` goal is needed. Plain ASM underneath, no
+                 reflection, so the native binary needs no configuration for it. ASM's version is
+                 quarkus-bom's. -->
+            <groupId>org.jacoco</groupId>
+            <artifactId>org.jacoco.core</artifactId>
+            <version>${jacoco.version}</version>
+        </dependency>
+
+        <dependency>
+            <!-- `qits database diagram` reads a repository's compiled JPA mapping: the reactor's
+                 target/classes and its runtime jars, indexed class by class, never loaded. The
+                 version is quarkus-bom's. Plain bytecode reading; its one reflective call is
+                 Array.newInstance in Index.create (Utils.unfold), for ClassInfo[] and
+                 AnnotationInstance[], which META-INF/native-image/qits-platform-access-commands/jandex/
+                 registers. Without it the binary fails at the first index (proven with the binary
+                 over the fixture project). -->
+            <groupId>io.smallrye</groupId>
+            <artifactId>jandex</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- qits-projects' recorded answers (golden-masters/index.json + one JSON per state and
+                 operation), read by projects/ProjectsContract through qits-pact-consumer. Pinned in
+                 the root pom. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-projects-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The other providers' recorded answers, one jar per service the commands call (ticket
+                 qits-1149), each read by its own pact under contracts/. Pinned in the root pom. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-pact-consumer</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-workspaces-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-workspace-daemon-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-artifacts-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-ci-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-idp-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-events-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-maintenance-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-observability-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- qits-system's recorded targets: what the VHS tapes' fake platform answers `qits
+                 targets` with (FakePlatformMain, epic qits-881). Pinned in the root pom. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-system-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-deployments-golden-masters</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- JpaMappingConformanceTest builds Hibernate's own Metadata over the fixture entities and
+                 holds `qits database diagram`'s reconstruction against it. TEST SCOPE ONLY: Hibernate
+                 never reaches the commands jar, the binary or its SBOM. The version is quarkus-bom's,
+                 the one the estate's services run. -->
+            <groupId>org.hibernate.orm</groupId>
+            <artifactId>hibernate-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Quarkus applies Bean Validation's @NotNull to the schema; the conformance test does the
+                 same through Hibernate's TypeSafeActivator. Test scope only. -->
+            <groupId>org.hibernate.validator</groupId>
+            <artifactId>hibernate-validator</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- PanacheEntity and PanacheEntityBase, as the estate's entities extend them: the fixtures
+                 do too, and the generator reads PanacheEntity's id from this jar. Test scope only. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm-panache</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The consumer half of the qits-projects contract, plain JUnit 5. Test scope, so its
+                 Kotlin/ktor/netty tree never reaches the commands jar, the binary or the service. -->
+            <groupId>au.com.dius.pact.consumer</groupId>
+            <artifactId>junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <!-- FILTERING IS ON FOR ONE RESOURCE AND NOTHING ELSE: the version `qits -V` prints and
+             `qits update` compares, ${project.version} as the release stamped it. The pin module
+             filters its own copy the same way, and for the same reason the include/exclude pair is
+             not belt-and-braces: filtering every resource would rewrite any file here that happens
+             to contain `${`. The native image takes the file because
+             META-INF/native-image/qits-platform-access-commands/version/resource-config.json names
+             it, in this jar, so the MCP service's native build gets it too. -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>eu/wohlben/qits/cli/access/update/qits-version.properties</include>
+                </includes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <excludes>
+                    <exclude>eu/wohlben/qits/cli/access/update/qits-version.properties</exclude>
+                </excludes>
+            </resource>
+        </resources>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <!-- picocli-codegen's processor writes the reflection and resource config of
+                         every @Command it compiles into the jar. -Aproject names the directory it
+                         writes under, so a second picocli jar on a consumer's classpath cannot
+                         collide with this one. No proxy config: the tree declares no interface
+                         command, so the file would be an empty list in a format GraalVM 25 has
+                         deprecated. -->
+                    <annotationProcessorPathsUseDepMgmt>true</annotationProcessorPathsUseDepMgmt>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>info.picocli</groupId>
+                            <artifactId>picocli-codegen</artifactId>
+                        </path>
+                    </annotationProcessorPaths>
+                    <compilerArgs>
+                        <arg>-Aproject=qits-platform-access-commands</arg>
+                        <arg>-Adisable.proxy.config=true</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+            <plugin>
+                <!-- quarkus-arc brings JBoss LogManager onto the test classpath; set before the
+                     first logger, or JUL complains on stderr that it was asked too late. -->
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                        <!-- What QitsVersionTest holds the filtered qits-version.properties against. -->
+                        <qits.project.version>${project.version}</qits.project.version>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+            <plugin>
+                <!-- A test jar beside the main one, for the MCP service in this reactor: its
+                     end-to-end calls run against the same fakes (FakePlatform, FakeSocketServer) the
+                     commands' own tests use, rather than a second copy of them. Never deployed,
+                     like the main jar. -->
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+                <version>${jandex-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>make-index</id>
+                        <goals>
+                            <goal>jandex</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

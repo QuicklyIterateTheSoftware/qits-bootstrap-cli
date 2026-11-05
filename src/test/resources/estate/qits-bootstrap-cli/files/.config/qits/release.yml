@@ -1,0 +1,21 @@
+archetype: cli
+
+# THE CONSUMER PACTS (qits-1149): what the bootstrap asks each qits service, written by
+# BootstrapPactFileTest from the providers' golden masters and committed as
+# pacts/qits-bootstrap-cli_<provider>.json. The platform packs each as
+# `eu.wohlben.qits:qits-bootstrap-cli-pacts-<provider>`, only when it changed, from the release slot's
+# last step; the provider pins that jar and verifies it. A key here must name exactly a provider that
+# has a file in pacts/ — BootstrapPactFileTest writes one only for a provider with a recorded row.
+contracts:
+  application: qits-bootstrap-cli
+  pacts:
+    qits-projects-service: { packages: [maven] }
+    qits-events-service: { packages: [maven] }
+    qits-ci-service: { packages: [maven] }
+    qits-deployments-service: { packages: [maven] }
+    qits-idp-service: { packages: [maven] }
+    qits-githost-service: { packages: [maven] }
+    qits-artifacts-service: { packages: [maven] }
+    qits-system-service: { packages: [maven] }
+    qits-containers-service: { packages: [maven] }
+

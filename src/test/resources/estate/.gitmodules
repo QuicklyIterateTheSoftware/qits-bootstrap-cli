@@ -1,0 +1,306 @@
+[submodule "qits-artifacts-service"]
+	path = components/qits-artifacts/qits-artifacts-service
+	url = ../qits-artifacts-service.git
+	ignore = all
+	branch = main
+	update = merge
+[submodule "qits-observability-service"]
+	path = components/qits-observability/qits-observability-service
+	url = ../qits-observability-service.git
+	ignore = all
+	branch = main
+	update = merge
+[submodule "qits-workspace-daemon"]
+	path = components/qits-workspaces/qits-workspace-daemon
+	url = ../qits-workspace-daemon.git
+	ignore = all
+	branch = main
+	update = merge
+[submodule "qits-userflows-javalib"]
+	path = components/qits-userflows/qits-userflows-javalib
+	url = ../qits-userflows-javalib.git
+	ignore = all
+	branch = main
+	update = merge
+[submodule "qits-integrations-angular-jslib"]
+	path = components/qits-integrations/qits-integrations-angular-jslib
+	url = ../qits-integrations-angular-jslib.git
+	ignore = all
+	branch = main
+	update = merge
+[submodule "qits-integrations-quarkus-javalib"]
+	path = components/qits-integrations/qits-integrations-quarkus-javalib
+	url = ../qits-integrations-quarkus-javalib.git
+	ignore = all
+	branch = main
+	update = merge
+[submodule "qits-workspaces-service"]
+	path = components/qits-workspaces/qits-workspaces-service
+	url = ../qits-workspaces-service.git
+	ignore = all
+	branch = main
+	update = merge
+[submodule "qits-stt-service"]
+	path = components/qits-stt/qits-stt-service
+	url = ../qits-stt-service.git
+	ignore = all
+	branch = main
+	update = merge
+[submodule "qits-ci-service"]
+	path = components/qits-ci/qits-ci-service
+	url = ../qits-ci-service.git
+	ignore = all
+	branch = main
+	update = merge
+[submodule "qits-projects-service"]
+	path = components/qits-projects/qits-projects-service
+	url = ../qits-projects-service.git
+	ignore = all
+	branch = main
+	update = merge
+[submodule "qits-ui-components-jslib"]
+	path = components/qits-ui-components/qits-ui-components-jslib
+	url = ../qits-ui-components-jslib.git
+	ignore = all
+	branch = main
+	update = merge
+[submodule "qits-ci-daemon"]
+	path = components/qits-ci/qits-ci-daemon
+	url = ../qits-ci-daemon.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-ci-frontend"]
+	path = components/qits-ci/qits-ci-frontend
+	url = ../qits-ci-frontend.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-observability-frontend"]
+	path = components/qits-observability/qits-observability-frontend
+	url = ../qits-observability-frontend.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-artifacts-frontend"]
+	path = components/qits-artifacts/qits-artifacts-frontend
+	url = ../qits-artifacts-frontend.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-projects-frontend"]
+	path = components/qits-projects/qits-projects-frontend
+	url = ../qits-projects-frontend.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-events-service"]
+	path = components/qits-events/qits-events-service
+	url = ../qits-events-service.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-events-frontend"]
+	path = components/qits-events/qits-events-frontend
+	url = ../qits-events-frontend.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-eventstream-javalib"]
+	path = components/qits-eventstream/qits-eventstream-javalib
+	url = ../qits-eventstream-javalib.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-idp-service"]
+	path = components/qits-idp/qits-idp-service
+	url = ../qits-idp-service.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-build-images-oci"]
+	path = components/qits-build-images/qits-build-images-oci
+	url = ../qits-build-images-oci.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-bootstrap-cli"]
+	path = components/qits-bootstrap/qits-bootstrap-cli
+	url = ../qits-bootstrap-cli.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-deployments-service"]
+	path = components/qits-deployments/qits-deployments-service
+	url = ../qits-deployments-service.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-docs-service"]
+	path = components/qits-docs/qits-docs-service
+	url = ../qits-docs-service.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-docs-frontend"]
+	path = components/qits-docs/qits-docs-frontend
+	url = ../qits-docs-frontend.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-deployments-frontend"]
+	path = components/qits-deployments/qits-deployments-frontend
+	url = ../qits-deployments-frontend.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-edge-service"]
+	path = components/qits-edge/qits-edge-service
+	url = ../qits-edge-service.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-workspace-oci"]
+	path = components/qits-workspaces/qits-workspace-oci
+	url = ../qits-workspace-oci.git
+	ignore = all
+	branch = main
+	update = merge
+[submodule "qits-database-oci"]
+	path = components/qits-database/qits-database-oci
+	url = ../qits-database-oci.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-projects-daemon"]
+	path = components/qits-projects/qits-projects-daemon
+	url = ../qits-projects-daemon.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-registries-javalib"]
+	path = components/qits-registries/qits-registries-javalib
+	url = ../qits-registries-javalib.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-mirror-service"]
+	path = components/qits-mirror/qits-mirror-service
+	url = ../qits-mirror-service.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-githost-service"]
+	path = components/qits-githost/qits-githost-service
+	url = ../qits-githost-service.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-githost-frontend"]
+	path = components/qits-githost/qits-githost-frontend
+	url = ../qits-githost-frontend.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-mirror-frontend"]
+	path = components/qits-mirror/qits-mirror-frontend
+	url = ../qits-mirror-frontend.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-containers-service"]
+	path = components/qits-containers/qits-containers-service
+	url = ../qits-containers-service.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-idp-frontend"]
+	path = components/qits-idp/qits-idp-frontend
+	url = ../qits-idp-frontend.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-orchestrator-service"]
+	path = components/qits-orchestrator/qits-orchestrator-service
+	url = ../qits-orchestrator-service.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-orchestrator-frontend"]
+	path = components/qits-orchestrator/qits-orchestrator-frontend
+	url = ../qits-orchestrator-frontend.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-maintenance-service"]
+	path = components/qits-maintenance/qits-maintenance-service
+	url = ../qits-maintenance-service.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-maintenance-frontend"]
+	path = components/qits-maintenance/qits-maintenance-frontend
+	url = ../qits-maintenance-frontend.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-system-service"]
+	path = components/qits-system/qits-system-service
+	url = ../qits-system-service.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-system-frontend"]
+	path = components/qits-system/qits-system-frontend
+	url = ../qits-system-frontend.git
+	ignore = all
+	update = merge
+	branch = main
+[submodule "qits-workspace-editor-oci"]
+	path = components/qits-workspaces/qits-workspace-editor-oci
+	url = ../qits-workspace-editor-oci.git
+	branch = main
+	ignore = all
+	update = merge
+[submodule "qits-coding-agents"]
+	path = components/qits-agents/qits-coding-agents
+	url = ../qits-coding-agents.git
+	branch = main
+	ignore = all
+	update = merge
+[submodule "qits-platform-access-monorepo"]
+	path = components/qits-platform-access/qits-platform-access-monorepo
+	url = ../qits-platform-access-monorepo.git
+	branch = main
+	ignore = all
+	update = merge
+[submodule "qits-landing-app"]
+	path = components/qits-landing/qits-landing-app
+	url = ../qits-landing-app.git
+	branch = main
+	ignore = all
+	update = merge
+[submodule "qits-containers-javalib"]
+	path = components/qits-containers/qits-containers-javalib
+	url = ../qits-containers-javalib.git
+	branch = main
+	ignore = all
+	update = merge
+[submodule "qits-runner-javalib"]
+	path = components/qits-runner/qits-runner-javalib
+	url = ../qits-runner-javalib.git
+	branch = main
+	ignore = all
+	update = merge
+[submodule "qits-system-runner-daemon"]
+	path = components/qits-system/qits-system-runner-daemon
+	url = ../qits-system-runner-daemon.git
+	branch = main
+	ignore = all
+	update = merge
+[submodule "qits-bootstrap-javalib"]
+	path = components/qits-bootstrap/qits-bootstrap-javalib
+	url = ../qits-bootstrap-javalib.git
+	branch = main
+	ignore = all
+	update = merge

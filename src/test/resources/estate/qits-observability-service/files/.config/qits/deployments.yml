@@ -1,0 +1,36 @@
+# How qits-platform-deployments deploys this repo. It reads this file from the git host at
+# the built sha, so the answer travels with the commit.
+#
+# CARRYING THE FILE AT ALL is the other thing it says. qits-projects reads it at the release tag to
+# decide whether this repository deploys — a library or an SPA carries none, and its release
+# finalizes `main` there and then, while a deployable one waits for the deployment to succeed. A
+# deploy pulls the VERSION COORDINATE the release build published. `deploy_branches` used to name a
+# branch to deploy from here, in thirteen copies of one platform-wide answer, and it went with the
+# entry-branch promotion and the release door on 2026-09-03.
+#
+# WHAT THIS REPOSITORY DEPLOYS AS, held still across the repository rename. The repository is
+# qits-observability-service now; the application is still qits-observability, so nothing that is
+# running moves: the swarm service and its wire alias, the container, the image
+# qits/qits-observability the build pushes, the provisioned database, the derived host label, the
+# extras family and the QITS_APPLICATION the container boots with all keep the names they have.
+# Omitted, this name would be DERIVED from the repository, and the rename would read as a
+# decommission plus a new application rather than a rename. Changing the value later is exactly that
+# decommission, so it does not change again.
+application: qits-observability
+
+routes: /observability
+
+# WHERE THE EDGE APPEARS THIS APPLICATION IN THE SIDEBAR. One entry per slot: `platform` is the
+# project-scoped group, and this is its third row. The label and the position are the whole
+# statement — the host is derived from the application name (`qits-observability` minus its `qits-`
+# prefix is `observability`), so there is no `host:` line to keep in step.
+#
+# This replaces `navigation: Observability:7`, the flat list every application shared. The old key
+# still parses — a spec is read at the built sha, so it can never become unknown — and maps to
+# `system.Observability`, which is the wrong group for pages a project scopes.
+navigation-entries: platform.Observability:3
+
+# Where the browsable API document lives: swagger-ui under this service's non-application
+# root, which sits under the primary route above. The shell's Api Docs viewer reads it off
+# /main-navigation and frames it for this repository.
+api-docs: /observability/q/swagger-ui

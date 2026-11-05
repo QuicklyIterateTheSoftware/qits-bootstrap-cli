@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- qits-platform-access-cli: the `qits` command, access to the platform from a workstation.
+
+         PARENTLESS on purpose, like every other qits repo: a clone of this repo alone must
+         `./mvnw verify` green, with no parent to inherit from, no platform registry to reach and no
+         prior install anywhere. Versions that must stay in step with the platform (Quarkus, the JDK
+         release) are repeated here deliberately. The app-wide machinery of the monorepo (spotless,
+         dev-guard, enforcer, jandex) is intentionally absent.
+
+         AN AGGREGATOR SINCE 2026-09-17, AND THE SHAPE IS qits-ci-daemon's ROOT: the
+         `eu.wohlben:qits` coordinate a child's <parent> points at (../pom.xml), the quarkus-bom
+         import, the compiler/surefire pins, and nothing else. Four modules:
+
+           platform-access-cli-binary  the pin: one tiny jar whose own version IS the version of
+                                       the binary this release published. The only thing here that
+                                       is deployed to a Maven repository. See
+                                       PlatformAccessCliBinary.
+           platform-access-commands    the commands: every `qits` command but `qits tui`, the
+                                       session and the screen's model, as a plain picocli jar with
+                                       no quarkus-picocli and no JLine, so more than one program can
+                                       be built from one tree. Never deployed; consumed in this
+                                       reactor only.
+           platform-access-mcp-service the same commands served as MCP tools at /mcp, each call run
+                                       as its caller: the Quarkus service
+                                       qits-platform-access-mcp-service, released as an image from
+                                       the same release as the binary. Never deployed to Maven.
+           platform-access-cli         the program: the `qits` native binary, which is what this
+                                       repository is for. The commands, plus `qits tui` and the
+                                       command-mode Quarkus application around them.
+
+         THE PIN IS FIRST IN THE LIST because it is the cheap module and nothing depends on it in
+         reactor: a broken pin costs no native compile. The commands come before the two programs
+         that depend on them, the service before the CLI (Maven orders the reactor by dependency
+         anyway; the list says it too). The release stamper walks a reactor by
+         <module> only, so a module missing from this list would never be version-stamped — which
+         is the whole reason the pin had to become a module rather than a nested pom beside one.
+
+         `./mvnw package -Dnative -DskipTests` makes the native binary
+         `platform-access-cli/target/qits` and the native service
+         `platform-access-mcp-service/target/qits-platform-access-mcp-service`; `-pl <module> -am`
+         builds one of them. The application module
+         builds no jar; the three lines that keep it so live in its pom, as they do in
+         qits-bootstrap-cli's. `./mvnw clean verify` runs the tests and packages the pin and the
+         commands jar the program is built from. -->
+    <groupId>eu.wohlben</groupId>
+    <artifactId>qits</artifactId>
+    <version>2026.1105.92857</version>
+    <packaging>pom</packaging>
+    <name>qits-platform-access-cli</name>
+
+    <modules>
+        <module>platform-access-cli-binary</module>
+        <module>platform-access-commands</module>
+        <module>platform-access-mcp-service</module>
+        <module>platform-access-cli</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <!-- The platform's Quarkus. Moves with the platform, not ahead of it. -->
+        <quarkus.platform.version>3.34.6</quarkus.platform.version>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+
+        <!-- `./mvnw test -Dtest=SomeTest` from the root, which is how AGENTS.md and
+             SkillDocumentTest's own failure message tell you to regenerate SKILL.md. Surefire
+             fails a module where the pattern matches nothing, so in a reactor that one-liner dies
+             in whichever module does not hold the test — a reactor detail reaching a person who
+             asked for one test. This turns that into what it already means: the other modules have
+             nothing to run. A run with no `-Dtest` is unaffected. -->
+        <surefire.failIfNoSpecifiedTests>false</surefire.failIfNoSpecifiedTests>
+        <!-- THE PROVIDER'S GOLDEN MASTERS (epic qits-546, qits-965), test scope: qits-projects
+             records what its /work doors answer for each provider state, and the commands' consumer
+             pact (ProjectsConsumerPactTest, pacts/qits-platform-access-monorepo_qits-projects-service.json)
+             is written from those recordings, never from hand-written JSON. A newer recording reaches
+             this repository the way every pin does — as a qits-maintenance bump on this property,
+             gated here, where a changed answer the CLI cannot read goes red before it ships. Do not
+             hand-edit it to chase a release. -->
+        <qits.projects-golden-masters.version>2026.1105.84836</qits.projects-golden-masters.version>
+        <!-- The other providers' golden masters, one per service the commands call (ticket
+             qits-1149): each pact under pacts/ is written from its provider's recordings. Bumped by
+             qits-maintenance like the one above. -->
+        <qits.workspaces-golden-masters.version>2026.1102.193613</qits.workspaces-golden-masters.version>
+        <qits.workspace-daemon-golden-masters.version>2026.1029.165821</qits.workspace-daemon-golden-masters.version>
+        <qits.artifacts-golden-masters.version>2026.1029.125556</qits.artifacts-golden-masters.version>
+        <qits.ci-golden-masters.version>2026.1102.180015</qits.ci-golden-masters.version>
+        <qits.idp-golden-masters.version>2026.1027.165632</qits.idp-golden-masters.version>
+        <qits.events-golden-masters.version>2026.1031.124054</qits.events-golden-masters.version>
+        <qits.maintenance-golden-masters.version>2026.1031.22002</qits.maintenance-golden-masters.version>
+        <qits.observability-golden-masters.version>2026.1018.155850</qits.observability-golden-masters.version>
+        <!-- qits-system's recordings, for the targets the VHS tapes' fake platform answers with
+             (FakePlatformMain, epic qits-881); no consumer pact reads them yet. Bumped by
+             qits-maintenance like the others. -->
+        <qits.system-golden-masters.version>2026.1102.183359</qits.system-golden-masters.version>
+        <qits.deployments-golden-masters.version>2026.1010.145913</qits.deployments-golden-masters.version>
+        <!-- The estate's golden-master reader and pact row builder (qits-integrations), test scope:
+             it reads every provider's recordings off the classpath and binds only what a command
+             reads. -->
+        <qits.pact-consumer.version>2026.1019.82625</qits.pact-consumer.version>
+        <!-- pact-jvm, test scope only: the consumer half of the qits-projects contract. An external
+             library, so it moves by hand, not by a maintenance bump; the same version as the
+             provider's verifier and every other consumer on the estate. -->
+        <pact-jvm.version>4.6.21</pact-jvm.version>
+        <!-- Where the golden masters jar is resolved from: the platform's hosted Maven. The default
+             is the public address; a CI step passes the in-network one, and the exact-id mirror in
+             .qits-maven-settings.xml (and a workspace's settings) reroutes `qits-maven` anyway. -->
+        <qits.maven.repository.url>https://registry.qits.${env.QITS_DOMAIN}/artifacts/maven/maven</qits.maven.repository.url>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Supplies the managed versions the children leave unversioned: junit-jupiter for
+                 the pin module, picocli, jackson and quarkus-arc for the commands, the whole Quarkus
+                 surface for the application. The pin module
+                 has no main-scope dependency at all and is not allowed to grow one. -->
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <!-- Test scope at every declaration site: recordings a test reads, never code. -->
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-projects-golden-masters</artifactId>
+                <version>${qits.projects-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>au.com.dius.pact.consumer</groupId>
+                <artifactId>junit5</artifactId>
+                <version>${pact-jvm.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-workspaces-golden-masters</artifactId>
+                <version>${qits.workspaces-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-workspace-daemon-golden-masters</artifactId>
+                <version>${qits.workspace-daemon-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-artifacts-golden-masters</artifactId>
+                <version>${qits.artifacts-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-ci-golden-masters</artifactId>
+                <version>${qits.ci-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-idp-golden-masters</artifactId>
+                <version>${qits.idp-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-events-golden-masters</artifactId>
+                <version>${qits.events-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-maintenance-golden-masters</artifactId>
+                <version>${qits.maintenance-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-observability-golden-masters</artifactId>
+                <version>${qits.observability-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-system-golden-masters</artifactId>
+                <version>${qits.system-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-deployments-golden-masters</artifactId>
+                <version>${qits.deployments-golden-masters.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>eu.wohlben.qits</groupId>
+                <artifactId>qits-pact-consumer</artifactId>
+                <version>${qits.pact-consumer.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <repositories>
+        <!-- The one repository beside Central: the platform's, for the golden masters jar. -->
+        <repository>
+            <id>qits-maven</id>
+            <url>${qits.maven.repository.url}</url>
+        </repository>
+    </repositories>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>${quarkus.platform.group-id}</groupId>
+                    <artifactId>quarkus-maven-plugin</artifactId>
+                    <version>${quarkus.platform.version}</version>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${compiler-plugin.version}</version>
+                    <configuration>
+                        <parameters>true</parameters>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${surefire-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <!-- Released in step with surefire, so one version for both. Bound only by the MCP
+                         service's native profile, where it runs McpWireJsonIT against the runner;
+                         pinned here so a `failsafe:` goal named on the command line resolves to this
+                         version in every module of a `-am` reactor, not to whatever is newest. -->
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <version>${surefire-plugin.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

@@ -1,0 +1,35 @@
+# WHAT THIS REPOSITORY DEPLOYS AS, held still across the repository rename. The repository is
+# qits-docs-service now; the application is still qits-docs, so nothing that is running moves: the
+# swarm service and its wire alias, the container, the image qits/qits-docs the build pushes, the
+# provisioned database, the derived host label, the extras family and the QITS_APPLICATION the
+# container boots with all keep the names they have. Omitted, this name would be DERIVED from the
+# repository, and the rename would read as a decommission plus a new application rather than a
+# rename. Changing the value later is exactly that decommission, so it does not change again.
+application: qits-docs
+
+# The machine surface. The edge path-routes every application's `routes:` prefix on every host, so
+# /docs/** reaches this service from anywhere; the client is what this service's OWN host serves at
+# its root, and needs no route entry to say so.
+routes: /docs
+
+# Where this application hangs in the sidebar. Documentation is published by every kind of
+# repository, so it is an entry under all six category detail nodes — the position is per slot,
+# and 2 is Docs' place in the platform's fixed order of the per-repository applications
+# (Api Docs 1, Docs 2, Code 3, CI 4, Artifacts 5, Configuration 6, Workspaces 7).
+navigation-entries: services.details.Docs:2, daemons.details.Docs:2, libs.details.Docs:2, apps.details.Docs:2, frontends.details.Docs:2, cli.details.Docs:2, images.details.Docs:2
+
+# idp:client ASKS QITS-DEPLOYMENTS TO PROVISION THIS APPLICATION'S OWN QITS-IDP SERVICE CLIENT — id
+# `<env>-qits-docs` (derived from env + application), roles fixed in qits-idp code. The deployer
+# stores the secret the way it stores a database password, and injects QITS_RESOURCE_IDP_URL,
+# QITS_RESOURCE_IDP_CLIENT_ID and QITS_RESOURCE_IDP_CLIENT_SECRET, which the `qits` oidc client in
+# application.properties reads. It is the bearer every read of qits-artifacts carries now that this
+# service dials the store at its edge host, registry.qits.<domain>, where the edge refuses an
+# anonymous request (qits-1419, feature qits-1406; the qits-githost pattern of qits-1330). No
+# database: this service still holds no state.
+resources: idp:client
+
+# The default would be /docs/q/health/ready, derived from the name with the qits-
+# prefix dropped — which is exactly right here. It is spelled anyway because the segment is
+# spelled in two other places (DocsPaths.BASE and quarkus.http.non-application-root-path), so a
+# reader chasing a failing health gate finds it here too.
+health_path: /docs/q/health/ready

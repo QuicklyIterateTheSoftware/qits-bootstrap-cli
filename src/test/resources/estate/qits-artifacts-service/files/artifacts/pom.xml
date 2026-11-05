@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-artifacts</artifactId>
+        <version>2026.1105.101824</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- What did NOT move out to qits-blobstore or qits-registries: this service's own domain over
+         the shared store. The docs and daemon registries (entities, persistence, services), the
+         store explorer, the live blob census, the repository seeder, and the two repository-type
+         PROFILE BEANS this service contributes — DAEMON_BINARIES and DOCS, formats nobody else
+         serves.
+
+         It also owns the SCHEMA. The Flyway lineage under src/main/resources/db/artifacts/migration
+         is carried unchanged through the split: the libraries ship no migrations, each consuming
+         service owns its own, and this one's is the original chain. Orphaned tables (the git host's
+         V4/V5, the proxy tables) are a cutover data concern, not a reason to rewrite history.
+
+         A plain library jar: entities, persistence, control, dto — NO web/JAX-RS, and no dependency
+         on `domain` or any `auth/*` module. Its REST boundary is hosted by `service`.
+
+         The directory stays `artifacts/` (the filtered history is anchored to that path); only the
+         coordinates are namespaced, hence the doubled name. -->
+    <artifactId>qits-artifacts-artifacts</artifactId>
+    <name>qits-artifacts :: artifacts</name>
+
+    <dependencies>
+        <dependency>
+            <!-- The store itself: ArtifactRepository/ArtifactRecord, the disk index, the blob
+                 service, and RepositoryTypeProfiles — the open registration the two profile beans
+                 in this module plug into. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-blobstore</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The three formats, for the READ side only: the census and the explorer count npm
+                 tarballs, maven artifacts and OCI manifests, so they need those modules' entities
+                 and repositories. Nothing here serves their wire routes — `service` does. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-registries-npm</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-registries-maven</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-registries-oci</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm-panache</artifactId>
+        </dependency>
+        <dependency>
+            <!-- ObjectMapper bean for services that read/write JSON (no REST needed). -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The one engine this service has. It replaced quarkus-jdbc-h2 with the blob store's
+                 move to chunked bytea: `bytea`, `pg_advisory_xact_lock`, a partial index and an
+                 on-conflict promote exist on no other, so H2 is not a smaller postgres here, it is
+                 a different store. Compile scope, unlike the libraries' test scope: this module
+                 owns the schema, so it also picks the driver. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <!-- PatientPgDriver, which the datasource block in this jar's
+                 microprofile-config.properties names as a string. It also arrives transitively on
+                 qits-blobstore, which reads DbRetry — named here because this module's own config
+                 is what pins the class, and a config-only reference is exactly the kind that
+                 disappears silently when a transitive dependency moves. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-db-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Flyway 10 split its database support out of core; without this the postgres lineage
+                 has no dialect and migrate-at-start fails at the first statement. -->
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-validator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.mapstruct</groupId>
+            <artifactId>mapstruct</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- A real postgres for this module's suite, spawned as a child process rather than a
+                 container: the first rule of this repo is that a clone tests green with no docker,
+                 and the schema under test is a PostgreSQL lineage. See testdb/EmbeddedPg. -->
+            <groupId>io.zonky.test</groupId>
+            <artifactId>embedded-postgres</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Named per architecture on purpose: the binaries are separate artifacts and zonky
+                 picks one at run time, so an unnamed arch fails in the middle of a suite rather
+                 than during resolution. These three are what this platform is built and developed
+                 on — the same three the qits-blobstore and qits-registries suites name. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-darwin-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+            <plugin>
+                <!-- Index the jar so a consuming app discovers its CDI beans and entities without
+                     needing a quarkus.index-dependency entry (the monorepo's `service` needed one). -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

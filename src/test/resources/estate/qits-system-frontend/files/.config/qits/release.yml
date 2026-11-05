@@ -1,0 +1,36 @@
+# How this repository releases: the `spa-frontend` archetype's QA slot (`release-request:`, from
+# `.config/qits/release-archetypes/spa-frontend.yml` in qits-ci) — install, lint, test (the pact
+# spec included), build — and the contracts below.
+#
+# THE PACTS (qits-1284) are the REST calls @qits/ui-components makes on this SPA's behalf, declared
+# as contracts keyed by the provider's repository name. They sit flat in `pacts/` as
+# `qits-system-frontend_qits-ui-components-jslib_<provider>.json`, written by
+# `src/app/ui-components.pact.spec.ts` (regenerate with `QITS_GOLDEN_UPDATE=true npm test`); qits-ci
+# packs `pacts/*_<provider>.json` into the maven jar
+# eu.wohlben.qits:qits-system-frontend-pacts-<provider>, which that provider verifies in its own
+# gate. A contract package is `if-changed` by definition: a release whose pact with a provider did
+# not change publishes nothing for it.
+#
+# qits-system-service is NOT declared here yet, on purpose (epic qits-1481). This SPA's own pact
+# with it, `src/app/api/targets-api.pact.spec.ts`, writes no file today — every row is skipped
+# until `@qits/system-golden-masters` publishes the targets module's states, see that file's own
+# comment — so there is nothing yet for a `qits-system-service: {...}` entry here to pack. Add it
+# once that spec writes `pacts/qits-system-frontend_qits-system-service.json` for real.
+#
+# `application:` IS THE APPLICATION THIS SPA BELONGS TO, `qits-system`. The SPA ships no image and
+# is no deployable of its own: qits-system-service carries it as its Quinoa `webui` submodule and
+# serves it from the `qits-system` application. The pact packages' coordinates are spelled with
+# the REPOSITORY names, never this one; `application:` only names the application in the packages'
+# description.
+#
+# NO `release:` SLOT. `spa-frontend` has none, and since qits-1149 it needs none: qits-ci
+# synthesises a release step for every composition without one, and its postlude packs and
+# publishes the committed pacts. The step builds nothing, because there is nothing to build.
+archetype: spa-frontend
+
+contracts:
+  application: qits-system
+  pacts:
+    qits-edge-service: { packages: [maven] }
+    qits-projects-service: { packages: [maven] }
+    qits-ci-service: { packages: [maven] }

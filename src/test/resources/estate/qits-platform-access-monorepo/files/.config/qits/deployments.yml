@@ -1,0 +1,26 @@
+# How qits-deployments deploys this repository's one image, the MCP service. It reads this file from
+# the git host at the release tag, and carrying it at all is what makes the release deploy: without
+# it the docker package is refused (`DeployService.refuseUndeclaredSpec`). The binary and the pin jar
+# are not deployments; the image `qits/qits-platform-access-mcp-service` the release pushes is.
+#
+# THE APPLICATION IS SPELLED, NOT DERIVED. Derived from the repository it would be
+# qits-platform-access-cli, which is the CLI, not this service. The name is the image's, so the swarm
+# service, its wire alias `<env>-qits-platform-access-mcp-service:8080` and the extras family
+# `qits.deployments.extras.qits-platform-access-mcp-service.*` all read the same. Changing it later
+# is a decommission plus a new application, so it does not change.
+application: qits-platform-access-mcp-service
+
+# The service serves MCP at /mcp (quarkus.mcp.server.qits.http.root-path), at the root of its own
+# HTTP space: no quarkus.http.root-path.
+routes: /mcp
+
+# THE PUBLIC NAME, mcp.<env>.<domain> (mcp.qits.<QITS_DOMAIN> on the flat `qits` project). Spelled,
+# because the derived label would be the application name minus `qits-`, and no navigation entry:
+# this is not a page.
+host: mcp
+
+# THE READINESS PATH IS STATED because the default is `/<application minus qits->/q/health/ready`
+# (`/platform-access-mcp-service/q/health/ready`), and this service has no root path: Quarkus answers
+# readiness at /q/health/ready. Readiness waits on nothing: the idp's keys are fetched on the first
+# token, never at boot.
+health_path: /q/health/ready

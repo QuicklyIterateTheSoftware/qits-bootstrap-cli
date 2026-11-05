@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- The platform's byte plane, whole: the content-addressed blob store, and the protocol
+         services, wire routes and upstream clients for npm, maven and OCI that write through it.
+
+         Both halves came out of qits-platform-artifacts (phase 1 of byte-plane-split-plan.md), the
+         store into its own repository and the formats into this one. That split was awkward — it
+         left the store's classes in `eu.wohlben.qits.artifacts` — and it is undone: qits-blobstore
+         merged in here on 2026-08-30 with its history, its package renamed to
+         `eu.wohlben.qits.blobstore`, its maven coordinate unchanged. One repository, one release,
+         one version for the storage layer.
+
+         ONE MODULE PER FORMAT, and each carries BOTH sides — hosted and pull-through cache. A
+         consuming service wires only the repository types it owns: qits-platform-mirror takes the
+         proxy/mirror types, qits-artifacts the hosted ones. Splitting hosted from cached instead
+         would cut every format down the middle, and the two sides share a table in all three
+         (`npm_version`, `maven_artifact`, `oci_manifest`) — one code path, told apart by the
+         repository row's type.
+
+         NO FLYWAY MIGRATIONS: each consuming service owns its schema. JPA entities travel as they
+         are, and the suites generate their schema from the mappings.
+
+         The FORMAT modules keep their package names — eu.wohlben.qits.artifacts.* for the
+         store-side halves and eu.wohlben.qits.{npm,maven,registry} for the routes — so the
+         service-side switch stays a dependency change rather than a rewrite. Only the merged
+         blobstore module moved, to eu.wohlben.qits.blobstore.*.
+
+         Resolves from Maven Central except for one platform artifact: qits-db-core, which carries
+         DbRetry. It comes from the `qits-maven` repository below. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-registries</artifactId>
+    <!-- One version for the whole byte plane. Every module carries it verbatim — this repository
+         duplicates the version rather than deriving it, so the release stamp rewrites one literal
+         per pom — and `deploy` at the root publishes them together. -->
+    <version>2026.1103.145246</version>
+    <packaging>pom</packaging>
+    <name>qits-registries</name>
+
+    <modules>
+        <!-- `blobstore` first: the store every other module writes through. Then `common`, which
+             holds what two formats need and neither owns. The three format modules are siblings and
+             depend on each other not at all. -->
+        <module>blobstore</module>
+        <module>common</module>
+        <module>npm</module>
+        <module>maven</module>
+        <module>oci</module>
+    </modules>
+
+    <properties>
+        <!-- DbRetry, the read patience seam. Published by libs/qits-integrations-quarkus, so it is
+             pinned to a released calver rather than following a snapshot. -->
+        <qits.db-core.version>2026.1002.70617</qits.db-core.version>
+        <!-- qits-http-core (qits-1198): @RawHttpClient only, on MavenUpstream/NpmUpstream/MirrorUpstream
+             — those three talk to Maven Central, registry.npmjs.org and arbitrary upstream OCI
+             registries, none of them a qits service, so none of them is wrapped. Annotation-only use,
+             CLASS retention, so `provided` below costs the format modules nothing at runtime. -->
+        <qits.http-core.version>2026.1103.132907</qits.http-core.version>
+        <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.version>3.34.6</quarkus.platform.version>
+
+        <!-- Real postgres for the store's suite and the format suites alike: the blob store's only
+             backend is postgres now, so every suite that stores a byte needs one. Zonky resolves the
+             binaries as ordinary Maven artifacts and runs them as a child process, which keeps the
+             rule that a clone builds and tests green with no docker. 18.4.0 matches the platform's
+             own database image. -->
+        <zonky.embedded-postgres.version>2.2.2</zonky.embedded-postgres.version>
+        <zonky.postgres-binaries.version>18.4.0</zonky.postgres-binaries.version>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+        <jandex-plugin.version>3.4.0</jandex-plugin.version>
+        <lombok.version>1.18.38</lombok.version>
+        <lombok-mapstruct-binding.version>0.2.0</lombok-mapstruct-binding.version>
+        <mapstruct.version>1.6.3</mapstruct.version>
+    </properties>
+
+    <repositories>
+        <!-- The platform's own Maven repository, for qits-db-core — since the blobstore merge the
+             one dependency neither on Maven Central nor in this reactor. A local build resolves it
+             from ~/.m2 instead; a publish container has no such cache and reads it from the store it
+             was just deployed to. The id must stay `qits-maven`: it is what a cached copy is
+             recorded under, and what the bootstrap's settings mirror matches by exact id. -->
+        <repository>
+            <id>qits-maven</id>
+            <url>${qits.maven.repository.url}</url>
+        </repository>
+    </repositories>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <!-- Which postgres the embedded binaries ARE. Imported as a BOM because the per-arch
+                     artifacts each module names are separate coordinates. -->
+                <groupId>io.zonky.test.postgres</groupId>
+                <artifactId>embedded-postgres-binaries-bom</artifactId>
+                <version>${zonky.postgres-binaries.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.zonky.test</groupId>
+                <artifactId>embedded-postgres</artifactId>
+                <version>${zonky.embedded-postgres.version}</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok</artifactId>
+                <version>${lombok.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.mapstruct</groupId>
+                <artifactId>mapstruct</artifactId>
+                <version>${mapstruct.version}</version>
+            </dependency>
+            <dependency>
+                <!-- A module of this reactor since the merge, so it moves at the reactor's version
+                     rather than at a pin of its own. -->
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-blobstore</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <!-- Declared by npm, maven and oci, one each: the three modules that read rows. It
+                 cannot ride in on `common`, which holds a body reader and no database code at all,
+                 and which npm does not depend on. -->
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-db-core</artifactId>
+                <version>${qits.db-core.version}</version>
+            </dependency>
+            <!-- @RawHttpClient only (qits-1198): MavenUpstream, NpmUpstream and MirrorUpstream each
+                 declare this to annotate their HttpClient as deliberately unwrapped — they all talk
+                 to an external registry, never a qits service. CLASS retention, so `provided` is
+                 enough: nothing needs the jar at runtime. -->
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-http-core</artifactId>
+                <version>${qits.http-core.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <!-- The reactor's own module, so the format modules depend on it version-less. -->
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-registries-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${compiler-plugin.version}</version>
+                    <configuration>
+                        <parameters>true</parameters>
+                        <!-- Incremental compilation leaves stale MapStruct *Impl classes behind
+                             when a mapper's shape changes. -->
+                        <useIncrementalCompilation>false</useIncrementalCompilation>
+                        <annotationProcessorPaths>
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                                <version>${lombok.version}</version>
+                            </path>
+                            <path>
+                                <groupId>org.mapstruct</groupId>
+                                <artifactId>mapstruct-processor</artifactId>
+                                <version>${mapstruct.version}</version>
+                            </path>
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok-mapstruct-binding</artifactId>
+                                <version>${lombok-mapstruct-binding.version}</version>
+                            </path>
+                        </annotationProcessorPaths>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${surefire-plugin.version}</version>
+                    <configuration>
+                        <systemPropertyVariables>
+                            <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                        </systemPropertyVariables>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>io.smallrye</groupId>
+                    <artifactId>jandex-maven-plugin</artifactId>
+                    <version>${jandex-plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>make-index</id>
+                            <goals>
+                                <goal>jandex</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

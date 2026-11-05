@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-platform-deployments</artifactId>
+        <version>2026.1105.94733</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The EXECUTION domain: the recorded deployments, the orchestration that produces them, the
+         rollback pins read off them, the strict deployment-spec parser, and the two SEAMS this
+         module cannot implement itself — the docker driver and the git-host spec source. A plain
+         library jar: NO web/JAX-RS, no HTTP client, no docker client. The whole of what reaches
+         outside the process is an interface here and an implementation in `service/`.
+
+         It depends on `environments` because deploying is a decision about the topology: a green
+         build registers the repository's service and asks which tiers track the branch. That
+         dependency is one-way and is the partition — the topology knows nothing about containers.
+         In-process, so registration writes rows in the same transaction and resolution is a
+         repository query; the HTTP client, the stub server and the outage posture the previous
+         two-service split needed all dissolved with the merge.
+
+         The directory is `deployments/` and the artifactId is
+         `qits-platform-deployments-deployments`. Doubled, and deliberately so: the module is the
+         deployments domain of the qits-platform-deployments repo, and shortening either half would
+         make the coordinate ambiguous in a shared ~/.m2. -->
+    <artifactId>qits-platform-deployments-deployments</artifactId>
+    <name>qits-platform-deployments :: deployments</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-platform-deployments-environments</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The event vocabulary DeployAnnouncer is spelled in. Plain records over
+                 `eventstream`, no bus and no transport, so holding them here does not put the bus
+                 in a domain module — see AGENTS.md, "the bus's SEAMS live in service/". -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-platform-deployments-events</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm-panache</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-validator</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The causation persistence trio ONLY — CausedRow and CausationStamp on
+                 PdDeployment, @Uncaused on PdResource. No listener, no publisher, no EventFrame
+                 and no CausationScope: the cause crosses the worker hop as a plain UUID on
+                 BuildAnnouncements.announce, because an executor hop is exactly where an ambient
+                 scope dies. This module has no @QuarkusTest, so the jar's persistence unit never
+                 boots here and its suite owes it no database. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-eventstream</artifactId>
+        </dependency>
+        <dependency>
+            <!-- DbRetry, which the worker's three brackets are wrapped in. Declared here as well
+                 as in `environments` because this module reads the class, not just the config
+                 line that names its driver sibling. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-db-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.mapstruct</groupId>
+            <artifactId>mapstruct</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- PdSchemaTest runs the real migration against a real postgres. Zonky spawns the
+                 binaries below as a child process, so `mvn verify` still needs no docker. -->
+            <groupId>io.zonky.test</groupId>
+            <artifactId>embedded-postgres</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Named per architecture on purpose: the binaries are separate artifacts and zonky
+                 picks one at run time, so an unnamed arch fails in the middle of a suite rather
+                 than during resolution. These three are what this platform is built and developed
+                 on. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The FOURTH arch, and it is the one no developer machine is: the CI step containers
+                 are Alpine (musl), and .config/qits/ci-event-userflows.yml runs `mvn verify` over
+                 the WHOLE reactor there — so PdSchemaTest's postgres has to have a binary for that
+                 platform too. Named here as well as in service/pom.xml because zonky resolves per
+                 module classpath, and a missing arch fails mid-suite rather than at resolution. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64-alpine</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-darwin-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- The consuming Quarkus app needs an index of this jar's beans and entities. -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

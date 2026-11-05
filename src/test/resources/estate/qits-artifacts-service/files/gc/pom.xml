@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-artifacts</artifactId>
+        <version>2026.1105.101824</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- GARBAGE COLLECTION: a PROCESS modelled from within qits-artifacts, not artifacts domain
+         (artifacts-gc-plan.md, settlement). The census, the per-type strategies, the reconciliation
+         and the sweep live here; the blob store, its rows and its registries live in `artifacts`.
+
+         The dependency runs ONE WAY — gc → artifacts, never back. `artifacts` does not know a
+         garbage collector exists, which is the property that keeps a strategy's rule out of the
+         store: a change here cannot reach the write path, and the store's funnels stay the only way
+         a byte or a row moves. Where a strategy needs one of those funnels, `artifacts` opens a
+         narrow public door (`BlobReclaim`, `OciRegistryCollection`, `NpmRegistryCollection`) that
+         delegates to a member that stays package-private.
+
+         PIN-BASED HOSTED TYPES ONLY (byte-plane-split-plan.md phase 4). The access-tracked eviction
+         engine and the three cache adapters went to qits-platform-mirror with the caches they
+         collect; git pack GC went to qits-githost with the git host. What is left is one engine —
+         `OwnArtifactsStrategy` — over the types this service publishes, plus the reconciliation and
+         the sweep, which are type-agnostic and stay whole.
+
+         The JAX-RS boundary is not here either. `GcPlanController` stays in `service` with every
+         other route, so this module — like `artifacts` — carries no web layer. -->
+    <artifactId>qits-artifacts-gc</artifactId>
+    <name>qits-artifacts :: gc</name>
+
+    <dependencies>
+        <dependency>
+            <!-- The store this collects: its census, its rows, its blob ids, and the three narrow
+                 doors above. The one direction that exists. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-artifacts-artifacts</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The store's own doors: BlobReclaim, the repository rows, and RepositoryTypeProfiles
+                 — which is what the planner walks now that the type set is open rather than an
+                 enum it could call values() on. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-blobstore</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The hosted formats' collections, which are the adapters' delete funnels. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-registries-npm</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-registries-maven</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-registries-oci</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <!-- CdHttpDeploymentPins parses qits-cd's answer with an injected ObjectMapper. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The five pin readers wrap their outbound HttpClient through QitsHttpClients. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-http-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- A real postgres for this module's suite. Test-scope dependencies do not travel, so
+                 this block is a copy of `artifacts`' rather than something inherited — the same
+                 rule that gives this module its own GcFixture: modules here share no test
+                 classpath. Its database name is its own (see testdb/EmbeddedPgConfigSource), so two
+                 modules' suites in one build never mean the same one. -->
+            <groupId>io.zonky.test</groupId>
+            <artifactId>embedded-postgres</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-darwin-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+            <plugin>
+                <!-- Index the jar so the consuming app discovers the strategies, the planner and the
+                     sweep as CDI beans. Without it `service` finds no GcStrategy at all and the plan
+                     reports every type as unclaimed — a green build with an empty report. -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

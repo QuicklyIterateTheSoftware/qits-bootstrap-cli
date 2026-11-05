@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-stt</artifactId>
+        <version>2026.1105.123002</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The stt DOMAIN: the venv bootstrap, the resident Parakeet worker and the process plumbing
+         between them, plus the worker script itself as a classpath resource. A plain library jar in
+         the shape of the monorepo's `artifacts`/`ci`/`epics` modules — NO web, NO JAX-RS; the route
+         lives in the sibling `service` module.
+
+         No datasource, no Flyway, no entities: this context stores nothing. A transcription is a
+         request/response over a temp WAV that is deleted in a finally block.
+
+         quarkus-jackson is here for the ObjectMapper bean only — the worker protocol is one JSON
+         line per response over the child process's pipes, which needs no REST stack. -->
+    <artifactId>qits-stt-domain</artifactId>
+    <name>qits-stt :: domain</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <!-- ObjectMapper bean availability: the resident worker answers in JSON lines. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- Index the jar so a consuming app discovers its CDI beans without needing a
+                     quarkus.index-dependency entry. -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

@@ -1,0 +1,676 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben</groupId>
+        <artifactId>qits-platform-edge-parent</artifactId>
+        <version>2026.1105.120452</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <groupId>eu.wohlben</groupId>
+    <artifactId>qits-platform-edge</artifactId>
+    <version>2026.1105.120452</version>
+    <packaging>quarkus</packaging>
+
+    <name>qits-platform-edge</name>
+    <description>The platform's L7 edge: it binds the host's only public port and hands every
+        request to the environment gateway its Host name names.
+    </description>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <!-- Keep in step with the platform's quarkus.platform.version (qits-gateway's is the one to
+             match; it is the closest sibling and the other half of every request that passes here). -->
+        <quarkus.platform.version>3.40.1</quarkus.platform.version>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+        <failsafe-plugin.version>${surefire-plugin.version}</failsafe-plugin.version>
+        <spotless-plugin.version>2.44.5</spotless-plugin.version>
+        <google-java-format.version>1.28.0</google-java-format.version>
+        <qits.eventstream.version>2026.1103.231226</qits.eventstream.version>
+
+        <!-- The user-story framework (TEST SCOPE ONLY): ForwardAuthBootstrapIT is written as
+             @UserStory methods, so the packaged forward-auth proof doubles as documentation —
+             steps, notes and an OBSERVED network diagram emitted under service/target/userstories/,
+             published per commit by .config/qits/ci-event-userflows.yml. Published out of
+             libs/qits-userflows to the platform's own Maven repository, which is the same
+             `qits-maven` repository below that qits-eventstream already comes from — so nothing
+             about resolution changes and neither docker/Dockerfile nor either pipeline needed a
+             repair. The groupId is spelled out rather than ${project.groupId}: this repository's
+             own groupId is `eu.wohlben`, and the platform's shared jars are `eu.wohlben.qits`. -->
+        <qits.userflows.version>2026.1028.231715</qits.userflows.version>
+        <!-- The recording service mock, used for ONE of the two kinds of far side this catalogue
+             needs: qits-platform-idp, whose whole contribution is a canned JSON introspection
+             answer plus a recording of who asked for it, which is exactly what this library is for.
+             It is NOT used for the applications behind the vhosts any more — those need response
+             headers, non-JSON bodies, an answer written over time, an outage arm and a WebSocket
+             upgrade, none of which canned JSON can do, so they are eu.wohlben.qits.edge.StoryUpstream
+             (a Vert.x recorder in the test JVM). See that class for the four reasons, one per
+             story. Released out of libs/qits-integrations-quarkus. -->
+        <qits.service-mock.version>2026.1002.70617</qits.service-mock.version>
+        <!-- The platform's shared rules (test scope only), qits-1754: ProviderStateCoverageTest
+             checks that every state golden-masters/index.json records has its @State callback on
+             ConsumerPactVerificationTest. Released out of libs/qits-integrations-quarkus, like
+             qits-userflows and qits-service-mock above. -->
+        <qits.arch-rules.version>2026.1030.30851</qits.arch-rules.version>
+        <!-- pact-jvm's JUnit 5 provider, for contracts/ConsumerPactVerificationTest: the version every
+             provider on the estate verifies with, so a consumer's pact is read the same way. -->
+        <pact.version>4.7.5</pact.version>
+        <!-- qits-idp's recorded answers (golden-masters/), test scope: consumer/IdpContract builds
+             the edge's pact against qits-idp from them (ticket qits-1149). Moves like every
+             internal pin, by a qits-maintenance bump; do not hand-edit it to chase a release. -->
+        <qits.idp-golden-masters.version>2026.1027.165632</qits.idp-golden-masters.version>
+        <!-- THE CONSUMER PACTS ConsumerPactVerificationTest verifies (ticket qits-1284): fourteen
+             frontends, each through @qits/ui-components' main-navigation call, each publishing
+             eu.wohlben.qits:qits-<frontend>-pacts-qits-edge-service carrying
+             `pacts/qits-<frontend>_qits-ui-components-jslib_qits-edge-service.json`. Test scope at
+             the declaration site; a pin in <properties> like every other qits jar, so
+             qits-maintenance bumps it when the consumer releases a changed pact. -->
+        <qits.ci-frontend-pacts-qits-edge-service.version>2026.1103.145359</qits.ci-frontend-pacts-qits-edge-service.version>
+        <qits.projects-frontend-pacts-qits-edge-service.version>2026.1103.141410</qits.projects-frontend-pacts-qits-edge-service.version>
+        <qits.docs-frontend-pacts-qits-edge-service.version>2026.1103.140427</qits.docs-frontend-pacts-qits-edge-service.version>
+        <qits.events-frontend-pacts-qits-edge-service.version>2026.1103.172940</qits.events-frontend-pacts-qits-edge-service.version>
+        <qits.githost-frontend-pacts-qits-edge-service.version>2026.1103.140926</qits.githost-frontend-pacts-qits-edge-service.version>
+        <qits.maintenance-frontend-pacts-qits-edge-service.version>2026.1103.172943</qits.maintenance-frontend-pacts-qits-edge-service.version>
+        <qits.artifacts-frontend-pacts-qits-edge-service.version>2026.1103.141143</qits.artifacts-frontend-pacts-qits-edge-service.version>
+        <qits.deployments-frontend-pacts-qits-edge-service.version>2026.1103.172937</qits.deployments-frontend-pacts-qits-edge-service.version>
+        <qits.mirror-frontend-pacts-qits-edge-service.version>2026.1103.172944</qits.mirror-frontend-pacts-qits-edge-service.version>
+        <qits.observability-frontend-pacts-qits-edge-service.version>2026.1103.151444</qits.observability-frontend-pacts-qits-edge-service.version>
+        <qits.orchestrator-frontend-pacts-qits-edge-service.version>2026.1103.172942</qits.orchestrator-frontend-pacts-qits-edge-service.version>
+        <qits.system-frontend-pacts-qits-edge-service.version>2026.1103.172958</qits.system-frontend-pacts-qits-edge-service.version>
+        <qits.idp-frontend-pacts-qits-edge-service.version>2026.1103.172941</qits.idp-frontend-pacts-qits-edge-service.version>
+        <!-- The shared golden-master reader (qits-integrations-quarkus-javalib), test scope. -->
+        <qits.pact-consumer.version>2026.1019.82625</qits.pact-consumer.version>
+
+        <!-- INTEGRATION TESTS ARE OFF BY DEFAULT, and this repository now has both halves of that
+             sentence: a failsafe plugin bound below, and ForwardAuthBootstrapIT for it to run.
+             There was neither before.
+
+             It stays TRUE. README.md documents `./mvnw verify` as "unit tests + the end-to-end
+             proxy suite (no docker, no network)" from a clone of this repository alone, and that
+             build is already the heaviest of its kind here: the surefire half forks TWO JVMs —
+             EdgeSessionGateTest needs a Quarkus of its own, see the surefire executions below —
+             and spawns a real PostgreSQL. Opting `verify` into a launched front door plus a SECOND
+             embedded postgres (failsafe forks its own JVM, so the suite's cannot be reused) would
+             change that build, for everybody, to run what CI runs anyway.
+
+             .config/qits/ci-event-userflows.yml therefore names the story classes, as a comma
+             list: -DskipITs=false "-Dit.test=ForwardAuthBootstrapIT,AnonymousReadIT,...". Every
+             new story class goes into that list in the same commit that adds it, or it is written
+             and never run. The `native` profile below flips
+             the property wholesale, which keeps its plain meaning — run everything, against the
+             binary — and this IT earns its place there twice over: the edge SHIPS native, and a
+             GraalVM image is exactly where a lost reflection registration or a client built in a
+             class initialiser hides. -->
+        <skipITs>true</skipITs>
+        <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
+        <zonky.embedded-postgres.version>2.2.2</zonky.embedded-postgres.version>
+        <zonky.postgres-binaries.version>18.6.0</zonky.postgres-binaries.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.zonky.test.postgres</groupId>
+                <artifactId>embedded-postgres-binaries-bom</artifactId>
+                <version>${zonky.postgres-binaries.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.zonky.test</groupId>
+                <artifactId>embedded-postgres</artifactId>
+                <version>${zonky.embedded-postgres.version}</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- FIVE EXTENSIONS, AND THE SHORTNESS OF THE LIST IS THE POINT OF THIS SERVICE. Every
+         dependency here is native image size, build time and reflection surface, and this process
+         is the one thing that has to be up before anything on the platform is reachable. There is
+         no REST layer, no datasource, no ORM and no client: the edge reads an environment list from
+         configuration and streams bytes.
+
+         The fifth is the telemetry exporter, and it is the one addition that earns its size. The
+         edge is the outermost hop, so it is the only place that sees a request the environment
+         gateway never received — a 502 against an unreachable gateway, a host name that fell to the
+         default. Without it the platform's first hop is the one hop with no trace. -->
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The HTTP server and the Vert.x `Router` the catch-all route is registered on. Raw
+                 Vert.x routes only — a JAX-RS layer would buffer and re-encode what must pass
+                 through untouched. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-vertx-http</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The reverse-proxy engine, the same one qits-gateway uses one hop further in: it
+                 streams request and response bodies without buffering them and forwards WebSocket
+                 upgrades by default. Version managed by the platform BOM. -->
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-http-proxy</artifactId>
+        </dependency>
+        <dependency>
+            <!-- /q/health/{live,ready}, answered by this process and never proxied. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-health</artifactId>
+        </dependency>
+        <dependency>
+            <!-- OTLP export to qits-observability. The extension is what instruments the process;
+                 the endpoint and protocol in application.properties are what make it arrive, since
+                 the defaults are gRPC to localhost:4317 and the receiver speaks HTTP/protobuf. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-opentelemetry</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Durable live delivery plus the catch-up log reader. The edge is rebuilt or moved
+                 independently of deployments, so its routing projection must recover missed events. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-eventstream</artifactId>
+            <version>${qits.eventstream.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben</groupId>
+            <artifactId>qits-platform-edge-acme</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- Direct on purpose: Quarkus discovers named JCE providers from application
+             dependencies while augmenting the native image. acme4j also brings this transitively,
+             but that alone did not register BC in the production executable. -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-security</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The token this service PRESENTS (qits-543/qits-1328): the named client `qits`, its
+                 own qits-idp service client by client credentials, configured in
+                 application.properties from the deployer's idp:client resource. Brought in alone,
+                 it enables no OIDC tenant of its own and changes no request the edge authenticates
+                 — that is quarkus-oidc, not this extension — it only lets the qits-eventstream
+                 library mint this process's own bearer through OidcClients.getClient("qits"). -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-oidc-client</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-scheduler</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Flyway 10's PostgreSQL support lives outside flyway-core. -->
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- InMemorySpanExporter, for ObservabilityIngestSpanSuppressionTest (qits-1432): %test
+                 disables the Quarkus SDK, so that test turns it back on for itself and reads spans
+                 off a CDI-produced in-memory exporter rather than a real OTLP receiver. No
+                 <version>: the quarkus-bom imports the opentelemetry-bom that manages it — the same
+                 dependency qits-projects-service's OtelGitTracingTest carries for the same reason. -->
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-sdk-testing</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test</groupId>
+            <artifactId>embedded-postgres</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64-alpine</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-darwin-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The user-story framework: the whole story catalogue under
+                 eu.wohlben.qits.edge.*IT is written as @UserStory methods, so the packaged-boot
+                 proofs double as documentation. Every one of them is browserless (an Interactions
+                 parameter and no Flow), so the transitive Playwright never launches anything and no
+                 browser is ever downloaded — which is what lets the userflow pipeline run in a step
+                 container with no Chromium in it. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-userflows</artifactId>
+            <version>${qits.userflows.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The recording service mock, standing in for qits-platform-idp — whose recordings
+                 prove the edge ASKS about a cookie, with its own client credential, rather than
+                 deciding on its own. One canned JSON answer per route plus a recording of who
+                 asked for it is exactly what this library is for.
+
+                 IT IS NOT THE APPLICATION STAND-IN. The services behind the vhosts are
+                 eu.wohlben.qits.edge.StoryUpstream, a Vert.x recorder in the test JVM, because
+                 these stories need four things canned JSON cannot do — a chosen response header
+                 (the Cache-Control rewrite), a non-JSON body (an index.html), an answer written
+                 over time (the streaming claim) and an outage arm plus a WebSocket upgrade. That
+                 class states the four, one per story.
+
+                 Neither of them replaces StubGateways, and neither is meant to: that resource is
+                 the in-JVM far side the @QuarkusTest suites are built on, with a stub idp carrying
+                 three sessions and a revocation. All three live side by side. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-service-mock</artifactId>
+            <version>${qits.service-mock.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- contracts/ConsumerPactVerificationTest: verifies the consumer pacts this provider
+                 pins. -->
+            <groupId>au.com.dius.pact.provider</groupId>
+            <artifactId>junit5</artifactId>
+            <version>${pact.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- consumer/: the edge's own consumer pacts (ticket qits-1149), written to
+                 pacts/<consumer>_<provider>.json at the repository root. Brings pact-jvm's consumer. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-pact-consumer</artifactId>
+            <version>${qits.pact-consumer.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The eventstream pact kit (qits-1163), always qits-eventstream's own version:
+                 EventstreamPactTest writes
+                 pacts/qits-edge-service_qits-eventstream-javalib_qits-events-service.json, the
+                 catch-up reads the library makes for the edge's durable listeners. BEFORE
+                 qits-idp-golden-masters on purpose: the kit reads the FIRST golden-masters/index.json
+                 on the classpath and refuses qits-idp's; qits-pact-consumer picks its own by
+                 application, so it does not mind the order. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-eventstream-contracts</artifactId>
+            <version>${qits.eventstream.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The consumer pacts ConsumerPactVerificationTest verifies: each jar carries one
+                 `pacts/<consumer>_qits-ui-components-jslib_qits-edge-service.json`, and the test
+                 reads them off the classpath. The pinned jar IS the source of the pact; nothing is
+                 copied into this tree. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-ci-frontend-pacts-qits-edge-service</artifactId>
+            <version>${qits.ci-frontend-pacts-qits-edge-service.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-projects-frontend-pacts-qits-edge-service</artifactId>
+            <version>${qits.projects-frontend-pacts-qits-edge-service.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-docs-frontend-pacts-qits-edge-service</artifactId>
+            <version>${qits.docs-frontend-pacts-qits-edge-service.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-events-frontend-pacts-qits-edge-service</artifactId>
+            <version>${qits.events-frontend-pacts-qits-edge-service.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-githost-frontend-pacts-qits-edge-service</artifactId>
+            <version>${qits.githost-frontend-pacts-qits-edge-service.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-maintenance-frontend-pacts-qits-edge-service</artifactId>
+            <version>${qits.maintenance-frontend-pacts-qits-edge-service.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-artifacts-frontend-pacts-qits-edge-service</artifactId>
+            <version>${qits.artifacts-frontend-pacts-qits-edge-service.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-deployments-frontend-pacts-qits-edge-service</artifactId>
+            <version>${qits.deployments-frontend-pacts-qits-edge-service.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-mirror-frontend-pacts-qits-edge-service</artifactId>
+            <version>${qits.mirror-frontend-pacts-qits-edge-service.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-observability-frontend-pacts-qits-edge-service</artifactId>
+            <version>${qits.observability-frontend-pacts-qits-edge-service.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-orchestrator-frontend-pacts-qits-edge-service</artifactId>
+            <version>${qits.orchestrator-frontend-pacts-qits-edge-service.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-system-frontend-pacts-qits-edge-service</artifactId>
+            <version>${qits.system-frontend-pacts-qits-edge-service.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-idp-frontend-pacts-qits-edge-service</artifactId>
+            <version>${qits.idp-frontend-pacts-qits-edge-service.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Recordings a test reads, never code. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-idp-golden-masters</artifactId>
+            <version>${qits.idp-golden-masters.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- ProviderStateCoverageTest (qits-1754): the platform's shared rules. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-arch-rules</artifactId>
+            <version>${qits.arch-rules.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>quarkus-maven-plugin</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <extensions>true</extensions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${compiler-plugin.version}</version>
+                <configuration>
+                    <parameters>true</parameters>
+                </configuration>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${surefire-plugin.version}</version>
+                <configuration>
+                    <systemPropertyVariables>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                        <maven.home>${maven.home}</maven.home>
+                    </systemPropertyVariables>
+                    <!-- The suite's WebSocket tests open a socket with a chosen `Host`, because
+                         Host IS what this service routes on. The JDK's HttpClient refuses to send
+                         one otherwise (`Host` is on its restricted list) and fails with an
+                         IllegalArgumentException about the header name — a message that says
+                         nothing about the edge. It is on argLine rather than in
+                         systemPropertyVariables because the JDK reads the list once, when
+                         java.net.http initialises, which can happen before a property set from
+                         inside the forked JVM would land. See EdgeClient.handshake. -->
+                    <argLine>-Djdk.httpclient.allowRestrictedHeaders=host</argLine>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>default-test</id>
+                        <configuration>
+                            <excludes>
+                                <exclude>**/EdgeSessionGateTest.java</exclude>
+                                <exclude>**/ObservabilityIngestSpanSuppressionTest.java</exclude>
+                                <exclude>**/contracts/**</exclude>
+                            </excludes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <!-- The OTel span suppression proof (qits-1432), in a JVM of its own for
+                             the same reason as EdgeSessionGateTest below: quarkus.otel.sdk.disabled
+                             is read at boot, this class turns it back on for itself alone, and a
+                             second Quarkus start in one JVM silently degrades a WebSocket upgrade
+                             through vertx-http-proxy, breaking the socket tests of whichever class
+                             ran second with nothing logged anywhere. -->
+                        <id>otel-span-suppression-tests</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <includes>
+                                <include>**/ObservabilityIngestSpanSuppressionTest.java</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <!-- The browser session gate, in a JVM of its own, and it needs one twice
+                             over.
+
+                             qits.edge.sessions.enabled is read at boot, so proving both of its
+                             states means two Quarkus starts. In ONE JVM the second start is a
+                             restart — after which a WebSocket upgrade through vertx-http-proxy
+                             silently degrades to a plain proxied GET and the socket tests of
+                             whichever class ran second fail with nothing logged anywhere. It is a
+                             property of the harness rather than of this code, and qits-gateway paid
+                             for finding it.
+
+                             A second surefire execution forks a second JVM, which is the whole
+                             mechanism: in it, this class's application is the first start, and both
+                             suites keep their socket tests. -->
+                        <id>session-gate-tests</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <includes>
+                                <include>**/EdgeSessionGateTest.java</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <!-- The provider contract: golden-master recording and consumer pact
+                             verification (epic qits-112), in a JVM of their own for two reasons.
+
+                             Their Quarkus start is not EdgeRoutingTest's, and a second start in one
+                             JVM breaks the WebSocket tests of whichever class runs second (see
+                             session-gate-tests above).
+
+                             And a provider state publishes deployments without clearing the
+                             projection, whose tables only the edge's own package can reach. So the
+                             golden master is the whole navigation only if nothing else published
+                             in this JVM: here nothing does, on a database Flyway cleaned at start. -->
+                        <id>contract-tests</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <includes>
+                                <include>**/contracts/*Test.java</include>
+                            </includes>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <!-- The story catalogue binds here. There was no failsafe wiring in this
+                     repository at all before ForwardAuthBootstrapIT — this pom had no integration
+                     test to run — so the executions are declared rather than inherited from
+                     anywhere, and they arrive together with the `skipITs` property above.
+
+                     THE argLine IS THE SAME ONE SUREFIRE CARRIES, and it stopped being optional
+                     when a story grew a WebSocket beat. StreamingPassthroughIT opens a real
+                     upgrade through the launched front door, which means handing the JDK's
+                     HttpClient a chosen `Host` — and `Host` is on that client's restricted list,
+                     so without this it fails with an IllegalArgumentException about the header
+                     name rather than with anything about this service. It is on argLine rather
+                     than in systemPropertyVariables because the JDK reads the list once, when
+                     java.net.http initialises, which can happen before a property set from inside
+                     the forked JVM would land. See EdgeClient.handshake. -->
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>${failsafe-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <argLine>-Djdk.httpclient.allowRestrictedHeaders=host</argLine>
+                    <systemPropertyVariables>
+                        <!-- How @QuarkusIntegrationTest finds the compiled binary in a `-Dnative`
+                             build; without it the native run has nothing to launch. The name is
+                             `quarkus.package.output-name` from application.properties (and the
+                             Dockerfile's COPY line), NOT maven's finalName — with an output-name
+                             set, target/${finalName}-runner does not exist, so all three spellings
+                             have to move together or a native IT starts nothing and passes. -->
+                        <native.image.path>${project.build.directory}/qits-platform-edge</native.image.path>
+                        <!-- Launch the packaged app on a free port instead of the default 8081.
+                             This service's own test config already refuses 8081 for the suite —
+                             on the deployment host it is the platform's own npm registry — and
+                             failsafe starts while surefire's last Quarkus may still be releasing
+                             its port. 0 lets the kernel choose; RestAssured.port follows, and the
+                             IT builds its EdgeClient from it. -->
+                        <quarkus.http.test-port>0</quarkus.http.test-port>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+            <plugin>
+                <!-- Same formatter as the rest of the platform (google-java-format, needs JDK 21+),
+                     applied on every build so formatting is never a review topic. -->
+                <groupId>com.diffplug.spotless</groupId>
+                <artifactId>spotless-maven-plugin</artifactId>
+                <version>${spotless-plugin.version}</version>
+                <configuration>
+                    <java>
+                        <googleJavaFormat>
+                            <version>${google-java-format.version}</version>
+                        </googleJavaFormat>
+                    </java>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>spotless-apply</id>
+                        <phase>process-sources</phase>
+                        <goals>
+                            <goal>apply</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <repositories>
+        <repository>
+            <id>qits-maven</id>
+            <url>${qits.maven.repository.url}</url>
+        </repository>
+    </repositories>
+
+    <profiles>
+        <!-- GraalVM native build: `-Dnative` disables the jar and enables the native image. There is
+             no parent pom to inherit a native profile from, so it lives here.
+
+             The toolchain is `.sdkmanrc`'s 25.0.2-graalce: `sdk env` puts a native-image on
+             JAVA_HOME and the compile runs in-process, no container. That has to be declared rather
+             than assumed, because Quarkus does not fail when native-image is missing — it logs
+             "Cannot find the native-image ... Attempting to fall back to container build" and shells
+             docker with a Mandrel image. Green either way, which is how a repository ends up
+             building under docker without anyone deciding to.
+
+             docker/Dockerfile is the shipping form, not the build: it wraps this same binary in an
+             image, with its own Mandrel builder so a machine with no GraalVM can still produce one. -->
+        <profile>
+            <id>native</id>
+            <activation>
+                <property>
+                    <name>native</name>
+                </property>
+            </activation>
+            <properties>
+                <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
+                <!-- skipITs flips with it, the shape every deployable sibling carries: a native
+                     `./mvnw verify -Dnative` runs ForwardAuthBootstrapIT against the BINARY rather
+                     than packaging one nobody starts. That is where this IT is worth most — the
+                     shipped form of this service is the native image, and the story's whole
+                     apparatus (a Vert.x proxy copying a header map, two HTTP clients built in
+                     @PostConstruct rather than in static fields, Flyway, Bouncy Castle) is exactly
+                     what a lost reflection registration breaks with a green JVM suite.
+
+                     docker/Dockerfile is unaffected: it runs `package -DskipTests`, which failsafe
+                     honours and which never reaches the integration-test phase anyway. -->
+                <skipITs>false</skipITs>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+            </properties>
+        </profile>
+    </profiles>
+</project>

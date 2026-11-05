@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-platform-system</artifactId>
+        <version>2026.1105.122850</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The system domain: the docker command lines, the runner that executes them under a deadline
+         and a bound, the parsers that turn their output into the records the API returns, and the
+         pseudo-terminal subsystem. A plain library jar — no JAX-RS, no WebSocket type — with the
+         REST boundary and the sockets left to `service`, the same split every qits context carries.
+
+         IT OWNS NO STORE (the targets module owns the one store this service has). There is no
+         datasource, no persistence unit and no Flyway lineage here,
+         because there is nothing to persist: an answer is read from the daemon when it is asked,
+         and a terminal is a live process that a restart is meant to end.
+
+         THE PTY LIVES HERE, and that is the one thing about this jar worth knowing before touching
+         it. `terminal/ForeignPty` reaches libc through java.lang.foreign; its downcall descriptors
+         are declared in META-INF/native-image/.../reachability-metadata.json and the two files move
+         together. The surefire block below is what keeps the JVM suite from warning on every one of
+         those calls.
+
+         The directory is `system/` and the artifactId `qits-platform-system-domain`: the directory
+         names the context, the artifactId names the layer. -->
+    <artifactId>qits-platform-system-domain</artifactId>
+    <name>qits-platform-system :: domain</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <!-- ObjectMapper without a REST layer. Docker's `{{json .}}` formatted output and its
+                 `inspect` documents are read as TREES rather than bound to generated types: the
+                 shapes are the docker API's, they carry dozens of fields this service does not
+                 show, and binding them would make every docker release a compile error here. The
+                 records the API returns are built from the tree by the parsers in `reads/`. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- ForeignPtyTest and TerminalSessionTest open real pseudo-terminals, which
+                         means java.lang.foreign downcalls — restricted methods that warn on every
+                         call without this and are documented to become an error in a later release.
+                         The native image resolves native access at build time and needs nothing;
+                         this is only the JVM path. Same flag qits-projects' domain module sets; see
+                         service/src/main/resources/application.properties for why a runner jar
+                         cannot set it for itself. -->
+                    <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+                </configuration>
+            </plugin>
+            <plugin>
+                <!-- Index the jar so a consuming app discovers its CDI beans without needing a
+                     quarkus.index-dependency entry. -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

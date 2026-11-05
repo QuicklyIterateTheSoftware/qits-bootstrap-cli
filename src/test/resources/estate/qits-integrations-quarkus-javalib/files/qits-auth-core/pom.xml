@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- The platform's shared authentication code: claim checks for bearer tokens, and the one
+         config gate that turns machine enforcement on. A service authenticates only bearers; the
+         forward-auth mechanism that believed X-Qits-User is gone (qits-1338).
+
+         DELIBERATELY THIN. It does NOT depend on quarkus-oidc. Validating a bearer is the consuming
+         service's choice of extension and config; this module only reads what validation left on
+         the SecurityIdentity. The one JWT dependency is the microprofile-jwt-auth API — an
+         interface jar, no implementation — because `JsonWebToken` is the type quarkus-oidc puts in
+         the principal, and reading a claim without naming that type would mean guessing at
+         identity attributes instead. -->
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-integrations-quarkus</artifactId>
+        <version>2026.1105.105731</version>
+    </parent>
+
+    <artifactId>qits-auth-core</artifactId>
+    <packaging>jar</packaging>
+    <name>qits-auth-core</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <!-- SecurityIdentity, QuarkusSecurityIdentity, and the
+                 UnauthorizedException/ForbiddenException pair Quarkus REST already maps to 401/403.
+                 Named rather than taken through vertx-http below, which carries only the security
+                 SPI. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-security</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The Router and RoutingContext IssuerUnreachable registers on. A consuming service
+                 serves HTTP by definition, so this is no new weight. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-vertx-http</artifactId>
+        </dependency>
+        <dependency>
+            <!-- API only. quarkus-oidc (or any other JWT extension the service picks) brings the
+                 implementation; without one, MachineIdentity simply sees no machine token, which is
+                 the correct answer for a service that validates no bearers. -->
+            <groupId>org.eclipse.microprofile.jwt</groupId>
+            <artifactId>microprofile-jwt-auth-api</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The gate and issuer suites drive real requests, so the test scope needs REST
+                 endpoints to hit. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-rest-jackson</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- The consuming Quarkus app needs an index of this jar's beans — the mechanism,
+                     the identity provider and MachineAuth are all discovered from it. Without the
+                     index the jar is inert on a consumer's classpath and says nothing about why. -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

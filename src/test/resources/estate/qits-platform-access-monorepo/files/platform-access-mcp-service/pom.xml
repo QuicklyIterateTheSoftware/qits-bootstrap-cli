@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben</groupId>
+        <artifactId>qits</artifactId>
+        <version>2026.1105.92857</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- THE MCP SERVICE. The commands of platform-access-commands, served as MCP tools at /mcp, one
+         tool per leaf of the picocli tree, run in-process for whoever called: the bearer on the MCP
+         request is the credential the command uses, so `qits:agent` reads and is refused writes here
+         exactly as on the CLI. The application is `qits-platform-access-mcp-service`, released
+         from this repository at the same version as the `qits` binary, so the two are always the
+         same code.
+
+         WHAT IT MUST NEVER CARRY:
+           - quarkus-oidc-client. Its configuration block mints a client that dials with the
+             service's own credential, and a service that answers for its caller must not be able to
+             call the platform as itself. quarkus-oidc here only checks the caller's bearer.
+           - quarkus-picocli. It would make this a command-mode application; the tree is walked and
+             run by McpTools with plain picocli, which the commands jar brings.
+
+         NEVER DEPLOYED TO A MAVEN REPOSITORY. What it produces is a native runner,
+         `target/qits-platform-access-mcp-service`, shipped as an image by the release. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-platform-access-mcp-service</artifactId>
+    <name>qits-platform-access-mcp-service</name>
+
+    <properties>
+        <!-- Not in any BOM, so they are pinned here. The MCP extension's version is the one
+             qits-projects-service and qits-observability-service run: 2.0 speaks the stateless MCP
+             protocol and CR2 is built against the platform's Quarkus. -->
+        <mcp-server.version>2.0.0.CR2</mcp-server.version>
+        <assertj.version>3.27.4</assertj.version>
+
+        <maven.deploy.skip>true</maven.deploy.skip>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <!-- The tree the tools are read from and run with. In this reactor only. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-platform-access-commands</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkiverse.mcp</groupId>
+            <artifactId>quarkus-mcp-server-http</artifactId>
+            <version>${mcp-server.version}</version>
+        </dependency>
+        <dependency>
+            <!-- Bearer validation only (application-type=service); see the header for what is not
+                 here. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-oidc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-health</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkiverse.mcp</groupId>
+            <artifactId>quarkus-mcp-server-test</artifactId>
+            <version>${mcp-server.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- FakePlatform, the observability socket fake and TestCli: the library's own fakes,
+                 so the end-to-end calls here meet the same platform the commands' tests do. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-platform-access-commands</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>quarkus-maven-plugin</artifactId>
+                <extensions>true</extensions>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>build</goal>
+                            <goal>generate-code</goal>
+                            <goal>generate-code-tests</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <!-- `./mvnw package -Dnative -DskipTests -pl platform-access-mcp-service -am` builds
+                 `target/qits-platform-access-mcp-service`. It needs a GraalVM on JAVA_HOME. The
+                 static musl flags are not here: the Dockerfile appends them, as it does for the
+                 binary, so a host build stays glibc-linked. -->
+            <id>native</id>
+            <activation>
+                <property>
+                    <name>native</name>
+                </property>
+            </activation>
+            <properties>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+                <!-- Pkce holds a SecureRandom in a static field and is in the commands jar this
+                     service carries. Seeded at build time, every image would carry the same seed. -->
+                <quarkus.native.additional-build-args>--initialize-at-run-time=eu.wohlben.qits.cli.access.login.Pkce</quarkus.native.additional-build-args>
+                <!-- The runner the ITs start; `-Dnative.image.path=<runner>` points them at another
+                     one, a released runner for instance. -->
+                <native.image.path>${project.build.directory}/qits-platform-access-mcp-service</native.image.path>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <!-- THE NATIVE RUNNER'S OWN TESTS, the *IT classes (@QuarkusIntegrationTest):
+                             what only a native image can get wrong, McpWireJsonIT first (qits-1226).
+                             Here and not in the default build, because without -Dnative there is no
+                             runner to start, so the release request's plain `verify` never runs
+                             them. `./mvnw verify -Dnative` builds the runner and then runs them;
+                             docker/Dockerfile's `service-it` stage names the two goals on the runner
+                             `service-build` already made, so nothing is compiled twice.
+                             Configuration at plugin level, not on the execution, so a goal named on
+                             the command line gets it too. -->
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <configuration>
+                            <!-- The runner boots the prod profile, whose idp address is
+                                 https://idp.qits.${QITS_DOMAIN}/idp with no default; the ITs replace
+                                 the key fetch (BearerProfile), so any domain resolves the expression. -->
+                            <environmentVariables>
+                                <QITS_DOMAIN>example.test</QITS_DOMAIN>
+                            </environmentVariables>
+                            <systemPropertyVariables>
+                                <native.image.path>${native.image.path}</native.image.path>
+                                <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                            </systemPropertyVariables>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>integration-test</goal>
+                                    <goal>verify</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

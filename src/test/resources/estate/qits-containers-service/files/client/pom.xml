@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-containers</artifactId>
+        <version>2026.1104.205759</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- What a consumer depends on to CALL this service: the wire records, the four-outcome answer
+         and the HttpClient behind them.
+
+         IT DOES NOT DEPEND ON `core`, AND THAT IS THE POINT OF THE MODULE. A caller wants a few
+         records and a client; `core` carries entities, a Flyway lineage and datasource defaults at
+         ordinal 100, and every one of those would arrive in qits-ci, qits-workspaces and
+         qits-projects the day they depend on this. The wire types are restated here rather than
+         shared, which is the same trade the poms make with their duplicated versions.
+
+         NO FRAMEWORK, THOUGH NOT TWO DEPENDENCIES ANY MORE: qits-http-core joined jackson-databind
+         and qits-eventstream for the tracing wrap (qits-1198), but it is the same API-jars-only
+         bargain as the other two — no quarkus-arc here and no OIDC extension. ContainersClient is a
+         plain class a consumer's own producer turns into a bean, which is what lets a daemon with
+         no CDI construct one and what keeps this jar out of the way of a consumer's own
+         container. -->
+    <artifactId>qits-containers-client</artifactId>
+    <name>qits-containers :: client</name>
+
+    <dependencies>
+        <dependency>
+            <!-- Jackson itself, NOT a Quarkus extension and NOT the CDI ObjectMapper. ContainersJson
+                 builds its own mapper for the reason CanonicalJson does: a consuming application's
+                 ObjectMapperCustomizers must not be able to change what this client puts on a wire
+                 another service parses. quarkus-jackson would bring the same jar plus an extension,
+                 and an extension in a client jar is arc in every consumer.
+
+                 Version from the Quarkus BOM, so this agrees with whatever the consuming service
+                 already has on its classpath rather than pulling a second copy in beside it. -->
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Causation, for two classes: CausationHeader.NAME and CausationScope.current(). The
+                 client stamps X-Qits-Causation-Id on every request by hand, exactly as that header's
+                 own javadoc prescribes for a caller that speaks java.net.http.HttpClient rather than
+                 the REST client — CausationClientFilter is a JAX-RS provider and there is no JAX-RS
+                 here to discover it.
+
+                 COMPILE SCOPE, NOT PROVIDED OR OPTIONAL. The eventstream jar is the platform's
+                 causation home and it is already a mandatory dependency of every service that would
+                 call this one, so nothing new arrives in practice — and the alternative is worse in
+                 both directions. Copying the header name into this jar would be a second answer to
+                 a question the platform has settled once, and it would silently stop matching the
+                 day the name moved. Declaring it `provided` would make it a line every consumer has
+                 to restate, and a consumer that forgot would fail with NoClassDefFoundError on its
+                 first call rather than at resolution. Same reasoning qits-eventstream's own pom
+                 gives for taking qits-db-core at runtime scope instead of leaving it optional.
+
+                 It brings arc and the outbox's extensions along transitively. That is honest rather
+                 than free: it is the price of the platform having ONE causation implementation, and
+                 a consumer that declares qits-eventstream itself — every one of them does — resolves
+                 its own version rather than this jar's. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-eventstream</artifactId>
+        </dependency>
+        <dependency>
+            <!-- QitsHttpClients.wrap, so ContainersClient's own HttpClient opens a CLIENT span and
+                 stamps X-Qits-Caller exactly as every other service-to-service call does. Compile
+                 scope: a consumer that constructs this class with new has to pass one through the
+                 constructor overload that takes it. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-http-core</artifactId>
+        </dependency>
+
+        <dependency>
+            <!-- Plain JUnit, no @QuarkusTest. THE SUITE IN THIS MODULE IS PURE UNIT TESTS: outcome
+                 mapping against a stub, URL building, header stamping, and the HTTP/1.1 pin. It
+                 starts no application, needs no database and reaches no docker, which is what keeps
+                 the module as light to build as it is to consume. What the client does against the
+                 REAL REST surface is proved in `service`, where that surface is — see
+                 ContainersClientWireTest. -->
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

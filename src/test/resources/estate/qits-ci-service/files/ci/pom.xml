@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-ci</artifactId>
+        <version>2026.1104.173648</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The CI pipeline domain: the in-repo `.config/qits/ci-<event>.yml` pipelines as a quality
+         gate. A plain library jar: entities, persistence, control, mapper, dto — NO web/JAX-RS
+         (that is `service`). Runs reference repositories/branches by *String id/name* (never a JPA
+         @ManyToOne into another context's tables) and this context talks to the rest of qits only
+         over the surfaces it declares: the git host's smart-HTTP URL and its own docker CLI
+         shell-out.
+
+         It owns its OWN named datasource + persistence unit + Flyway lineage — its own postgres
+         database on the platform's postgres, provisioned by the deployment spec's `resources:` line
+         and injected as QITS_RESOURCE_DB_* (see
+         src/main/resources/META-INF/microprofile-config.properties). It was a file-based H2 under
+         ~/.qits/data/ci until that mechanism landed, and the H2 lineage went with the file: there is
+         ONE V1 again (`db/ci/migration/V1__init.sql`), the nine H2 migrations translated to where
+         they arrived. See that file's header for why a clean start was allowed.
+
+         The directory stays `ci/` (the extracted git history is anchored to it) while the
+         artifactId is `qits-ci-domain`: this module is the domain layer of the qits-ci repo, and
+         `eu.wohlben.qits:qits-ci-ci` would be nonsense. -->
+    <artifactId>qits-ci-domain</artifactId>
+    <name>qits-ci :: domain</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm-panache</artifactId>
+        </dependency>
+        <dependency>
+            <!-- ObjectMapper bean availability for consumers (no REST needed). -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <!-- This context's store. It was a file H2 under ${user.home} until the platform grew
+                 resource provisioning; the datasource is the generic `QITS_RESOURCE_DB_*` contract
+                 now, and this repo's deployment spec declares `postgresql:db` to have it filled in.
+                 See src/main/resources/META-INF/microprofile-config.properties. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Two things, and they answer two different halves of one outage. PatientPgDriver is
+                 what the datasource above names as its driver: it delegates to org.postgresql.Driver
+                 and, while postgres is not there, keeps asking for up to 14s instead of failing at
+                 once — config carries the name and no code here touches it. DbRetry is code, called
+                 by this module's read seams (CiRunService's listings, CiDaemonPins.currentAnswer,
+                 KnownCiRepos.candidates) for the loss the driver cannot help with: a connection
+                 severed AFTER the statements ran, which no amount of patience at creation time can
+                 undo. That second one is why the dependency is COMPILE scope rather than runtime.
+                 It sits in this jar for the reason flyway-database-postgresql does: this module
+                 declares the datasource, so a consumer that did not carry the driver would fail at
+                 boot on a pool it does not own. The real pgjdbc still comes from
+                 quarkus-jdbc-postgresql above; this jar brings it provided-scope only. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-db-core</artifactId>
+        </dependency>
+        <dependency>
+            <!-- For ONE class, CiDaemonBinary: the version of the qits-ci-daemon binary this
+                 deployment's step containers download, which CiDaemonPins answers with. The rest
+                 of the jar is the control-socket wire contract and belongs to `service` (which
+                 restates this dependency for its own imports rather than taking it transitively
+                 from here).
+
+                 It does not breach this module's framework-free rule: CiDaemonBinary is a
+                 Properties load off the classpath — no JAX-RS, no websockets, no java.net.http, no
+                 config system — which is exactly the shape a capability constant has to have to be
+                 readable from a native binary and a Quarkus service alike. See
+                 qits.ci-daemon-protocol.version in the root pom. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-ci-daemon-protocol</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Flyway 10 split its database support out of the core: without this module Flyway
+                 refuses a postgres url with "no database found to handle". It sits in this jar
+                 because this jar owns the lineage — a consumer that did not carry it would fail at
+                 boot on a migration it does not own. -->
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-validator</artifactId>
+        </dependency>
+        <dependency>
+            <!-- CiEventTriggerService's owed-event sweep. Declared rather than taken transitively
+                 through qits-eventstream below, which carries the same extension for its outbox and
+                 catch-up sweepers: this module names @Scheduled in its own source, and a dependency
+                 a source file imports is one the pom states. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-scheduler</artifactId>
+        </dependency>
+        <dependency>
+            <!-- CausedRow + CausationStamp: CiRun records the event it was written because of, in
+                 the platform's generic causation_id column. The jar rides into this module's OWN
+                 tests too — the eventstream persistence unit boots whether the bus is enabled or
+                 not — so testdb/EmbeddedPgConfigSource feeds it a database and the test properties
+                 keep it dark, exactly the consumer contract the eventstream README states. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-eventstream</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Parses the repo-committed ci-post-receive.yml (SafeConstructor — plain maps/lists
+                 only, never instantiating classes from repository content). Version managed by the
+                 Quarkus BOM. -->
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.mapstruct</groupId>
+            <artifactId>mapstruct</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The platform's shared ArchUnit rules; ArchRulesTest points them at this module's
+                 packages, where the entities live. Forgetting a causation decision on a new
+                 @Entity fails this build naming the class. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-arch-rules</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The store every @QuarkusTest here boots against. Zonky spawns real postgres
+                 binaries as a child process — a maven dependency rather than a container — which is
+                 what keeps the clone-alone, docker-free rule true now that this context's store is
+                 postgres. EmbeddedPg + EmbeddedPgConfigSource hand the running instance to
+                 Quarkus. -->
+            <groupId>io.zonky.test</groupId>
+            <artifactId>embedded-postgres</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Named per architecture on purpose: the binaries are separate artifacts and zonky
+                 picks one at run time, so an unnamed arch fails in the middle of a suite rather
+                 than during resolution. These three are what this platform is built and developed
+                 on. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- A fourth, and the pipeline is what added it: the CI step containers are Alpine
+                 (musl), .config/qits/ci-event-userflows.yml runs `mvn verify` in maven-base as
+                 `user: build`, and THIS module's suite starts an embedded postgres there too — one
+                 per surefire JVM, and the reactor gives every module its own. An unnamed arch fails
+                 in the middle of that suite rather than during resolution. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64-alpine</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-darwin-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- The consuming Quarkus app needs an index of this jar's beans and entities; in
+                     the monorepo the reactor's own module discovery covered it. -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

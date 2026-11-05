@@ -1,0 +1,41 @@
+# How qits-platform-deployments deploys this repo. It reads this file from the git host at
+# the built sha, so the answer travels with the commit.
+#
+# CARRYING THE FILE AT ALL is the other thing it says. The release flow reads it to decide whether
+# this repository deploys — a repo without one is finalized on `main` the moment it releases, and a
+# library or an SPA carries none. What a deploy pulls is the VERSION COORDINATE the release
+# published. There is no promotion and no branch to promote onto: the entry branch
+# (`qits.workspaces.release.entry-branch`) and the `deploy_branches` that used to name it here, in
+# thirteen copies of one platform-wide answer, went with the release door.
+#
+# THE APPLICATION NAME OUTLIVES THE REPOSITORY NAME, and this key is what pins it. The repository is
+# renamed qits-database-oci; the application stays `qits-oci-postgresql`, which is the name every
+# environment already spells — the swarm service and its wire alias, the container, the data volume,
+# the image `qits/qits-oci-postgresql` both pipelines push — the QA pipeline under a fold's merged
+# sha, the release pipeline under the CalVer a deploy pulls — and the host in every consumer's
+# JDBC url the bootstrap writes. Drop this key and the deployer derives all of that from the new
+# repository name instead, looking for an image nothing publishes and a database nobody has.
+application: qits-oci-postgresql
+
+# NOT AN HTTP SERVICE, so the derived health path cannot work: the gate curls localhost:8080 inside
+# the container and nothing there answers. `health_cmd` replaces that gate with a command the
+# deployer runs in-container instead.
+health_cmd: pg_isready -U postgres
+
+# STOP-FIRST, because this application is a single writer on one data volume. The deployer's
+# default is start-first: the successor boots while the predecessor still runs. Two postgres
+# processes on the same data directory do not exclude each other across containers — the pid file
+# is stale to each of them — so on 2026-09-05 both wrote WAL into the same segment, the
+# predecessor's shutdown checkpoint was overwritten, and the cluster could not start until the
+# control file was repaired by hand. Stopping first costs a few seconds of downtime, which every
+# consumer already holds through (DB patience); overlapping costs the database.
+update_order: stop-first
+
+# THE PLATFORM DATABASE'S DATA, declared here rather than in deployment config (qits-1391). A
+# private volume's name is derived as `<application>-<name>`, so `private:data` under
+# `application: qits-oci-postgresql` above is exactly `qits-oci-postgresql-data` — the volume the
+# bootstrap created and every environment has run on since. The name must not drift by a character:
+# docker answers an unknown volume name by creating an empty one, and an empty data directory is a
+# fresh cluster that passes `pg_isready`. The deployer drops the config mount of the same target,
+# and a live service already mounting this volume at this target is updated in place, not recreated.
+volumes: private:data:/var/lib/postgresql

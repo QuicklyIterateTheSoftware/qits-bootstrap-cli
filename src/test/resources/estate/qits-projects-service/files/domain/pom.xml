@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-projects</artifactId>
+        <version>2026.1105.133119</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The projects DOMAIN: the Project aggregate, the Repository entity and its bare origin on
+         disk, name aliases, the submodule graph, remote-login sessions, .qits-config.yml ingestion,
+         and the ports this context reaches the rest of the application through. A plain library jar
+         in the shape of the monorepo's `artifacts`/`ci`/`epics` modules — NO web, NO JAX-RS, NO
+         websockets; those live in the sibling `service` module.
+
+         It owns its OWN named datasource + persistence unit + Flyway lineage (a postgres database
+         of its own, handed to it as QITS_RESOURCE_DB_* — see
+         src/main/resources/META-INF/microprofile-config.properties). The Project↔Repository↔RepositoryName↔
+         RepositorySubmodule relations are REAL JPA relations with real foreign keys — all four
+         tables are owned here, in one database. Everything OUTSIDE it (workspaces, commands,
+         agents, technical processes) is reached by String id through a `control/` port, never a
+         join. -->
+    <artifactId>qits-projects-domain</artifactId>
+    <name>qits-projects :: domain</name>
+
+    <dependencies>
+        <dependency>
+            <!-- The git substrate: mirrors, wire reads and pushes. GitMirrorRegistry is the one
+                 place this module builds it from config; GitHostAddress/GitCredentials are this
+                 module's own vocabulary for the shapes it declares. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-projects-gitmirror</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm-panache</artifactId>
+        </dependency>
+        <dependency>
+            <!-- ObjectMapper bean for the repository metadata sidecars (no REST needed). -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <!-- This context's store. It was a file H2 until the platform grew resource
+                 provisioning; the `projects` datasource is now a postgres database created for
+                 this application before its container starts, and the driver is what opens it. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Flyway 10 split its database support out of the core: without this module Flyway
+                 refuses a postgres url with "no database found to handle". It sits here because
+                 this module owns the `projects` lineage; `entities` carries it too, for its own. -->
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-validator</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The causation PERSISTENCE trio and nothing else: CausedRow + CausationStamp on
+                 Project and Repository, @Uncaused on RepositoryName. No publish, no subscribe, no
+                 EventFrame — the bus's seams stay in `service`, which is the rule AGENTS.md
+                 narrows. The jar rides into this module's OWN tests too: its persistence unit
+                 opens a connection and runs Flyway at boot whether the bus is enabled or not, so
+                 testdb/DomainEmbeddedPgConfigSource feeds it a database and the test properties
+                 keep it dark. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-eventstream</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The database-patience pair, and both halves are used here. PatientPgDriver is what
+                 this module's shipped defaults name as the `projects` datasource's driver, so the
+                 class must be on the runtime classpath; DbRetry wraps the by-name read seam
+                 (RepositoryService#findByProjectAndName) and RepositoryNameResolver's own loop, the
+                 two reads a caller is waiting on that a postgres cutover would otherwise turn into
+                 a 404 for a repository that exists. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-db-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.mapstruct</groupId>
+            <artifactId>mapstruct</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Parses the repository's committed .qits-config.yml into plain config records. This
+                 is repository content, not app config, so it is read straight from the bare origin
+                 (no Quarkus config machinery). Version is managed by the Quarkus BOM. -->
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+        </dependency>
+        <!-- NO pty4j. The interactive remote-login session still needs a real TTY so `git push` can
+             prompt for credentials; it gets one from ForeignPty, six libc calls through
+             java.lang.foreign, with the child put on the slave device by setsid. pty4j was
+             JNA plus per-platform native libraries unpacked from its own jar at runtime — none of
+             which a GraalVM native image can resolve at build time, and the failure would have
+             landed on the first sign-in in the binary while this suite stayed green. See
+             ForeignPty's javadoc; qits-workspace-daemon made the same call for the same reason. -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The platform's shared ArchUnit rules; ArchRulesTest points them at this module's
+                 entity package. A new @Entity here that neither implements CausedRow nor declares
+                 @Uncaused fails this build naming the class. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-arch-rules</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- The store every @QuarkusTest in this module and in `service` boots against. Zonky
+                 spawns real postgres binaries as a child process — a maven dependency rather than
+                 a container — which is what keeps the clone-alone, docker-free rule true now that
+                 the store is postgres. testdb/EmbeddedPg + testdb/EmbeddedPgConfigSource hand the
+                 running instance to Quarkus, and EmbeddedPg travels to `service` in this module's
+                 test-jar rather than being copied. -->
+            <groupId>io.zonky.test</groupId>
+            <artifactId>embedded-postgres</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- Named per architecture on purpose: the binaries are separate artifacts and zonky
+                 picks one at run time, so an unnamed arch fails in the middle of a suite rather
+                 than during resolution. These three are what this platform is built and developed
+                 on. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <!-- A fourth: the CI step containers are Alpine (musl). ci-event-userflows.yml runs
+                 `mvn verify` on the whole reactor in maven-base as `user: build`, so THIS module's
+                 suite starts its embedded postgres there too and zonky picks the -alpine binaries
+                 at run time. Missing, it fails mid-suite rather than during resolution. -->
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-linux-amd64-alpine</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.zonky.test.postgres</groupId>
+            <artifactId>embedded-postgres-binaries-darwin-arm64v8</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- ForeignPtyTest and RemoteLoginSessionTest open real pseudo-terminals, which
+                         means java.lang.foreign downcalls — restricted methods that warn on every
+                         call without this and are documented to become an error in a later release.
+                         The native image resolves native access at build time and needs nothing;
+                         this is only the JVM path. Same flag qits-workspace-daemon's PTY modules
+                         set; see service/src/main/resources/application.properties for why a runner
+                         jar cannot set it for itself. -->
+                    <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+                </configuration>
+            </plugin>
+            <plugin>
+                <!-- Index the jar so a consuming app discovers its CDI beans and entities without
+                     needing a quarkus.index-dependency entry. -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- A test-jar, so the `service` module's suite reuses this module's test support
+                     (GitFixtures, RepoDataDirReset, and the InMemoryProcessRegistry /
+                     RecordingWorkspaceLifecycle port implementations) instead of carrying a second
+                     copy of each.
+
+                     All test CLASSES ship, none of the test RESOURCES. Filtering classes out is
+                     what does not work: Quarkus builds its Jandex index of a reactor dependency
+                     from target/test-classes while the classpath resolves to this jar, so a jar
+                     narrower than the directory yields ClassNotFoundException for whatever the
+                     index saw and the jar dropped. The resources must go the other way — a second
+                     application.properties / junit-platform.properties on service's test classpath
+                     is a config-source collision. -->
+                <artifactId>maven-jar-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>test-jar</goal>
+                        </goals>
+                        <configuration>
+                            <excludes>
+                                <exclude>application.properties</exclude>
+                                <exclude>junit-platform.properties</exclude>
+                                <exclude>META-INF/services/**</exclude>
+                                <exclude>fixtures/**</exclude>
+                            </excludes>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

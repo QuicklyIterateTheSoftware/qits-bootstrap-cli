@@ -1,0 +1,57 @@
+# How qits-platform-deployments deploys this repo. It reads this file from the git host at
+# the built sha, so the answer travels with the commit.
+#
+# CARRYING THE FILE AT ALL is the other thing it says. The release flow reads it to decide whether
+# this repository deploys — a library or an SPA carries none, and its `main` is finalized at the
+# release itself rather than after a deployment — and where it does deploy, a Deployment Request
+# carries the released VERSION. `deploy_branches` used to name a branch here, in
+# thirteen copies of one platform-wide answer, and a release pushed onto every entry it named.
+#
+# THE NAME THIS DEPLOYS AS, spelled because the repository is renamed and the application is not.
+# Every derivation the deployer makes hangs off this name — the wire alias peers dial, the container
+# it manages, the extras family, the database — so letting it follow the repository would
+# decommission the running service and start a stranger beside it.
+#
+# It is the SHORT name, and always has been: the repository was qits-platform-events while the
+# catalog row, the bus alias every consumer dials (qits.events.url) and the database were qits-events.
+application: qits-events
+
+routes: /events
+
+# WHERE THE EDGE APPEARS THIS APPLICATION IN THE SIDEBAR. One entry per slot: `platform` is the
+# project-scoped group, and this is the first row in it. The label and the position are the whole
+# statement — the host is derived from the application name (`qits-events` minus its `qits-` prefix
+# is `events`), so there is no `host:` line to keep in step with anything.
+#
+# This replaces `navigation: Events:6`, the flat list every application shared. The old key still
+# parses — a spec is read at the built sha, so it can never become unknown — and maps to
+# `system.Events`, which is the wrong group for a service whose pages are about one project.
+navigation-entries: platform.Events:1
+
+# THE STORE, DECLARED RATHER THAN CONFIGURED. This service's log is PostgreSQL, and the line below
+# is what provisions it: a role and a database of its own on the platform environment's postgres —
+# a platform service has no tier to derive one from — created before the successor container starts
+# and injected as QITS_RESOURCE_DB_URL / _USERNAME / _PASSWORD — the generic contract the events
+# jar's datasource defaults read verbatim. The database name does not change with the flip, so the
+# durable log carries over wherever the platform environment is the tier this service ran on.
+#
+# The third segment is omitted, so the database is the default derivation: the application name
+# minus its `qits-` prefix, dashes to underscores, under a `qits_` prefix — `qits_events`. Spelling
+# it out would be a second place for one answer to be wrong in.
+#
+# Provisioning is idempotent and the credential lives in the deployer's registry, so a redeploy
+# finds the existing row and injects the password this process is already connected with.
+#
+# idp:client ASKS QITS-DEPLOYMENTS TO PROVISION THIS APPLICATION'S OWN QITS-IDP SERVICE CLIENT — id
+# `<env>-qits-events` (derived from env + application), roles fixed in qits-idp code. The deployer
+# stores the secret the way it stores the database password, and injects QITS_RESOURCE_IDP_URL,
+# QITS_RESOURCE_IDP_CLIENT_ID and QITS_RESOURCE_IDP_CLIENT_SECRET, which the `qits` oidc client in
+# application.properties reads. It is the bearer qits-telemetry-core attaches to every OTLP export,
+# now that this service ships its telemetry to qits-observability's edge host, where the edge
+# refuses an anonymous request (epic qits-428).
+resources: postgresql:db, idp:client
+
+# Where the browsable API document lives: swagger-ui under this service's non-application
+# root, which sits under the primary route above. The shell's Api Docs viewer reads it off
+# /main-navigation and frames it for this repository.
+api-docs: /events/q/swagger-ui

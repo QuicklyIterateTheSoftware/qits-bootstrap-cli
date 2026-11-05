@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-registries</artifactId>
+        <version>2026.1103.145246</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- What more than one format needs and no format owns. Two classes, both in
+         `eu.wohlben.qits.registry` — named for the registry because that is where the first was
+         written, and the package is kept verbatim so nothing has to be re-imported:
+
+         * `OciRequestBody`, the bounded streaming read of a Vert.x request body. maven's deploy PUT
+           reads through it too, and so do the daemon and docs wires that stay in qits-artifacts.
+           Putting it here is what keeps `maven` from depending on `oci` for a body reader.
+         * `BlobSender`, the twin on the way out: chunks of a stored blob written to a Vert.x
+           response under backpressure. All three formats serve blobs, and so do qits-artifacts'
+           own daemon and docs routes.
+
+         BlobSender is why this module now depends on qits-blobstore. It reads bytes through
+         `BlobStore.open`; the module still owns no schema, no entity and no query.
+
+         The repository TYPE is not here either, and no longer needs to be anywhere central: the
+         shape of a type (`RepositoryTypeProfile`) travels with the entity in qits-blobstore, and
+         each format module contributes its own profiles as CDI beans. -->
+
+    <artifactId>qits-registries-common</artifactId>
+    <name>qits-registries :: common</name>
+
+    <dependencies>
+        <dependency>
+            <!-- BlobSender reads a stored blob's bytes through BlobStore.open. -->
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-blobstore</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <!-- VertxInputStream and RoutingContext on the way in, HttpServerResponse on the way
+                 out — the request/response plumbing itself. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-vertx-http</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Plain JUnit only. BlobSender's backpressure loop is driven through Vert.x'
+                 WriteStream, which a test double implements in a few lines — no container, no
+                 database, no HTTP. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
