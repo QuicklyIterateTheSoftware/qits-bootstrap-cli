@@ -35,6 +35,11 @@
              line. `jline-terminal`, not the aggregate `jline`: see the dependency below. -->
         <jline.version>3.30.16</jline.version>
 
+        <!-- What a repository declares, read from its files, and the project graph over it
+             (qits-3): the library qits-maintenance-service reads the same declarations with.
+             Released by qits-bootstrap-javalib; qits-maintenance bumps it. -->
+        <qits.bootstrap-graph.version>2026.1105.144428</qits.bootstrap-graph.version>
+
         <!-- Not in any BOM, so it is pinned here. -->
         <assertj.version>3.27.4</assertj.version>
 
@@ -158,6 +163,15 @@
             <groupId>org.jline</groupId>
             <artifactId>jline-terminal</artifactId>
             <version>${jline.version}</version>
+        </dependency>
+        <dependency>
+            <!-- The manifest readers and ProjectGraph/Walk behind `order` (qits-3). Plain Java:
+                 its own runtime dependencies are jackson-databind (JsonNode trees only) and
+                 snakeyaml (SafeConstructor into a Map only), both already aligned by quarkus-bom,
+                 so the native image needs no reflection registration for it. -->
+            <groupId>eu.wohlben.qits</groupId>
+            <artifactId>qits-bootstrap-graph</artifactId>
+            <version>${qits.bootstrap-graph.version}</version>
         </dependency>
 
         <dependency>
