@@ -175,14 +175,19 @@ class StackFileTest {
         assertThat(keysOnly(stack())).doesNotContain("127.0.0.1");
     }
 
-    /** With a domain the edge gains 80 and 443 — and NOT the unauthenticated management port. */
+    /**
+     * With a domain the seed edge gains 443, host-mode, beside its ingress-mode HTTP port — and
+     * NOT port 80 (DNS-01 needs no challenge listener; 80 stays the bootstrap ingress's) and NOT
+     * the unauthenticated management port.
+     */
     @Test
     void theTlsPortsAreHostModeAndTheManagementPortIsNotPublished() {
         String edge = block(ComposeTemplate.compose(ComposeTemplateTest.tokens("qits-dev.eu")),
                 alias("edge"));
 
-        assertThat(edge).contains("published: 80").contains("published: 443")
-                .contains("mode: host");
+        assertThat(edge.lines().map(String::strip)).contains("published: 8080", "published: 443")
+                .doesNotContain("published: 80");
+        assertThat(edge).contains("mode: host");
         assertThat(keysOnly(edge)).doesNotContain("9000");
     }
 

@@ -4031,12 +4031,40 @@ public class SeedPhases {
                     if (!boot.config.bootstrapIngress()) {
                         ctx.skip("QITS_BOOTSTRAP_INGRESS=0");
                     }
-                    if (!boot.ingress.releaseTls(ctx::log)) {
+                    if (!boot.ingress.holdsTls()) {
                         ctx.skip("the bootstrap ingress holds no 443 ("
                                 + boot.ingress.mode() + ")");
                     }
-                    ctx.note("443 is the seed edge's; the progress page stays on 80");
+                    String before = boot.ingress.progressAddress();
+                    String after = "http://" + boot.config.requiredDomain();
+                    // TOLD BEFORE THE DOOR MOVES, and as STATUS: a status line is what an open
+                    // progress page receives live (its `status` event) and what every console UI
+                    // prints, so a page open on https://<domain> shows where to go before its
+                    // connection drops. The pause gives that page a poll or two to receive it.
+                    ctx.status(progressMoveNotice(before, after));
+                    handoffNoticePause();
+                    boot.ingress.releaseTls(ctx::log);
+                    boot.state.progressMovedTo = boot.ingress.progressAddress();
+                    // The note is what stays: on the phase's line in the console, in the page's
+                    // phase list and in state.json, for a page opened after the move.
+                    ctx.note("443 is the seed edge's; the progress page is now "
+                            + boot.state.progressMovedTo + " (" + before + " is the edge's)");
                 });
+    }
+
+    /** How long the handoff waits after telling an open page where it is going. */
+    static java.time.Duration handoffNotice = java.time.Duration.ofSeconds(3);
+
+    private static void handoffNoticePause() throws InterruptedException {
+        if (!handoffNotice.isZero()) {
+            Thread.sleep(handoffNotice.toMillis());
+        }
+    }
+
+    /** The line an open progress page and the console get just before 443 changes hands. */
+    static String progressMoveNotice(String before, String after) {
+        return "THE PROGRESS PAGE MOVES to " + after + " — " + before + " goes to the platform's "
+                + "edge now (it serves registry.qits.<domain>); reopen the page at " + after;
     }
 
     public Phase composeFile() {

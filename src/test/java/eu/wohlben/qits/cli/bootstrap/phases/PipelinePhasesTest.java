@@ -506,6 +506,9 @@ class PipelinePhasesTest {
 
         assertThat(report).contains("NOT ISSUED").contains("PLACEHOLDER")
                 .contains("records above")
+                // DNS-01, the edge's own: no HTTP-01 and no port that must reach the host.
+                .contains("DNS-01").contains("QITS_DNS_HETZNER_TOKEN")
+                .doesNotContain("HTTP-01").doesNotContain("Port 80 has to")
                 .contains("--staging")
                 .contains("--domain=qits-dev.eu")
                 .contains("--email=hostmaster@qits-dev.eu")
@@ -1148,6 +1151,32 @@ class PipelinePhasesTest {
                 ".*\\b(registry|mirror|githost)\\.[a-z0-9-]+\\.(localhost|internal)\\b.*"));
         assertThat(ctx.lines).noneMatch(line -> line.contains("http://mirror.")
                 || line.contains("http://registry.") || line.contains("http://githost."));
+    }
+
+    /**
+     * <b>The closing report says where the progress page went</b> when edge-tls-handoff moved it —
+     * and says nothing about it when this run moved nothing.
+     */
+    @Test
+    void theReportNamesTheMovedProgressPageOnlyWhenItMoved(@TempDir Path temp) throws Exception {
+        for (String moved : new String[] {"http://qits-dev.eu", null}) {
+            Boot boot = new Boot(TestConfig.from(Map.of("QITS_ENV_NAME", "dev",
+                    "QITS_DOMAIN", "qits-dev.eu", "QITS_PUBLIC_IP", "203.0.113.7")),
+                    new RunLog(temp.resolve("run.log")),
+                    new ScriptedRunner(command -> ScriptedRunner.ok()));
+            boot.state.wrapperDir = temp;
+            boot.state.progressMovedTo = moved;
+            Ctx ctx = new Ctx();
+
+            new PipelinePhases(boot).summary().action().run(ctx);
+
+            if (moved == null) {
+                assertThat(ctx.lines).noneMatch(line -> line.startsWith("progress:"));
+            } else {
+                assertThat(ctx.lines).anyMatch(line -> line.startsWith(
+                        "progress:  the bootstrap's progress page moved to http://qits-dev.eu"));
+            }
+        }
     }
 
     /**

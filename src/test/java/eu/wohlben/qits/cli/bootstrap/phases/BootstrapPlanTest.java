@@ -553,9 +553,9 @@ class BootstrapPlanTest {
      * The phase the domain brings, and where it has to sit.
      * <p>
      * The PLACEHOLDER certificate goes before the seed stack, because the edge is started there with
-     * a keystore and a keystore whose files are missing fails startup. The ACME order goes after the
-     * health wait: the CA fetches the HTTP-01 challenge over the public name, so the edge has to be
-     * holding port 80 before there is anything to order against.
+     * a keystore and a keystore whose files are missing fails startup. There is no ACME phase at all:
+     * the running edge orders its certificate itself over DNS-01 — TXT records written through
+     * Hetzner DNS — so no listener, and no port 80, has to reach this host for it.
      * <p>
      * There is no zone phase between them any more. This platform serves no dns — the records are
      * held at the domain's own provider, before the run.

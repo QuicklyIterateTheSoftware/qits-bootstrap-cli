@@ -157,6 +157,11 @@ public class RunState {
      * id-addressed.
      */
     public boolean repositoriesRegistered;
+    /**
+     * Where the progress page moved to when {@code edge-tls-handoff} gave 443 to the seed edge —
+     * {@code http://<domain>} — or null when this run moved nothing. The closing report says so.
+     */
+    public String progressMovedTo;
     /** The bootstrap-only ingress's state file and expiry; never persisted in state. */
     public Path bootstrapIngressEnvFile;
     public long bootstrapIngressExpiresAt;

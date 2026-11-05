@@ -1578,10 +1578,12 @@ class SeedPhasesTest {
     @Test
     void theTlsHandoffGivesThePublicTlsPortToTheSeedEdge() throws Exception {
         List<String> removed = new ArrayList<>();
+        List<String> order = new ArrayList<>();
         ScriptedRunner runner = new ScriptedRunner(command -> {
             String line = String.join(" ", command);
             if (line.startsWith("docker rm -f")) {
                 removed.add(command.getLast());
+                order.add("rm " + command.getLast());
                 return ScriptedRunner.ok();
             }
             if (line.equals("docker ps -a --format {{.Names}}")) {
@@ -1601,9 +1603,47 @@ class SeedPhasesTest {
         // Undecided, a public ingress reads as PUBLIC_TLS — what a re-bootstrap with a retained
         // certificate pair runs in.
         assertThat(boot.ingress.mode()).isEqualTo(BootstrapIngressMode.PUBLIC_TLS);
-        CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
+        List<String> notes = new ArrayList<>();
+        PhaseContext ctx = new PhaseContext() {
+            @Override
+            public void log(String line) {
+            }
 
-        new SeedPhases(boot).edgeTlsHandoff().action().run(ctx);
+            @Override
+            public void status(String status) {
+                order.add("status " + status);
+            }
+
+            @Override
+            public void note(String note) {
+                notes.add(note);
+            }
+
+            @Override
+            public void warn(String message) {
+                order.add("warn " + message);
+            }
+        };
+        java.time.Duration pause = SeedPhases.handoffNotice;
+        SeedPhases.handoffNotice = java.time.Duration.ZERO;
+        try {
+            new SeedPhases(boot).edgeTlsHandoff().action().run(ctx);
+        } finally {
+            SeedPhases.handoffNotice = pause;
+        }
+
+        // THE OPERATOR IS TOLD, before the door moves: the status line is what an open progress
+        // page receives live and what the console prints, and it comes before the old ingress
+        // goes. The note — console header, the page's phase list, state.json — keeps the address.
+        assertThat(order).hasSize(2);
+        assertThat(order.get(0)).startsWith("status THE PROGRESS PAGE MOVES to http://wohlben.eu")
+                .contains("https://wohlben.eu goes to the platform's edge");
+        assertThat(order.get(1)).isEqualTo("rm " + BootstrapIngressLifecycle.CONTAINER);
+        assertThat(notes).singleElement().asString()
+                .contains("the progress page is now http://wohlben.eu")
+                .contains("https://wohlben.eu is the edge's");
+        assertThat(boot.state.progressMovedTo).isEqualTo("http://wohlben.eu");
+        assertThat(boot.ingress.progressAddress()).isEqualTo("http://wohlben.eu");
 
         assertThat(removed).containsExactly(BootstrapIngressLifecycle.CONTAINER);
         assertThat(boot.ingress.mode()).isEqualTo(BootstrapIngressMode.PUBLIC_HTTP);

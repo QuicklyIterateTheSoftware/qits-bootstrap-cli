@@ -634,12 +634,14 @@ public class PipelinePhases {
         } else {
             lines.add("tls:       NOT ISSUED — the order did not go through, so the edge still "
                     + "holds the PLACEHOLDER");
-            lines.add("           certificate and browsers reject it. The usual reason is the "
-                    + "records above: a");
-            lines.add("           name the internet cannot resolve yet answers nothing, and the "
-                    + "HTTP-01");
-            lines.add("           challenge is fetched over exactly that name. Port 80 has to "
-                    + "reach this host too.");
+            lines.add("           certificate and browsers reject it. The edge orders it itself "
+                    + "over DNS-01: it");
+            lines.add("           writes the _acme-challenge TXT records through Hetzner DNS with "
+                    + "QITS_DNS_HETZNER_TOKEN");
+            lines.add("           and keeps retrying. The usual reasons are that token, or the "
+                    + "records above not");
+            lines.add("           resolving yet. No port has to reach this host for it — port 80 "
+                    + "plays no part.");
             lines.add("           Nothing is lost — rerun the boot, or issue it by hand from a "
                     + "container on qits-net:");
         }
@@ -3569,6 +3571,12 @@ public class PipelinePhases {
                     + "takes it back after.");
             String registry = publicRegistryHost(apex);
             String mirror = publicMirrorHost(apex);
+            if (boot.state.progressMovedTo != null) {
+                report.add("progress:  the bootstrap's progress page moved to "
+                        + boot.state.progressMovedTo + " at edge-tls-handoff, when");
+                report.add("           443 went to the edge, and was retired with the edge's seed "
+                        + "deploy.");
+            }
             report.add("registry:  " + registry
                     + " — the platform's OWN images and packages (" + env + "-qits-artifacts)");
             report.add("mirror:    " + mirror

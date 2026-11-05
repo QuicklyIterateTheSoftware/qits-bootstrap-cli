@@ -141,7 +141,7 @@ public final class BootstrapIngressLifecycle {
      * @return whether there was a 443 to give up
      */
     public boolean releaseTls(Consumer<String> out) throws IOException {
-        if (!boot.config.bootstrapIngress() || mode() != BootstrapIngressMode.PUBLIC_TLS) {
+        if (!holdsTls()) {
             return false;
         }
         out.accept("  the bootstrap ingress gives 443 to the seed edge; the progress page stays "
@@ -152,6 +152,20 @@ public final class BootstrapIngressLifecycle {
         mode = BootstrapIngressMode.PUBLIC_HTTP;
         start(out);
         return true;
+    }
+
+    /** Whether this run's ingress holds 443 — the one case {@link #releaseTls} has work in. */
+    public boolean holdsTls() {
+        return boot.config.bootstrapIngress() && mode() == BootstrapIngressMode.PUBLIC_TLS;
+    }
+
+    /**
+     * Where a person reaches the live progress page right now — {@code https://<domain>} in
+     * {@code PUBLIC_TLS}, {@code http://<domain>} once {@link #releaseTls} has run, the loopback
+     * door otherwise. What the handoff tells the operator, the open page and the closing report.
+     */
+    public String progressAddress() {
+        return address();
     }
 
     /** Whether this boot's seed stack already runs the edge — the holder of 443 from then on. */
