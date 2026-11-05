@@ -57,11 +57,18 @@ for, forever.
     qits-bootstrap order --wrapper <qits-qits checkout>   # read-only: the order the repositories declare
 
 `order` changes nothing (qits-3). It reads every submodule's manifests, `release.yml` and
-`deployments.yml` through `qits-bootstrap-graph`, derives what to push, what to replay and the
-deploy order (`BootOrder`, with the cutover reasons in `CutoverRules`), and prints that beside
-`PlatformModel`'s three lists with every difference. The boot itself still runs on the lists;
-`BootOrderDiffTest` holds the two together over the `src/test/resources/estate/` fixture, which
-`src/test/resources/estate/refresh.sh <wrapper>` regenerates.
+`deployments.yml` through `qits-bootstrap-graph` and prints what to push, what to replay and the
+deploy order (`BootOrder`, with the cutover reasons in `CutoverRules`) — exactly what the boot's
+`plan-train` phase plans from its own checkouts. There are no hand-kept lists behind it any more:
+which repositories the platform has is the wrapper's `.gitmodules`, and what each one is to the
+boot is what it declares. `BootOrderEstateTest` asserts the derivation over the
+`src/test/resources/estate/` fixture, which `src/test/resources/estate/refresh.sh <wrapper>`
+regenerates.
+
+**The header's total is provisional until `plan-train` has run.** Everything up to the train is
+planned before the first phase; the train's phases — `push-<name>`, `release-<name>`,
+`deploy-<name>` — are planned by `plan-train` once `sources` has cloned what they are read from,
+and the total grows by them when it runs.
 
 ## Running it
 
@@ -1040,7 +1047,7 @@ trusted certificate.
 It is **not deployer-managed, and there is deliberately no settings row or deployment spec for it**: the runner rolls
 itself over when qits-system pins a newer version, by starting a successor container and leaving,
 and a deployer replacing the same container would be two actors racing to remove it. So it is in no
-stack file and no `DEPLOYABLES` entry, the seed's cutovers pass it by, and the deployed qits-system —
+stack file and no deployments.yml, the seed's cutovers pass it by, and the deployed qits-system —
 the same database at the same alias — is simply redialled.
 
 **Whose target it is decides everything.** The phase acts only when qits-system lists no target or

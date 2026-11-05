@@ -433,15 +433,20 @@ forced. Add to that list rather than deviating quietly.
   `.gitmodules` is the authority on where a repository sits: `GitModules` reads it, `RunState`
   looks each repository up by name, by the path's last segment and by the url's, and
   `PlatformModel.repoPath` is only the fallback for a wrapper this machine has not cloned yet.
-  Nothing here spells a layout that a checkout could contradict. `PlatformModel.archetype` reads
-  the path's first segment while it is one of the six, and derives from the NAME otherwise — the
-  role suffix phase 2 renames into, then a table of today's names. The plane is DECIDED by
-  `PlatformModel.PLATFORM_SERVICES` and
-  usually also said by the name (`platform-idp`, `platform-mirror`); the tier lives in the WIRE
-  ALIAS derived from it (`prod-qits-ci`) — never the other way round. **The list is the authority,
-  not the spelling**: qits-deployments and qits-events joined the platform plane on 2026-08-17 and
-  their APPLICATIONS still answer to a bare name that says no plane at all, while their
-  repositories say it (`qits-events-platform-service`).
+  Nothing here spells a layout that a checkout could contradict. There is no plane any more: every
+  service is an ordinary service in the one environment, and the tier lives in the WIRE ALIAS
+  (`prod-qits-ci`) that `PlatformModel.wireAlias` derives.
+- **Which repositories the platform has, and what each one is to the boot, is DERIVED — there is
+  no list to add a repository to** (qits-3). Membership is the wrapper's `.gitmodules` less
+  `PlatformModel.READ_ONLY_REPOS` (`RunState.platformRepos`, what `sources` clones), and what each
+  repository is comes from its own declarations through `qits-bootstrap-graph`: a repository with
+  a `deployments.yml` is deployed (less the database the seed holds), every other one is pushed,
+  and a pushed one another repository pins at a release version is replayed. `Boot.estate()`
+  derives that once per run (`Estate`, `BootOrder`); the `plan-train` phase turns it into one
+  `push-`, `release-` and `deploy-` phase each, deploys ordered by the RUNTIME edges and
+  `CutoverRules` — the one place a cutover reason no declaration carries is written down. A new
+  repository joins by being a submodule with honest declarations; a new deploy-order reason is a
+  `CutoverRules` entry quoting it, never a position. `order --wrapper` prints the derivation.
 - **The host's docker socket is granted to THREE services, and every grant is a socket bind
   somebody wrote on purpose.** qits-containers starts every workload on the host, qits-deployments
   is a deployer, and qits-platform-system owns the admin console's terminals. A fourth is a
@@ -461,7 +466,7 @@ forced. Add to that list rather than deviating quietly.
   host (`QITS_SYSTEM_RUNNER_CREDENTIAL_VOLUME=qits_shared_dot_claude`, `_M2_VOLUME`,
   `_PNPM_VOLUME`) — and the runner rolls itself over from then on. It runs before the first release
   replay, so qits-system is a seed service. It stays as the platform's own target; nothing
-  decommissions it. Do not give it a settings row, a `DEPLOYABLES` entry or a stack service: a
+  decommissions it. Do not give it a settings row, a deployments.yml or a stack service: a
   deployer replacing the container would race the runner's own rollover. It replaced the CI runner
   (`runner-localhost`, `qits/qits-ci-runner`) and the workspaces runner.
   **Whose target it is decides whether anything is started**: the phase acts only when qits-system
