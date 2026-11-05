@@ -99,6 +99,46 @@ class BootOrderTest {
     }
 
     @Test
+    void aPackageJsonWithNoLockIsPinnedByNameAndRange() {
+        Map<String, String> tree = Map.of("package.json", """
+                {"dependencies": {"@qits/angular": "2026.1103.125108", "rxjs": "^7"},
+                 "devDependencies": {"@qits/ci-golden-masters": "2026.1018.180637"},
+                 "peerDependencies": {"@qits/peer": "1"}}""");
+        eu.wohlben.qits.bootstrap.graph.manifest.RepositoryFiles files = files(tree);
+
+        assertThat(CheckoutProjectSource.lockless(files)).containsExactly(
+                new Pin(new Coordinate(Ecosystem.NPM, "@qits/angular"), "2026.1103.125108",
+                        "package.json", "dependencies"),
+                new Pin(new Coordinate(Ecosystem.NPM, "@qits/ci-golden-masters"),
+                        "2026.1018.180637", "package.json", "devDependencies"));
+
+        Map<String, String> locked = new java.util.HashMap<>(tree);
+        locked.put("package-lock.json", "{}");
+        assertThat(CheckoutProjectSource.lockless(files(locked))).as("a lock is ManifestReader's")
+                .isEmpty();
+    }
+
+    private static eu.wohlben.qits.bootstrap.graph.manifest.RepositoryFiles files(
+            Map<String, String> tree) {
+        return new eu.wohlben.qits.bootstrap.graph.manifest.RepositoryFiles() {
+            @Override
+            public Optional<String> read(String path) {
+                return Optional.ofNullable(tree.get(path));
+            }
+
+            @Override
+            public List<String> paths() {
+                return tree.keySet().stream().sorted().toList();
+            }
+
+            @Override
+            public Map<String, String> gitlinks() {
+                return Map.of();
+            }
+        };
+    }
+
+    @Test
     void releaseVersionsAreCalver() {
         assertThat(BootOrder.RELEASE_VERSION.matcher("2026.1105.103222").matches()).isTrue();
         assertThat(BootOrder.RELEASE_VERSION.matcher("2026.905.92439").matches()).isTrue();
