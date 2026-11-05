@@ -54,6 +54,15 @@ It sweeps **both** deployer label namespaces — the current one and the retired
 taking a platform that was never bootstrapped since the merge-back off a machine is what unwrap is
 for, forever.
 
+    qits-bootstrap order --wrapper <qits-qits checkout>   # read-only: the order the repositories declare
+
+`order` changes nothing (qits-3). It reads every submodule's manifests, `release.yml` and
+`deployments.yml` through `qits-bootstrap-graph`, derives what to push, what to replay and the
+deploy order (`BootOrder`, with the cutover reasons in `CutoverRules`), and prints that beside
+`PlatformModel`'s three lists with every difference. The boot itself still runs on the lists;
+`BootOrderDiffTest` holds the two together over the `src/test/resources/estate/` fixture, which
+`src/test/resources/estate/refresh.sh <wrapper>` regenerates.
+
 ## Running it
 
 From the wrapper repository, which compiles this CLI first and passes everything through:
