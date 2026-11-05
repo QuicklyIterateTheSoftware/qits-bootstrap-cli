@@ -508,7 +508,7 @@ class BootstrapPlanTest {
     void aGitlinkCycleFailsTheTrainPlanNamingBoth() throws Exception {
         Path estate = temp.resolve("estate");
         java.nio.file.Files.createDirectories(estate);
-        java.nio.file.Files.writeString(estate.resolve(".gitmodules"), """
+        java.nio.file.Files.writeString(estate.resolve(".gitmodules.fixture"), """
                 [submodule "qits-a-javalib"]
                 \tpath = components/a/qits-a-javalib
                 \turl = ../qits-a-javalib.git
@@ -520,7 +520,7 @@ class BootstrapPlanTest {
                 {"qits-b-javalib", "qits-a-javalib"}}) {
             Path files = estate.resolve(pair[0]).resolve("files");
             java.nio.file.Files.createDirectories(files);
-            java.nio.file.Files.writeString(files.resolve(".gitmodules"),
+            java.nio.file.Files.writeString(files.resolve(".gitmodules.fixture"),
                     "[submodule \"" + pair[1] + "\"]\n\tpath = " + pair[1] + "\n\turl = ../"
                             + pair[1] + ".git\n");
             java.nio.file.Files.writeString(estate.resolve(pair[0]).resolve("gitlinks"),
