@@ -38,7 +38,7 @@
         <!-- What a repository declares, read from its files, and the project graph over it
              (qits-3): the library qits-maintenance-service reads the same declarations with.
              Released by qits-bootstrap-javalib; qits-maintenance bumps it. -->
-        <qits.bootstrap-graph.version>2026.1106.228</qits.bootstrap-graph.version>
+        <qits.bootstrap-graph.version>2026.1106.215243</qits.bootstrap-graph.version>
 
         <!-- Not in any BOM, so it is pinned here. -->
         <assertj.version>3.27.4</assertj.version>
