@@ -32,9 +32,16 @@ import java.util.Optional;
  */
 public final class RefRepositoryFiles implements RepositoryFiles {
 
-    /** The root files ManifestReader looks for by name. */
+    /**
+     * The root files {@code ManifestReader} looks for by name. {@code "pnpm-lock.yaml"} is a
+     * literal because the library pin this repository builds against has no PNPM_LOCK constant
+     * yet; with that library {@code ManifestReader} never asks for it, so listing it here changes
+     * nothing today — it only lets the at-ref path see the file once a bump makes the library
+     * read it.
+     */
     private static final List<String> ROOT_FILES = List.of(
-            "pom.xml", "package.json", ManifestReader.PACKAGE_LOCK, GitmodulesParser.PATH);
+            "pom.xml", "package.json", ManifestReader.PACKAGE_LOCK, "pnpm-lock.yaml",
+            GitmodulesParser.PATH);
 
     private final PinnedVersions.Sources sources;
     private final String name;

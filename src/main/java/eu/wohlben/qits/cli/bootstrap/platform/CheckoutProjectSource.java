@@ -287,14 +287,39 @@ public final class CheckoutProjectSource implements ProjectSource {
     }
 
     private static List<Pin> pins(RepositoryFiles files) {
-        List<Pin> pins = new ArrayList<>();
+        List<Pin> resolved = new ArrayList<>();
         for (ParsedPin parsed : ManifestReader.read(files)) {
             if (internal(parsed.ecosystem(), parsed.name())) {
-                pins.add(new Pin(new Coordinate(parsed.ecosystem(), parsed.name()),
+                resolved.add(new Pin(new Coordinate(parsed.ecosystem(), parsed.name()),
                         parsed.version(), parsed.manifestPath(), parsed.location()));
             }
         }
-        pins.addAll(lockless(files));
+        return merge(resolved, lockless(files));
+    }
+
+    /** The coordinate and manifest a {@link #merge} dedupes a lockless pin against. */
+    private record PinnedAt(Coordinate coordinate, String manifestPath) {
+    }
+
+    /**
+     * {@code resolved} plus every {@code lockless} pin whose coordinate was not already pinned, at
+     * the same {@code manifestPath}, by {@code resolved} — kept apart from {@link #pins} so a test
+     * can exercise the dedupe without a {@link RepositoryFiles}. Before qits-bootstrap-graph reads
+     * pnpm-lock.yaml itself, {@code resolved} never carries one of these coordinates and nothing is
+     * filtered; from the release carrying qits-1914 on, it does, and this is what keeps the one
+     * repository's pin from being counted twice.
+     */
+    static List<Pin> merge(List<Pin> resolved, List<Pin> lockless) {
+        Set<PinnedAt> covered = new LinkedHashSet<>();
+        for (Pin pin : resolved) {
+            covered.add(new PinnedAt(pin.coordinate(), pin.manifestPath()));
+        }
+        List<Pin> pins = new ArrayList<>(resolved);
+        for (Pin pin : lockless) {
+            if (covered.add(new PinnedAt(pin.coordinate(), pin.manifestPath()))) {
+                pins.add(pin);
+            }
+        }
         return List.copyOf(pins);
     }
 
@@ -309,9 +334,14 @@ public final class CheckoutProjectSource implements ProjectSource {
      * lock alone, so it pins nothing for them, and qits-ui-components-jslib's devDependency on
      * {@code @qits/angular} was no edge at all.
      * <p>
-     * Ordering needs the edge, not the version; qits-maintenance does not read pnpm locks either,
-     * so this stays the boot's. The version is the declared range verbatim — for these two an
-     * exact calver — and the location is the block, as {@code NpmParser} writes it.
+     * Ordering needs the edge, not the version. From the qits-bootstrap-graph release carrying
+     * qits-1914 on, {@code ManifestReader} resolves {@code pnpm-lock.yaml} itself, so this now
+     * only fills in what the library did not pin — a repository whose pnpm lock is unreadable or
+     * absent, {@code RefRepositoryFiles}' twenty-thousand-line capture limit among the reasons.
+     * It stays, rather than being dropped on the bump, so this class keeps producing the same
+     * pins across both library versions; {@link #pins} is what dedupes the overlap once the
+     * library pins the same coordinate itself. The version is the declared range verbatim — for
+     * these two an exact calver — and the location is the block, as {@code NpmParser} writes it.
      */
     static List<Pin> lockless(RepositoryFiles files) {
         List<String> paths = files.paths();
