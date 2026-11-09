@@ -80,18 +80,17 @@ public final class DeploymentSettings {
         }
 
         String edge = PlatformModel.application("edge");
-        // THE TLS WIRING, which wakes the image's certificate support: inert until a keystore
-        // names files. The files are on the letsencrypt volume the edge's deployments.yml
-        // declares, which holds the placeholder this boot writes until the edge's own DNS-01 order
-        // replaces it.
-        settings.add(plain(edge, "QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT",
-                "/work/.letsencrypt/current/lets-encrypt.crt"));
-        settings.add(plain(edge, "QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY",
-                "/work/.letsencrypt/current/lets-encrypt.key"));
-        settings.add(plain(edge, "QUARKUS_TLS_RELOAD_PERIOD", "1m"));
-        settings.add(plain(edge, "QITS_EDGE_ACME_ENABLED", String.valueOf(in.acmeEnabled())));
-        if (in.acmeEnabled()) {
-            settings.add(plain(edge, "QITS_EDGE_ACME_MODE", in.acmeMode()));
+        // THE TLS WIRING AND THE ACME ON/PRODUCTION DEFAULTS ARE THE EDGE IMAGE'S OWN NOW
+        // (qits-2009): the PEM paths, the 1m reload period, acme.enabled and acme.mode=production
+        // are baked into the image rather than restated here. A row is stated only where this
+        // installation differs from them.
+        if (!in.acmeEnabled()) {
+            settings.add(plain(edge, "QITS_EDGE_ACME_ENABLED", "false"));
+        } else {
+            // The mode, too, only when it differs from the image's default of production.
+            if (!"production".equalsIgnoreCase(in.acmeMode())) {
+                settings.add(plain(edge, "QITS_EDGE_ACME_MODE", in.acmeMode()));
+            }
             settings.add(plain(edge, "QITS_EDGE_ACME_EMAIL", in.acmeEmail()));
             // A VALUE, never the _FILE form the seed edge reads: the deployer mounts no swarm
             // secrets, and the file form wins when both are set.

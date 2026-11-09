@@ -311,13 +311,18 @@ forced. Add to that list rather than deviating quietly.
   qits-configuration any more (retired in qits-1396): nothing here renders, imports or flips either,
   and `DeploymentSettingsGuardTest` fails the build on any code that dials or writes
   qits-configuration again. What the image defaults cannot know is `DeploymentSettings` — the
-  domain, the passwords this run generated, the push token, the ACME account and TLS keystore, the
+  domain, the passwords this run generated, the push token, the ACME account, the
   daemon override, the port when it is not 8080 — and `deployment-settings` PUTs each row to
   `/deployments/api/settings/{application}/{environment}/{key}` under the bootstrap's `qits:system`
-  bearer, values never printed. **Its place is the whole ordering argument**: after `environment`,
-  which proves the seed deployer answers writes, and immediately before the first `seed-deploy-*`,
-  because every deployment reads the rows — the edge's TLS and ACME rows above all, or its cutover
-  takes the certificate away. The seed deployer itself reads none: it is started from the stack
+  bearer, values never printed. **The TLS PEM paths, the reload period, and ACME on/production are
+  the edge image's own defaults now (qits-2009)**: a row is stated only where this installation
+  differs from them — `QITS_EDGE_ACME_ENABLED` only to turn ACME off, `QITS_EDGE_ACME_MODE` only
+  for a mode other than production — and the email, the Hetzner token and the extra SANs are stated
+  whenever ACME is on, because the image has no default for any of those three. **Its place is the
+  whole ordering argument**: after `environment`, which proves the seed deployer answers writes,
+  and immediately before the first `seed-deploy-*`, because every deployment reads the rows — the
+  edge's ACME account rows above all, or its cutover orders no certificate for the domain it is
+  given. The seed deployer itself reads none: it is started from the stack
   file, which therefore spells its own `QITS_PLATFORM_DEPLOYMENTS_*` env, and its successor reads
   its own rows at the self-update last of the train. A PUT is an upsert, so a rerun writes the same
   rows again. The config volumes stay, for the seed pullers' `config.json` (`docker-configs`).

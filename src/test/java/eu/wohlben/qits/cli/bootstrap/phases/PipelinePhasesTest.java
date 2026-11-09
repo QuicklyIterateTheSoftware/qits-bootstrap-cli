@@ -702,13 +702,13 @@ class PipelinePhasesTest {
         boot.state.pgSuperuserPassword = "pg-superuser-secret";
         boot.state.daemonSha = "abc123";
         String base = boot.config.platformDeploymentsUrl() + "/api/settings/";
+        // No QITS_ACME_MODE is set, so this run keeps the config's own default, staging — enabled,
+        // and not the image's production default, so QITS_EDGE_ACME_MODE is stated and
+        // QITS_EDGE_ACME_ENABLED is not. The TLS PEM rows are the image's own now (qits-2009) and
+        // are never written here at all.
         for (String row : List.of("qits-deployments/prod/QITS_DOMAIN",
                 "qits-deployments/prod/QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD",
                 "qits-deployments/prod/QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH",
-                "qits-edge/prod/QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT",
-                "qits-edge/prod/QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY",
-                "qits-edge/prod/QUARKUS_TLS_RELOAD_PERIOD",
-                "qits-edge/prod/QITS_EDGE_ACME_ENABLED",
                 "qits-edge/prod/QITS_EDGE_ACME_MODE",
                 "qits-edge/prod/QITS_EDGE_ACME_EMAIL",
                 "qits-ci/prod/QITS_CI_DAEMON_VERSION_OVERRIDE",
@@ -722,7 +722,12 @@ class PipelinePhasesTest {
         new PipelinePhases(boot).deploymentSettings().action().run(ctx);
 
         List<String> puts = http.calls.stream().filter(call -> call.startsWith("PUT ")).toList();
-        assertThat(puts).hasSize(13).allMatch(call -> call.startsWith("PUT " + base));
+        assertThat(puts).hasSize(9).allMatch(call -> call.startsWith("PUT " + base));
+        assertThat(puts).doesNotContain(
+                "PUT " + base + "qits-edge/prod/QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT",
+                "PUT " + base + "qits-edge/prod/QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY",
+                "PUT " + base + "qits-edge/prod/QUARKUS_TLS_RELOAD_PERIOD",
+                "PUT " + base + "qits-edge/prod/QITS_EDGE_ACME_ENABLED");
         assertThat(http.bodies.get("PUT " + base
                 + "qits-oci-postgresql/prod/POSTGRES_PASSWORD"))
                 .isEqualTo("{\"value\":\"pg-superuser-secret\",\"secret\":true}");
@@ -733,7 +738,7 @@ class PipelinePhasesTest {
         assertThat(String.join("\n", ctx.lines)).doesNotContain("pg-superuser-secret")
                 .doesNotContain(boot.config.pushToken())
                 .contains("qits-oci-postgresql POSTGRES_PASSWORD (secret)");
-        assertThat(ctx.note).isEqualTo("13 settings");
+        assertThat(ctx.note).isEqualTo("9 settings");
     }
 
     /** A refused write stops the boot, naming the row and the status — never the answer's body. */

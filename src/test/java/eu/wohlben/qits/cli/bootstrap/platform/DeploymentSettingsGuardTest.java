@@ -41,15 +41,13 @@ class DeploymentSettingsGuardTest {
         List<DeploymentSettings.Setting> settings =
                 DeploymentSettings.of(inputs(8080, List.of(), "hetzner-secret"));
 
+        // inputs() carries mode "production", the image's own default, so neither
+        // QITS_EDGE_ACME_ENABLED nor QITS_EDGE_ACME_MODE is stated — and the TLS PEM rows are the
+        // edge image's own now (qits-2009) and are never written here at all.
         assertThat(keys(settings)).containsExactly(
                 "qits-deployments QITS_DOMAIN",
                 "qits-deployments QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD",
                 "qits-deployments QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH",
-                "qits-edge QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT",
-                "qits-edge QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY",
-                "qits-edge QUARKUS_TLS_RELOAD_PERIOD",
-                "qits-edge QITS_EDGE_ACME_ENABLED",
-                "qits-edge QITS_EDGE_ACME_MODE",
                 "qits-edge QITS_EDGE_ACME_EMAIL",
                 "qits-edge QITS_EDGE_ACME_HETZNER_TOKEN",
                 "qits-ci QITS_CI_DAEMON_VERSION_OVERRIDE",
@@ -66,9 +64,8 @@ class DeploymentSettingsGuardTest {
         assertThat(value(settings, "qits-deployments", "QITS_DOMAIN")).isEqualTo("qits-dev.eu");
         assertThat(value(settings, "qits-deployments", "QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH"))
                 .isEqualTo("true");
-        assertThat(value(settings, "qits-edge", "QITS_EDGE_ACME_MODE")).isEqualTo("production");
-        assertThat(value(settings, "qits-edge", "QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT"))
-                .isEqualTo("/work/.letsencrypt/current/lets-encrypt.crt");
+        assertThat(value(settings, "qits-edge", "QITS_EDGE_ACME_EMAIL"))
+                .isEqualTo("hostmaster@qits-dev.eu");
         assertThat(value(settings, "qits-ci", "QITS_CI_DAEMON_VERSION_OVERRIDE"))
                 .isEqualTo("abc123");
         // The admin password the deployer provisions with IS the superuser's postgres password.
@@ -124,14 +121,61 @@ class DeploymentSettingsGuardTest {
 
     @Test
     void anEdgeWithoutAcmeIsToldSoAndNothingAboutAnAccount() {
-        List<String> keys = keys(DeploymentSettings.of(new DeploymentSettings.Inputs("prod",
-                "qits-dev.eu", 8080, false, "off", "hostmaster@qits-dev.eu", "token", List.of(),
-                "pg", "push", "")));
+        List<DeploymentSettings.Setting> settings = DeploymentSettings.of(
+                new DeploymentSettings.Inputs("prod", "qits-dev.eu", 8080, false, "off",
+                        "hostmaster@qits-dev.eu", "token", List.of(), "pg", "push", ""));
 
-        assertThat(keys).contains("qits-edge QITS_EDGE_ACME_ENABLED")
+        assertThat(keys(settings)).contains("qits-edge QITS_EDGE_ACME_ENABLED")
                 .doesNotContain("qits-edge QITS_EDGE_ACME_MODE", "qits-edge QITS_EDGE_ACME_EMAIL",
                         "qits-edge QITS_EDGE_ACME_HETZNER_TOKEN",
                         "qits-ci QITS_CI_DAEMON_VERSION_OVERRIDE");
+        // The image's own default is ACME on, so this installation states it only to turn it off.
+        assertThat(value(settings, "qits-edge", "QITS_EDGE_ACME_ENABLED")).isEqualTo("false");
+    }
+
+    /**
+     * <b>The image's own defaults are ACME on and mode production</b> (qits-2009): an installation
+     * that matches both states neither row, and the TLS PEM rows never again at all.
+     */
+    @Test
+    void acmeOnAtProductionWritesNeitherEnabledNorModeNorTls() {
+        List<String> keys = keys(DeploymentSettings.of(new DeploymentSettings.Inputs("prod",
+                "qits-dev.eu", 8080, true, "production", "hostmaster@qits-dev.eu", "token",
+                List.of(), "pg", "push", "")));
+
+        assertThat(keys).doesNotContain("qits-edge QITS_EDGE_ACME_ENABLED",
+                "qits-edge QITS_EDGE_ACME_MODE", "qits-edge QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT",
+                "qits-edge QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY",
+                "qits-edge QUARKUS_TLS_RELOAD_PERIOD");
+        // The comparison is case-insensitive: a mode spelled any other way than lowercase still
+        // matches the image's default and states nothing.
+        List<String> keysMixedCase = keys(DeploymentSettings.of(new DeploymentSettings.Inputs(
+                "prod", "qits-dev.eu", 8080, true, "Production", "hostmaster@qits-dev.eu", "token",
+                List.of(), "pg", "push", "")));
+        assertThat(keysMixedCase).doesNotContain("qits-edge QITS_EDGE_ACME_MODE");
+    }
+
+    /** ACME on but staging, the one case this installation differs from the image: MODE is stated. */
+    @Test
+    void acmeOnAtStagingWritesModeButNotEnabled() {
+        List<DeploymentSettings.Setting> settings = DeploymentSettings.of(
+                new DeploymentSettings.Inputs("prod", "qits-dev.eu", 8080, true, "staging",
+                        "hostmaster@qits-dev.eu", "token", List.of(), "pg", "push", ""));
+
+        assertThat(keys(settings)).doesNotContain("qits-edge QITS_EDGE_ACME_ENABLED")
+                .contains("qits-edge QITS_EDGE_ACME_MODE");
+        assertThat(value(settings, "qits-edge", "QITS_EDGE_ACME_MODE")).isEqualTo("staging");
+    }
+
+    /** ACME off, the one case this installation differs from the image: ENABLED is stated false. */
+    @Test
+    void acmeOffWritesEnabledFalse() {
+        List<DeploymentSettings.Setting> settings = DeploymentSettings.of(
+                new DeploymentSettings.Inputs("prod", "qits-dev.eu", 8080, false, "off",
+                        "hostmaster@qits-dev.eu", "token", List.of(), "pg", "push", ""));
+
+        assertThat(keys(settings)).containsOnlyOnce("qits-edge QITS_EDGE_ACME_ENABLED");
+        assertThat(value(settings, "qits-edge", "QITS_EDGE_ACME_ENABLED")).isEqualTo("false");
     }
 
     /** A blank password is a bug in the run, never a row: it would deploy a database nobody opens. */
