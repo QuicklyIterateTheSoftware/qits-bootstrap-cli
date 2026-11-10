@@ -47,7 +47,7 @@
              (qits-1149). One pin per provider that publishes golden masters; qits-maintenance
              bumps them, and a changed answer the bootstrap cannot read goes red here before it
              ships. Do not hand-edit them to chase a release. -->
-        <qits.projects-golden-masters.version>2026.1109.121314</qits.projects-golden-masters.version>
+        <qits.projects-golden-masters.version>2026.1110.31824</qits.projects-golden-masters.version>
         <qits.events-golden-masters.version>2026.1109.83116</qits.events-golden-masters.version>
         <qits.ci-golden-masters.version>2026.1109.132507</qits.ci-golden-masters.version>
         <qits.deployments-golden-masters.version>2026.1109.191811</qits.deployments-golden-masters.version>
