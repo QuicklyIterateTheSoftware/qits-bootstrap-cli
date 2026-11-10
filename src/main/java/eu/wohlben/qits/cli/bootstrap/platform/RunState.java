@@ -92,6 +92,13 @@ public class RunState {
     public String pgCiPassword;
     public String pgCiEventstreamPassword;
     public String pgPlatformIdpPassword;
+    /**
+     * The idp's OUTBOX role, beside its own store above — it joined the event bus for qits-1977
+     * (`resources: postgresql:db:qits_platform_idp, postgresql:eventstream:qits_idp_eventstream,
+     * idp:client`), the same pair ci, the deployer, the git host, the orchestrator and qits-system
+     * already carry.
+     */
+    public String pgPlatformIdpEventstreamPassword;
     public String pgEventsPassword;
     /**
      * The byte plane's three stores, on the same terms as the four above. Every one of them keeps a

@@ -3212,7 +3212,7 @@ public class SeedPhases {
     public static final List<String> SEED_DATABASES = List.of(
             "qits_deployments", "qits_deployments_eventstream",
             "qits_ci", "qits_ci_eventstream",
-            "qits_platform_idp", "qits_events",
+            "qits_platform_idp", "qits_idp_eventstream", "qits_events",
             "qits_artifacts", "qits_platform_mirror",
             "qits_githost", "qits_githost_eventstream",
             "qits_projects", "qits_epics", "qits_projects_eventstream",
@@ -3237,7 +3237,8 @@ public class SeedPhases {
      * <p>
      * <b>Which databases are here, and which are deliberately not.</b> This phase provisions what
      * the SEED STACK needs: the deployer's own store AND ITS OUTBOX, and the stores of the core
-     * services that come up beside it — qits-ci (its database and its outbox), qits-platform-idp,
+     * services that come up beside it — qits-ci (its database and its outbox),
+     * qits-platform-idp (its database and, since qits-1977, its outbox),
      * qits-events, qits-artifacts, qits-platform-mirror, qits-githost (its
      * database and its outbox), qits-projects (three: its own, the epics store beside it and its
      * outbox) and qits-containers (the same pair). Five of them are
@@ -3272,6 +3273,9 @@ public class SeedPhases {
                     "qits.pg.ci-eventstream-password");
             String platformIdp = pgPassword(ctx, state, "PG_PLATFORM_IDP_PASSWORD",
                     "qits.pg.platform-idp-password");
+            String platformIdpEventstream = pgPassword(ctx, state,
+                    "PG_PLATFORM_IDP_EVENTSTREAM_PASSWORD",
+                    "qits.pg.platform-idp-eventstream-password");
             String events = pgPassword(ctx, state, "PG_EVENTS_PASSWORD", "qits.pg.events-password");
             String artifacts = pgPassword(ctx, state, "PG_ARTIFACTS_PASSWORD",
                     "qits.pg.artifacts-password");
@@ -3312,6 +3316,7 @@ public class SeedPhases {
             boot.state.pgCiPassword = ci;
             boot.state.pgCiEventstreamPassword = ciEventstream;
             boot.state.pgPlatformIdpPassword = platformIdp;
+            boot.state.pgPlatformIdpEventstreamPassword = platformIdpEventstream;
             boot.state.pgEventsPassword = events;
             boot.state.pgArtifactsPassword = artifacts;
             boot.state.pgPlatformMirrorPassword = platformMirror;
@@ -3344,6 +3349,7 @@ public class SeedPhases {
             state.put("PG_CI_PASSWORD", ci);
             state.put("PG_CI_EVENTSTREAM_PASSWORD", ciEventstream);
             state.put("PG_PLATFORM_IDP_PASSWORD", platformIdp);
+            state.put("PG_PLATFORM_IDP_EVENTSTREAM_PASSWORD", platformIdpEventstream);
             state.put("PG_EVENTS_PASSWORD", events);
             state.put("PG_ARTIFACTS_PASSWORD", artifacts);
             state.put("PG_PLATFORM_MIRROR_PASSWORD", platformMirror);
@@ -3420,6 +3426,8 @@ public class SeedPhases {
             ci = registry.getOrDefault("qits_ci", ci);
             ciEventstream = registry.getOrDefault("qits_ci_eventstream", ciEventstream);
             platformIdp = registry.getOrDefault("qits_platform_idp", platformIdp);
+            platformIdpEventstream =
+                    registry.getOrDefault("qits_idp_eventstream", platformIdpEventstream);
             events = registry.getOrDefault("qits_events", events);
             artifacts = registry.getOrDefault("qits_artifacts", artifacts);
             platformMirror = registry.getOrDefault("qits_platform_mirror", platformMirror);
@@ -3445,6 +3453,7 @@ public class SeedPhases {
                 boot.state.pgCiPassword = ci;
                 boot.state.pgCiEventstreamPassword = ciEventstream;
                 boot.state.pgPlatformIdpPassword = platformIdp;
+                boot.state.pgPlatformIdpEventstreamPassword = platformIdpEventstream;
                 boot.state.pgEventsPassword = events;
                 boot.state.pgArtifactsPassword = artifacts;
                 boot.state.pgPlatformMirrorPassword = platformMirror;
@@ -3464,6 +3473,7 @@ public class SeedPhases {
                 state.put("PG_CI_PASSWORD", ci);
                 state.put("PG_CI_EVENTSTREAM_PASSWORD", ciEventstream);
                 state.put("PG_PLATFORM_IDP_PASSWORD", platformIdp);
+                state.put("PG_PLATFORM_IDP_EVENTSTREAM_PASSWORD", platformIdpEventstream);
                 state.put("PG_EVENTS_PASSWORD", events);
                 state.put("PG_ARTIFACTS_PASSWORD", artifacts);
                 state.put("PG_PLATFORM_MIRROR_PASSWORD", platformMirror);
@@ -3507,6 +3517,13 @@ public class SeedPhases {
                 provision(ctx, admin, "qits_ci", ci, false);
                 provision(ctx, admin, "qits_ci_eventstream", ciEventstream, false);
                 provision(ctx, admin, "qits_platform_idp", platformIdp, false);
+                // THE IDP'S OWN OUTBOX, since qits-1977: the idp joined the event bus and its
+                // deployments.yml now declares `resources: postgresql:db:qits_platform_idp,
+                // postgresql:eventstream:qits_idp_eventstream, idp:client`, the same pair ci, the
+                // deployer, the git host, the orchestrator and qits-system already carry. Created
+                // once here, never altered again — from the first pipeline deployment the
+                // deployer's registry owns it.
+                provision(ctx, admin, "qits_idp_eventstream", platformIdpEventstream, false);
                 // The BUS, on the same terms and for the same reason: it joined the seed on
                 // 2026-08-10, so it boots from the compose file before any deployer could have
                 // created it a database, and its datasource is an expression over the triple with
@@ -4618,6 +4635,8 @@ public class SeedPhases {
         values.put("PG_CI_PASSWORD", orEmpty(boot.state.pgCiPassword));
         values.put("PG_CI_EVENTSTREAM_PASSWORD", orEmpty(boot.state.pgCiEventstreamPassword));
         values.put("PG_PLATFORM_IDP_PASSWORD", orEmpty(boot.state.pgPlatformIdpPassword));
+        values.put("PG_PLATFORM_IDP_EVENTSTREAM_PASSWORD",
+                orEmpty(boot.state.pgPlatformIdpEventstreamPassword));
         values.put("PG_EVENTS_PASSWORD", orEmpty(boot.state.pgEventsPassword));
         values.put("PG_ARTIFACTS_PASSWORD", orEmpty(boot.state.pgArtifactsPassword));
         values.put("PG_PLATFORM_MIRROR_PASSWORD", orEmpty(boot.state.pgPlatformMirrorPassword));

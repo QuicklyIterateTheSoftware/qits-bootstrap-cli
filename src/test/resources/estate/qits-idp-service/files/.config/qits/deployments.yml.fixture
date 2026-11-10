@@ -83,4 +83,8 @@ health_path: /idp/q/health/ready
 # qits-telemetry-core attaches it to every OTLP export, because the edge in front of
 # qits-observability refuses an anonymous POST. The claim also keeps the client out of
 # UnclaimedServiceClientCollector's reach, which deletes any service client no deployment claims.
-resources: postgresql:db:qits_platform_idp, idp:client
+#
+# postgresql:eventstream:qits_idp_eventstream — THE OUTBOX, since qits-1977: this service joined
+# qits-eventstream, whose Flyway lineage cannot share a database with the store above, and it
+# refuses to boot without QITS_RESOURCE_EVENTSTREAM_URL/_USERNAME/_PASSWORD.
+resources: postgresql:db:qits_platform_idp, postgresql:eventstream:qits_idp_eventstream, idp:client

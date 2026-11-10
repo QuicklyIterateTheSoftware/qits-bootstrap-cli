@@ -231,13 +231,20 @@ public final class ComposeTemplate {
                   #
                   # SPELLED HERE, AND ONLY HERE. This container is started by the seed stack before any deployer
                   # exists, so the bootstrap creates the role and the database over JDBC and hands the
-                  # credential over itself. Every deployment after this one gets the same three variables
-                  # from qits-platform-deployments, which reads `resources: postgresql:db` in this
-                  # repository's deployments.yml — which is why the deployer's settings carry
-                  # no datasource env at all.
+                  # credential over itself. Every deployment after this one gets the same six variables
+                  # from qits-platform-deployments, which reads `resources: postgresql:db:qits_platform_idp,
+                  # postgresql:eventstream:qits_idp_eventstream, idp:client` in this repository's
+                  # deployments.yml — which is why the deployer's settings carry no datasource env at all.
                   QITS_RESOURCE_DB_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_platform_idp
                   QITS_RESOURCE_DB_USERNAME: qits_platform_idp
                   QITS_RESOURCE_DB_PASSWORD: "${PG_PLATFORM_IDP_PASSWORD}"
+                  # THE OUTBOX, beside the store above — the idp joined the event bus for qits-1977:
+                  # it is a consumer of qits-eventstream now, which keeps its own Flyway lineage in a
+                  # second database, exactly the pair qits-ci, the deployer, the git host, the
+                  # orchestrator and qits-system already carry.
+                  QITS_RESOURCE_EVENTSTREAM_URL: jdbc:postgresql://${ENV_NAME}-qits-oci-postgresql:5432/qits_idp_eventstream
+                  QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_idp_eventstream
+                  QITS_RESOURCE_EVENTSTREAM_PASSWORD: "${PG_PLATFORM_IDP_EVENTSTREAM_PASSWORD}"
                   # Nothing is spelled for the token issuer here (qits-730). The idp derives its own `iss` —
                   # https://idp.qits.<domain> — from QITS_DOMAIN in code and reads no environment
                   # variable for it any more, so there is nothing here for this program to write

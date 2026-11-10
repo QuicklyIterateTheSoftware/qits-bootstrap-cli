@@ -43,6 +43,7 @@ class ComposeTemplateTest {
         values.put("PG_CI_PASSWORD", "aaaabbbbccccdddd");
         values.put("PG_CI_EVENTSTREAM_PASSWORD", "eeeeffff00001111");
         values.put("PG_PLATFORM_IDP_PASSWORD", "2222333344445555");
+        values.put("PG_PLATFORM_IDP_EVENTSTREAM_PASSWORD", "4444555566667777");
         values.put("PG_EVENTS_PASSWORD", "bbbbccccddddeeee");
         values.put("PG_ARTIFACTS_PASSWORD", "cafecafecafecafe");
         values.put("PG_PLATFORM_MIRROR_PASSWORD", "1234123412341234");
@@ -177,6 +178,7 @@ class ComposeTemplateTest {
                 .doesNotContain("${PG_CI_PASSWORD}")
                 .doesNotContain("${PG_CI_EVENTSTREAM_PASSWORD}")
                 .doesNotContain("${PG_PLATFORM_IDP_PASSWORD}")
+                .doesNotContain("${PG_PLATFORM_IDP_EVENTSTREAM_PASSWORD}")
                 .doesNotContain("${PG_EVENTS_PASSWORD}")
                 .doesNotContain("${PG_ARTIFACTS_PASSWORD}")
                 .doesNotContain("${PG_PLATFORM_MIRROR_PASSWORD}")
@@ -1280,11 +1282,18 @@ class ComposeTemplateTest {
                 .doesNotContain("- qits-ci-data:/data")
                 .doesNotContain("docker.sock");
 
+        // Two stores, two Flyway lineages for the idp too, since qits-1977: its own store and the
+        // eventstream outbox it joined the bus with.
         assertThat(idp).contains("QITS_RESOURCE_DB_URL: "
                         + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_platform_idp")
                 .contains("QITS_RESOURCE_DB_USERNAME: qits_platform_idp")
-                .contains("QITS_RESOURCE_DB_PASSWORD: \"2222333344445555\"");
+                .contains("QITS_RESOURCE_DB_PASSWORD: \"2222333344445555\"")
+                .contains("QITS_RESOURCE_EVENTSTREAM_URL: "
+                        + "jdbc:postgresql://prod-qits-oci-postgresql:5432/qits_idp_eventstream")
+                .contains("QITS_RESOURCE_EVENTSTREAM_USERNAME: qits_idp_eventstream")
+                .contains("QITS_RESOURCE_EVENTSTREAM_PASSWORD: \"4444555566667777\"");
         assertThat(idp).doesNotContain("QUARKUS_DATASOURCE_IDP_JDBC_URL")
+                .doesNotContain("QUARKUS_DATASOURCE_EVENTSTREAM_JDBC_URL")
                 .doesNotContain("- qits-idp-data:/data");
 
         // A volume declaration with no mount is a volume nothing ever fills, and the next reader
