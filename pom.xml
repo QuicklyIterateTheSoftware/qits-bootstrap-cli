@@ -50,16 +50,16 @@
         <qits.projects-golden-masters.version>2026.1113.222933</qits.projects-golden-masters.version>
         <qits.events-golden-masters.version>2026.1109.83116</qits.events-golden-masters.version>
         <qits.ci-golden-masters.version>2026.1113.31502</qits.ci-golden-masters.version>
-        <qits.deployments-golden-masters.version>2026.1113.124805</qits.deployments-golden-masters.version>
+        <qits.deployments-golden-masters.version>2026.1114.112916</qits.deployments-golden-masters.version>
         <qits.idp-golden-masters.version>2026.1109.13349</qits.idp-golden-masters.version>
         <qits.githost-golden-masters.version>2026.1109.41303</qits.githost-golden-masters.version>
-        <qits.artifacts-golden-masters.version>2026.1111.62703</qits.artifacts-golden-masters.version>
+        <qits.artifacts-golden-masters.version>2026.1114.41515</qits.artifacts-golden-masters.version>
         <!-- qits-system's (qits-1535): the targets doors the target-* phases call. The pinned
              release predates the targets module, so every row against it is pending until a
              qits-maintenance bump brings its states. qits-workspaces has no pin any more: the
              bootstrap calls none of its doors since the target replaced its runner. -->
         <qits.system-golden-masters.version>2026.1112.808</qits.system-golden-masters.version>
-        <qits.containers-golden-masters.version>2026.1019.103940</qits.containers-golden-masters.version>
+        <qits.containers-golden-masters.version>2026.1114.40637</qits.containers-golden-masters.version>
         <!-- pact-jvm, test scope only. An external library, so it moves by hand; the same version
              as the providers' verifiers and every other consumer on the estate. -->
         <pact-jvm.version>4.6.21</pact-jvm.version>
