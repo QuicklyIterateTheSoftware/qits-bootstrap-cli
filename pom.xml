@@ -43,7 +43,7 @@
         <!-- Every docker argv and the process host that runs it (qits-2212): the library the
              platform's own docker callers use, so a docker behaviour fix lands once. Released by
              qits-containers-javalib; qits-maintenance bumps it. -->
-        <qits.containers-driver.version>2026.1116.82048</qits.containers-driver.version>
+        <qits.containers-driver.version>2026.1116.92807</qits.containers-driver.version>
 
         <!-- Not in any BOM, so it is pinned here. -->
         <assertj.version>3.27.4</assertj.version>
