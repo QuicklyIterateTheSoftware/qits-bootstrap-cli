@@ -344,7 +344,9 @@ forced. Add to that list rather than deviating quietly.
   given. The seed deployer itself reads none: it is started from the stack
   file, which therefore spells its own `QITS_PLATFORM_DEPLOYMENTS_*` env, and its successor reads
   its own rows at the self-update last of the train. A PUT is an upsert, so a rerun writes the same
-  rows again. The config volumes stay, for the seed pullers' `config.json` (`docker-configs`).
+  rows again. The seed pullers no longer get a config volume at all: the deployer, the
+  orchestrator and qits-system each write their own `config.json` under `/tmp/qits-docker` from
+  their `QITS_RESOURCE_IDP_CLIENT_ID`/`_SECRET` pair at boot (qits-2266).
 - **A DEPLOYMENT IS A RELEASE, and there is no ref that deploys.** qits-projects tags a release
   through qits-githost's primitives and publishes `SCMRelease`; the `release:` phase of the
   repository's own `.config/qits/release.yml` — which qits-ci composes into a trigger document
@@ -479,9 +481,11 @@ forced. Add to that list rather than deviating quietly.
   makes the socket usable by a container running as uid 1001 — plus a comment saying why the
   power belongs there rather than behind an endpoint on one of the three. The seed stack grants
   the same three by hand (`user: "1001:<gid>"`). A socket holder that also PULLS needs a `config.json` of its
-  own: `SeedPhases.dockerConfig` writes one per holder, with the hosts that holder pulls from (the
-  registry vhost for the first two, the registry AND the mirror for qits-platform-system, whose
-  glances image is the mirror's).
+  own, and each of the three writes it itself now (qits-2266): at boot, under `/tmp/qits-docker`,
+  from the `QITS_RESOURCE_IDP_CLIENT_ID`/`_SECRET` pair the seed stack already hands it, naming
+  the hosts that holder pulls from (the registry vhost for the first two, the registry AND the
+  mirror for qits-platform-system, whose glances image is the mirror's). The bootstrap no longer
+  writes any of the three — `SeedPhases.dockerConfig` and the `docker-configs` phase are gone.
 - **This host's TARGET holds the socket as a CONTAINER, and never as a deployment.** Every CI run
   is a lease on a qits-system target since qits-1547 (and every workspace one since qits-1535), so
   `target-localhost` declares target `localhost` at `POST /system/api/targets` (reservations: ci from

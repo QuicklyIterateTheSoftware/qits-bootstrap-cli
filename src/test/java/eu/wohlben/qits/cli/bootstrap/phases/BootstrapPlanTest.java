@@ -431,7 +431,7 @@ class BootstrapPlanTest {
         // makes — and compose-file is BELOW all three, because the secrets it renders do not exist
         // until the idp has issued them.
         assertThat(ids).containsSubsequence("ci-daemon", "idp-bootstrap-client", "seed-idp",
-                "idp-clients", "compose-file", "docker-configs", "seed-stack", "seed-health",
+                "idp-clients", "compose-file", "seed-stack", "seed-health",
                 "register-token");
         // The deployer's extras file and the two phases that moved it into qits-configuration are
         // gone with that service (qits-765): the settings go to the deployer's own store.
@@ -446,7 +446,7 @@ class BootstrapPlanTest {
         // without its database, and idp-clients records every issued secret in the deployer's
         // registry on that same server.
         assertThat(ids).containsSubsequence("seed-image-oci-postgresql", "seed-postgres",
-                "idp-bootstrap-client", "seed-idp", "idp-clients", "compose-file", "docker-configs",
+                "idp-bootstrap-client", "seed-idp", "idp-clients", "compose-file",
                 "seed-stack");
         // The git host is in the seed stack rather than started by hand: nothing needs it before
         // compose brings it up, and git-repos — the first phase that PUTs against it — is after
@@ -673,7 +673,7 @@ class BootstrapPlanTest {
     void theDomainAddsThePlaceholderAndTheRunningEdgeOwnsIssuance() {
         List<String> ids = ids(plan(Map.of()));
 
-        assertThat(ids).containsSubsequence("docker-configs", "edge-cert", "seed-stack", "seed-health");
+        assertThat(ids).containsSubsequence("compose-file", "edge-cert", "seed-stack", "seed-health");
         assertThat(ids).doesNotContain("dns-zone", "edge-acme");
     }
 

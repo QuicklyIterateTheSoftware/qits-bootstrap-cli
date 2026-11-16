@@ -7,7 +7,6 @@ import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.engine.PhaseSkipped;
 import eu.wohlben.qits.cli.bootstrap.platform.MuslToolchain;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
-import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
 import eu.wohlben.qits.cli.bootstrap.proc.ScriptedRunner;
 import org.junit.jupiter.api.Test;
@@ -1764,34 +1763,17 @@ class SeedPhasesTest {
         assertThat(SeedPhases.bootIdentity("oci", ESTATE, TAGS)).isEqualTo("2026.812.153438");
     }
 
-    // --- the pullers' docker credentials -----------------------------------------------------------
+    // --- the docker config.json helper --------------------------------------------------------------
 
     /**
      * The docker CLI's own file: four fixed keys around one base64 of {@code <id>:<secret>}, which
      * is the same document {@code docker login} writes. The registry host is the KEY inside it —
      * docker matches the credential by the name it is dialling — so a file keyed by anything but
-     * the vhost the deployer and the orchestrator pull from is a credential never offered.
+     * the vhost a puller actually dials is a credential never offered. {@code dockerConfigJson} and
+     * {@code dockerAuth} are shared with {@link PipelinePhases}' own push and pull config.json
+     * writes; there is no seed-only caller of them any more since the three seed pullers' own
+     * config volumes were retired (qits-2266).
      */
-    /**
-     * <b>Every seed puller's file names the two PUBLIC names</b> (qits-1430): the deployer pulls
-     * {@code registry.qits.<domain>/qits/<app>:<version>}, qits-system pulls glances from
-     * {@code mirror.qits.<domain>}, qits-containers names the same pair — and docker matches an
-     * entry by host alone, so a machine-name vhost here would be a credential never presented.
-     */
-    @Test
-    void theSeedPullersCredentialIsForThePublicRegistryAndMirror() {
-        List<String> hosts = SeedPhases.dockerConfigHosts("qits-dev.eu");
-
-        assertThat(hosts).containsExactly("registry.qits.qits-dev.eu", "mirror.qits.qits-dev.eu");
-        assertThat(hosts).noneMatch(host -> host.contains("localhost"));
-        String auth = Base64.getEncoder().encodeToString(
-                "prod-qits-deployments:s3cr3t".getBytes(StandardCharsets.UTF_8));
-        assertThat(SeedPhases.dockerConfigJson(hosts, "prod-qits-deployments", "s3cr3t"))
-                .isEqualTo("{\"auths\":{"
-                        + "\"registry.qits.qits-dev.eu\":{\"auth\":\"" + auth + "\"},"
-                        + "\"mirror.qits.qits-dev.eu\":{\"auth\":\"" + auth + "\"}}}\n");
-    }
-
     @Test
     void aPullersConfigJsonIsWhatDockerLoginWouldHaveWritten() {
         String json = SeedPhases.dockerConfigJson(
@@ -1825,32 +1807,6 @@ class SeedPhasesTest {
                 + "\"registry.qits.qits-dev.eu\":{\"auth\":\"" + auth + "\"},"
                 + "\"mirror.qits.qits-dev.eu\":{\"auth\":\"" + auth + "\"}}}\n");
         assertThat(json).doesNotContain("s3cr3t");
-    }
-
-    /**
-     * <b>Both halves of the credential are masked, and the second is not covered by the first.</b>
-     * The base64 does not contain the secret as a substring, so a mask on the secret alone would
-     * leave the whole credential on the screen and in the run log in one token.
-     */
-    @Test
-    void theWriteHidesTheSecretAndTheBase64OfIt() {
-        String json = SeedPhases.dockerConfigJson(
-                List.of("registry.qits.qits-dev.eu"), "prod-qits-containers", "s3cr3t");
-        Cmd write = SeedPhases.dockerConfigWrite(
-                "qits-containers-config", json, "prod-qits-containers", "s3cr3t");
-
-        assertThat(write.maskText(json + " s3cr3t")).doesNotContain("s3cr3t")
-                .doesNotContain(Base64.getEncoder().encodeToString(
-                        "prod-qits-containers:s3cr3t".getBytes(StandardCharsets.UTF_8)));
-        // The file lands on the volume named, under the one name docker looks for, owned by the
-        // image's uid and readable by nobody else on that volume.
-        assertThat(write.command()).contains("qits-containers-config:/cfg");
-        assertThat(String.join(" ", write.command()))
-                .contains("cat > /cfg/config.json")
-                .contains("chown 1001:0 /cfg/config.json")
-                .contains("chmod 600 /cfg/config.json");
-        // The document travels on stdin: a credential on a command line is a credential in ps.
-        assertThat(write.stdinText()).isEqualTo(json);
     }
 
     @Test

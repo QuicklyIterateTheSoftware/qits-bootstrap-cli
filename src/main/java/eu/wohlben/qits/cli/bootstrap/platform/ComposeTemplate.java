@@ -181,27 +181,7 @@ public final class ComposeTemplate {
               qits-workspaces-data:
                 name: qits-workspaces-data
               qits-stt-data:
-                name: qits-stt-data
-              # THE ORCHESTRATOR'S DOCKER CONFIG, and the whole volume is one file: the config.json
-              # its `docker pull` authenticates with, written by the bootstrap with this service's
-              # own idp client. A volume rather than env because the docker CLI reads a FILE under
-              # DOCKER_CONFIG, and a mount is what a cutover carries across.
-              #
-              # Load-bearing since the flip, and it existed before it for that reason: a puller
-              # that has to be redeployed to gain a credential is a puller that is down for the
-              # length of the change.
-              qits-containers-config:
-                name: qits-containers-config
-              # qits-system's docker config, on the orchestrator's terms: one config.json its glances
-              # pull through the mirror authenticates with, written by the bootstrap with this
-              # service's own idp client. The deployed successor writes its own from the client it is injected.
-              qits-system-config:
-                name: qits-system-config
-              # The deployer's own docker config: the config.json its seed pulls authenticate with,
-              # written by the bootstrap. A volume because the docker CLI reads a file. The extras
-              # file that sat beside it is gone: the deployer reads its settings store (qits-765).
-              qits-deployments-config:
-                name: qits-deployments-config${LETSENCRYPT_VOLUME}
+                name: qits-stt-data${LETSENCRYPT_VOLUME}
 
             # EACH KEY BELOW IS THE SERVICE'S WIRE ALIAS, AND THAT IS THE WHOLE ADDRESSING MODEL NOW.
             # There is no container_name: a stack ignores it and names the container
@@ -214,7 +194,7 @@ public final class ComposeTemplate {
             # NO update_config ANYWHERE, and that is a decision rather than an omission: swarm's default
             # update order is stop-first, which is the only order these services can take. Every one of
             # them either holds a volume no second writer may open or binds a host port a second task
-            # would collide on — the deployer's config volume most of all.
+            # would collide on.
             services:
               # The issuer. No published host port or public token route: in phase 1 nothing outside qits-net
               # talks to it, and /idp/token reachable from the host unauthenticated would be
@@ -355,8 +335,9 @@ public final class ComposeTemplate {
                   #
                   # THE FLIP OF 2026-08-14 STANDS. Reads were anonymous on the two registry names
                   # until that day, because every puller was a machine holding no credential. Each
-                  # one holds its own now — the deployer and the orchestrator from the config.json
-                  # files this bootstrap writes, a ci step from the credential ci commissions for
+                  # one holds its own now — the deployer and the orchestrator write their own
+                  # config.json under /tmp/qits-docker from their QITS_RESOURCE_IDP_CLIENT_ID/
+                  # _SECRET pair (qits-2266), a ci step from the credential ci commissions for
                   # its run — so the door was closed by adding the key below, the OTHER HALF of that
                   # change, which stays exactly as it is:
                   #
@@ -567,13 +548,8 @@ public final class ComposeTemplate {
                   # DERIVES itself — registry.qits.<domain>, from the QITS_DOMAIN line below — rather
                   # than a value stated here. There is no registry-host key left to spell: every pull
                   # still carries a bearer, which is what the two variables below are for.
-                  # WHERE THE DOCKER CLI LOOKS FOR A CREDENTIAL. This container runs as uid 1001
-                  # with no home, so without this variable docker finds no ~/.docker/config.json
-                  # and pulls anonymously, which the edge now refuses. The bootstrap writes
-                  # config.json onto the config volume below, and this variable is what makes the CLI
-                  # read it. The identity in it is this service's own idp client,
-                  # ${ALIAS_DEPLOYMENTS}.
-                  DOCKER_CONFIG: /work/config
+                  # This service writes its own docker config.json under /tmp/qits-docker from its
+                  # QITS_RESOURCE_IDP_CLIENT_ID/_SECRET pair at boot (qits-2266).
                   # AND THE SWITCH THAT MAKES IT LOAD-BEARING — one of the flip's three values,
                   # spelled here as well as in the deployer's settings, because this seed deployer
                   # pulls before its settings store holds a row. It does two things: this deployer's
@@ -607,8 +583,7 @@ public final class ComposeTemplate {
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}
                 volumes:
                   # No data volume any more: the store is the postgres above, and /data held the H2 files
-                  # and nothing else. The config volume stays for the docker credential above.
-                  - qits-deployments-config:/work/config
+                  # and nothing else. The docker socket is what is left to mount.
                   - /var/run/docker.sock:/var/run/docker.sock
                 # Both names, for the reason spelled on qits-idp's block above.
                 ${SEED_NETWORKS_DEPLOYMENTS}
@@ -1140,17 +1115,9 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_IDP_URL: ${IDP_DIAL}
                   QITS_RESOURCE_IDP_CLIENT_ID: ${ALIAS_CONTAINERS}
                   QITS_RESOURCE_IDP_CLIENT_SECRET: "${IDP_CLIENT_SECRET_CONTAINERS}"
-                  # WHERE THE DOCKER CLI LOOKS FOR A CREDENTIAL, exactly as the deployer's block
-                  # says: this container runs as uid 1001 with no home, so without this variable
-                  # docker reads no config.json and every `docker pull` of a workload image is
-                  # anonymous. The file on the volume below carries this service's own idp client,
-                  # ${ENV_NAME}-qits-containers — the puller's identity, so a refusal names the
-                  # service that was refused.
-                  #
-                  # LOAD-BEARING SINCE THE FLIP, and mounted before it for the same reason the
-                  # deployer's was: gaining a credential must not be a redeploy of the one service
-                  # that starts every workload on this host.
-                  DOCKER_CONFIG: /work/config
+                  # This service writes its own docker config.json under /tmp/qits-docker from its
+                  # QITS_RESOURCE_IDP_CLIENT_ID/_SECRET pair above at boot (qits-2266), and points
+                  # the docker CLI at it itself — a refusal still names the service that was refused.
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}
                 volumes:
                   # THE SOCKET. Starting containers is what this service is, so the mount is not a
@@ -1159,9 +1126,6 @@ public final class ComposeTemplate {
                   # service instead, one at a time. The store is the postgres above, so nothing it
                   # writes outlives the container.
                   - /var/run/docker.sock:/var/run/docker.sock
-                  # And the one file the docker CLI authenticates a pull with, which is why this
-                  # volume holds no state of the service's own.
-                  - qits-containers-config:/work/config
                 networks: [qits-net]
                 deploy:
                   replicas: 1
@@ -1205,9 +1169,9 @@ public final class ComposeTemplate {
                   QITS_RESOURCE_IDP_URL: ${IDP_DIAL}
                   QITS_RESOURCE_IDP_CLIENT_ID: ${ALIAS_SYSTEM}
                   QITS_RESOURCE_IDP_CLIENT_SECRET: "${IDP_CLIENT_SECRET_SYSTEM}"
-                  # Where the docker CLI looks for its credential: the file on the volume below, the
+                  # This service writes its own docker config.json under /tmp/qits-docker from its
+                  # QITS_RESOURCE_IDP_CLIENT_ID/_SECRET pair above at boot (qits-2266), the
                   # orchestrator's reason.
-                  DOCKER_CONFIG: /work/config
                   QITS_SYSTEM_GLANCES_IMAGE_VERSION: 4.5.6-full
                   # QITS_DOMAIN (the SEED_DOMAIN fragment) is what the targets module composes every
                   # public address a target is told from — system.qits.<domain>, registry.qits.<domain>
@@ -1215,7 +1179,6 @@ public final class ComposeTemplate {
                   QITS_OBSERVABILITY_URL: http://${ENV_NAME}-qits-observability:8080${SEED_DOMAIN}${TIER_ENV_SYSTEM}
                 volumes:
                   - /var/run/docker.sock:/var/run/docker.sock
-                  - qits-system-config:/work/config
                 networks: [qits-net]
                 deploy:
                   replicas: 1

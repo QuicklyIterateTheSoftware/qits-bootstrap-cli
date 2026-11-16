@@ -57,9 +57,13 @@ import java.util.function.Supplier;
  * <p>
  * <b>{@code --with-data-volumes} is the middle answer, and it exists for the re-bootstrap.</b>
  * Moving a service onto another database is a cold boot of that service's data and nothing else,
- * so the data volumes go and the CONFIG volumes stay: {@code qits-deployments-config} holds the
- * push token, the client secrets and every run-arg the deployer boots from, and losing it turns a
- * migration into a re-issue of every credential on the machine. Keep-patterns are therefore
+ * so the data volumes go. There is no config volume to keep any more: {@code qits-deployments-config},
+ * {@code qits-containers-config} and {@code qits-system-config} held only the seed pullers' docker
+ * {@code config.json}, and each of those three services now writes its own under
+ * {@code /tmp/qits-docker} from its {@code QITS_RESOURCE_IDP_CLIENT_ID}/{@code _SECRET} pair at boot
+ * (qits-2266) — so a leftover one on an old host holds nothing and is ordinary removable platform
+ * state, taken by {@code --with-data-volumes} like any other data volume and by {@code --with-volumes}
+ * like any other platform volume. Keep-patterns are therefore
  * checked FIRST and win, and a volume matching neither set is kept — a sweep that guesses about a
  * volume it has never heard of is how someone's data goes.
  * <p>
@@ -80,7 +84,7 @@ public class UnwrapPhases {
      * than letting it fall between the two patterns: it is a volume this program creates, so what
      * happens to it is a decision, and it stays one if someone widens {@link #DATA}.
      */
-    private static final List<String> KEEP = List.of("qits-*-config", "qits-maven-cache");
+    private static final List<String> KEEP = List.of("qits-maven-cache");
 
     /**
      * Deleted by {@code --with-data-volumes}. {@code qits-maven-seed} is the temporary Maven
@@ -89,10 +93,13 @@ public class UnwrapPhases {
      * {@code @qits} tarballs and client bundles phase 1 built (qits-889), and {@code qits-oci-seed}
      * its image twin: the platform-built bases phase 1 exported as OCI layouts for the builds that
      * start from them. The cache above is their opposite: qits bytes that this platform published
-     * against third-party bytes that it did not.
+     * against third-party bytes that it did not. {@code qits-*-config} is a fourth, different kind
+     * of removable: not rebuilt data but dead weight — the three seed pullers' docker
+     * {@code config.json} volumes this program no longer writes (qits-2266), left behind only on a
+     * host bootstrapped before the change.
      */
-    private static final List<String> DATA = List.of("qits-*-data", "qits-maven-seed",
-            "qits-npm-seed", "qits-oci-seed");
+    private static final List<String> DATA = List.of("qits-*-data", "qits-*-config",
+            "qits-maven-seed", "qits-npm-seed", "qits-oci-seed");
 
     private final Boot boot;
     private final boolean withVolumes;
@@ -249,7 +256,8 @@ public class UnwrapPhases {
     }
 
     /**
-     * The re-bootstrap's sweep: a service's data goes, its configuration stays.
+     * The re-bootstrap's sweep: a service's data goes, and so does the dead {@code qits-*-config}
+     * weight left by an old host — only {@code qits-maven-cache} stays.
      * <p>
      * Both name lists are printed in full. This is the toggle a person reaches for when they are
      * about to lose data on purpose, and the only way to check the sweep agreed with them is to
@@ -257,7 +265,7 @@ public class UnwrapPhases {
      */
     private Phase dataVolumes() {
         return new Phase("volumes-data",
-                "remove the qits-*-data volumes, keep the config ones", ctx -> {
+                "remove the qits-*-data and qits-*-config volumes, keep the maven cache", ctx -> {
             List<String> all = volumeNames();
             List<String> kept = all.stream().filter(name -> !isData(name)).toList();
             List<String> going = all.stream().filter(UnwrapPhases::isData).toList();
@@ -315,8 +323,7 @@ public class UnwrapPhases {
             List<String> names = volumeNames();
             ctx.log("  " + names.size() + " volume(s) kept: databases (every blob included — the"
                     + " registry, the caches and the git host), and the maven download cache");
-            ctx.log("  add --with-data-volumes to reset the databases and keep the config volumes"
-                    + " and the maven cache");
+            ctx.log("  add --with-data-volumes to reset the databases and keep the maven cache");
             ctx.log("  add --with-volumes for the full clean slate");
             ctx.note(names.size() + " kept");
         });

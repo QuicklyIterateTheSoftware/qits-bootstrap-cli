@@ -582,7 +582,11 @@ class ComposeTemplateTest {
         assertThat(block).doesNotContain("QUARKUS_DATASOURCE_PLATFORMDEPLOYMENTS_JDBC_URL");
         assertThat(block).doesNotContain("- qits-deployments-data:/data");
         assertThat(compose).doesNotContain("qits-deployments-data:\n");
-        assertThat(block).contains("- qits-deployments-config:/work/config");
+        // The config volume and its DOCKER_CONFIG mount are gone (qits-2266): the deployer writes
+        // its own docker config.json under /tmp/qits-docker from its idp client at boot.
+        assertThat(block).doesNotContain("qits-deployments-config")
+                .doesNotContain("/work/config")
+                .doesNotContain("DOCKER_CONFIG");
         assertThat(block).contains("- /var/run/docker.sock:/var/run/docker.sock");
         // Machine auth inbound only: it validates a bearer and mints none, so no oidc-client.
         assertThat(block).contains("QITS_AUTH_MACHINE_REQUIRED: \"true\"")
@@ -874,29 +878,33 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>WHERE EACH SEED PULLER'S DOCKER CREDENTIAL IS.</b> Neither container has a home,
-     * so the docker CLI reads no {@code ~/.docker/config.json} and every pull would be anonymous —
-     * which the edge refuses — unless {@code DOCKER_CONFIG} names a mounted path. The deployer's
-     * file goes on the config volume it already has; the orchestrator gets a volume that
-     * holds nothing else.
-     * <p>
-     * All of it was written and mounted BEFORE the flip for one reason: gaining a credential must
-     * not be a redeploy of the two services that pull everything this platform runs.
+     * <b>NEITHER PULLER IS GIVEN A DOCKER CONFIG VOLUME ANY MORE</b> (qits-2266). Each of the
+     * three pullers — the deployer, the orchestrator, qits-system — writes its own
+     * {@code config.json} under {@code /tmp/qits-docker} at boot, from the
+     * {@code QITS_RESOURCE_IDP_CLIENT_ID}/{@code _SECRET} pair the seed stack already hands it, so
+     * there is no {@code DOCKER_CONFIG} line, no {@code qits-*-config} mount and no such volume
+     * declared at all.
      */
     @Test
-    void bothPullersAreGivenADockerConfigHome() {
+    void noPullerIsGivenADockerConfigVolume() {
         String compose = ComposeTemplate.compose(tokens());
         String deployer = serviceBlock(compose, ENV + "-qits-deployments");
         String containers = serviceBlock(compose, ENV + "-qits-containers");
+        String system = serviceBlock(compose, ENV + "-qits-system");
 
-        assertThat(deployer).contains("DOCKER_CONFIG: /work/config")
-                .contains("- qits-deployments-config:/work/config");
-                // The socket stays: it is the whole component.
-        assertThat(containers).contains("DOCKER_CONFIG: /work/config")
-                .contains("- qits-containers-config:/work/config")
+        assertThat(deployer).doesNotContain("DOCKER_CONFIG")
+                .doesNotContain("qits-deployments-config");
+        // The socket stays: it is the whole component.
+        assertThat(containers).doesNotContain("DOCKER_CONFIG")
+                .doesNotContain("qits-containers-config")
                 .contains("- /var/run/docker.sock:/var/run/docker.sock");
-        // A mount needs a declaration, and the orchestrator's volume is new.
-        assertThat(compose).contains("  qits-containers-config:\n    name: qits-containers-config");
+        assertThat(system).doesNotContain("DOCKER_CONFIG")
+                .doesNotContain("qits-system-config");
+        // No volume declaration for any of the three, anywhere in the file.
+        assertThat(compose).doesNotContain("qits-deployments-config:")
+                .doesNotContain("qits-containers-config:")
+                .doesNotContain("qits-system-config:")
+                .doesNotContain("/work/config");
     }
 
     /**

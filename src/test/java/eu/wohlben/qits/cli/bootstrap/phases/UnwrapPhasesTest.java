@@ -20,10 +20,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The re-bootstrap's sweep, which is the one place unwrap deletes data on purpose. What it must
- * never take with it is a config volume: those hold the push token, the client secrets and the
- * pullers' docker credentials, and losing them turns a migration into a re-issue of every credential on
- * the machine.
+ * The re-bootstrap's sweep, which is the one place unwrap deletes data on purpose. A config volume
+ * is no longer special: since qits-2266 none of the three seed pullers' {@code qits-*-config}
+ * volumes holds anything the bootstrap wrote — each puller writes its own {@code config.json}
+ * under {@code /tmp/qits-docker} at boot instead — so a leftover one from an old host is ordinary
+ * removable platform state, taken by {@code --with-data-volumes} like any other data volume.
  */
 class UnwrapPhasesTest {
 
@@ -41,10 +42,17 @@ class UnwrapPhasesTest {
         assertThat(UnwrapPhases.isData("qits-oci-seed")).isTrue();
     }
 
+    /**
+     * The three seed pullers' docker credential volumes hold nothing of this program's any more
+     * (qits-2266), so a leftover one is dead weight rather than configuration — {@code --with-data-
+     * volumes} takes it, same as any other data volume.
+     */
     @Test
-    void theConfigVolumesStay() {
-        assertThat(UnwrapPhases.isData("qits-deployments-config")).isFalse();
-        // And so does the edge's certificate. A re-bootstrap is a cold boot of the DATABASES; a
+    void theConfigVolumesGoToo() {
+        assertThat(UnwrapPhases.isData("qits-deployments-config")).isTrue();
+        assertThat(UnwrapPhases.isData("qits-containers-config")).isTrue();
+        assertThat(UnwrapPhases.isData("qits-system-config")).isTrue();
+        // The edge's certificate still stays: a re-bootstrap is a cold boot of the DATABASES; a
         // Let's Encrypt certificate is neither data nor config but it is rate-limited to re-issue,
         // and the "matches neither list" rule is what keeps it. --with-volumes still takes it.
         assertThat(UnwrapPhases.isData("qits-edge-letsencrypt")).isFalse();
@@ -62,7 +70,8 @@ class UnwrapPhasesTest {
         // Its neighbour is classified the other way: the seed repository holds what THIS platform
         // published, which the next bootstrap republishes.
         assertThat(UnwrapPhases.isData("qits-maven-seed")).isTrue();
-        // And the full teardown asks no questions of the keep list at all.
+        // And the full teardown asks no questions of either list at all — it takes a dead
+        // qits-*-config leftover too, which --with-data-volumes now also removes as data.
         assertThat(UnwrapPhases.isPlatformVolume("qits-deployments-config")).isTrue();
         assertThat(UnwrapPhases.isPlatformVolume("postgres-data")).isFalse();
     }

@@ -39,9 +39,10 @@ starts another one. `docker stack rm qits` comes first and the compose-era `comp
 beside it, for a machine carrying a platform bootstrapped before the swarm cutover. **The volumes
 stay** — they hold the databases, the registry's blobs and the git host's repositories.
 `unwrap --with-volumes` is the full clean slate; `unwrap --with-data-volumes` removes the
-`qits-*-data` volumes (and `qits-maven-seed`, `qits-npm-seed` and `qits-oci-seed`) while keeping every `qits-*-config` one, which is
-what a move onto another database needs and what keeps the push token, the client secrets and the
-deployer's config; `unwrap --dry-run` lists what would go and removes nothing.
+`qits-*-data` volumes (and `qits-maven-seed`, `qits-npm-seed`, `qits-oci-seed` and any leftover
+`qits-*-config` — the three seed pullers' docker credential volumes, dead since qits-2266 and
+removable with either flag because they hold nothing); `unwrap --dry-run` lists what would go and
+removes nothing.
 `qits-edge-letsencrypt` and `qits-edge-acme` match neither pattern and are therefore kept by
 `--with-data-volumes` — a certificate is rate-limited to re-issue, and a database reset is no reason
 to lose one. The second of the two holds certbot's own state: the ACME account key and the
@@ -141,14 +142,16 @@ doors**, which is not seed-deployed either and has no name `edge-ready` proves (
 presents the bootstrap's own bearer alone, qits-1333); and **git pushes** to
 qits-githost, whose address `Boot.gitUrl` decides.
 
-**The seed pullers' docker credential is for the PUBLIC names.** `docker-configs` writes one
-`config.json` per puller — the deployer, qits-containers, qits-system — with entries for
-`registry.qits.<domain>` and `mirror.qits.<domain>`, the names each of them pulls by (the deployer
-qualifies every image as `registry.qits.<domain>/qits/<app>:<version>`) and the pair each deployed
-successor writes for itself. No machine name is written into any credential, and the edge answers
-none any more (qits-1433). The bootstrap configures no registry mirror or credential in
-`qits-buildkitd` at all — a seed build resolves nothing from a registry — and from its first
-deployment qits-containers configures that container's mirrors for the public names.
+**The seed pullers' docker credential is for the PUBLIC names, and each puller writes its own
+now** (qits-2266). The deployer, qits-containers and qits-system each write their own `config.json`
+under `/tmp/qits-docker` at boot, from the `QITS_RESOURCE_IDP_CLIENT_ID`/`_SECRET` pair the seed
+stack already hands them, with entries for `registry.qits.<domain>` and `mirror.qits.<domain>`, the
+names each of them pulls by (the deployer qualifies every image as
+`registry.qits.<domain>/qits/<app>:<version>`) — the same pair each deployed successor writes for
+itself, so nothing changes at the self-update. No machine name is written into any credential, and
+the edge answers none any more (qits-1433). The bootstrap configures no registry mirror or
+credential in `qits-buildkitd` at all — a seed build resolves nothing from a registry — and from
+its first deployment qits-containers configures that container's mirrors for the public names.
 
 **Every image push goes to `registry.qits.<domain>`, and only once that name has its real
 certificate** (owner ruling 2026-11-05). There is no loopback vhost to push through instead:
@@ -777,7 +780,7 @@ workspaces and, after the desk cutover, the desks of this host are all leases on
 | 48 | resolve the BOOTSTRAP's own idp client (given, kept, generated) and record it in `.qits-bootstrap.env`. One pair, and the run creates every other credential with it |
 | 49 | start **qits-platform-idp alone** from the seed stack file. A client cannot be created at a service that is not up, and the idp seeds its first database service client from the pair above — `QITS_IDP_SEED_CLIENT_ID`/`_SECRET`, once per installation, gated by an `idp_seed` marker row rather than by the variables, so every rerun spells them and seeds nothing twice |
 | 50 | create the SEVEN seed services' idp clients against that running idp (`POST /idp/api/service-clients`): qits-projects, qits-ci, qits-containers, qits-deployments, qits-platform-edge, qits-system (whose targets module commissions every target's credentials with it) and qits-workspaces (whose every peer call carries a bearer, qits-889) — the applications that are up before anything exists that could provision a credential for them. Each secret is recorded in qits-deployments' `pd_resource` registry, keyed by the application and this tier, which is the same row the deployer injects as `QITS_RESOURCE_IDP_*` when it replaces the seed container. Every other application declares an `idp:client` resource and is handed one by the deployer in the ordinary way |
-| 51–53 | generate the seed stack file; write the three seed pullers' docker credentials onto their config volumes (`docker-configs`), each for `registry.qits.<domain>` and `mirror.qits.<domain>`. There is no extras file any more: the deployer reads its settings store, which phase 66 fills. **After the three phases above, because the values are not known until the idp has issued them**: each seed service's block carries `QITS_RESOURCE_IDP_URL`, `_CLIENT_ID` (the wire alias — a client id IS the alias) and `_CLIENT_SECRET`. What the deployer configures itself with is `QITS_PLATFORM_DEPLOYMENTS_*` env on the seed service, and **nothing identity-shaped is in its settings at all**: no `QITS_RESOURCE_IDP_*`, no `QUARKUS_OIDC_CLIENT_*`, no `QITS_IDP_CLIENT*`. For a deployed application the deployer injects the credential from its own registry, and a stored one would shadow the row it keeps current and outlive every rotation of it |
+| 51–52 | generate the seed stack file. There is no extras file any more: the deployer reads its settings store, which phase 66 fills. **After the three phases above, because the values are not known until the idp has issued them**: each seed service's block carries `QITS_RESOURCE_IDP_URL`, `_CLIENT_ID` (the wire alias — a client id IS the alias) and `_CLIENT_SECRET`. What the deployer configures itself with is `QITS_PLATFORM_DEPLOYMENTS_*` env on the seed service, and **nothing identity-shaped is in its settings at all**: no `QITS_RESOURCE_IDP_*`, no `QUARKUS_OIDC_CLIENT_*`, no `QITS_IDP_CLIENT*`. For a deployed application the deployer injects the credential from its own registry, and a stored one would shadow the row it keeps current and outlive every rotation of it. **The three seed pullers no longer get a bootstrap-written `config.json` on a config volume** (`docker-configs`, retired qits-2266): the deployer, the orchestrator and qits-system each write their own under `/tmp/qits-docker` at boot from the `QITS_RESOURCE_IDP_CLIENT_ID`/`_SECRET` pair the seed stack already hands them |
 | — | **with `QITS_DOMAIN` only**: write a self-signed placeholder certificate onto the `qits-edge-letsencrypt` volume, unless one is already there. It is before the stack starts because the edge's keystore names those files and a keystore whose files are missing fails startup. The real one replaces it two phases later, and this is what the edge keeps if that order does not go through |
 | — | **`edge-tls-handoff`: port 443 is the seed edge's.** A bootstrap ingress in `PUBLIC_TLS` mode is restarted as a port-80-only one (the same progress page, plain HTTP, the mode recorded so a retry keeps it); the seed edge publishes 443 from its first start, because every image push goes to `registry.qits.<domain>` and that name arrives on this host's 443. A no-op in the other modes |
 | 55–56 | `docker stack deploy` the seed (only what the deployer does not already manage — the rest is left out of the FILE, since a stack deploy takes no service list, and any seed SERVICE of a deployer-managed application is removed); wait for the idp, the edge, the gateway, the store, the mirror, the git host, the alias table (qits-projects, whose readiness is the three databases it refuses to boot without), ci, the deployer, the bus and the container orchestrator — all on qits-net. The orchestrator is polled at its own alias: it has no gateway route and must not have one, because every caller is a machine and a route would put a socket-holding service behind the platform's public door |

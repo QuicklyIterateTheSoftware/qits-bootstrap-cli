@@ -189,10 +189,6 @@ public final class BootstrapPlan {
         String domain = boot.config.requiredDomain();
         phases.add(seed.dnsHetznerSecret(domain));
         phases.add(seed.composeFile());
-        // The three pullers' docker credentials, on the config volumes the seed stack mounts.
-        // There is no extras file beside the deployer's any more: the deployer reads its
-        // deployments' environment from its settings store, written below once it answers.
-        phases.add(seed.dockerConfigs());
         // BEFORE the edge is started with a keystore, which is what the next phase does: a keystore
         // naming files that do not exist fails startup, so the volume has to hold a certificate
         // first.
