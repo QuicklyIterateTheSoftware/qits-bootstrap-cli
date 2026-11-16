@@ -5,7 +5,11 @@
 The qits platform's cold bootstrap, as a Quarkus command-mode CLI. It runs as a container on
 `qits-net` with the host's docker socket mounted, shells docker and git, calls the platform's HTTP
 APIs, and shows a live two-region terminal display of what it is doing. Started on the host it puts
-itself in that container: same binary, image built from this checkout, exit code relayed.
+itself in that container: same program, image built from this checkout, exit code relayed. **Every
+docker call goes through qits-containers-driver** (qits-2212): the argv comes from its builders
+(`DockerArgv`, `SwarmArgv`, `ComposeArgv`, `HostRunArgv` over a `HostRunSpec`) and every process,
+git included, runs through its `ContainerProcess.stream` — the same library the platform's own
+docker callers use, so a docker behaviour fix lands once.
 
 ## Read this first
 
@@ -162,7 +166,9 @@ forced. Add to that list rather than deviating quietly.
   the loopback and how a build's `RUN` reaches the internet (upstream bases, Maven Central) — and it
   binds `0.0.0.0:1234` so the same container keeps working once qits-containers moves it onto
   `qits-net`. Three things follow and none of them may be quietly undone: the host has no
-  `buildctl`, so the client is `docker run --rm --entrypoint buildctl` of the SAME image;
+  `buildctl`, so the client is `docker run --rm --entrypoint buildctl` of the SAME image (a
+  `HostRunSpec` like every other run; only buildctl's own arguments after the image are this
+  program's list);
   `--output type=docker,dest=…` plus `docker load` is what replaces buildx's `--load`, which is why
   every `docker tag`, `docker create` and `stack deploy --resolve-image never` after a build is
   untouched; and a build's scratch directories sit under `QITS_SRC` rather than `/tmp`, because
@@ -255,6 +261,19 @@ forced. Add to that list rather than deviating quietly.
   none; `SeedDockerfile.refusePlatformBases` refuses a build any stage of which would still start
   from `registry.qits.`/`mirror.qits.`. A `docker-image://` context is NOT the answer: on a
   standalone buildkitd it resolves from a registry too.
+- **No docker argv is spelled here — qits-containers-driver spells them all** (qits-2212). `Docker`
+  names what to run and the library's builders render it, belting every name, volume, network,
+  mount, image and label on the way out, so a name read back off `ps`/`ls` that would read as a
+  flag is refused rather than run. Names read back from docker go through the REFERENCE-belted
+  builders (`startByReference`, `rm(bin, List)`, `serviceRmReferences`, `networkRm`), never the
+  DNS-label ones, which refuse a swarm task's `qits_x.1.abc` or a versioned runner name. A shape the
+  `Docker` facade does not offer is built with the library in the phase and handed to
+  `Docker.run(Cmd, …)`, which exists only for that: a library argv plus a mask, stdin, timeout or
+  environment. `ProcessRunner` keeps its contract (the `$ ` echo, ANSI cleaning, masking, the
+  capture limit and tail, the run log) and hands spawning, stdin, the deadline and the
+  kill-and-reap on interrupt to `ContainerProcess.stream`. The one process this program still
+  spawns itself is the launcher's attached payload run (`HostLauncher`, `inheritIO`), whose argv is
+  `ContainerRun`'s `HostRunSpec`.
 - **The seed is a docker STACK, and four compose words do not survive the move.** The generated
   file carries no root `name:` and no `group_add:` — either one makes `docker stack deploy` refuse
   it outright, measured — no `container_name:` (ignored; a task's container is
@@ -623,19 +642,28 @@ forced. Add to that list rather than deviating quietly.
 
 ## Build forms
 
-    sdk env && ./mvnw package -Dnative -DskipTests   the binary people run
+    sdk env && ./mvnw package -Dnative -DskipTests   the binary people run on a host
+    docker/Dockerfile.bootstrap                      the payload image: a JVM fast-jar
     ./mvnw clean verify                              the tests; packages nothing
     ./mvnw quarkus:dev -Dquarkus.args="…"            the working loop
 
-**There is no jar — not in production, not in the image, and not as a dev loop.** The native binary
-is the only form of this program, and three lines in the pom keep it that way, all outside the
-native profile so an ordinary build cannot make one either: `quarkus.package.jar.enabled=false`,
-`quarkus.build.skip=true`, and maven-jar-plugin's `default-jar` bound to phase `none`. The second
-is not optional — Quarkus' build goal asked for neither a jar nor a binary fails the build with
-"No artifact results were produced" — and the native profile turns it back on. Skipping the goal
-in a JVM build loses no coverage: every `@QuarkusTest` augments the application anyway.
-`clean package -Dnative` leaves the binary alone in `target/`. The loop while working on the CLI
-is the tests and dev mode, neither of which packages anything.
+**An ordinary build packages nothing; the two packaged forms each ask for theirs explicitly.** Three
+lines in the pom keep a plain `package`/`verify` from producing anything, all outside the native
+profile: `quarkus.package.jar.enabled=false`, `quarkus.build.skip=true`, and maven-jar-plugin's
+`default-jar` bound to phase `none`. The second is not optional — Quarkus' build goal asked for
+neither a jar nor a binary fails the build with "No artifact results were produced". Skipping the
+goal in a JVM build loses no coverage: every `@QuarkusTest` augments the application anyway. The
+loop while working on the CLI is the tests and dev mode, neither of which packages anything.
+
+- **The binary people run on a host** is the native one: the native profile turns the build goal
+  back on, and `clean package -Dnative` leaves the binary alone in `target/`.
+- **The payload image is a JVM fast-jar**, not a native binary. `docker/Dockerfile.bootstrap`
+  builds it with the builder's own `mvn package -DskipTests -Dquarkus.build.skip=false
+  -Dquarkus.package.jar.enabled=true -Dquarkus.package.jar.type=fast-jar` and runs
+  `java -jar /opt/qits/quarkus-run.jar` on `eclipse-temurin:25-jre-alpine` (plus `docker-cli`,
+  buildx, compose and git). The payload is a one-shot recovery vehicle with no latency-sensitive
+  path, so it trades the native start-up for build headroom; resolving
+  `qits-bootstrap-graph` and `qits-containers-driver` from `qits-maven` is the same in both.
 
 `.sdkmanrc` names the GraalVM (25.0.2-graalce, the platform's pin), so `sdk env` sets JAVA_HOME and
 nobody exports it by hand. Without sdkman, name it on the command line instead:
@@ -644,17 +672,13 @@ nobody exports it by hand. Without sdkman, name it on the command line instead:
 The native profile carries every flag the native build needs, so that command takes no others. Run
 `clean verify` BEFORE a native package, never after: clean wipes the runner.
 
-**The payload image builds the second flavour of that binary: the same program, fully static
-against musl.** Its builder stage is GraalVM CE plus a musl toolchain it installs itself, and the
-flags reach the build through one seam — `-Dnative.extra-build-args`, which the native profile
-appends to the flag it already carries. Adding a flag for the host build goes in the profile;
-adding one for the image goes on the Dockerfile's mvn line. Naming `quarkus.native.additional-build-args` whole on a command line breaks
-this: Quarkus reads it from one config source, so the profile's flag would vanish without a word.
-
-Both halves of "static musl" are forced, and neither is a preference. A binary linked against a
-host glibc starts on no alpine image, and a *statically* linked glibc binary resolves no names —
-glibc reaches the name services through `dlopen` — while every address this CLI dials is a wire
-alias on `qits-net`. A glibc-static payload would build clean and fail its first lookup.
+A native build that needs extra flags gets them through one seam — `-Dnative.extra-build-args`,
+which the native profile appends to the flag it already carries. Naming
+`quarkus.native.additional-build-args` whole on a command line breaks this: Quarkus reads it from
+one config source, so the profile's flag would vanish without a word. Should a native payload ever
+come back, it has to be static against musl, not glibc: a *statically* linked glibc binary resolves
+no names — glibc reaches the name services through `dlopen` — while every address this CLI dials is
+a wire alias on `qits-net`.
 
 ## Tests
 

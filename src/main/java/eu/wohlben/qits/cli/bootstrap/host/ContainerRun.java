@@ -1,6 +1,8 @@
 package eu.wohlben.qits.cli.bootstrap.host;
 
 import eu.wohlben.qits.cli.bootstrap.config.BootstrapConfig;
+import eu.wohlben.qits.cli.bootstrap.platform.Docker;
+import eu.wohlben.qits.containers.driver.spec.HostRunSpec;
 
 import java.nio.file.Path;
 import java.time.ZoneId;
@@ -83,14 +85,10 @@ public final class ContainerRun {
     }
 
     public static List<String> command(Plan plan) {
-        List<String> argv = new ArrayList<>();
-        argv.add("docker");
-        argv.add("run");
-        // The container is the run. Nothing is left behind to inspect afterwards that the log and
-        // the browser view do not already hold.
-        argv.add("--rm");
-        argv.add("--name");
-        argv.add(CONTAINER_NAME);
+        // The container is the run: `run --rm`. Nothing is left behind to inspect afterwards that
+        // the log and the browser view do not already hold. Rendered by qits-containers-driver
+        // (qits-2212); the options below render in the order they are added.
+        HostRunSpec.Builder run = HostRunSpec.removed(plan.image()).name(CONTAINER_NAME);
 
         // A terminal, only when there is one to hand on. `-it` against a pipe is docker's "the
         // input device is not a TTY" and a stopped run, and without it UiFactory finds no console
@@ -100,11 +98,10 @@ public final class ContainerRun {
         // so it needs no terminfo in the image; forwarding an exotic host TERM would only add a
         // way for the display to come out wrong.
         if (plan.tty()) {
-            argv.add("-it");
+            run.interactiveTty();
         }
 
-        argv.add("-v");
-        argv.add(SOCKET + ":" + SOCKET);
+        run.volume(SOCKET + ":" + SOCKET);
 
         // AS THE PERSON WHO STARTED IT, not as root. Two things follow from it, and both are the
         // reason: the clones and the generated files under the wrapper stay the user's own rather
@@ -112,43 +109,30 @@ public final class ContainerRun {
         // "detected dubious ownership", which is what it says when the repository belongs to
         // somebody else. The socket's group is then not optional — a plain uid is in no groups
         // inside the container, and the socket is srw-rw---- root:docker.
-        argv.add("--user");
-        argv.add(plan.user());
-        argv.add("--group-add");
-        argv.add(plan.dockerGid());
+        run.user(plan.user());
+        run.groupAdd(plan.dockerGid());
 
         for (Path mount : mounts(plan)) {
-            argv.add("-v");
-            argv.add(mount + ":" + mount);
+            run.volume(mount + ":" + mount);
         }
 
         // The directory the launcher stood in, so `.env` is the same file, and so a relative
         // QITS_SRC or QITS_LOG_FILE resolves to the same place it would have on the host.
-        argv.add("-w");
-        argv.add(plan.workDir().toString());
+        run.workdir(plan.workDir().toString());
 
-        environment(plan).forEach((name, value) -> {
-            argv.add("-e");
-            argv.add(name + "=" + value);
-        });
+        environment(plan).forEach(run::env);
         for (String name : passThrough(plan)) {
             // By NAME: docker copies the value across, so a secret in the environment stays out of
             // this command line.
-            argv.add("-e");
-            argv.add(name);
+            run.envName(name);
         }
 
-        publish(plan).ifPresent(publish -> {
-            argv.add("-p");
-            argv.add(publish);
-        });
+        publish(plan).ifPresent(run::publish);
 
         // NOT --network qits-net. The network may not exist yet on a cold machine, and the run's
         // second phase both creates it and attaches this container to it. Naming it here would
         // fail the run before that phase could.
-        argv.add(plan.image());
-        argv.addAll(plan.args());
-        return List.copyOf(argv);
+        return Docker.argv(run.args(plan.args()).build());
     }
 
     /**

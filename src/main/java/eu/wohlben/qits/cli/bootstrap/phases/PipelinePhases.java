@@ -26,6 +26,8 @@ import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.platform.TargetSlots;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
+import eu.wohlben.qits.containers.driver.docker.DockerArgv;
+import eu.wohlben.qits.containers.driver.spec.HostRunSpec;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -892,8 +894,8 @@ public class PipelinePhases {
             List<String> references = new ArrayList<>();
             for (Map.Entry<String, StoreImage> entry : missing.entrySet()) {
                 String reference = entry.getValue().reference(registryHost);
-                Boot.must(boot.docker.exec(ctx::log, "tag", seedImageTag(entry.getKey()),
-                        reference), "tagging " + seedImageTag(entry.getKey()) + " as " + reference
+                Boot.must(boot.docker.tag(seedImageTag(entry.getKey()), reference, ctx::log),
+                        "tagging " + seedImageTag(entry.getKey()) + " as " + reference
                         + " failed");
                 references.add(reference);
             }
@@ -914,7 +916,7 @@ public class PipelinePhases {
      */
     static Cmd pushCommand(Path config, String reference,
                            BootstrapPublishCredential.Pair pair) {
-        Cmd push = Cmd.of(List.of("docker", "--config", config.toString(), "push", reference))
+        Cmd push = Cmd.of(DockerArgv.push(Docker.BIN, config.toString(), reference))
                 .timeout(Duration.ofMinutes(30));
         if (pair != null) {
             push.mask(pair.secret()).mask(SeedPhases.dockerAuth(pair.clientId(), pair.secret()));
@@ -2846,9 +2848,8 @@ public class PipelinePhases {
             throws IOException {
         String token = issued.token();
         String url = issued.url();
-        ProcessResult found = boot.docker.run(Cmd.of(List.of("docker", "ps", "-a",
-                "--filter", "label=" + kind.processLabel() + "=" + id,
-                "--format", "{{.Names}} {{.State}}")), null);
+        ProcessResult found = boot.docker.psAll(
+                List.of("label=" + kind.processLabel() + "=" + id), "{{.Names}} {{.State}}");
         Boot.must(found, "listing the " + kind.noun() + "'s containers failed");
         List<String> containers = found.captured().stream().map(String::strip)
                 .filter(line -> !line.isBlank()).toList();
@@ -2862,7 +2863,7 @@ public class PipelinePhases {
             if (running != null) {
                 ctx.log("  " + container + " is already up");
             } else {
-                Boot.must(boot.docker.exec(ctx::log, "start", container),
+                Boot.must(boot.docker.start(container, ctx::log),
                         "starting " + container + " failed");
             }
             return container;
@@ -2886,7 +2887,7 @@ public class PipelinePhases {
         String volume = kind.stateVolume().apply(id);
         if (registered) {
             token = null;
-            if (!boot.docker.run(Cmd.of("docker", "volume", "inspect", volume), null).ok()) {
+            if (!boot.docker.volumeExists(volume)) {
                 throw new IllegalStateException(kind.noun() + " " + LOCALHOST_RUNNER + " (" + id
                         + ") is registered, and neither a container nor the volume "
                         + volume + " that held its client is on this host. Its "
@@ -2898,10 +2899,11 @@ public class PipelinePhases {
         } else {
             // The volume is KEPT — it is the runner's state — but its client goes: the
             // runner registers with the token on this line, which is a new one.
-            Boot.must(boot.docker.run(Cmd.of(List.of("docker", "run", "--rm",
-                            "--entrypoint", "rm",
-                            "-v", volume + ":" + kind.stateDir(), image,
-                            "-f", kind.stateDir() + "/client.json")), ctx::log),
+            Boot.must(boot.docker.run(Cmd.of(Docker.argv(HostRunSpec.removed(image)
+                            .entrypoint("rm")
+                            .volume(volume + ":" + kind.stateDir())
+                            .args("-f", kind.stateDir() + "/client.json")
+                            .build())), ctx::log),
                     "clearing the " + kind.noun() + "'s stale client failed");
         }
         String container = kind.containerName().apply(id, version);
@@ -3086,27 +3088,22 @@ public class PipelinePhases {
      */
     Cmd targetRunCommand(String targetId, String version, String image, int slots, String token,
                          String url) {
-        List<String> command = new ArrayList<>(List.of(
-                "docker", "run", "-d",
-                "--name", targetContainerName(targetId, version),
-                "--restart", "unless-stopped",
-                "--label", TARGET_PROCESS_LABEL + "=" + targetId,
-                "--label", TARGET_VERSION_LABEL + "=" + version,
-                "-v", "/var/run/docker.sock:/var/run/docker.sock",
-                "-v", targetStateVolume(targetId) + ":" + TARGET_STATE_DIR,
-                "-e", "QITS_SYSTEM_RUNNER_ID=" + targetId,
-                "-e", "QITS_SYSTEM_RUNNER_SLOTS=" + slots,
-                "-e", "QITS_SYSTEM_RUNNER_URL=" + url));
+        HostRunSpec.Builder spec = HostRunSpec.detached(targetContainerName(targetId, version), image)
+                .restart("unless-stopped")
+                .label(TARGET_PROCESS_LABEL, targetId)
+                .label(TARGET_VERSION_LABEL, version)
+                .volume("/var/run/docker.sock:/var/run/docker.sock")
+                .volume(targetStateVolume(targetId) + ":" + TARGET_STATE_DIR)
+                .env("QITS_SYSTEM_RUNNER_ID", targetId)
+                .env("QITS_SYSTEM_RUNNER_SLOTS", String.valueOf(slots))
+                .env("QITS_SYSTEM_RUNNER_URL", url);
         if (token != null) {
-            command.add("-e");
-            command.add(TARGET_TOKEN_ENV);
+            spec.envName(TARGET_TOKEN_ENV);
         }
         for (String[] shared : TARGET_SHARED_VOLUMES) {
-            command.add("-e");
-            command.add(shared[0] + "=" + shared[1]);
+            spec.env(shared[0], shared[1]);
         }
-        command.add(image);
-        Cmd run = Cmd.of(command);
+        Cmd run = Cmd.of(Docker.argv(spec.build()));
         if (token != null) {
             run.env(TARGET_TOKEN_ENV, token).mask(token);
         }
@@ -3204,8 +3201,8 @@ public class PipelinePhases {
             String image = targetRunnerImage(domain, version);
             if (!boot.docker.imageExists(image)
                     && boot.docker.imageExists(SeedPhases.systemRunnerImage(version))) {
-                Boot.must(boot.docker.exec(ctx::log, "tag", SeedPhases.systemRunnerImage(version),
-                        image), "tagging the runner image under the registry host failed");
+                Boot.must(boot.docker.tag(SeedPhases.systemRunnerImage(version), image, ctx::log),
+                        "tagging the runner image under the registry host failed");
             }
             if (!boot.docker.imageExists(image)) {
                 if (!boot.artifacts.imagePublished(SeedPhases.SYSTEM_RUNNER_IMAGE, version)) {
@@ -3217,7 +3214,7 @@ public class PipelinePhases {
                 pull(ctx, publicRegistryHost(domain), image);
             }
             for (String[] shared : TARGET_SHARED_VOLUMES) {
-                Boot.must(boot.docker.run(Cmd.of("docker", "volume", "create", shared[1]), null),
+                Boot.must(boot.docker.ensureVolume(shared[1], null),
                         "creating the shared volume " + shared[1] + " failed");
             }
             int minCi = boot.config.ciConcurrentBuildsEffective();
@@ -3298,7 +3295,7 @@ public class PipelinePhases {
                         List.of(registryHost), clientId, secret), StandardCharsets.UTF_8);
             }
             ctx.status("pulling " + reference);
-            Cmd pull = Cmd.of(List.of("docker", "--config", config.toString(), "pull", reference))
+            Cmd pull = Cmd.of(DockerArgv.pull(Docker.BIN, config.toString(), reference))
                     .timeout(Duration.ofMinutes(30));
             if (credential) {
                 pull.mask(secret).mask(SeedPhases.dockerAuth(clientId, secret));
@@ -3407,7 +3404,7 @@ public class PipelinePhases {
         });
         String container = boot.state.targetContainer;
         if (container != null) {
-            ProcessResult logs = boot.docker.exec(null, "logs", "--tail", "20", container);
+            ProcessResult logs = boot.docker.logsTail(container, 20);
             evidence.append("docker logs --tail 20 ").append(container).append(":\n")
                     .append(logs.tailText(20));
         }
@@ -3486,9 +3483,8 @@ public class PipelinePhases {
         }
         ctx.log("  releasing the self-seed on " + service + ": the idp answers now, so the wrapper "
                 + "origin it creates can be authorised");
-        Boot.must(boot.docker.run(Cmd.of(List.of("docker", "service", "update",
-                                "--env-add", SELF_SEED_ENABLED + "=true", service))
-                        .timeout(Duration.ofMinutes(10)), ctx::log),
+        Boot.must(boot.docker.serviceEnvAdd(service, List.of(SELF_SEED_ENABLED + "=true"),
+                        Duration.ofMinutes(10), ctx::log),
                 "releasing the self-seed on " + service + " failed");
     }
 

@@ -1,14 +1,9 @@
 package eu.wohlben.qits.cli.bootstrap.proc;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
+import eu.wohlben.qits.containers.driver.docker.ContainerProcess;
+
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
@@ -38,96 +33,41 @@ public class ProcessRunner {
             sink.accept("$ " + cmd.display());
         }
 
-        ProcessBuilder builder = new ProcessBuilder(cmd.command());
-        builder.redirectErrorStream(true);
-        if (cmd.workDir() != null) {
-            builder.directory(cmd.workDir().toFile());
-        }
-        Map<String, String> env = builder.environment();
-        env.putAll(cmd.environment());
-
         List<String> captured = new ArrayList<>();
         TailBuffer tail = new TailBuffer(TAIL_LINES);
         boolean[] truncated = {false};
 
-        Process process;
-        try {
-            process = builder.start();
-        } catch (IOException e) {
-            String message = "cannot start " + cmd.command().getFirst() + ": " + e.getMessage();
-            emit(sink, tail, message);
-            return new ProcessResult(127, List.of(message), tail.all(), false, false);
-        }
-
-        writeStdin(process, cmd);
-
-        // The output is read on its own thread so that the timeout below is a real deadline: a
-        // command that prints nothing and never exits would otherwise be waited on inside
-        // readLine, where no clock is looking.
-        Thread reader = new Thread(() -> {
-            try (BufferedReader lines = new BufferedReader(
-                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-                String raw;
-                while ((raw = lines.readLine()) != null) {
+        // Spawning, the reader thread, stdin, the deadline and the kill-and-reap on interrupt are
+        // the library's (qits-2212): the one process host the platform's docker callers share, so
+        // a fix there (qits-894's reap) lands here too. Masking, cleaning, capture and the tail
+        // stay here, because only this side knows which values are secrets.
+        ContainerProcess.Result result = ContainerProcess.stream(
+                cmd.workDir(), cmd.command(), cmd.environment(), cmd.stdinText(), cmd.timeout(),
+                raw -> {
                     String line = cmd.maskText(Ansi.clean(raw));
-                    if (captured.size() < cmd.captureLimit()) {
-                        captured.add(line);
-                    } else {
-                        truncated[0] = true;
+                    synchronized (captured) {
+                        if (captured.size() < cmd.captureLimit()) {
+                            captured.add(line);
+                        } else {
+                            truncated[0] = true;
+                        }
                     }
                     emit(sink, tail, line);
-                }
-            } catch (IOException e) {
-                emit(sink, tail, "output stream ended: " + e.getMessage());
-            }
-        }, "output-reader");
-        reader.setDaemon(true);
-        reader.start();
+                });
 
-        boolean timedOut = false;
-        int exit;
-        try {
-            if (process.waitFor(cmd.timeout().toMillis(), TimeUnit.MILLISECONDS)) {
-                exit = process.exitValue();
-            } else {
-                timedOut = true;
-                process.destroyForcibly().waitFor();
-                exit = -1;
-                emit(sink, tail, "!! killed after " + cmd.timeout());
-            }
-            // join, not a race: the reader's last lines are the ones an error message quotes.
-            reader.join(5_000);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            process.destroyForcibly();
-            exit = -1;
+        if (result.timedOut()) {
+            emit(sink, tail, "!! killed after " + cmd.timeout());
+            return new ProcessResult(-1, snapshot(captured), tail.all(), true, truncated[0]);
         }
-        return new ProcessResult(exit, List.copyOf(captured), tail.all(), timedOut, truncated[0]);
+        // Exit 127 on a start failure: the library has already delivered "cannot start <argv0>:
+        // <reason>" as a line, so it sits in the capture and the tail like any other.
+        return new ProcessResult(result.exitCode(), snapshot(captured), tail.all(), false, truncated[0]);
     }
 
-    /**
-     * stdin is written on its own thread: a Dockerfile fed on stdin can be larger than the pipe
-     * buffer, and a single-threaded write would deadlock against a command already printing.
-     */
-    private void writeStdin(Process process, Cmd cmd) {
-        String text = cmd.stdinText();
-        if (text == null) {
-            try {
-                process.getOutputStream().close();
-            } catch (IOException ignored) {
-                // The command may have exited already; nothing to do about it.
-            }
-            return;
+    private static List<String> snapshot(List<String> captured) {
+        synchronized (captured) {
+            return List.copyOf(captured);
         }
-        Thread writer = new Thread(() -> {
-            try (OutputStream out = process.getOutputStream()) {
-                out.write(text.getBytes(StandardCharsets.UTF_8));
-            } catch (IOException ignored) {
-                // A command that stops reading before we stop writing is its own business.
-            }
-        }, "stdin-writer");
-        writer.setDaemon(true);
-        writer.start();
     }
 
     private void emit(Consumer<String> sink, TailBuffer tail, String line) {

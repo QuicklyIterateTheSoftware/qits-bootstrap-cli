@@ -8,6 +8,10 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -71,6 +75,39 @@ class ProcessRunnerTest {
 
         assertThat(result.timedOut()).isTrue();
         assertThat(result.ok()).isFalse();
+    }
+
+    @Test
+    void anInterruptKillsAndReapsTheChild() throws Exception {
+        // `exec` so the pid the shell prints is the sleeping child itself (qits-2212: the library's
+        // qits-894 kill-and-reap, which the runner's own destroyForcibly-and-return lacked).
+        CompletableFuture<Long> pid = new CompletableFuture<>();
+        AtomicReference<ProcessResult> result = new AtomicReference<>();
+        AtomicBoolean stillInterrupted = new AtomicBoolean();
+        Thread caller = new Thread(() -> {
+            result.set(runner().run(
+                    Cmd.of("sh", "-c", "echo pid=$$; exec sleep 30").timeout(Duration.ofMinutes(1)),
+                    line -> {
+                        if (line.startsWith("pid=")) {
+                            pid.complete(Long.parseLong(line.substring(4)));
+                        }
+                    }));
+            stillInterrupted.set(Thread.currentThread().isInterrupted());
+        });
+        caller.start();
+        long child = pid.get(10, TimeUnit.SECONDS);
+
+        long started = System.nanoTime();
+        caller.interrupt();
+        caller.join(10_000);
+
+        assertThat(caller.isAlive()).as("the call returns promptly").isFalse();
+        assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(10));
+        assertThat(result.get().exitCode()).isEqualTo(-1);
+        assertThat(result.get().timedOut()).isFalse();
+        assertThat(stillInterrupted).as("the interrupt flag is set again").isTrue();
+        // Reaped, not merely signalled: by the time run() returns the child is gone.
+        assertThat(ProcessHandle.of(child).map(ProcessHandle::isAlive).orElse(false)).isFalse();
     }
 
     @Test

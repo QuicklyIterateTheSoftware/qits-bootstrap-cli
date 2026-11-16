@@ -26,6 +26,7 @@ import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.platform.SeedDockerfile;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
+import eu.wohlben.qits.containers.driver.spec.HostRunSpec;
 import org.eclipse.microprofile.config.ConfigProvider;
 
 import java.io.IOException;
@@ -415,7 +416,7 @@ public class SeedPhases {
             if (boot.docker.networksOf(self).contains(Boot.NETWORK)) {
                 ctx.log("  " + self + " is already on " + Boot.NETWORK);
             } else {
-                Boot.must(boot.docker.exec(ctx::log, "network", "connect", Boot.NETWORK, self),
+                Boot.must(boot.docker.networkConnect(Boot.NETWORK, self, ctx::log),
                         "joining " + Boot.NETWORK + " failed");
                 ctx.log("  " + self + " joined " + Boot.NETWORK);
             }
@@ -795,20 +796,18 @@ public class SeedPhases {
                     for (String library : SEED_LIBRARIES) {
                         extra.put(library, pinned.extraVersions(library));
                     }
-                    String cid = create(ctx, List.of(
-                            "docker", "create", "--user", "root", "--entrypoint", "sh",
-                            "-v", SEED_REPO_VOLUME + ":/repo", "-v", MAVEN_CACHE_MOUNT,
-                            "maven:3.9-eclipse-temurin-25",
-                            "-c", seedScript(extra)));
+                    String cid = create(ctx, temporary("maven:3.9-eclipse-temurin-25")
+                            .user("root").entrypoint("sh")
+                            .volume(SEED_REPO_VOLUME + ":/repo").volume(MAVEN_CACHE_MOUNT)
+                            .args("-c", seedScript(extra)));
                     for (String library : SEED_LIBRARIES) {
                         String repo = PlatformModel.repo(library);
                         for (String version : extra.get(library)) {
                             copyTag(ctx, library, version, cid, seedTree(library, version));
                         }
                         ctx.log("  " + repo + " -> " + seedTree(library, null));
-                        Boot.must(boot.docker.exec(Duration.ofMinutes(30), ctx::log, "cp",
-                                        boot.state.repoDir(library) + "/.",
-                                        cid + ":" + seedTree(library, null)),
+                        Boot.must(boot.docker.copyIn(boot.state.repoDir(library) + "/.", cid,
+                                        seedTree(library, null), Duration.ofMinutes(30), ctx::log),
                                 "copying " + repo + " in failed");
                     }
                     startAndReap(ctx, cid, "the qits library seed failed");
@@ -946,11 +945,11 @@ public class SeedPhases {
                     if (wanted.isEmpty()) {
                         ctx.skip(NpmSeed.VOLUME + " holds all " + order.size());
                     }
-                    String cid = create(ctx, List.of("docker", "create", "--user", "root",
-                            "--entrypoint", "sh", "-v", NpmSeed.VOLUME + ":" + NpmSeed.MOUNT,
-                            NpmSeed.NODE_IMAGE,
-                            "-c", NpmSeed.packagesScript(wanted.stream().map(NpmSource::build)
-                                    .toList())));
+                    String cid = create(ctx, temporary(NpmSeed.NODE_IMAGE)
+                            .user("root").entrypoint("sh")
+                            .volume(NpmSeed.VOLUME + ":" + NpmSeed.MOUNT)
+                            .args("-c", NpmSeed.packagesScript(wanted.stream()
+                                    .map(NpmSource::build).toList())));
                     Path exports = Files.createDirectories(boot.state.srcDir.resolve(".exports"));
                     for (NpmSource source : wanted) {
                         Path tar = exports.resolve(source.pkg().file() + ".tar");
@@ -959,8 +958,9 @@ public class SeedPhases {
                                             source.ref(), source.directory(), tar, ctx::log),
                                     "archiving " + PlatformModel.repo(source.producer()) + " "
                                             + source.ref() + " failed");
-                            Boot.must(boot.docker.exec(Duration.ofMinutes(10), ctx::log, "cp",
-                                            tar.toString(), cid + ":" + NpmSeed.archive(source.pkg())),
+                            Boot.must(boot.docker.copyIn(tar.toString(), cid,
+                                            NpmSeed.archive(source.pkg()), Duration.ofMinutes(10),
+                                            ctx::log),
                                     "copying " + source.pkg().id() + " in failed");
                         } finally {
                             Files.deleteIfExists(tar);
@@ -1074,9 +1074,10 @@ public class SeedPhases {
                 boot.git.fileAt(webui, "HEAD", ".npmrc")), origin);
         String bundle = PlatformModel.seedBundlePath(name);
         ctx.status("building the client of qits/" + name + " at " + shortSha(sha));
-        String cid = create(ctx, List.of("docker", "create", "--user", "root",
-                "--entrypoint", "sh", "-v", NpmSeed.VOLUME + ":" + NpmSeed.MOUNT,
-                NpmSeed.NODE_IMAGE, "-c", NpmSeed.frontendScript(
+        String cid = create(ctx, temporary(NpmSeed.NODE_IMAGE)
+                .user("root").entrypoint("sh")
+                .volume(NpmSeed.VOLUME + ":" + NpmSeed.MOUNT)
+                .args("-c", NpmSeed.frontendScript(
                         PlatformModel.repo(name) + "@" + sha, bundle, pins, npmrc)));
         try {
             Path exports = Files.createDirectories(boot.state.srcDir.resolve(".exports"));
@@ -1084,14 +1085,13 @@ public class SeedPhases {
             try {
                 Boot.must(boot.git.archive(webui, "HEAD", ".", tar, ctx::log),
                         "archiving " + origin + " failed");
-                Boot.must(boot.docker.exec(Duration.ofMinutes(10), ctx::log, "cp",
-                                tar.toString(), cid + ":" + NpmSeed.FRONTEND_ARCHIVE),
+                Boot.must(boot.docker.copyIn(tar.toString(), cid, NpmSeed.FRONTEND_ARCHIVE,
+                                Duration.ofMinutes(10), ctx::log),
                         "copying " + origin + " in failed");
             } finally {
                 Files.deleteIfExists(tar);
             }
-            ProcessResult built = boot.docker.exec(Docker.BUILD_TIMEOUT, ctx::log, "start", "-a",
-                    cid);
+            ProcessResult built = boot.docker.startAttached(cid, ctx::log);
             if (!built.ok()) {
                 throw new IllegalStateException("building the client of qits/" + name + " ("
                         + origin + " at " + shortSha(sha) + ") failed\n" + built.tailText(20));
@@ -1099,8 +1099,8 @@ public class SeedPhases {
             Path ui = repo.resolve(PlatformModel.seedUiPath(name));
             deleteTree(ui);
             Files.createDirectories(ui);
-            Boot.must(boot.docker.exec(Duration.ofMinutes(10), ctx::log, "cp",
-                            cid + ":" + NpmSeed.FRONTEND_OUT + "/.", ui.toString()),
+            Boot.must(boot.docker.copyOut(cid, NpmSeed.FRONTEND_OUT + "/.", ui.toString(),
+                            Duration.ofMinutes(10), ctx::log),
                     "copying the client of qits/" + name + " out failed");
         } finally {
             boot.docker.removeContainer(cid, null);
@@ -1219,8 +1219,11 @@ public class SeedPhases {
                     .append(path).append("'\n");
         }
         script.append("exit 0\n");
-        return List.of("docker", "run", "--rm", "-v", SEED_REPO_VOLUME + ":/repo:ro",
-                "--entrypoint", "sh", "maven:3.9-eclipse-temurin-25", "-c", script.toString());
+        return Docker.argv(HostRunSpec.removed("maven:3.9-eclipse-temurin-25")
+                .volume(SEED_REPO_VOLUME + ":/repo:ro")
+                .entrypoint("sh")
+                .args("-c", script.toString())
+                .build());
     }
 
     /**
@@ -1263,9 +1266,8 @@ public class SeedPhases {
             // the registry host too: docker run then finds it locally, before any pull. This is the
             // seed's pull+retag — and the tag the images-publish phase pushes, because a run is
             // refused until the STORE answers for the image too. A tag is a local name, not a dial.
-            Boot.must(boot.docker.exec(ctx::log, "tag",
-                    "qits/build-images/" + name + ":latest",
-                    boot.registryHost() + "/qits/build-images/" + name + ":latest"),
+            Boot.must(boot.docker.tag("qits/build-images/" + name + ":latest",
+                    boot.registryHost() + "/qits/build-images/" + name + ":latest", ctx::log),
                     "tagging qits/build-images/" + name + " under the registry host failed");
         });
     }
@@ -1545,12 +1547,10 @@ public class SeedPhases {
                 ctx.skip(artifactId + " " + String.join(", ", versions)
                         + " is in the file registry");
             }
-            String cid = create(ctx, List.of(
-                    "docker", "create", "--user", "root",
-                    "--entrypoint", "sh", "-v", SEED_REPO_VOLUME + ":/repo",
-                    "-v", MAVEN_CACHE_MOUNT,
-                    "maven:3.9-eclipse-temurin-25",
-                    "-c", protocolScript(repoName, owed)));
+            String cid = create(ctx, temporary("maven:3.9-eclipse-temurin-25")
+                    .user("root").entrypoint("sh")
+                    .volume(SEED_REPO_VOLUME + ":/repo").volume(MAVEN_CACHE_MOUNT)
+                    .args("-c", protocolScript(repoName, owed)));
             for (String version : owed) {
                 copyTag(ctx, repoName, version, cid, publishTree(version));
             }
@@ -1662,12 +1662,10 @@ public class SeedPhases {
                         ctx.skip("the file registry holds both toolchain tarballs");
                     }
                     ctx.status("downloading and seeding " + wanted.size() + " tarball(s)");
-                    String cid = create(ctx, List.of(
-                            "docker", "create", "--user", "root",
-                            "--entrypoint", "sh", "-v", SEED_REPO_VOLUME + ":/repo",
-                            "-v", MAVEN_CACHE_MOUNT,
-                            "maven:3.9-eclipse-temurin-25",
-                            "-c", toolchainScript(wanted)));
+                    String cid = create(ctx, temporary("maven:3.9-eclipse-temurin-25")
+                            .user("root").entrypoint("sh")
+                            .volume(SEED_REPO_VOLUME + ":/repo").volume(MAVEN_CACHE_MOUNT)
+                            .args("-c", toolchainScript(wanted)));
                     startAndReap(ctx, cid, "seeding the musl toolchain failed");
                     ctx.note(wanted.size() + " tarball(s) seeded");
                 });
@@ -1747,29 +1745,28 @@ public class SeedPhases {
             // build needs it most: it reads Maven Central direct, with nothing in front of it to be
             // warm. Its reactor resolves no qits jar it does not build itself.
             boot.docker.ensureVolume(MAVEN_CACHE_VOLUME, ctx::log);
-            String cid = create(ctx, List.of(
-                    "docker", "create", "--user", "root", "--entrypoint", "bash",
-                    "--memory", "6g", "--cpu-quota", "400000", "--cpuset-cpus", "0-3",
-                    "-v", MAVEN_CACHE_MOUNT, "qits/graalvmce-musl-builder:jdk-25",
-                    "-c", MAVEN_PURGE_QITS
+            String cid = create(ctx, temporary("qits/graalvmce-musl-builder:jdk-25")
+                    .user("root").entrypoint("bash")
+                    .memory("6g").cpuQuota(400000).cpusetCpus("0-3")
+                    .volume(MAVEN_CACHE_MOUNT)
+                    .args("-c", MAVEN_PURGE_QITS
                             + "cd /qits-build && ./mvnw -B -ntp -pl ci-daemon -am package -Dnative "
                             + "-DskipTests -Dquarkus.native.container-build=false"
                             + MAVEN_REPO_LOCAL));
-            Boot.must(boot.docker.exec(Duration.ofMinutes(30), ctx::log,
-                    "cp", repo.toString(), cid + ":/qits-build"), "copying the daemon source in failed");
+            Boot.must(boot.docker.copyIn(repo.toString(), cid, "/qits-build",
+                    Duration.ofMinutes(30), ctx::log), "copying the daemon source in failed");
             ctx.status("cold musl native build of the ci-daemon");
-            ProcessResult run = boot.docker.exec(Docker.BUILD_TIMEOUT,
-                    ctx::log, "start", "-a", cid);
+            ProcessResult run = boot.docker.startAttached(cid, ctx::log);
             if (!run.ok()) {
                 boot.docker.removeContainer(cid, null);
                 throw new IllegalStateException("ci-daemon build failed\n" + run.tailText(20));
             }
             Path out = boot.state.wrapperDir.resolve(".qits-bootstrap").resolve("qits-ci-daemon");
             Files.createDirectories(out.getParent());
-            Boot.must(boot.docker.exec(Duration.ofMinutes(30), ctx::log,
-                            "cp", cid + ":/qits-build/ci-daemon/target/qits-ci-daemon", out.toString()),
+            Boot.must(boot.docker.copyOut(cid, "/qits-build/ci-daemon/target/qits-ci-daemon",
+                            out.toString(), Duration.ofMinutes(30), ctx::log),
                     "copying the daemon binary out failed");
-            boot.docker.exec(null, "rm", cid);
+            boot.docker.removeStopped(cid, null);
 
             boot.state.daemonBinary = out;
             boot.state.daemonSha = sha256(out);
@@ -2127,11 +2124,10 @@ public class SeedPhases {
                 ctx.skip("the file registry holds all "
                         + all.size());
             }
-            String cid = create(ctx, List.of("docker", "create", "--user", "root",
-                    "--entrypoint", "sh",
-                    "-v", SEED_REPO_VOLUME + ":/repo", "-v", MAVEN_CACHE_MOUNT,
-                    "maven:3.9-eclipse-temurin-25",
-                    "-c", contractScript(wanted)));
+            String cid = create(ctx, temporary("maven:3.9-eclipse-temurin-25")
+                    .user("root").entrypoint("sh")
+                    .volume(SEED_REPO_VOLUME + ":/repo").volume(MAVEN_CACHE_MOUNT)
+                    .args("-c", contractScript(wanted)));
             Path exports = Files.createDirectories(boot.state.srcDir.resolve(".exports"));
             for (ContractJar jar : wanted) {
                 Path tar = exports.resolve(jar.artifactId() + "@" + jar.version() + ".tar");
@@ -2140,8 +2136,8 @@ public class SeedPhases {
                                     jar.directory(), tar, ctx::log),
                             "archiving " + jar.directory() + "/ of " + PlatformModel.repo(jar.repository())
                                     + " " + jar.ref() + " failed");
-                    Boot.must(boot.docker.exec(Duration.ofMinutes(10), ctx::log, "cp",
-                                    tar.toString(), cid + ":" + jar.archive()),
+                    Boot.must(boot.docker.copyIn(tar.toString(), cid, jar.archive(),
+                                    Duration.ofMinutes(10), ctx::log),
                             "copying " + jar.artifactId() + " " + jar.version() + " in failed");
                 } finally {
                     Files.deleteIfExists(tar);
@@ -2271,11 +2267,10 @@ public class SeedPhases {
             if (toFile.isEmpty()) {
                 ctx.skip("the file registry holds qits-runner " + String.join(", ", versions));
             }
-            String cid = create(ctx, List.of(
-                    "docker", "create", "--user", "root",
-                    "--entrypoint", "sh", "-v", SEED_REPO_VOLUME + ":/repo",
-                    "-v", MAVEN_CACHE_MOUNT, "maven:3.9-eclipse-temurin-25",
-                    "-c", runnerScript(toFile)));
+            String cid = create(ctx, temporary("maven:3.9-eclipse-temurin-25")
+                    .user("root").entrypoint("sh")
+                    .volume(SEED_REPO_VOLUME + ":/repo").volume(MAVEN_CACHE_MOUNT)
+                    .args("-c", runnerScript(toFile)));
             for (String version : toFile) {
                 copyTag(ctx, "runner", version, cid, publishTree(version));
             }
@@ -2451,29 +2446,27 @@ public class SeedPhases {
             // of the volume (Maven Central for the rest), where the ci-daemon's resolves Maven
             // Central alone.
             boot.docker.ensureVolume(SEED_REPO_VOLUME, ctx::log);
-            String cid = create(ctx, List.of(
-                    "docker", "create", "--user", "root",
-                    "--entrypoint", "bash",
-                    "--memory", "6g", "--cpu-quota", "400000", "--cpuset-cpus", "0-3",
-                    "-v", SEED_REPO_VOLUME + ":/repo:ro",
-                    "-v", MAVEN_CACHE_MOUNT, "qits/graalvmce-musl-builder:jdk-25",
-                    "-c", systemRunnerBuildScript()));
+            String cid = create(ctx, temporary("qits/graalvmce-musl-builder:jdk-25")
+                    .user("root").entrypoint("bash")
+                    .memory("6g").cpuQuota(400000).cpusetCpus("0-3")
+                    .volume(SEED_REPO_VOLUME + ":/repo:ro").volume(MAVEN_CACHE_MOUNT)
+                    .args("-c", systemRunnerBuildScript()));
             // The build directory sits under the sources directory because the image build below
             // mounts it as its context, and that mount is resolved by the HOST's daemon.
             Path context = boot.state.srcDir.resolve(".exports").resolve("qits-system-runner-image");
             try {
                 copyTag(ctx, "system-runner-daemon", version, cid, "/qits-build");
                 ctx.status("cold musl native build of the system-runner");
-                ProcessResult run = boot.docker.exec(Docker.BUILD_TIMEOUT, ctx::log, "start", "-a",
-                        cid);
+                ProcessResult run = boot.docker.startAttached(cid, ctx::log);
                 if (!run.ok()) {
                     throw new IllegalStateException("system-runner build failed\n"
                             + run.tailText(20));
                 }
                 Files.createDirectories(context);
-                Boot.must(boot.docker.exec(Duration.ofMinutes(30), ctx::log, "cp",
-                                cid + ":/qits-build/system-runner/target/qits-system-runner",
-                                context.resolve("qits-system-runner").toString()),
+                Boot.must(boot.docker.copyOut(cid,
+                                "/qits-build/system-runner/target/qits-system-runner",
+                                context.resolve("qits-system-runner").toString(),
+                                Duration.ofMinutes(30), ctx::log),
                         "copying the runner binary out failed");
                 ctx.status("packaging " + image);
                 Boot.must(boot.docker.buildFromStdin(image, stage, context, List.of(), ctx::log),
@@ -2490,7 +2483,7 @@ public class SeedPhases {
 
     private void tag(PhaseContext ctx, String image, List<String> tags) {
         for (String tag : tags) {
-            Boot.must(boot.docker.exec(ctx::log, "tag", image, tag),
+            Boot.must(boot.docker.tag(image, tag, ctx::log),
                     "tagging " + image + " as " + tag + " failed");
         }
     }
@@ -2820,13 +2813,14 @@ public class SeedPhases {
                 }
                 // The binary stage is FROM scratch with the one file in it: a container of it is
                 // created, never started, and the file copied out.
-                ProcessResult created = boot.docker.exec(ctx::log, "create", tag, "/qits");
+                ProcessResult created = boot.docker.run(Cmd.of(Docker.argv(
+                        HostRunSpec.created(tag).args("/qits").build())), ctx::log);
                 Boot.must(created, "creating a container of " + tag + " failed");
                 String cid = created.captured().getLast().strip();
                 try {
                     Files.createDirectories(out.getParent());
-                    Boot.must(boot.docker.exec(Duration.ofMinutes(5), ctx::log, "cp",
-                            cid + ":/qits", out.toString()), "copying the qits binary out failed");
+                    Boot.must(boot.docker.copyOut(cid, "/qits", out.toString(),
+                            Duration.ofMinutes(5), ctx::log), "copying the qits binary out failed");
                 } finally {
                     boot.docker.removeContainer(cid, null);
                 }
@@ -3119,8 +3113,7 @@ public class SeedPhases {
             String base = boot.config.artifactsUrl() + "/maven/maven";
             ctx.status("uploading " + SEED_REPO_VOLUME + ":/" + STORE_SEED_SUBTREE + " to " + base);
             String cid = create(ctx, storeSeedCommand(base, authorization), authorization);
-            ProcessResult run = boot.docker.exec(Docker.BUILD_TIMEOUT, ctx::log, "start", "-a",
-                    cid);
+            ProcessResult run = boot.docker.startAttached(cid, ctx::log);
             boot.docker.removeContainer(cid, null);
             if (!run.ok()) {
                 throw new IllegalStateException("uploading the file repository into the store "
@@ -3140,9 +3133,14 @@ public class SeedPhases {
 
     /** The container: on qits-net, the volume read-only, the script. */
     static List<String> storeSeedCommand(String base, String authorization) {
-        return List.of("docker", "create", "--network", Boot.NETWORK, "--user", "root",
-                "--entrypoint", "sh", "-v", SEED_REPO_VOLUME + ":/repo:ro",
-                "maven:3.9-eclipse-temurin-25", "-c", storeSeedScript(base, authorization));
+        return Docker.argv(storeSeedSpec(base, authorization).build());
+    }
+
+    private static HostRunSpec.Builder storeSeedSpec(String base, String authorization) {
+        return temporary("maven:3.9-eclipse-temurin-25")
+                .network(Boot.NETWORK).user("root").entrypoint("sh")
+                .volume(SEED_REPO_VOLUME + ":/repo:ro")
+                .args("-c", storeSeedScript(base, authorization));
     }
 
     /**
@@ -3385,9 +3383,9 @@ public class SeedPhases {
                         + " from the same volume — no seed server to start");
             } else {
                 boot.docker.removeContainer(pg, null);
-                Boot.must(boot.docker.run(Cmd.of(List.of(
-                                "docker", "run", "-d", "--name", pg,
-                                "--network", Boot.NETWORK,
+                Boot.must(boot.docker.run(Cmd.of(Docker.argv(
+                                HostRunSpec.detached(pg, "qits/oci-postgresql:latest")
+                                .network(Boot.NETWORK)
                                 // NO PUBLISHED PORT. Every consumer dials the alias on 5432 over
                                 // qits-net, this CLI included — it runs in a container on that
                                 // network. Nothing on the host has asked for this server since.
@@ -3395,9 +3393,9 @@ public class SeedPhases {
                                 // keeps PGDATA at /var/lib/postgresql/18/docker, so the pre-18 path
                                 // mounts the volume BESIDE the cluster — every byte then goes into
                                 // the container layer and is lost on the next recreate.
-                                "-v", "qits-oci-postgresql-data:/var/lib/postgresql",
-                                "-e", "POSTGRES_PASSWORD=" + superuser,
-                                "qits/oci-postgresql:latest"))
+                                .volume("qits-oci-postgresql-data:/var/lib/postgresql")
+                                .env("POSTGRES_PASSWORD", superuser)
+                                .build()))
                         .mask(superuser), ctx::log), "the seed " + pg + " did not start");
             }
 
@@ -3876,11 +3874,8 @@ public class SeedPhases {
                 ctx -> {
                     int port = boot.config.port();
                     ctx.status("installing the ip6tables reject for [::1]:" + port);
-                    ProcessResult result = boot.docker.run(Cmd.of(List.of(
-                            "docker", "run", "--rm", "--privileged", "--pid=host",
-                            "--network", "host", "alpine:3",
-                            "nsenter", "-t", "1", "-m", "-n", "--",
-                            "sh", "-c", ipv6LoopbackScript(port))), ctx::log);
+                    ProcessResult result = boot.docker.run(Cmd.of(
+                            onHost(ipv6LoopbackScript(port))), ctx::log);
                     if (!result.ok()) {
                         throw new IllegalStateException("the IPv6 loopback reject for port " + port
                                 + " could not be installed (exit " + result.exitCode() + "). Every "
@@ -3964,11 +3959,7 @@ public class SeedPhases {
                 ctx.skip("QITS_HOST_OOM=false");
             }
             ctx.status("configuring systemd-oomd and swap on the host");
-            ProcessResult result = boot.docker.run(Cmd.of(List.of(
-                    "docker", "run", "--rm", "--privileged", "--pid=host",
-                    "--network", "host", "alpine:3",
-                    "nsenter", "-t", "1", "-m", "-n", "--",
-                    "sh", "-c", HostOomd.script())), ctx::log);
+            ProcessResult result = boot.docker.run(Cmd.of(onHost(HostOomd.script())), ctx::log);
             if (!result.ok()) {
                 ctx.warn("the host's memory-pressure setup could not be applied (exit "
                         + result.exitCode() + "), so this host still livelocks under pressure "
@@ -4205,14 +4196,15 @@ public class SeedPhases {
      * mask on the secret alone would leave the whole credential on the screen in one token.
      */
     static Cmd dockerConfigWrite(String volume, String json, String clientId, String secret) {
-        return Cmd.of(List.of(
-                        "docker", "run", "--rm", "-i",
-                        "-v", volume + ":/cfg",
-                        "--entrypoint", "sh", "alpine/git",
+        return Cmd.of(Docker.argv(HostRunSpec.removed("alpine/git")
+                        .interactive()
+                        .volume(volume + ":/cfg")
+                        .entrypoint("sh")
                         // 0600 and the image's own uid: a credential file is readable by the one
                         // container that presents it and by nobody sharing the volume later.
-                        "-c", "cat > /cfg/config.json && chown 1001:0 /cfg/config.json "
-                                + "&& chmod 600 /cfg/config.json"))
+                        .args("-c", "cat > /cfg/config.json && chown 1001:0 /cfg/config.json "
+                                + "&& chmod 600 /cfg/config.json")
+                        .build()))
                 .stdin(json)
                 .mask(secret)
                 .mask(dockerAuth(clientId, secret));
@@ -4253,7 +4245,7 @@ public class SeedPhases {
                     .map(String::strip).filter(value -> !value.isEmpty());
             if (configuredSecret.isPresent()) {
                 String name = configuredSecret.orElseThrow();
-                Boot.must(boot.docker.run(Cmd.of("docker", "secret", "inspect", name), null),
+                Boot.must(boot.docker.secretInspect(name, null),
                         "configured edge DNS Swarm secret " + name + " does not exist");
                 ctx.note("kept " + name);
                 return;
@@ -4264,16 +4256,12 @@ public class SeedPhases {
                     .orElseThrow(() -> new IllegalArgumentException(
                             "QITS_DNS_HETZNER_TOKEN is required for DNS-01 on " + domain));
             String name = DomainTokens.secretName(token);
-            ProcessResult existing = boot.docker.run(
-                    Cmd.of("docker", "secret", "inspect", name), null);
+            ProcessResult existing = boot.docker.secretInspect(name, null);
             if (existing.ok()) {
                 ctx.note("kept " + name);
                 return;
             }
-            ProcessResult created = boot.docker.run(
-                    Cmd.of("docker", "secret", "create", name, "-")
-                            .stdin(token)
-                            .mask(token), ctx::log);
+            ProcessResult created = boot.docker.secretCreate(name, token, ctx::log);
             Boot.must(created, "creating the edge DNS Swarm secret failed");
             ctx.note("created " + name);
         });
@@ -4338,10 +4326,12 @@ public class SeedPhases {
                 + " on the edge's volume", ctx -> {
             boot.docker.ensureVolume("qits-edge-letsencrypt", ctx::log);
             String script = placeholderCertificateScript(domain);
-            ProcessResult result = boot.docker.run(Cmd.of(List.of(
-                    "docker", "run", "--rm",
-                    "-v", "qits-edge-letsencrypt:/cert",
-                    "--entrypoint", "sh", "alpine/git", "-c", script)), ctx::log);
+            ProcessResult result = boot.docker.run(Cmd.of(Docker.argv(
+                    HostRunSpec.removed("alpine/git")
+                            .volume("qits-edge-letsencrypt:/cert")
+                            .entrypoint("sh")
+                            .args("-c", script)
+                            .build())), ctx::log);
             Boot.must(result, "writing the placeholder certificate for " + domain + " failed");
             boolean kept = result.captured().stream().anyMatch(line -> line.contains("already"));
             ctx.note(kept ? "certificate kept" : "placeholder written");
@@ -4462,18 +4452,21 @@ public class SeedPhases {
             // one this phase makes for itself.
             boot.docker.ensureVolume(ACME_STATE_VOLUME, ctx::log);
             ctx.status("certbot certonly --manual, " + mode.word() + ", for " + domain);
-            ProcessResult result = boot.docker.run(Cmd.of(List.of(
-                    "docker", "run", "--rm",
-                    // The management port is on qits-net and nowhere else, and so is this container.
-                    "--network", Boot.NETWORK,
-                    "-v", "qits-edge-letsencrypt:/cert",
-                    "-v", ACME_STATE_VOLUME + ":/acme",
-                    "-e", "MODE=" + mode.word(),
-                    "-e", "DIRECTORY=" + mode.directory(),
-                    "-e", "DOMAIN=" + domain,
-                    "-e", "EMAIL=" + email,
-                    "-e", "EDGE_URL=" + boot.config.edgeLetsEncryptUrl(),
-                    "--entrypoint", "sh", "alpine/git", "-c", ACME_SCRIPT)), ctx::log);
+            ProcessResult result = boot.docker.run(Cmd.of(Docker.argv(
+                    HostRunSpec.removed("alpine/git")
+                            // The management port is on qits-net and nowhere else, and so is this
+                            // container.
+                            .network(Boot.NETWORK)
+                            .volume("qits-edge-letsencrypt:/cert")
+                            .volume(ACME_STATE_VOLUME + ":/acme")
+                            .env("MODE", mode.word())
+                            .env("DIRECTORY", mode.directory())
+                            .env("DOMAIN", domain)
+                            .env("EMAIL", email)
+                            .env("EDGE_URL", boot.config.edgeLetsEncryptUrl())
+                            .entrypoint("sh")
+                            .args("-c", ACME_SCRIPT)
+                            .build())), ctx::log);
             if (!result.ok()) {
                 ctx.warn("no certificate for " + domain + " (exit " + result.exitCode() + "). The "
                         + "edge keeps its PLACEHOLDER certificate and browsers reject it. The usual "
@@ -4725,20 +4718,37 @@ public class SeedPhases {
 
     // --- small helpers ----------------------------------------------------------------------------
 
-    private String create(PhaseContext ctx, List<String> command) {
-        return create(ctx, command, null);
+    /** What every helper container this program creates carries, so a sweep can find it. */
+    static final String TEMPORARY_LABEL = "qits.bootstrap.temporary";
+
+    /**
+     * {@code docker create <image>}, labelled {@link #TEMPORARY_LABEL} FIRST — before any option a
+     * caller adds — so every created helper reads {@code create --label …=true …}.
+     */
+    static HostRunSpec.Builder temporary(String image) {
+        return HostRunSpec.created(image).label(TEMPORARY_LABEL, "true");
+    }
+
+    /** A one-shot in the host's own namespaces: {@code nsenter} into pid 1, then the script. */
+    static List<String> onHost(String script) {
+        return Docker.argv(HostRunSpec.removed("alpine:3")
+                .privileged().pidHost().network("host")
+                .args("nsenter", "-t", "1", "-m", "-n", "--", "sh", "-c", script)
+                .build());
+    }
+
+    private String create(PhaseContext ctx, HostRunSpec.Builder spec) {
+        return create(ctx, Docker.argv(spec.build()), null);
     }
 
     /**
-     * The same, with a secret on the command line — a publishing token inside the script the
-     * container runs. {@code Cmd.mask} is what keeps it off the screen and out of the run log.
+     * The same, already rendered (from a spec opened with {@link #temporary}), with a secret on the
+     * command line — a publishing token inside the script the container runs. {@code Cmd.mask} is
+     * what keeps it off the screen and out of the run log.
      */
     private String create(PhaseContext ctx, List<String> command, String secret) {
-        List<String> labelled = new ArrayList<>(command);
-        labelled.add(2, "qits.bootstrap.temporary=true");
-        labelled.add(2, "--label");
         ProcessResult result = boot.docker.run(
-                Cmd.of(labelled).timeout(Duration.ofMinutes(30)).mask(secret)
+                Cmd.of(command).timeout(Duration.ofMinutes(30)).mask(secret)
                         .mask(bearerOf(secret)), ctx::log);
         Boot.must(result, "docker create failed");
         List<String> lines = result.captured();
@@ -4769,8 +4779,7 @@ public class SeedPhases {
                         + "pin closure but not in the checkout");
         try {
             ctx.log("  " + PlatformModel.repo(name) + " " + version + " -> " + into);
-            Boot.must(boot.docker.exec(Duration.ofMinutes(30), ctx::log, "cp",
-                            tree + "/.", cid + ":" + into),
+            Boot.must(boot.docker.copyIn(tree + "/.", cid, into, Duration.ofMinutes(30), ctx::log),
                     "copying " + PlatformModel.repo(name) + " " + version + " in failed");
         } finally {
             boot.git.worktreeRemove(repo, tree, null);
@@ -4778,17 +4787,17 @@ public class SeedPhases {
     }
 
     private void copyIn(PhaseContext ctx, Path source, String cid) {
-        Boot.must(boot.docker.exec(Duration.ofMinutes(30), ctx::log,
-                "cp", source + "/.", cid + ":/src"), "copying " + source + " into the container failed");
+        Boot.must(boot.docker.copyIn(source + "/.", cid, "/src", Duration.ofMinutes(30), ctx::log),
+                "copying " + source + " into the container failed");
     }
 
     private void startAndReap(PhaseContext ctx, String cid, String failure) {
-        ProcessResult result = boot.docker.exec(Docker.BUILD_TIMEOUT, ctx::log, "start", "-a", cid);
+        ProcessResult result = boot.docker.startAttached(cid, ctx::log);
         if (!result.ok()) {
             boot.docker.removeContainer(cid, null);
             throw new IllegalStateException(failure + "\n" + result.tailText(20));
         }
-        boot.docker.exec(null, "rm", cid);
+        boot.docker.removeStopped(cid, null);
     }
 
     static String shortSha(String sha) {

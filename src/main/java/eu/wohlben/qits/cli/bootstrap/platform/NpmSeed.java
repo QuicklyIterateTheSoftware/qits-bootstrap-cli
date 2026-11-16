@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import eu.wohlben.qits.cli.bootstrap.api.Json;
+import eu.wohlben.qits.containers.driver.spec.HostRunSpec;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -551,7 +552,10 @@ public final class NpmSeed {
                     .append(file).append("'\n");
         }
         script.append("exit 0\n");
-        return List.of("docker", "run", "--rm", "-v", VOLUME + ":" + MOUNT + ":ro",
-                "--entrypoint", "sh", NODE_IMAGE, "-c", script.toString());
+        return Docker.argv(HostRunSpec.removed(NODE_IMAGE)
+                .volume(VOLUME + ":" + MOUNT + ":ro")
+                .entrypoint("sh")
+                .args("-c", script.toString())
+                .build());
     }
 }

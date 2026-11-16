@@ -6,6 +6,7 @@ import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.platform.PlatformModel;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
+import eu.wohlben.qits.containers.driver.spec.HostRunSpec;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -13,7 +14,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -101,30 +101,30 @@ public final class BootstrapIngressLifecycle {
         // network phase. Its browser port is never published independently.
         if (boot.docker.allNames().contains("qits-bootstrap-progress")
                 && !boot.docker.networksOf("qits-bootstrap-progress").contains(Boot.NETWORK)) {
-            boot.docker.exec(out, "network", "connect", Boot.NETWORK, "qits-bootstrap-progress");
+            boot.docker.networkConnect(Boot.NETWORK, "qits-bootstrap-progress", out);
         }
-        List<String> argv = new ArrayList<>(List.of("docker", "run", "-d", "--name", CONTAINER,
-                "--label", LABEL + "=true", "--label", LABEL + ".expires-at="
-                        + boot.state.bootstrapIngressExpiresAt, "--restart", "unless-stopped",
-                "--network", Boot.NETWORK,
-                "--cap-drop", "ALL", "--security-opt", "no-new-privileges"));
+        HostRunSpec.Builder edge = HostRunSpec.detached(CONTAINER, image)
+                .label(LABEL, "true")
+                .label(LABEL + ".expires-at", String.valueOf(boot.state.bootstrapIngressExpiresAt))
+                .restart("unless-stopped")
+                .network(Boot.NETWORK)
+                .capDrop("ALL")
+                .securityOpt("no-new-privileges");
         if (mode() == BootstrapIngressMode.PUBLIC_TLS) {
             // The only ingress mount is the retained certificate pair, read-only. This container
             // receives neither the Docker socket nor any platform/configuration volume.
-            argv.addAll(List.of("-p", "80:8080", "-p", "443:8443", "-v",
-                    CERTIFICATE_VOLUME + ":/cert:ro"));
+            edge.publish("80:8080").publish("443:8443").volume(CERTIFICATE_VOLUME + ":/cert:ro");
         } else if (mode() == BootstrapIngressMode.PUBLIC_HTTP) {
             // The same public door with no TLS half: no 443 publish, no certificate mount, and no
             // TLS environment — the server then listens plainly on its one port and redirects
             // nothing.
-            argv.addAll(List.of("-p", "80:8080"));
+            edge.publish("80:8080");
         } else {
-            argv.addAll(List.of("-p", boot.config.bootstrapIngressBind() + ":"
-                    + boot.config.bootstrapIngressPort() + ":8080"));
+            edge.publish(boot.config.bootstrapIngressBind() + ":"
+                    + boot.config.bootstrapIngressPort() + ":8080");
         }
-        argv.addAll(List.of("--env-file", boot.state.bootstrapIngressEnvFile.toString(), image,
-                "bootstrap-edge"));
-        Cmd command = Cmd.of(argv);
+        edge.envFile(boot.state.bootstrapIngressEnvFile.toString()).args("bootstrap-edge");
+        Cmd command = Cmd.of(Docker.argv(edge.build()));
         Boot.must(boot.docker.run(command, out), "starting the bootstrap ingress failed");
         out.accept("  bootstrap ingress: " + address() + " (" + description()
                 + ", expires " + Instant.ofEpochSecond(boot.state.bootstrapIngressExpiresAt) + ")");
@@ -193,8 +193,8 @@ public final class BootstrapIngressLifecycle {
 
     /** Takes only expired containers carrying our exact label; an active bootstrap is untouched. */
     private void reconcile(Consumer<String> out) {
-        ProcessResult result = boot.docker.exec(null, "ps", "-a", "--filter", "label=" + LABEL
-                + "=true", "--format", "{{.Names}}|{{.Label \"" + LABEL + ".expires-at\"}}");
+        ProcessResult result = boot.docker.psAll(List.of("label=" + LABEL + "=true"),
+                "{{.Names}}|{{.Label \"" + LABEL + ".expires-at\"}}");
         if (!result.ok()) {
             return;
         }
@@ -294,9 +294,11 @@ public final class BootstrapIngressLifecycle {
         if (image == null) {
             return true;
         }
-        return boot.docker.run(Cmd.of(List.of("docker", "run", "--rm",
-                "-v", CERTIFICATE_VOLUME + ":/cert:ro", "--entrypoint", "sh", image,
-                "-c", "test -f " + CERTIFICATE + " -a -f " + CERTIFICATE_KEY)), null).ok();
+        return boot.docker.run(Cmd.of(Docker.argv(HostRunSpec.removed(image)
+                .volume(CERTIFICATE_VOLUME + ":/cert:ro")
+                .entrypoint("sh")
+                .args("-c", "test -f " + CERTIFICATE + " -a -f " + CERTIFICATE_KEY)
+                .build())), null).ok();
     }
 
     /**

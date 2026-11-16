@@ -7,6 +7,8 @@ import eu.wohlben.qits.cli.bootstrap.engine.PhaseContext;
 import eu.wohlben.qits.cli.bootstrap.platform.Docker;
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
+import eu.wohlben.qits.containers.driver.docker.DockerArgv;
+import eu.wohlben.qits.containers.driver.docker.SwarmArgv;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -15,6 +17,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -158,8 +161,7 @@ public class UnwrapPhases {
                 ctx.log("  would run: docker compose -p qits -f " + compose + " down");
                 return;
             }
-            boot.docker.exec(Duration.ofMinutes(10), ctx::log,
-                    "compose", "-p", "qits", "-f", compose.toString(), "down");
+            boot.docker.composeDown("qits", compose, Duration.ofMinutes(10), ctx::log);
         });
     }
 
@@ -191,7 +193,8 @@ public class UnwrapPhases {
                 ctx.skip("no qits services");
             }
             ctx.log("  " + names.size() + " service(s)");
-            remove(ctx, new ArrayList<>(names), "service", "rm");
+            remove(ctx, new ArrayList<>(names),
+                    name -> SwarmArgv.serviceRmReferences(Docker.BIN, List.of(name)));
             ctx.note(done(names.size()));
         });
     }
@@ -228,7 +231,7 @@ public class UnwrapPhases {
                 ctx.skip("no qits containers");
             }
             ctx.log("  " + ids.size() + " container(s)");
-            remove(ctx, new ArrayList<>(ids), "rm", "-f");
+            remove(ctx, new ArrayList<>(ids), id -> DockerArgv.rm(Docker.BIN, List.of(id)));
             ctx.note(done(ids.size()));
         });
     }
@@ -240,7 +243,7 @@ public class UnwrapPhases {
                 ctx.skip("no qits-* volumes");
             }
             ctx.log("  " + String.join(", ", names));
-            remove(ctx, names, "volume", "rm");
+            remove(ctx, names, name -> DockerArgv.volumeRm(Docker.BIN, name));
             ctx.note(done(names.size()));
         });
     }
@@ -264,7 +267,7 @@ public class UnwrapPhases {
                 ctx.skip("no data volumes; " + kept.size() + " kept");
             }
             ctx.log("  removing " + going.size() + ": " + String.join(", ", going));
-            remove(ctx, going, "volume", "rm");
+            remove(ctx, going, name -> DockerArgv.volumeRm(Docker.BIN, name));
             ctx.note(done(going.size()) + ", " + kept.size() + " kept");
         });
     }
@@ -293,8 +296,7 @@ public class UnwrapPhases {
     }
 
     private List<String> volumeNames() {
-        return boot.docker
-                .run(Cmd.of("docker", "volume", "ls", "-q"), null)
+        return boot.docker.volumeNames()
                 .captured().stream().map(String::trim)
                 .filter(UnwrapPhases::isPlatformVolume).toList();
     }
@@ -357,8 +359,9 @@ public class UnwrapPhases {
                     ctx.log("  would disconnect " + container + " from " + network);
                     continue;
                 }
-                ProcessResult result = boot.docker.exec(Duration.ofMinutes(1), null,
-                        "network", "disconnect", network, container);
+                ProcessResult result = boot.docker.run(Cmd.of(
+                        DockerArgv.networkDisconnect(Docker.BIN, network, container))
+                        .timeout(Duration.ofMinutes(1)), null);
                 if (result.ok()) {
                     left++;
                     ctx.log("  disconnected " + container + " from " + network);
@@ -384,17 +387,15 @@ public class UnwrapPhases {
     private Phase networks() {
         return new Phase("networks", "remove the platform's networks", ctx -> {
             Set<String> names = new LinkedHashSet<>();
-            for (String line : boot.docker.run(Cmd.of(
-                    "docker", "network", "ls", "--format", "{{.Name}}"), null).captured()) {
+            for (String line : boot.docker.networkNames(List.of()).captured()) {
                 String name = line.trim();
                 if (isPlatformNetwork(name)) {
                     names.add(name);
                 }
             }
             for (String label : List.of("qits.platform.deployments.network", "qits.cd.network")) {
-                for (String line : boot.docker.run(Cmd.of(
-                        "docker", "network", "ls", "--filter", "label=" + label,
-                        "--format", "{{.Name}}"), null).captured()) {
+                for (String line : boot.docker.networkNames(List.of("label=" + label))
+                        .captured()) {
                     names.add(line.trim());
                 }
             }
@@ -403,7 +404,8 @@ public class UnwrapPhases {
                 ctx.skip("no qits networks");
             }
             ctx.log("  " + String.join(", ", names));
-            remove(ctx, new ArrayList<>(names), NETWORK_ATTEMPTS, "network", "rm");
+            remove(ctx, new ArrayList<>(names), NETWORK_ATTEMPTS,
+                    name -> DockerArgv.networkRm(Docker.BIN, name));
             ctx.note(done(names.size()));
         });
     }
@@ -430,8 +432,7 @@ public class UnwrapPhases {
     private Phase images() {
         return new Phase("images", "remove the platform's images", ctx -> {
             List<String> refs = new ArrayList<>();
-            for (String line : boot.docker.run(Cmd.of(
-                    "docker", "images", "--format", "{{.Repository}}:{{.Tag}}"), null).captured()) {
+            for (String line : boot.docker.images("{{.Repository}}:{{.Tag}}").captured()) {
                 String ref = line.trim();
                 if (ref.startsWith("qits/") || isLegacyRegistryPortRef(ref)
                         || isRegistryVhostRef(ref) || isPublicRegistryRef(ref)) {
@@ -442,7 +443,7 @@ public class UnwrapPhases {
                 ctx.skip("no qits images");
             }
             ctx.log("  " + refs.size() + " image(s)");
-            remove(ctx, refs, "rmi", "-f");
+            remove(ctx, refs, ref -> DockerArgv.rmiForce(Docker.BIN, List.of(ref)));
             ctx.note(done(refs.size()));
         });
     }
@@ -491,8 +492,7 @@ public class UnwrapPhases {
 
     /** Names rather than ids, so the same container found by two filters is one entry. */
     private List<String> byFilter(String filter) {
-        return boot.docker.run(Cmd.of(
-                        "docker", "ps", "-a", "--filter", filter, "--format", "{{.Names}}"), null)
+        return boot.docker.psAll(List.of(filter), "{{.Names}}")
                 .captured().stream().map(String::trim).filter(name -> !name.isBlank()).toList();
     }
 
@@ -544,21 +544,34 @@ public class UnwrapPhases {
     }
 
     /** Removal is best effort per item: one stubborn object must not hide the rest. */
-    private void remove(PhaseContext ctx, List<String> items, String... command) {
+    private void remove(PhaseContext ctx, List<String> items,
+                        Function<String, List<String>> command) {
         remove(ctx, items, 1, command);
     }
 
-    private void remove(PhaseContext ctx, List<String> items, int attempts, String... command) {
+    /**
+     * {@code command} is the library builder for one item's removal (qits-2212). The items are read
+     * back off docker's own listings, and a name the builder refuses — one that would read as a
+     * flag — is kept and counted, never handed to docker.
+     */
+    private void remove(PhaseContext ctx, List<String> items, int attempts,
+                        Function<String, List<String>> command) {
         int failed = 0;
         for (String item : items) {
             if (dryRun) {
                 ctx.log("  would remove " + item);
                 continue;
             }
-            List<String> args = new ArrayList<>(List.of(command));
-            args.add(item);
+            List<String> args;
+            try {
+                args = command.apply(item);
+            } catch (IllegalArgumentException refused) {
+                failed++;
+                ctx.log("  kept " + item + ": " + refused.getMessage());
+                continue;
+            }
             ProcessResult result = retrying(
-                    () -> boot.docker.exec(Duration.ofMinutes(5), null, args.toArray(String[]::new)),
+                    () -> boot.docker.run(Cmd.of(args).timeout(Duration.ofMinutes(5)), null),
                     attempts,
                     () -> {
                         ctx.log("  " + item + " is not free yet; asking again");

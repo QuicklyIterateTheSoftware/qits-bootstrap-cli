@@ -9,6 +9,7 @@ import eu.wohlben.qits.cli.bootstrap.proc.ProcessRunner;
 import eu.wohlben.qits.cli.bootstrap.proc.RunLog;
 import eu.wohlben.qits.cli.bootstrap.ui.UiFactory;
 import eu.wohlben.qits.cli.bootstrap.ui.BootState;
+import eu.wohlben.qits.containers.driver.spec.HostRunSpec;
 
 import java.io.IOException;
 import java.io.PrintStream;
@@ -185,11 +186,16 @@ public final class HostLauncher {
         if (docker.allNames().contains(SUPERVISOR)) {
             docker.removeContainer(SUPERVISOR, out::println);
         }
-        ProcessResult result = docker.exec(out::println, "run", "-d", "--name", SUPERVISOR,
-                "--restart", "unless-stopped", "--user", user, "-v", workDir + ":" + workDir,
-                "-w", workDir.toString(), "-e", "QITS_WEB_BIND=true", "-e",
-                "QITS_WEB_HOST=0.0.0.0",
-                image, "progress-supervisor", "--state", state.toString());
+        ProcessResult result = docker.run(Cmd.of(Docker.argv(
+                HostRunSpec.detached(SUPERVISOR, image)
+                        .restart("unless-stopped")
+                        .user(user)
+                        .volume(workDir + ":" + workDir)
+                        .workdir(workDir.toString())
+                        .env("QITS_WEB_BIND", "true")
+                        .env("QITS_WEB_HOST", "0.0.0.0")
+                        .args("progress-supervisor", "--state", state.toString())
+                        .build())), out::println);
         if (!result.ok()) {
             out.println("the bootstrap progress supervisor did not start (exit "
                     + result.exitCode() + ")");

@@ -105,6 +105,15 @@ terminal provider, which shells `/bin/stty` rather than calling libc, because th
 call libc do not survive being compiled into a native image. One process per terminal, on a program
 that already shells docker and git for a living.
 
+**Every docker call goes through qits-containers-driver** (qits-2212), the library the platform's
+own docker callers use. The argv comes from its builders — `DockerArgv`, `SwarmArgv`, `ComposeArgv`
+and `HostRunArgv` over a `HostRunSpec` for every `run`/`create` — which belt each name, volume,
+mount, image and label, so a name read back off `docker ps` can never be taken for a flag. Every
+process, git included, runs through its `ContainerProcess.stream`: this program keeps the masking,
+the ANSI cleaning, the capture and the run log, and the library spawns, feeds stdin, enforces the
+deadline and kills and reaps the child on an interrupt. The launcher's attached payload run is the
+one process spawned directly, because it hands its terminal on; its argv is the library's too.
+
 It runs **in a container on `qits-net`**, with the host's docker socket mounted. Every address it
 dials is a wire alias — `prod-qits-artifacts:8080`, `prod-qits-platform-mirror:8080`,
 `prod-qits-githost:8080`, the postgres alias on 5432, `prod-qits-platform-idp:8080`, and qits-ci and
@@ -568,8 +577,8 @@ that, each measured on this host rather than assumed:
 **The image is addressed by its content** — a digest of `pom.xml`, `mvnw`, `.mvn/`, `src/main/` and
 the Dockerfile — so a rerun with an unchanged checkout finds it built and starts in a second, and a
 changed source is a different image that cannot be run stale by mistake. It is a two-stage build: a
-GraalVM stage makes the native binary from the checkout, the runtime stage is plain alpine with the
-docker CLI trio and git. Nothing is copied out of `target/`, so the image builds on a machine that
+maven stage packages the checkout as a JVM fast-jar, the runtime stage is `eclipse-temurin:25-jre-alpine`
+with the docker CLI trio and git. Nothing is copied out of `target/`, so the image builds on a machine that
 has never run maven — which is the machine this program is for. Its repository is `qits-bootstrap`,
 deliberately outside `unwrap`'s `qits/` image sweep: it is the image a running `unwrap` is executing
 from, and keeping it is what makes the next bootstrap start in seconds.
@@ -579,15 +588,11 @@ from, and keeping it is what makes the next bootstrap start in seconds.
 image makes the container the phases run in, so it is built before any phase and therefore before
 any buildkitd exists. It resolves nothing of the platform, and buildx is not required for it.
 
-**The binary in it is fully static against musl**, and both halves of that are forced. A binary
-linked against this host's glibc starts on no alpine image at all, and a *statically* linked glibc
-binary resolves no names — glibc reaches the name services through `dlopen`, which a static binary
-has no loader for, while every address this CLI dials is a wire alias on `qits-net`. musl compiles
-its resolver in. The Dockerfile's header says the rest, including why the builder stage is GraalVM
-CE and adds its own musl toolchain;
-`components/qits-ci/qits-ci-daemon/docker/Dockerfile.musl-builder` in the wrapper is where that
-reasoning was first written down. This repository copies it rather than sharing it, because the
-image has to build from a git URL on a machine that has seen no platform.
+**The program in it is a JVM fast-jar, not a native binary** (`java -jar
+/opt/qits/quarkus-run.jar`). The payload is a one-shot recovery vehicle with no latency-sensitive
+path, so it keeps build headroom for the capped native seed builds it orchestrates rather than
+spending it on its own; the Dockerfile's header says so. A native build stays available from this
+checkout (`./mvnw package -Dnative`) for the host, and it is not the payload's dependency.
 
 The run itself, flag by flag:
 

@@ -1,6 +1,11 @@
 package eu.wohlben.qits.cli.bootstrap.platform;
 
 import eu.wohlben.qits.cli.bootstrap.proc.Cmd;
+import eu.wohlben.qits.containers.driver.docker.ComposeArgv;
+import eu.wohlben.qits.containers.driver.docker.DockerArgv;
+import eu.wohlben.qits.containers.driver.docker.HostRunArgv;
+import eu.wohlben.qits.containers.driver.docker.SwarmArgv;
+import eu.wohlben.qits.containers.driver.spec.HostRunSpec;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessResult;
 import eu.wohlben.qits.cli.bootstrap.proc.ProcessRunner;
 
@@ -31,8 +36,20 @@ import java.util.function.Consumer;
  * are the paths that have to mean the same thing on both sides. The others the daemon resolves are
  * the ones this program hands it deliberately: named volumes, and {@code /var/run/docker.sock} for
  * the services that need it.
+ * <p>
+ * <b>Every argv here is qits-containers-driver's</b> (qits-2212): this class names WHAT to run and
+ * the library's builders ({@code DockerArgv}, {@code SwarmArgv}, {@code ComposeArgv},
+ * {@code HostRunArgv}) spell it and belt every name, path and reference on it, so a value read
+ * back from docker's own output can never smuggle a flag in. The process itself runs through
+ * {@link ProcessRunner}, which is the library's {@code ContainerProcess.stream} plus this
+ * program's masking and log. Nothing outside this class spells a docker verb; a phase that needs
+ * one the class does not offer builds it with the library and hands it to {@link #run(Cmd,
+ * Consumer)}.
  */
 public class Docker {
+    /** The docker CLI, as every builder takes it: first, and the only binary named here. */
+    public static final String BIN = "docker";
+
     /**
      * <b>The platform's BuildKit daemon, created here and then owned by qits-containers.</b> The
      * bootstrap is only the first thing that needs it: it has to build the seed images before any
@@ -120,16 +137,26 @@ public class Docker {
         return this;
     }
 
+    /**
+     * Runs an argv a library builder made, for the shapes that need a mask, stdin, a timeout or an
+     * environment of their own. It is not a passthrough: a hand-spelled docker argv has no business
+     * here (qits-2212).
+     */
     public ProcessResult run(Cmd cmd, Consumer<String> out) {
         return runner.run(cmd, out);
     }
 
+    /** {@code docker run|create} of a spec, rendered by the library. */
+    public static List<String> argv(HostRunSpec spec) {
+        return HostRunArgv.render(BIN, spec);
+    }
+
     public boolean daemonReachable() {
-        return runner.run(Cmd.of("docker", "version"), null).ok();
+        return runner.run(Cmd.of(DockerArgv.version(BIN, null)), null).ok();
     }
 
     public boolean composePluginPresent() {
-        return runner.run(Cmd.of("docker", "compose", "version"), null).ok();
+        return runner.run(Cmd.of(ComposeArgv.version(BIN)), null).ok();
     }
 
     /**
@@ -154,8 +181,8 @@ public class Docker {
 
     /** One {@code docker info} for both halves of the answer. */
     public Swarm swarm() {
-        ProcessResult info = runner.run(Cmd.of("docker", "info", "--format",
-                "{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}}"), null);
+        ProcessResult info = runner.run(Cmd.of(DockerArgv.info(BIN,
+                "{{.Swarm.LocalNodeState}} {{.Swarm.ControlAvailable}}")), null);
         String[] answer = info.ok() ? info.trimmed().split("\\s+") : new String[0];
         String state = answer.length > 0 && !answer[0].isBlank() ? answer[0] : "unknown";
         return new Swarm(state, answer.length > 1 && "true".equals(answer[1]));
@@ -174,8 +201,8 @@ public class Docker {
      * which is exactly the state worth catching. Empty when the daemon does not answer.
      */
     public List<String> registryMirrors() {
-        ProcessResult info = runner.run(Cmd.of("docker", "info", "--format",
-                "{{range .RegistryConfig.Mirrors}}{{.}} {{end}}"), null);
+        ProcessResult info = runner.run(Cmd.of(DockerArgv.info(BIN,
+                "{{range .RegistryConfig.Mirrors}}{{.}} {{end}}")), null);
         if (!info.ok()) {
             return List.of();
         }
@@ -199,13 +226,12 @@ public class Docker {
      * eu.wohlben.qits.cli.bootstrap.phases.SeedPhases#ensureSwarm}.
      */
     public ProcessResult initSwarm(Consumer<String> out) {
-        return runner.run(Cmd.of("docker", "swarm", "init"), out);
+        return runner.run(Cmd.of(SwarmArgv.swarmInit(BIN)), out);
     }
 
     /** Whether an image reference is already on this daemon. */
     public boolean imageExists(String reference) {
-        return runner.run(Cmd.of("docker", "image", "inspect", "-f", "{{.Id}}", reference),
-                null).ok();
+        return runner.run(Cmd.of(DockerArgv.imageInspect(BIN, reference, "{{.Id}}")), null).ok();
     }
 
     /**
@@ -253,8 +279,8 @@ public class Docker {
         if (self == null) {
             return null;
         }
-        ProcessResult name = runner.run(Cmd.of("docker", "inspect", "--type", "container",
-                "-f", "{{.Name}}", self), null);
+        ProcessResult name = runner.run(Cmd.of(
+                DockerArgv.inspectTypeContainer(BIN, self, "{{.Name}}")), null);
         if (!name.ok()) {
             return null;
         }
@@ -269,20 +295,20 @@ public class Docker {
         if (self == null) {
             return null;
         }
-        ProcessResult image = runner.run(Cmd.of("docker", "inspect", "--type", "container", "-f",
-                "{{.Config.Image}}", self), null);
+        ProcessResult image = runner.run(Cmd.of(
+                DockerArgv.inspectTypeContainer(BIN, self, "{{.Config.Image}}")), null);
         return image.ok() && !image.trimmed().isBlank() ? image.trimmed() : null;
     }
 
     public boolean containerExists(String nameOrId) {
-        return runner.run(Cmd.of("docker", "inspect", "--type", "container", "-f", "{{.Id}}",
-                nameOrId), null).ok();
+        return runner.run(Cmd.of(DockerArgv.inspectTypeContainer(BIN, nameOrId, "{{.Id}}")),
+                null).ok();
     }
 
     /** The networks a container is an endpoint on. */
     public List<String> networksOf(String nameOrId) {
-        ProcessResult result = runner.run(Cmd.of("docker", "inspect", "-f",
-                "{{range $net, $_ := .NetworkSettings.Networks}}{{$net}} {{end}}", nameOrId), null);
+        ProcessResult result = runner.run(Cmd.of(DockerArgv.inspect(BIN, nameOrId,
+                "{{range $net, $_ := .NetworkSettings.Networks}}{{$net}} {{end}}")), null);
         List<String> networks = new ArrayList<>();
         for (String line : lines(result)) {
             for (String name : line.split("\\s+")) {
@@ -297,7 +323,7 @@ public class Docker {
     /** The driver of a network, or an empty string when there is no network by that name. */
     public String networkDriver(String name) {
         ProcessResult driver = runner.run(Cmd.of(
-                "docker", "network", "inspect", "-f", "{{.Driver}}", name), null);
+                DockerArgv.networkInspect(BIN, name, "{{.Driver}}")), null);
         return driver.ok() ? driver.trimmed() : "";
     }
 
@@ -326,8 +352,8 @@ public class Docker {
                     + "and let this run make it again — `unwrap` does that, or stop everything on it "
                     + "and run `docker network rm " + name + "`");
         }
-        ProcessResult created = runner.run(Cmd.of("docker", "network", "create",
-                "-d", OVERLAY, "--attachable", name), out);
+        ProcessResult created = runner.run(Cmd.of(
+                SwarmArgv.overlayNetworkCreate(BIN, name, true, false, null, List.of())), out);
         // Two creators between the inspect and the create is the ordinary race here — ci and the
         // deployer ensure this network too — and whoever won made the same one.
         if (!created.ok() && !created.out().contains("already exists")) {
@@ -336,8 +362,18 @@ public class Docker {
         }
     }
 
-    public void ensureVolume(String name, Consumer<String> out) {
-        runner.run(Cmd.of("docker", "volume", "create", name), out);
+    public ProcessResult ensureVolume(String name, Consumer<String> out) {
+        return runner.run(Cmd.of(DockerArgv.volumeCreate(BIN, name)), out);
+    }
+
+    /** Whether a volume of that name exists — {@code volume inspect}'s exit code. */
+    public boolean volumeExists(String name) {
+        return runner.run(Cmd.of(DockerArgv.volumeInspect(BIN, name)), null).ok();
+    }
+
+    /** {@code volume ls -q}: every volume's name. Raw, as the runner captured it. */
+    public ProcessResult volumeNames() {
+        return runner.run(Cmd.of(DockerArgv.volumeLs(BIN, Map.of())), null);
     }
 
     // --- the seed stack -----------------------------------------------------------------------
@@ -361,12 +397,43 @@ public class Docker {
      */
     public ProcessResult stackDeploy(Path file, String stack, Duration timeout,
                                      Consumer<String> out) {
-        return runner.run(Cmd.of(List.of("docker", "stack", "deploy", "--resolve-image", "never",
-                "-c", file.toString(), stack)).timeout(timeout), out);
+        return runner.run(Cmd.of(SwarmArgv.stackDeploy(BIN, file.toString(), stack))
+                .timeout(timeout), out);
     }
 
     public ProcessResult stackRm(String stack, Consumer<String> out) {
-        return runner.run(Cmd.of("docker", "stack", "rm", stack), out);
+        return runner.run(Cmd.of(SwarmArgv.stackRm(BIN, stack)), out);
+    }
+
+    /** {@code compose -p <project> -f <file> down}: what a pre-swarm platform is taken down by. */
+    public ProcessResult composeDown(String project, Path file, Duration timeout,
+                                     Consumer<String> out) {
+        return runner.run(Cmd.of(ComposeArgv.down(BIN, project, file.toString())).timeout(timeout),
+                out);
+    }
+
+    /**
+     * {@code service update --env-add K=V... <service>}: one variable added to a running service,
+     * which swarm rolls out as a new task.
+     */
+    public ProcessResult serviceEnvAdd(String service, List<String> env, Duration timeout,
+                                       Consumer<String> out) {
+        return runner.run(Cmd.of(SwarmArgv.serviceEnvAdd(BIN, service, env)).timeout(timeout),
+                out);
+    }
+
+    /** {@code secret inspect <name>}: whether the swarm holds a secret by that name. */
+    public ProcessResult secretInspect(String name, Consumer<String> out) {
+        return runner.run(Cmd.of(SwarmArgv.secretInspect(BIN, name)), out);
+    }
+
+    /**
+     * {@code secret create <name> -}, the value fed on stdin and masked: it is never an argument,
+     * so it never reaches a process listing.
+     */
+    public ProcessResult secretCreate(String name, String value, Consumer<String> out) {
+        return runner.run(Cmd.of(SwarmArgv.secretCreateFromStdin(BIN, name)).stdin(value)
+                .mask(value), out);
     }
 
     /**
@@ -377,20 +444,21 @@ public class Docker {
      * for a container by the name a service answers to now asks here instead.
      */
     public List<String> serviceNames() {
-        return lines(runner.run(Cmd.of("docker", "service", "ls", "--format", "{{.Name}}"), null));
+        return lines(runner.run(Cmd.of(SwarmArgv.serviceLs(BIN, List.of(), "{{.Name}}")), null));
     }
 
     /** Service names carrying a label, which is how the deployer's own services are found. */
     public List<String> serviceNames(String filter) {
-        return lines(runner.run(Cmd.of("docker", "service", "ls", "--filter", filter,
-                "--format", "{{.Name}}"), null));
+        return lines(runner.run(Cmd.of(SwarmArgv.serviceLs(BIN, List.of(filter), "{{.Name}}")),
+                null));
     }
 
-    /** Removes services, in one call: {@code service rm} takes as many names as it is given. */
+    /**
+     * Removes services, in one call: {@code service rm} takes as many names as it is given. Each
+     * name is belted as a reference: these are read back off {@code service ls}.
+     */
     public ProcessResult serviceRm(List<String> names, Consumer<String> out) {
-        List<String> command = new ArrayList<>(List.of("docker", "service", "rm"));
-        command.addAll(names);
-        return runner.run(Cmd.of(command), out);
+        return runner.run(Cmd.of(SwarmArgv.serviceRmReferences(BIN, names)), out);
     }
 
     /**
@@ -404,25 +472,112 @@ public class Docker {
 
     /** Names of the running containers. */
     public List<String> runningNames() {
-        return lines(runner.run(Cmd.of("docker", "ps", "--format", "{{.Names}}"), null));
+        return ps("{{.Names}}");
     }
 
     /** Names of every container, running or not. */
     public List<String> allNames() {
-        return lines(runner.run(Cmd.of("docker", "ps", "-a", "--format", "{{.Names}}"), null));
+        return lines(runner.run(Cmd.of(DockerArgv.ps(BIN, true, false, "{{.Names}}")), null));
     }
 
     /** "name image" per running container — how a platform service's live sha is read. */
     public List<String> runningNamesAndImages() {
-        return lines(runner.run(Cmd.of("docker", "ps", "--format", "{{.Names}} {{.Image}}"), null));
+        return ps("{{.Names}} {{.Image}}");
     }
 
     public List<String> ps(String format) {
-        return lines(runner.run(Cmd.of("docker", "ps", "--format", format), null));
+        return lines(runner.run(Cmd.of(DockerArgv.ps(BIN, false, false, format)), null));
     }
 
-    public void removeContainer(String name, Consumer<String> out) {
-        runner.run(Cmd.of("docker", "rm", "-f", name), out);
+    /**
+     * {@code ps -a (--filter F)* --format T}, RAW: every container a filter picks, stopped ones
+     * too. Raw because some callers read the exit code before the lines.
+     */
+    public ProcessResult psAll(List<String> filters, String format) {
+        return runner.run(Cmd.of(DockerArgv.ps(BIN, true, filters, format)), null);
+    }
+
+    /**
+     * {@code rm -f <name>}. The name is belted as a REFERENCE — docker's own name charset, which a
+     * swarm task ({@code qits_x.1.abc}) and a versioned runner ({@code …-2026.1023.1}) both fit —
+     * because it is as often read off {@code ps} as written here.
+     */
+    public ProcessResult removeContainer(String name, Consumer<String> out) {
+        return runner.run(Cmd.of(DockerArgv.rm(BIN, List.of(name))), out);
+    }
+
+    /** {@code rm <container>}, unforced: a created helper that has already run to its end. */
+    public ProcessResult removeStopped(String container, Consumer<String> out) {
+        return runner.run(Cmd.of(DockerArgv.rmStopped(BIN, container)), out);
+    }
+
+    /** {@code start <container>}; the name may be one read off {@code ps}, so it is a reference. */
+    public ProcessResult start(String container, Consumer<String> out) {
+        return runner.run(Cmd.of(DockerArgv.startByReference(BIN, container)), out);
+    }
+
+    /**
+     * {@code start -a <container>}: a created helper run to its end, its output streamed — a seed
+     * build, so it gets {@link #BUILD_TIMEOUT}.
+     */
+    public ProcessResult startAttached(String container, Consumer<String> out) {
+        return runner.run(Cmd.of(DockerArgv.startAttached(BIN, container)).timeout(BUILD_TIMEOUT),
+                out);
+    }
+
+    /** {@code cp <host path> <container>:<path>}. */
+    public ProcessResult copyIn(String hostPath, String container, String containerPath,
+                                Duration timeout, Consumer<String> out) {
+        return runner.run(Cmd.of(DockerArgv.cpIn(BIN, hostPath, container, containerPath))
+                .timeout(timeout), out);
+    }
+
+    /** {@code cp <container>:<path> <host path>}. */
+    public ProcessResult copyOut(String container, String containerPath, String hostPath,
+                                 Duration timeout, Consumer<String> out) {
+        return runner.run(Cmd.of(DockerArgv.cpOut(BIN, container, containerPath, hostPath))
+                .timeout(timeout), out);
+    }
+
+    /** {@code tag <source> <target>}. */
+    public ProcessResult tag(String source, String target, Consumer<String> out) {
+        return runner.run(Cmd.of(DockerArgv.tag(BIN, source, target)), out);
+    }
+
+    /** {@code network connect <network> <container>}. */
+    public ProcessResult networkConnect(String network, String container, Consumer<String> out) {
+        return runner.run(Cmd.of(DockerArgv.networkConnect(BIN, network, container)), out);
+    }
+
+    /** {@code network disconnect <network> <container>}. */
+    public ProcessResult networkDisconnect(String network, String container,
+                                           Consumer<String> out) {
+        return runner.run(Cmd.of(DockerArgv.networkDisconnect(BIN, network, container)), out);
+    }
+
+    /** {@code network ls (--filter F)* --format {{.Name}}}, RAW. */
+    public ProcessResult networkNames(List<String> filters) {
+        return runner.run(Cmd.of(SwarmArgv.networkLs(BIN, filters, "{{.Name}}")), null);
+    }
+
+    /** {@code network rm <name>}, the name belted: it is read back off {@code network ls}. */
+    public ProcessResult removeNetwork(String name, Consumer<String> out) {
+        return runner.run(Cmd.of(DockerArgv.networkRm(BIN, name)), out);
+    }
+
+    /** {@code images --format <template>}, RAW. */
+    public ProcessResult images(String format) {
+        return runner.run(Cmd.of(DockerArgv.images(BIN, format)), null);
+    }
+
+    /** {@code rmi -f <image>}: forced, because unwrap means to win. */
+    public ProcessResult removeImage(String reference, Consumer<String> out) {
+        return runner.run(Cmd.of(DockerArgv.rmiForce(BIN, List.of(reference))), out);
+    }
+
+    /** {@code logs --tail <n> <container>}. */
+    public ProcessResult logsTail(String container, int lines) {
+        return runner.run(Cmd.of(DockerArgv.logsTailByReference(BIN, container, lines)), null);
     }
 
     /**
@@ -431,8 +586,7 @@ public class Docker {
      * streams, and a container's log arrives on both.
      */
     public List<String> logsSince(String container, String since) {
-        return lines(runner.run(
-                Cmd.of("docker", "logs", "--timestamps", "--since", since, container), null));
+        return lines(runner.run(Cmd.of(DockerArgv.logsSince(BIN, container, since)), null));
     }
 
     /**
@@ -563,14 +717,20 @@ public class Docker {
 
     /** The throwaway container that empties one layout directory of the volume. */
     static List<String> clearLayoutCommand(String layout) {
-        return List.of("docker", "run", "--rm", "-v", OCI_SEED_VOLUME + ":/layouts",
-                "--entrypoint", "rm", BUILDKIT_IMAGE, "-rf", "/layouts/" + layout);
+        return argv(HostRunSpec.removed(BUILDKIT_IMAGE)
+                .volume(OCI_SEED_VOLUME + ":/layouts")
+                .entrypoint("rm")
+                .args("-rf", "/layouts/" + layout)
+                .build());
     }
 
     /** The throwaway container that prints one layout's {@code index.json}. */
     static List<String> layoutIndexCommand(String layout) {
-        return List.of("docker", "run", "--rm", "-v", OCI_SEED_VOLUME + ":/layouts:ro",
-                "--entrypoint", "cat", BUILDKIT_IMAGE, "/layouts/" + layout + "/index.json");
+        return argv(HostRunSpec.removed(BUILDKIT_IMAGE)
+                .volume(OCI_SEED_VOLUME + ":/layouts:ro")
+                .entrypoint("cat")
+                .args("/layouts/" + layout + "/index.json")
+                .build());
     }
 
     private static final java.util.regex.Pattern INDEX_DIGEST =
@@ -625,56 +785,54 @@ public class Docker {
             outDir = Files.createTempDirectory(scratchRoot(), "image-");
             // Sorted, so the argv is the same on every run whatever map the caller built.
             Map<String, String> named = new TreeMap<>(volumeContexts);
-            List<String> command = new ArrayList<>(List.of(
-                    "docker", "run", "--rm", "--network", "host",
-                    "-v", context + ":/ctx:ro",
-                    "-v", dockerfileDir + ":/dfdir:ro",
-                    "-v", outDir + ":/out"));
-            named.forEach((name, volume) -> {
-                command.add("-v");
-                command.add(volume + ":/named/" + name + ":ro");
-            });
+            HostRunSpec.Builder client = HostRunSpec.removed(BUILDKIT_IMAGE)
+                    .network("host")
+                    .volume(context + ":/ctx:ro")
+                    .volume(dockerfileDir + ":/dfdir:ro")
+                    .volume(outDir + ":/out");
+            named.forEach((name, volume) -> client.volume(volume + ":/named/" + name + ":ro"));
             // The layouts are read — and one is written — by the CLIENT, which streams them to the
             // daemon over the build's session, so the volume is mounted here and nowhere else.
             if (!bases.isEmpty() || exportLayout != null) {
-                command.add("-v");
-                command.add(OCI_SEED_VOLUME + ":/layouts" + (exportLayout == null ? ":ro" : ""));
+                client.volume(OCI_SEED_VOLUME + ":/layouts" + (exportLayout == null ? ":ro" : ""));
             }
-            command.addAll(List.of(
-                    "--entrypoint", "buildctl", BUILDKIT_IMAGE,
+            client.entrypoint("buildctl");
+            // buildctl's own arguments, after the image: payload of the client, not docker's.
+            List<String> buildctl = new ArrayList<>(List.of(
                     "--addr", BUILDKIT_ADDR,
                     "build", "--frontend", "dockerfile.v0",
                     "--local", "context=/ctx",
                     "--local", "dockerfile=/dfdir",
                     "--opt", "filename=" + dockerfileName));
             named.keySet().forEach(name -> {
-                command.add("--local");
-                command.add(name + "=/named/" + name);
-                command.add("--opt");
-                command.add("context:" + name + "=local:" + name);
+                buildctl.add("--local");
+                buildctl.add(name + "=/named/" + name);
+                buildctl.add("--opt");
+                buildctl.add("context:" + name + "=local:" + name);
             });
             for (int i = 0; i < bases.size(); i++) {
                 LocalBase base = bases.get(i);
-                command.add("--oci-layout");
-                command.add("base" + i + "=/layouts/" + base.layout());
-                command.add("--opt");
-                command.add("context:" + base.reference() + "=oci-layout://base" + i + "@"
+                buildctl.add("--oci-layout");
+                buildctl.add("base" + i + "=/layouts/" + base.layout());
+                buildctl.add("--opt");
+                buildctl.add("context:" + base.reference() + "=oci-layout://base" + i + "@"
                         + base.digest());
             }
             if (target != null) {
-                command.add("--opt");
-                command.add("target=" + target);
+                buildctl.add("--opt");
+                buildctl.add("target=" + target);
             }
             for (String arg : extraBuildArgs) {
-                command.add("--opt");
-                command.add("build-arg:" + arg);
+                buildctl.add("--opt");
+                buildctl.add("build-arg:" + arg);
             }
-            command.add("--output");
-            command.add("type=docker,name=" + tag + ",dest=/out/" + IMAGE_TAR);
+            buildctl.add("--output");
+            buildctl.add("type=docker,name=" + tag + ",dest=/out/" + IMAGE_TAR);
             if (exportLayout != null) {
-                command.add("--output");
-                command.add("type=oci,name=" + tag + ",tar=false,dest=/layouts/" + exportLayout);
+                buildctl.add("--output");
+                buildctl.add("type=oci,name=" + tag + ",tar=false,dest=/layouts/" + exportLayout);
             }
+            List<String> command = argv(client.args(buildctl).build());
             Cmd cmd = Cmd.of(command).timeout(BUILD_TIMEOUT);
             ProcessResult built = runner.run(cmd, out);
             if (!built.ok()) {
@@ -682,8 +840,8 @@ public class Docker {
             }
             // The tar is read by the CLIENT, so this path is this container's own — the one place
             // the mounts above and this line mean the same directory for two different reasons.
-            return runner.run(Cmd.of(List.of("docker", "load", "-i",
-                    outDir.resolve(IMAGE_TAR).toString())).timeout(BUILD_TIMEOUT), out);
+            return runner.run(Cmd.of(DockerArgv.load(BIN, outDir.resolve(IMAGE_TAR).toString()))
+                    .timeout(BUILD_TIMEOUT), out);
         } catch (IOException e) {
             return failed("the build of " + tag + " could not be set up: " + e.getMessage());
         } finally {
@@ -701,9 +859,8 @@ public class Docker {
      */
     public ProcessResult buildOnHostDaemon(String tag, Path dockerfile, Path context,
                                            Consumer<String> out) {
-        return runner.run(Cmd.of(List.of("docker", "build",
-                "-f", dockerfile.toString(), "-t", tag, context.toString()))
-                .timeout(BUILD_TIMEOUT), out);
+        return runner.run(Cmd.of(DockerArgv.build(BIN, dockerfile.toString(), tag,
+                context.toString())).timeout(BUILD_TIMEOUT), out);
     }
 
     /**
@@ -745,19 +902,18 @@ public class Docker {
                 ready = new ProcessResult(0, List.of(), List.of(), false, false);
             } else {
                 log(out, "  starting the existing " + BUILDKITD + " and its warm cache");
-                ready = runner.run(Cmd.of("docker", "start", BUILDKITD), out);
+                ready = runner.run(Cmd.of(DockerArgv.start(BIN, BUILDKITD)), out);
             }
         } else {
             ensureVolume(BUILDKIT_STATE_VOLUME, out);
-            ready = runner.run(Cmd.of(List.of(
-                    "docker", "run", "-d", "--name", BUILDKITD,
-                    "--privileged", "--network", "host",
-                    "--restart", "unless-stopped",
+            ready = runner.run(Cmd.of(argv(HostRunSpec.detached(BUILDKITD, BUILDKIT_IMAGE)
+                    .privileged()
+                    .network("host")
+                    .restart("unless-stopped")
                     // So the kernel takes buildkitd before it takes a platform service.
-                    "--oom-score-adj", "500",
-                    "--memory", "9g", "--cpu-quota", "400000", "--cpuset-cpus", "0-3",
-                    "-v", BUILDKIT_STATE_VOLUME + ":/var/lib/buildkit",
-                    BUILDKIT_IMAGE,
+                    .oomScoreAdj(500)
+                    .memory("9g").cpuQuota(400000).cpusetCpus("0-3")
+                    .volume(BUILDKIT_STATE_VOLUME + ":/var/lib/buildkit")
                     // The image entrypoints to buildkitd, so these ride as its arguments.
                     // --oci-worker-net=host puts every RUN in the container's own network
                     // namespace — the machine's, since this container is host-net — because the
@@ -769,8 +925,9 @@ public class Docker {
                     // The default unix socket rides beside the tcp listen: qits-containers' gc
                     // sweep prunes this cache with `docker exec buildctl`, which knows no tcp
                     // address — measured missing on the platform builder's first live dry-run.
-                    "--addr", "unix:///run/buildkit/buildkitd.sock",
-                    "--addr", BUILDKIT_LISTEN, "--oci-worker-net=host")), out);
+                    .args("--addr", "unix:///run/buildkit/buildkitd.sock",
+                            "--addr", BUILDKIT_LISTEN, "--oci-worker-net=host")
+                    .build())), out);
         }
         buildkitdReady = ready.ok();
         return ready;
@@ -815,7 +972,7 @@ public class Docker {
      * indent is half of what tells a node from a builder. See {@link #staleBuilders}.
      */
     public List<String> builderRows() {
-        ProcessResult result = runner.run(Cmd.of("docker", "buildx", "ls"), null);
+        ProcessResult result = runner.run(Cmd.of(DockerArgv.buildxLs(BIN)), null);
         if (!result.ok()) {
             return List.of();
         }
@@ -868,7 +1025,7 @@ public class Docker {
      * the name it was given ({@code buildx_buildkit_<builder>0_state}).
      */
     public ProcessResult removeBuilder(String name, Consumer<String> out) {
-        return runner.run(Cmd.of("docker", "buildx", "rm", name), out);
+        return runner.run(Cmd.of(DockerArgv.buildxRm(BIN, name)), out);
     }
 
     /**
@@ -884,27 +1041,11 @@ public class Docker {
 
     /** The volumes no container holds — the only ones this program will consider removing. */
     public List<String> danglingVolumes() {
-        return lines(runner.run(
-                Cmd.of("docker", "volume", "ls", "-q", "-f", "dangling=true"), null));
+        return lines(runner.run(Cmd.of(DockerArgv.volumeLsDanglingShort(BIN)), null));
     }
 
     public ProcessResult removeVolume(String name, Consumer<String> out) {
-        return runner.run(Cmd.of("docker", "volume", "rm", name), out);
-    }
-
-    public ProcessResult exec(Consumer<String> out, String... args) {
-        return runner.run(Cmd.of(prepend("docker", args)), out);
-    }
-
-    public ProcessResult exec(Duration timeout, Consumer<String> out, String... args) {
-        return runner.run(Cmd.of(prepend("docker", args)).timeout(timeout), out);
-    }
-
-    private static List<String> prepend(String first, String[] rest) {
-        List<String> all = new ArrayList<>(rest.length + 1);
-        all.add(first);
-        all.addAll(Arrays.asList(rest));
-        return all;
+        return runner.run(Cmd.of(DockerArgv.volumeRm(BIN, name)), out);
     }
 
     private static List<String> lines(ProcessResult result) {
