@@ -43,7 +43,7 @@
         <!-- Every docker argv and the process host that runs it (qits-2212): the library the
              platform's own docker callers use, so a docker behaviour fix lands once. Released by
              qits-containers-javalib; qits-maintenance bumps it. -->
-        <qits.containers-driver.version>2026.1116.92807</qits.containers-driver.version>
+        <qits.containers-driver.version>2026.1116.235702</qits.containers-driver.version>
 
         <!-- Not in any BOM, so it is pinned here. -->
         <assertj.version>3.27.4</assertj.version>
@@ -55,7 +55,7 @@
         <qits.projects-golden-masters.version>2026.1116.190952</qits.projects-golden-masters.version>
         <qits.events-golden-masters.version>2026.1109.83116</qits.events-golden-masters.version>
         <qits.ci-golden-masters.version>2026.1113.31502</qits.ci-golden-masters.version>
-        <qits.deployments-golden-masters.version>2026.1116.123416</qits.deployments-golden-masters.version>
+        <qits.deployments-golden-masters.version>2026.1116.213739</qits.deployments-golden-masters.version>
         <qits.idp-golden-masters.version>2026.1109.13349</qits.idp-golden-masters.version>
         <qits.githost-golden-masters.version>2026.1109.41303</qits.githost-golden-masters.version>
         <qits.artifacts-golden-masters.version>2026.1114.172104</qits.artifacts-golden-masters.version>
