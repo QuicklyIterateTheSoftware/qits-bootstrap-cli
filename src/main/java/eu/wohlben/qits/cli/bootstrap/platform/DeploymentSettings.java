@@ -16,8 +16,8 @@ import java.util.List;
  * only this run knows — a domain, a password it generated, the port it was told, the ACME account.
  * <p>
  * <b>Only what applies is stated.</b> {@code QITS_PORT} names only when the port is not the
- * images' default of 8080, the daemon override only when this run built one, the DNS token only
- * when there is one, the additional certificate names only when there are any. A key a run has
+ * images' default of 8080, the daemon override only when this run built one, the DNS token and
+ * the node address beside it only when there is a token, the additional certificate names only when there are any. A key a run has
  * nothing to say about is left unwritten rather than written empty.
  * <p>
  * <b>Values are never printed.</b> {@link Setting#toString} names the place and the key alone,
@@ -48,8 +48,8 @@ public final class DeploymentSettings {
 
     /** What this run knows that the settings are made of. */
     public record Inputs(String envName, String domain, int port, boolean acmeEnabled,
-            String acmeMode, String acmeEmail, String hetznerToken, List<String> extraSans,
-            String postgresPassword, String pushToken, String daemonSha) {
+            String acmeMode, String acmeEmail, String hetznerToken, String nodeAddress,
+            List<String> extraSans, String postgresPassword, String pushToken, String daemonSha) {
     }
 
     /**
@@ -96,6 +96,9 @@ public final class DeploymentSettings {
             // secrets, and the file form wins when both are set.
             if (present(in.hetznerToken())) {
                 settings.add(secret(edge, "QITS_EDGE_ACME_HETZNER_TOKEN", in.hetznerToken()));
+                // What the edge writes node.<domain> with, beside the token it writes it through
+                // (qits-2292). Without it the deployed edge keeps no public record at all.
+                settings.add(plain(edge, "QITS_EDGE_DNS_NODE_ADDRESS", in.nodeAddress()));
             }
             // Names the derived wildcards cannot reach; usually none, and then no key.
             if (in.extraSans() != null && !in.extraSans().isEmpty()) {

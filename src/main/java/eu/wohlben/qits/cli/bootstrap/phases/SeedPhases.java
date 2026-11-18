@@ -4236,64 +4236,6 @@ public class SeedPhases {
     }
 
     /**
-     * One A record the domain needs: the name relative to the apex, and the address it answers.
-     * <p>
-     * Written relative because that is how a dns provider's own record editor asks for it, and
-     * because a name with the domain spelled into it is the commonest way to end up with
-     * {@code <domain>.<domain>}.
-     */
-    public record ZoneRecord(String name, String value, String why) {
-    }
-
-    /**
-     * <b>Every name this platform answers for, as four A records.</b> Derived from the shapes the
-     * edge routes by rather than from a list of today's environments, applications and projects,
-     * which is what makes it a set that never needs revisiting.
-     * <p>
-     * <b>This platform serves no dns.</b> The set is what the domain's own provider has to hold, and
-     * the closing report prints it — nothing here writes a record. At Hetzner they are typed in by
-     * hand, once.
-     * <p>
-     * Names are read RIGHT TO LEFT, {@code <app>[.<env>].<project>.<domain>}, each label inside the
-     * one to its right: the domain holds projects, a project holds its environments, an environment
-     * holds its apps. The project label is mandatory — there is no unqualified application tier and
-     * no top-level {@code <env>.<domain>} tier — so a name says which project it wants or it is not
-     * served. The durable answer is a wildcard per DEPTH, not a record per name, and the depths
-     * have not changed even though what sits at each of them has:
-     * <ul>
-     * <li>{@code @} — the apex, and it is not decoration. A wildcard never matches the apex, and the
-     *     apex is the address a person types, so without this record the front door has no answer.
-     * <li>{@code *} — every one-label name: {@code <project>.<domain>}, every project's own door.
-     * <li>{@code *.*} — every two-label name: {@code <env>.<project>.<domain>} where a project
-     *     supports environments, and {@code <app>.<project>.<domain>} — its applications — where it
-     *     does not.
-     * <li>{@code *.*.*} — every three-label name: {@code <app>.<env>.<project>.<domain>}, an
-     *     application of an env-supporting project. A project is created
-     *     by a person on a running platform, so these are the depths where a record per name would
-     *     mean a dns edit per project. The wildcards are what make creating a project a platform act
-     *     with no operator step behind it.
-     * </ul>
-     * Every value is the same address, because every one of these names is this one host: the edge
-     * is a single front door and the routing is by Host header behind it.
-     * <p>
-     * Depth five and beyond is deliberately left to answer NXDOMAIN. The edge stops reading after
-     * three labels, so a deeper name could only be served by the reading it already has with a
-     * label thrown away — and answering it would put a name on the internet that this platform
-     * cannot say the meaning of.
-     */
-    public static List<ZoneRecord> zoneRecords(String domain, String publicIp) {
-        return List.of(
-                new ZoneRecord("@", publicIp, "the apex — the browser door, and no wildcard covers it"),
-                new ZoneRecord("*", publicIp, "every <project>." + domain + " door"),
-                new ZoneRecord("*.*", publicIp,
-                        "every <env>.<project>." + domain + " door, and the <app>.<project>."
-                                + domain + " host of a project with no environments"),
-                new ZoneRecord("*.*.*", publicIp,
-                        "every <app>.<env>.<project>." + domain
-                                + " host — each service's UI and its wire routes"));
-    }
-
-    /**
      * <b>The real certificate, ordered from Let's Encrypt in this run.</b> With a domain set, this is
      * what turns the {@code edge-cert} phase's self-signed placeholder into something a browser
      * accepts — automatically, because a bootstrap that leaves a command for a person to paste is a
@@ -4599,7 +4541,10 @@ public class SeedPhases {
                 // edge works the per-environment AND per-project wildcards out for itself, so
                 // this is ad-hoc names only. Checked here, where a refusal is a message about a
                 // knob rather than a failed order.
-                ExtraSans.of(boot.config, domain)));
+                ExtraSans.of(boot.config, domain),
+                // The address the edge writes node.<domain> with (qits-2292). Checked the same way
+                // the host half checked it: four octets, never a name resolved here.
+                PublicIp.of(boot.config)));
         // THE SEED EDGE ALWAYS HOLDS 443 (owner ruling 2026-11-05). Every image push of the boot
         // goes to registry.qits.<domain> once that name serves its real certificate, and the
         // seed deploys pull through the same name, so the edge has to answer it on 443 from the

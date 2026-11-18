@@ -31,6 +31,9 @@ public final class DomainTokens {
     private DomainTokens() {
     }
 
+    /** The node address a fixture renders with: TEST-NET-3, which no real host holds. */
+    public static final String FIXTURE_ADDRESS = "203.0.113.7";
+
     /** The token values for this domain, with the defaults a fixture wants. */
     public static Map<String, String> of(String domain) {
         return of(domain, "staging", "hostmaster@" + domain, "");
@@ -48,6 +51,12 @@ public final class DomainTokens {
         return of(domain, mode, email, hetznerToken, existingSecret, List.of());
     }
 
+    /** The same, with extra names and the fixture's node address. */
+    public static Map<String, String> of(String domain, String mode, String email,
+            String hetznerToken, Optional<String> existingSecret, List<String> extraSans) {
+        return of(domain, mode, email, hetznerToken, existingSecret, extraSans, FIXTURE_ADDRESS);
+    }
+
     /**
      * The complete edge runtime contract, with the names the certificate must carry beyond the
      * wildcards the edge derives for itself.
@@ -55,21 +64,19 @@ public final class DomainTokens {
      * @param extraSans checked names inside the domain — see {@code ExtraSans}. Empty is the
      *     ordinary platform and spells no key at all: an empty list and an absent one are the same
      *     answer, and a key holding nothing is a line for the next reader to wonder about.
+     * @param nodeAddress {@code QITS_PUBLIC_IP}, checked: what the edge writes {@code node.<domain>}
+     *     with, the record every public name of the platform is a CNAME to (qits-2292)
      */
     public static Map<String, String> of(String domain, String mode, String email,
-            String hetznerToken, Optional<String> existingSecret, List<String> extraSans) {
+            String hetznerToken, Optional<String> existingSecret, List<String> extraSans,
+            String nodeAddress) {
         Map<String, String> values = new LinkedHashMap<>();
         String additional = String.join(",", extraSans);
         String secret = existingSecret.map(String::strip).filter(value -> !value.isEmpty())
                 .orElseGet(() -> secretName(hetznerToken));
-        // NOTE: this could be a hook to register the domain's dns records with an external dns
-        // provider. Domain mode assumes dns is configured OUTSIDE this platform now: the names it
-        // serves have to resolve to QITS_PUBLIC_IP before the certificate order can be answered,
-        // and nothing here writes them. qits-platform-dns used to be given its own SOA and NS
-        // identity here.
         values.put("LETSENCRYPT_VOLUME", letsEncryptVolume(secret));
         values.put("EDGE_SEED_TLS_PORTS", EDGE_TLS_PORTS);
-        values.put("EDGE_TLS", edgeTls(mode, email, secret, additional));
+        values.put("EDGE_TLS", edgeTls(mode, email, secret, additional, nodeAddress));
         values.put("SEED_DOMAIN", seedDomain(domain));
         return values;
     }
@@ -152,7 +159,7 @@ public final class DomainTokens {
     }
 
     private static String edgeTls(String mode, String email, String secretName,
-            String additionalNames) {
+            String additionalNames, String nodeAddress) {
         return "\n"
             + "      # WHERE THE CERTIFICATE IS READ FROM, and the whole of what wakes the image's\n"
             + "      # certificate support: it remains inert\n"
@@ -169,7 +176,11 @@ public final class DomainTokens {
             + "      QITS_EDGE_ACME_ENABLED: \"true\"\n"
             + "      QITS_EDGE_ACME_MODE: " + mode + "\n"
             + "      QITS_EDGE_ACME_EMAIL: " + email + "\n"
-            + "      QITS_EDGE_ACME_HETZNER_TOKEN_FILE: /run/secrets/qits-dns-hetzner-token"
+            + "      QITS_EDGE_ACME_HETZNER_TOKEN_FILE: /run/secrets/qits-dns-hetzner-token\n"
+            + "      # THE NODE RECORD'S ADDRESS. With the token above, the edge writes node.<domain>\n"
+            + "      # with it, the apex, and one CNAME to node.<domain>. per public host: the\n"
+            + "      # zone is the edge's to keep, and the bootstrap waits for it (dns-records).\n"
+            + "      QITS_EDGE_DNS_NODE_ADDRESS: " + nodeAddress
             + acmeAdditionalNames(additionalNames, "      ", ": ") + "\n"
             + "    volumes:\n"
             + "      - qits-edge-letsencrypt:/work/.letsencrypt\n"

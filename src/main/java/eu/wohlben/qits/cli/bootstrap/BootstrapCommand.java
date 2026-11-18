@@ -96,22 +96,22 @@ public class BootstrapCommand implements Callable<Integer> {
     /**
      * The domain this platform serves, and REQUIRED: every service is addressed by a subdomain of
      * it, and CI reaches the platform only through those public names. Its dns records are held
-     * outside this platform.
+     * in a Hetzner zone, written by the edge.
      */
     @CommandLine.Option(names = "--domain", paramLabel = "<domain>",
             description = "The domain to serve: the name every service is addressed under and the "
-                    + "edge's certificate is issued for. Required. Its dns records are yours to "
-                    + "hold (QITS_DOMAIN).")
+                    + "edge's certificate is issued for. Required. Its zone must exist at Hetzner; "
+                    + "the edge writes the records (QITS_DOMAIN).")
     String domain;
 
     /**
-     * This host's public address, and <b>mandatory with {@link #domain}</b>: it is the data of every
-     * A record the domain needs at its dns provider. The run cannot learn it — it is a container
-     * behind a NAT — and the person who set the records up already knows it.
+     * This host's public address, and <b>mandatory with {@link #domain}</b>: it is what the edge
+     * writes the node record with, and every public name is a CNAME to that record. The run cannot
+     * learn it — it is a container behind a NAT.
      */
     @CommandLine.Option(names = "--public-ip", paramLabel = "<ipv4>",
             description = "This host's public IPv4 address. Mandatory with --domain: it is what "
-                    + "every A record of the domain answers (QITS_PUBLIC_IP).")
+                    + "the edge writes the node record with (QITS_PUBLIC_IP).")
     String publicIp;
 
     /**
@@ -155,7 +155,7 @@ public class BootstrapCommand implements Callable<Integer> {
                 .tui(noTui ? Boolean.FALSE : null);
 
         // BEFORE either half does anything, and on the host half too: every one of these values
-        // LEAVES this machine — into the records a person types at a dns provider, and into a
+        // LEAVES this machine — into the records the edge writes at Hetzner, and into a
         // certificate request to Let's Encrypt — and none of them is undone by rerunning with the
         // spelling fixed. The pair rule is checked in the same breath: a domain with no address is a
         // name that resolves to nothing, and it is far cheaper to say so here than four hours in.
