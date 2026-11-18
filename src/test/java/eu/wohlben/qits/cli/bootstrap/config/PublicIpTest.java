@@ -10,9 +10,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The address is checked beside the domain and before the payload image is built, because it leaves
- * this machine: it becomes the data of every A record in a zone the internet reads back, and the
- * glue record at a registrar carries the same value. The two travel together, which is what most of
- * these tests are about.
+ * this machine: the edge writes it as the node's A record in a zone the internet reads back, and
+ * every public name is a CNAME to that record. The two travel together, which is what most of these
+ * tests are about.
  */
 class PublicIpTest {
 

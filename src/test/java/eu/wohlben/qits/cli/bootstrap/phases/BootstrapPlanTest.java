@@ -246,7 +246,8 @@ class BootstrapPlanTest {
                     "register-token", "store-seed", "registry-ready", "images-publish",
                     "seed-images-publish", "daemon-publish", "publish-credential-release");
             assertThat(ids.get(ids.indexOf("images-publish") - 1)).isEqualTo("registry-ready");
-            assertThat(ids.get(ids.indexOf("registry-ready") - 1)).isEqualTo("store-seed");
+            assertThat(ids.get(ids.indexOf("registry-ready") - 1)).isEqualTo("dns-records");
+            assertThat(ids.get(ids.indexOf("dns-records") - 1)).isEqualTo("store-seed");
         }
     }
 
@@ -278,6 +279,25 @@ class BootstrapPlanTest {
             // The registry's proof is edge-ready's, narrowed: it comes before every push, and the
             // full gate stays where the target needs it.
             assertThat(proven).isLessThan(ids.indexOf("edge-ready"));
+        }
+    }
+
+    /**
+     * <b>The registry's record is listed in the zone before anything looks the name up</b>
+     * (qits-2293), in both arms: {@code dns-records} reads the Hetzner zone and resolves nothing,
+     * and {@code registry-ready} — the first phase to dial {@code registry.qits.<domain>} — is the
+     * phase straight after it, so its first lookup finds the record instead of caching NXDOMAIN.
+     */
+    @Test
+    void theRegistryRecordIsListedBeforeTheRegistryNameIsDialled() {
+        for (Map<String, String> env : List.of(Map.<String, String>of(),
+                Map.of("QITS_SKIP_BUILD", "1"))) {
+            List<String> ids = ids(plan(env));
+
+            assertThat(ids.stream().filter("dns-records"::equals)).hasSize(1);
+            assertThat(ids.get(ids.indexOf("dns-records") + 1)).isEqualTo("registry-ready");
+            assertThat(ids).containsSubsequence("seed-stack", "seed-health", "dns-records",
+                    "registry-ready", "images-publish", "edge-ready");
         }
     }
 
@@ -666,8 +686,8 @@ class BootstrapPlanTest {
      * the running edge orders its certificate itself over DNS-01 — TXT records written through
      * Hetzner DNS — so no listener, and no port 80, has to reach this host for it.
      * <p>
-     * There is no zone phase between them any more. This platform serves no dns — the records are
-     * held at the domain's own provider, before the run.
+     * There is no zone phase between them any more: the edge writes the zone's records itself, and
+     * {@code dns-records} only reads them back, after the seed stack is up.
      */
     @Test
     void theDomainAddsThePlaceholderAndTheRunningEdgeOwnsIssuance() {

@@ -28,7 +28,7 @@ class DeploymentSettingsGuardTest {
     private static DeploymentSettings.Inputs inputs(int port, List<String> extraSans,
             String hetznerToken) {
         return new DeploymentSettings.Inputs("prod", "qits-dev.eu", port, true, "production",
-                "hostmaster@qits-dev.eu", hetznerToken, extraSans, "pg-superuser-secret",
+                "hostmaster@qits-dev.eu", hetznerToken, "203.0.113.7", extraSans, "pg-superuser-secret",
                 "push-token-secret", "abc123");
     }
 
@@ -50,6 +50,7 @@ class DeploymentSettingsGuardTest {
                 "qits-deployments QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH",
                 "qits-edge QITS_EDGE_ACME_EMAIL",
                 "qits-edge QITS_EDGE_ACME_HETZNER_TOKEN",
+                "qits-edge QITS_EDGE_DNS_NODE_ADDRESS",
                 "qits-ci QITS_CI_DAEMON_VERSION_OVERRIDE",
                 "qits-githost QITS_REPOSITORIES_GIT_PUSH_TOKEN",
                 "qits-projects QITS_REPOSITORIES_GIT_PUSH_TOKEN",
@@ -99,7 +100,7 @@ class DeploymentSettingsGuardTest {
 
     /**
      * <b>Only what applies.</b> The port is stated only when it differs from the images' default;
-     * the DNS token only when there is one; the extra certificate names only when there are any.
+     * the DNS token and the node address beside it only when there is a token; the extra certificate names only when there are any.
      * {@code QITS_ARTIFACTS_REGISTRY_HOST} is retired and is never written at all, whatever the
      * port: the deployer derives its registry host from {@code QITS_DOMAIN} now.
      */
@@ -108,7 +109,8 @@ class DeploymentSettingsGuardTest {
         List<String> plain = keys(DeploymentSettings.of(inputs(8080, List.of(), "")));
         assertThat(plain).doesNotContain("qits-deployments QITS_PORT",
                 "qits-deployments QITS_ARTIFACTS_REGISTRY_HOST", "qits-ci QITS_ARTIFACTS_REGISTRY_HOST",
-                "qits-edge QITS_EDGE_ACME_HETZNER_TOKEN", "qits-edge QITS_EDGE_ACME_ADDITIONAL_NAMES");
+                "qits-edge QITS_EDGE_ACME_HETZNER_TOKEN", "qits-edge QITS_EDGE_DNS_NODE_ADDRESS",
+                "qits-edge QITS_EDGE_ACME_ADDITIONAL_NAMES");
 
         List<DeploymentSettings.Setting> moved = DeploymentSettings.of(
                 inputs(9090, List.of("status.support.qits-dev.eu"), "hetzner-secret"));
@@ -123,7 +125,8 @@ class DeploymentSettingsGuardTest {
     void anEdgeWithoutAcmeIsToldSoAndNothingAboutAnAccount() {
         List<DeploymentSettings.Setting> settings = DeploymentSettings.of(
                 new DeploymentSettings.Inputs("prod", "qits-dev.eu", 8080, false, "off",
-                        "hostmaster@qits-dev.eu", "token", List.of(), "pg", "push", ""));
+                        "hostmaster@qits-dev.eu", "token", "203.0.113.7", List.of(), "pg", "push",
+                        ""));
 
         assertThat(keys(settings)).contains("qits-edge QITS_EDGE_ACME_ENABLED")
                 .doesNotContain("qits-edge QITS_EDGE_ACME_MODE", "qits-edge QITS_EDGE_ACME_EMAIL",
@@ -141,7 +144,7 @@ class DeploymentSettingsGuardTest {
     void acmeOnAtProductionWritesNeitherEnabledNorModeNorTls() {
         List<String> keys = keys(DeploymentSettings.of(new DeploymentSettings.Inputs("prod",
                 "qits-dev.eu", 8080, true, "production", "hostmaster@qits-dev.eu", "token",
-                List.of(), "pg", "push", "")));
+                "203.0.113.7", List.of(), "pg", "push", "")));
 
         assertThat(keys).doesNotContain("qits-edge QITS_EDGE_ACME_ENABLED",
                 "qits-edge QITS_EDGE_ACME_MODE", "qits-edge QUARKUS_TLS_KEY_STORE_PEM_ACME_CERT",
@@ -151,7 +154,7 @@ class DeploymentSettingsGuardTest {
         // matches the image's default and states nothing.
         List<String> keysMixedCase = keys(DeploymentSettings.of(new DeploymentSettings.Inputs(
                 "prod", "qits-dev.eu", 8080, true, "Production", "hostmaster@qits-dev.eu", "token",
-                List.of(), "pg", "push", "")));
+                "203.0.113.7", List.of(), "pg", "push", "")));
         assertThat(keysMixedCase).doesNotContain("qits-edge QITS_EDGE_ACME_MODE");
     }
 
@@ -160,7 +163,8 @@ class DeploymentSettingsGuardTest {
     void acmeOnAtStagingWritesModeButNotEnabled() {
         List<DeploymentSettings.Setting> settings = DeploymentSettings.of(
                 new DeploymentSettings.Inputs("prod", "qits-dev.eu", 8080, true, "staging",
-                        "hostmaster@qits-dev.eu", "token", List.of(), "pg", "push", ""));
+                        "hostmaster@qits-dev.eu", "token", "203.0.113.7", List.of(), "pg", "push",
+                        ""));
 
         assertThat(keys(settings)).doesNotContain("qits-edge QITS_EDGE_ACME_ENABLED")
                 .contains("qits-edge QITS_EDGE_ACME_MODE");
@@ -172,7 +176,8 @@ class DeploymentSettingsGuardTest {
     void acmeOffWritesEnabledFalse() {
         List<DeploymentSettings.Setting> settings = DeploymentSettings.of(
                 new DeploymentSettings.Inputs("prod", "qits-dev.eu", 8080, false, "off",
-                        "hostmaster@qits-dev.eu", "token", List.of(), "pg", "push", ""));
+                        "hostmaster@qits-dev.eu", "token", "203.0.113.7", List.of(), "pg", "push",
+                        ""));
 
         assertThat(keys(settings)).containsOnlyOnce("qits-edge QITS_EDGE_ACME_ENABLED");
         assertThat(value(settings, "qits-edge", "QITS_EDGE_ACME_ENABLED")).isEqualTo("false");
@@ -182,7 +187,7 @@ class DeploymentSettingsGuardTest {
     @Test
     void aMissingRequiredValueStopsRatherThanWritingAnEmptyRow() {
         assertThatThrownBy(() -> DeploymentSettings.of(new DeploymentSettings.Inputs("prod",
-                "qits-dev.eu", 8080, true, "production", "a@b", "", List.of(), null, "push", "")))
+                "qits-dev.eu", 8080, true, "production", "a@b", "", "203.0.113.7", List.of(), null, "push", "")))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD")
                 .hasMessageNotContaining("push");

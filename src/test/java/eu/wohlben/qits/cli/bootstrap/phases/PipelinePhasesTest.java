@@ -1,6 +1,7 @@
 package eu.wohlben.qits.cli.bootstrap.phases;
 
 import eu.wohlben.qits.cli.bootstrap.api.CiApi;
+import eu.wohlben.qits.cli.bootstrap.api.HetznerZone;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.config.Acme;
 import eu.wohlben.qits.cli.bootstrap.config.TestConfig;
@@ -440,24 +441,99 @@ class PipelinePhasesTest {
 
     private static String domainReport(Acme.Mode mode, String certificate,
             List<String> projectSlugs, List<String> extraSans) {
-        return String.join("\n", PipelinePhases.domainLines("qits-dev.eu", ENV, "203.0.113.7", mode,
-                "hostmaster@qits-dev.eu", certificate, projectSlugs, extraSans));
+        return String.join("\n", PipelinePhases.domainLines("qits-dev.eu", ENV, mode,
+                "hostmaster@qits-dev.eu", certificate, projectSlugs, extraSans,
+                dnsReport(ZONE_PUBLIC, ZONE_PRIVATE, List.of(
+                        new PipelinePhases.Lookup("node.qits-dev.eu", List.of("203.0.113.7"), null),
+                        new PipelinePhases.Lookup("idp.qits.qits-dev.eu", List.of("203.0.113.7"),
+                                null)))));
+    }
+
+    private static List<String> dnsReport(HetznerZone.Listing publics,
+            HetznerZone.Listing privates, List<PipelinePhases.Lookup> lookups) {
+        return PipelinePhases.dnsLines("qits-dev.eu", "203.0.113.7", publics, privates, lookups);
+    }
+
+    private static final HetznerZone.Listing ZONE_PUBLIC = new HetznerZone.Listing(List.of(
+            new HetznerZone.RrSet("node", "A", List.of("203.0.113.7")),
+            new HetznerZone.RrSet("@", "A", List.of("203.0.113.7")),
+            new HetznerZone.RrSet("registry.qits", "CNAME", List.of("node.qits-dev.eu."))), null);
+
+    private static final HetznerZone.Listing ZONE_PRIVATE = new HetznerZone.Listing(List.of(
+            new HetznerZone.RrSet("ci.qits", "A", List.of("100.96.0.1"))), null);
+
+    /**
+     * <b>The dns: lines read the zone back, one line per exposure</b> (qits-2293): the RRSets the
+     * edge labelled public and private, counted and named, and the two lookups beside them, each
+     * held against the given address.
+     */
+    @Test
+    void theDnsLinesCountAndNameEachExposureAndCheckTheTwoNames() {
+        String report = domainReport(Acme.Mode.PRODUCTION, "production");
+
+        assertThat(report).contains("dns:       the edge writes node.qits-dev.eu (A 203.0.113.7), the apex and a "
+                        + "CNAME per host; no wildcard.")
+                .contains("public  3 RRSets labelled qits-exposure=public:")
+                .contains("@ A, node A, registry.qits CNAME")
+                .contains("private 1 RRSets labelled qits-exposure=private:")
+                .contains("ci.qits A")
+                .containsPattern("node\\.qits-dev\\.eu +resolves to 203\\.0\\.113\\.7 — the given "
+                        + "address")
+                .containsPattern("idp\\.qits\\.qits-dev\\.eu +resolves to 203\\.0\\.113\\.7 — the "
+                        + "given address");
     }
 
     /**
-     * <b>The records are stated as a step to CHECK, because this platform serves no dns.</b> They
-     * are held at whatever provider holds the domain, and every one of them carries the address
-     * this run was given.
+     * <b>Nothing in the report asks for a wildcard or a record typed in by hand.</b> The edge
+     * writes exact records only, and a wildcard beside them is the mixed zone behind the
+     * qits-2273 and qits-2280 outages.
      */
     @Test
-    void theRecordsAreListedWithTheAddressTheyAllCarry() {
-        String report = domainReport(Acme.Mode.STAGING, "staging");
+    void theReportAsksForNoWildcardAndNoRecordByHand() {
+        for (Acme.Mode mode : Acme.Mode.values()) {
+            String report = domainReport(mode, null);
 
-        assertThat(report).contains("@").contains("*").contains("*.*").contains("*.*.*");
-        assertThat(report).contains("203.0.113.7");
-        // The reading they follow, so the person typing them in knows why there are four.
-        assertThat(report).contains("RIGHT TO LEFT")
-                .contains("<app>[.<env>].<project>.qits-dev.eu");
+            assertThat(report).as("mode %s", mode).doesNotContain("*.*")
+                    .doesNotContain("provider").doesNotContain("RIGHT TO LEFT")
+                    .contains("no wildcard");
+        }
+    }
+
+    /**
+     * <b>A failed read, a failed lookup or a foreign address is a LINE, not a failed boot.</b> The
+     * platform is up by the time the report prints; this is evidence for the reader.
+     */
+    @Test
+    void aFailedReadOrLookupOrAForeignAddressIsALine() {
+        String report = String.join("\n", dnsReport(
+                new HetznerZone.Listing(List.of(), "zones/qits-dev.eu/rrsets answered 401"),
+                null, List.of(
+                        new PipelinePhases.Lookup("node.qits-dev.eu", List.of("198.51.100.9"),
+                                null),
+                        new PipelinePhases.Lookup("idp.qits.qits-dev.eu", List.of(),
+                                "java.net.UnknownHostException: idp.qits.qits-dev.eu"))));
+
+        assertThat(report).contains("public  not read: zones/qits-dev.eu/rrsets answered 401")
+                .contains("private not read: no QITS_DNS_HETZNER_TOKEN in this run")
+                .contains("resolves to 198.51.100.9 — NOT the given address 203.0.113.7")
+                .contains("does NOT resolve here: java.net.UnknownHostException");
+    }
+
+    /** A long zone wraps its names rather than printing one line of hundreds of characters. */
+    @Test
+    void aLongZoneWrapsItsNames() {
+        List<HetznerZone.RrSet> many = new ArrayList<>();
+        for (int i = 0; i < 40; i++) {
+            many.add(new HetznerZone.RrSet("app" + i + ".qits", "CNAME",
+                    List.of("node.qits-dev.eu.")));
+        }
+        List<String> lines = dnsReport(new HetznerZone.Listing(many, null), ZONE_PRIVATE,
+                List.of());
+
+        assertThat(lines).filteredOn(line -> line.startsWith("               "))
+                .hasSizeGreaterThan(1)
+                .allSatisfy(line -> assertThat(line.length()).isLessThanOrEqualTo(100));
+        assertThat(String.join("\n", lines)).contains("40 RRSets").contains("app39.qits CNAME");
     }
 
     /**
@@ -511,7 +587,7 @@ class PipelinePhasesTest {
         String report = domainReport(Acme.Mode.STAGING, null);
 
         assertThat(report).contains("NOT ISSUED").contains("PLACEHOLDER")
-                .contains("records above")
+                .contains("dns: lines")
                 // DNS-01, the edge's own: no HTTP-01 and no port that must reach the host.
                 .contains("DNS-01").contains("QITS_DNS_HETZNER_TOKEN")
                 .doesNotContain("HTTP-01").doesNotContain("Port 80 has to")
@@ -574,9 +650,9 @@ class PipelinePhasesTest {
     // --- the project tier, beside the records ------------------------------------------------------
 
     /**
-     * <b>Both halves of a project's names are answered without an operator.</b> The
-     * {@code *.*.*} record means dns needs no step per project, and the edge derives the
-     * per-project wildcards from qits-projects' events, so the certificate needs none either. The
+     * <b>Both halves of a project's names are answered without an operator.</b> The edge writes a
+     * project's records itself, and it derives the per-project wildcard certificate names from
+     * qits-projects' events, so the certificate needs no step either. The
      * report says so, and no longer lists a host per project.
      */
     @Test
@@ -698,7 +774,8 @@ class PipelinePhasesTest {
     @Test
     void theSettingsArePutOneRowEachAndNoValueIsPrinted() throws Exception {
         CannedHttp http = commissioning(new CannedHttp());
-        Boot boot = runnerBoot(new ScriptedRunner(command -> ScriptedRunner.ok()), http, Map.of("QITS_DOMAIN", "qits-dev.eu"));
+        Boot boot = runnerBoot(new ScriptedRunner(command -> ScriptedRunner.ok()), http, Map.of("QITS_DOMAIN", "qits-dev.eu",
+                "QITS_PUBLIC_IP", "203.0.113.7"));
         boot.state.pgSuperuserPassword = "pg-superuser-secret";
         boot.state.daemonSha = "abc123";
         String base = boot.config.platformDeploymentsUrl() + "/api/settings/";
@@ -745,7 +822,8 @@ class PipelinePhasesTest {
     @Test
     void aRefusedSettingStopsTheBootWithoutEchoingTheRow() throws Exception {
         CannedHttp http = commissioning(new CannedHttp());
-        Boot boot = runnerBoot(new ScriptedRunner(command -> ScriptedRunner.ok()), http, Map.of("QITS_DOMAIN", "qits-dev.eu"));
+        Boot boot = runnerBoot(new ScriptedRunner(command -> ScriptedRunner.ok()), http, Map.of("QITS_DOMAIN", "qits-dev.eu",
+                "QITS_PUBLIC_IP", "203.0.113.7"));
         boot.state.pgSuperuserPassword = "pg-superuser-secret";
         String base = boot.config.platformDeploymentsUrl() + "/api/settings/";
         http.answer("PUT " + base + "qits-deployments/prod/QITS_DOMAIN", 403,
@@ -2260,6 +2338,119 @@ class PipelinePhasesTest {
         assertThat(boot.projects.base()).isEqualTo(boot.config.projectsUrl());
         assertThat(boot.registryHost()).isEqualTo("registry.qits.qits-dev.eu");
         assertThat(boot.registryCertificateProven()).isFalse();
+    }
+
+    // --- dns-records: the registry's record is in the zone before anything looks it up -----------
+
+    private static final String HETZNER_TOKEN = "hetzner-token-never-printed";
+
+    private static String zonePage(int page) {
+        return "GET https://api.hetzner.cloud/v1/zones/qits-dev.eu/rrsets"
+                + "?label_selector=qits-exposure%3Dpublic&per_page=100&page=" + page;
+    }
+
+    /** One page of Hetzner's RRSet listing, in its own shape: {@code rrsets} and the pagination. */
+    private static String rrsets(Integer next, String... rrsets) {
+        return "{\"rrsets\":[" + String.join(",", rrsets) + "],\"meta\":{\"pagination\":"
+                + "{\"next_page\":" + next + "}}}";
+    }
+
+    private static String rrset(String name, String type, String value) {
+        return "{\"name\":\"" + name + "\",\"type\":\"" + type + "\",\"ttl\":60,"
+                + "\"labels\":{\"qits-exposure\":\"public\"},\"records\":[{\"value\":\"" + value
+                + "\"}]}";
+    }
+
+    private static final String NODE = rrset("node", "A", "203.0.113.7");
+    private static final String REGISTRY_CNAME = rrset("registry.qits", "CNAME",
+            "node.qits-dev.eu.");
+
+    private Boot dnsBoot(CannedHttp http) throws Exception {
+        Map<String, String> env = new java.util.HashMap<>(DOMAIN);
+        env.put("QITS_DNS_HETZNER_TOKEN", HETZNER_TOKEN);
+        env.put("QITS_EDGE_READY_TIMEOUT", "PT0.2S");
+        return edgeBoot(http, env);
+    }
+
+    /**
+     * <b>dns-records passes once the zone lists both records, and asks nothing but the zone</b>
+     * (qits-2293): {@code node} A with the given address and the registry host as a CNAME to
+     * {@code node.<domain>.}. The token is the bearer and is printed nowhere.
+     */
+    @Test
+    void dnsRecordsPassesOnceTheZoneListsTheNodeAndTheRegistry() throws Exception {
+        int[] asked = {0};
+        CannedHttp http = new CannedHttp().answer(zonePage(1), () -> new Http.Response(200,
+                ++asked[0] < 3 ? rrsets(null, NODE) : rrsets(null, NODE, REGISTRY_CNAME)));
+        Boot boot = dnsBoot(http);
+        CiLogStreamTest.Recorder ctx = new CiLogStreamTest.Recorder();
+
+        new PipelinePhases(boot).dnsRecords().action().run(ctx);
+
+        assertThat(asked[0]).isEqualTo(3);
+        assertThat(http.calls).containsOnly(zonePage(1));
+        assertThat(http.headers.get(zonePage(1)))
+                .containsEntry("Authorization", "Bearer " + HETZNER_TOKEN);
+        assertThat(ctx.logs).noneMatch(line -> line.contains(HETZNER_TOKEN));
+        // Nothing dialled the registry: that is registry-ready's, and it is not latched here.
+        assertThat(boot.registryCertificateProven()).isFalse();
+    }
+
+    /** A zone without the registry's CNAME times out naming it, and points at the edge's log. */
+    @Test
+    void aMissingRegistryCnameTimesOutNamingItAndTheEdgesLog() throws Exception {
+        CannedHttp http = new CannedHttp().answer(zonePage(1), 200, rrsets(null, NODE));
+        Boot boot = dnsBoot(http);
+
+        assertThatThrownBy(() -> new PipelinePhases(boot).dnsRecords().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("no registry.qits CNAME record")
+                .hasMessageNotContaining("no node A")
+                .hasMessageContaining("host records")
+                .hasMessageContaining("docker service logs qits_" + ENV + "-qits-edge")
+                .hasMessageNotContaining(HETZNER_TOKEN);
+    }
+
+    /** A node record holding another address is not the one the run was given: no pass. */
+    @Test
+    void aNodeRecordWithAnotherAddressDoesNotPass() throws Exception {
+        CannedHttp http = new CannedHttp().answer(zonePage(1), 200,
+                rrsets(null, rrset("node", "A", "198.51.100.9"), REGISTRY_CNAME));
+        Boot boot = dnsBoot(http);
+
+        assertThatThrownBy(() -> new PipelinePhases(boot).dnsRecords().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("node A holds [198.51.100.9], not 203.0.113.7")
+                .hasMessageNotContaining("CNAME");
+    }
+
+    /** Every page is read: the registry's record on page two still counts. */
+    @Test
+    void dnsRecordsReadsEveryPageOfTheZone() throws Exception {
+        CannedHttp http = new CannedHttp()
+                .answer(zonePage(1), 200, rrsets(2, NODE))
+                .answer(zonePage(2), 200, rrsets(null, REGISTRY_CNAME));
+        Boot boot = dnsBoot(http);
+
+        new PipelinePhases(boot).dnsRecords().action().run(new CiLogStreamTest.Recorder());
+
+        assertThat(http.calls).containsExactly(zonePage(1), zonePage(2));
+    }
+
+    /** A zone Hetzner refuses to list is a wait that says so, never a pass. */
+    @Test
+    void aRefusedReadIsNoPass() throws Exception {
+        CannedHttp http = new CannedHttp().answer(zonePage(1), 401,
+                "{\"error\":{\"code\":\"unauthorized\"}}");
+        Boot boot = dnsBoot(http);
+
+        assertThatThrownBy(() -> new PipelinePhases(boot).dnsRecords().action()
+                .run(new CiLogStreamTest.Recorder()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("the zone was not read: zones/qits-dev.eu/rrsets answered 401")
+                .hasMessageNotContaining(HETZNER_TOKEN);
     }
 
     // --- registry-ready: the certificate every push waits for (owner ruling 2026-11-05) ----------

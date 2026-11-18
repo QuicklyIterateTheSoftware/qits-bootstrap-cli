@@ -116,55 +116,6 @@ class SeedPhasesTest {
                 .contains("is not a git checkout and is not empty");
     }
 
-    // --- the records the domain needs -------------------------------------------------------------
-
-    /**
-     * <b>Four A records, and the shapes are the edge's rather than a list of today's names.</b> The
-     * edge reads at most the first three labels of a Host header, so one wildcard per DEPTH answers
-     * every environment, every application vhost and every PROJECT there will ever be — adding any
-     * of them is then a platform act with no dns step. The apex is written out because no wildcard
-     * matches it.
-     * <p>
-     * <b>{@code *.*.*} is the record this change is about.</b> An environment and an app arrive with
-     * a deploy, which an operator is already present for; a project is created by a person on a
-     * running platform, so a record per project would be a dns edit per project — at Hetzner, by
-     * hand. The wildcard is what makes the project tier cost nobody anything.
-     * <p>
-     * The nameserver's own record went with qits-platform-dns: this platform serves no dns, so there
-     * is nothing to delegate to and no glue record to answer for.
-     */
-    @Test
-    void theDomainNeedsAWildcardPerDepthPlusTheApex() {
-        List<SeedPhases.ZoneRecord> records =
-                SeedPhases.zoneRecords("qits-dev.eu", "203.0.113.7");
-
-        assertThat(records).extracting(SeedPhases.ZoneRecord::name)
-                .containsExactly("@", "*", "*.*", "*.*.*");
-        // Every name is this one host: the edge is a single front door and routes by Host behind it.
-        assertThat(records).extracting(SeedPhases.ZoneRecord::value)
-                .containsOnly("203.0.113.7");
-        // And each one says which shape it is there for, because the person typing them in at the
-        // provider is reading this list and nothing else.
-        assertThat(records).extracting(SeedPhases.ZoneRecord::why)
-                .anySatisfy(why -> assertThat(why).contains("apex"))
-                .anySatisfy(why -> assertThat(why).contains("<project>.qits-dev.eu door"))
-                .anySatisfy(why -> assertThat(why).contains("<env>.<project>.qits-dev.eu"))
-                .anySatisfy(why -> assertThat(why)
-                        .contains("<app>.<env>.<project>.qits-dev.eu")
-                        .contains("wire routes"));
-    }
-
-    /**
-     * Record names are RELATIVE to the apex, which is how a provider's own record editor asks for
-     * them — a name with the domain spelled into it lands as {@code <domain>.<domain>}.
-     */
-    @Test
-    void noRecordNameCarriesTheDomain() {
-        assertThat(SeedPhases.zoneRecords("qits-dev.eu", "203.0.113.7"))
-                .extracting(SeedPhases.ZoneRecord::name)
-                .noneMatch(name -> name.contains("qits-dev.eu"));
-    }
-
     // --- the ACME run -----------------------------------------------------------------------------
 
     /**
@@ -1565,7 +1516,7 @@ class SeedPhasesTest {
     @Test
     void aPublicBootstrapEdgeStillGivesTheSeedEdgeItsTlsPort() {
         Boot boot = new Boot(TestConfig.from(Map.of(
-                "QITS_DOMAIN", "wohlben.eu",
+                "QITS_DOMAIN", "wohlben.eu", "QITS_PUBLIC_IP", "203.0.113.7",
                 "QITS_BOOTSTRAP_INGRESS_PUBLIC", "true")),
                 new RunLog(temp.resolve("run.log")));
         boot.deriveEstateFrom(eu.wohlben.qits.cli.bootstrap.platform.EstateFixture.checkouts());

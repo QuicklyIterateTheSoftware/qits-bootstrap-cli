@@ -81,13 +81,13 @@ public interface BootstrapConfig {
      * {@code BootstrapCommand} refuses it up front ({@link DomainName#missingRefusal}).
      * <p>
      * The edge gets 80, 443 and a loopback management port with a certificate slot on a volume,
-     * and a real Let's Encrypt certificate is ordered for the name. The closing report prints the
-     * records the domain needs, which is why {@link #publicIp()} is mandatory beside this.
+     * and a real Let's Encrypt certificate is ordered for the name. {@link #publicIp()} is
+     * mandatory beside this, because the edge needs an address to write the node record with.
      * <p>
-     * <b>DNS IS EXTERNAL.</b> The records live at whatever provider holds the domain, and this run
-     * writes none of them. Put them in place BEFORE the run, because the certificate order is
-     * answered over the public name; if they have not propagated yet the issuance warns and the
-     * closing report prints the retry.
+     * <b>THE ZONE IS AT HETZNER, AND THE EDGE KEEPS IT</b> (qits-2292). It writes
+     * {@code node.<domain>}, the apex and one CNAME per host through {@code QITS_DNS_HETZNER_TOKEN};
+     * nothing is typed in by hand, and no wildcard is wanted. The {@code dns-records} phase waits
+     * for the records the first push needs, and the closing report reads the zone back.
      * <p>
      * Validated by {@link DomainName}, on the host half, before the payload image is built: a typo
      * here would otherwise become a certificate request for a name nobody owns.
@@ -115,9 +115,9 @@ public interface BootstrapConfig {
      * <b>This host's public IPv4 address, and MANDATORY beside {@link #domain()}</b> —
      * {@code --public-ip} on the command line, {@code QITS_PUBLIC_IP} in {@code .env}.
      * <p>
-     * It is the data of every A record the domain needs at its dns provider, and the run cannot
-     * learn the address for itself — it is a container behind a NAT. So it is told, and the closing
-     * report prints the records with it filled in.
+     * It is what the edge writes the node record with: {@code node.<domain>} holds it, and every
+     * public name is a CNAME to that record. The run cannot learn the address for itself — it is a
+     * container behind a NAT — so it is told, and hands it to the seed edge and the deployed one.
      * <p>
      * Checked by {@link PublicIp} on the host half, beside the domain and in the same manner: four
      * dotted octets, and a hostname refused rather than resolved.
@@ -174,7 +174,11 @@ public interface BootstrapConfig {
      */
     Optional<String> acmeExtraSans();
 
-    /** Hetzner Cloud DNS token used only by the edge's DNS-01 certificate manager. */
+    /**
+     * The Hetzner Cloud token for the domain's zone. The edge writes the zone's records and its
+     * DNS-01 TXT records with it; this run only reads the zone back ({@code dns-records}, the
+     * closing report) and never logs it.
+     */
     Optional<String> dnsHetznerToken();
 
     /** Existing Swarm secret containing the Hetzner token, for repeat bootstraps. */

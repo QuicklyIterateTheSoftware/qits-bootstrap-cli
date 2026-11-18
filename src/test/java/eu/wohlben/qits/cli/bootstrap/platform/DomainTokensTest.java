@@ -19,7 +19,7 @@ class DomainTokensTest {
 
     private static Map<String, String> tokens() {
         return DomainTokens.of("wohlben.dev", "staging", "hostmaster@wohlben.dev",
-                TOKEN, Optional.empty(), List.of());
+                TOKEN, Optional.empty(), List.of(), "198.51.100.4");
     }
 
     /**
@@ -34,7 +34,8 @@ class DomainTokensTest {
     void theDeployedEdgeGetsTheTokenValueAndNoFile() {
         List<DeploymentSettings.Setting> settings = DeploymentSettings.of(
                 new DeploymentSettings.Inputs("prod", "wohlben.dev", 8080, true, "staging",
-                        "hostmaster@wohlben.dev", TOKEN, List.of(), "pg", "push", ""));
+                        "hostmaster@wohlben.dev", TOKEN, "198.51.100.4", List.of(), "pg", "push",
+                        ""));
 
         assertThat(settings).filteredOn(s -> s.application().equals("qits-edge"))
                 .extracting(DeploymentSettings.Setting::key)
@@ -44,6 +45,29 @@ class DomainTokensTest {
                 .singleElement()
                 .satisfies(s -> assertThat(s.value()).isEqualTo(TOKEN))
                 .satisfies(s -> assertThat(s.secret()).isTrue());
+    }
+
+    /**
+     * <b>Both edges are told the node address, beside the token</b> (qits-2293): it is what the
+     * edge writes {@code node.<domain>} with, and without it qits-2292's records stay unwritten. A
+     * plain row, because an address is no secret.
+     */
+    @Test
+    void bothEdgesAreToldTheNodeAddressBesideTheToken() {
+        String compose = tokens().get("EDGE_TLS");
+        assertThat(compose).contains("QITS_EDGE_ACME_HETZNER_TOKEN_FILE: "
+                + "/run/secrets/qits-dns-hetzner-token\n")
+                .contains("\n      QITS_EDGE_DNS_NODE_ADDRESS: 198.51.100.4\n");
+
+        List<DeploymentSettings.Setting> settings = DeploymentSettings.of(
+                new DeploymentSettings.Inputs("prod", "wohlben.dev", 8080, true, "production",
+                        "hostmaster@wohlben.dev", TOKEN, "198.51.100.4", List.of(), "pg", "push",
+                        ""));
+        assertThat(settings).filteredOn(s -> s.key().equals("QITS_EDGE_DNS_NODE_ADDRESS"))
+                .singleElement()
+                .satisfies(s -> assertThat(s.application()).isEqualTo("qits-edge"))
+                .satisfies(s -> assertThat(s.value()).isEqualTo("198.51.100.4"))
+                .satisfies(s -> assertThat(s.secret()).isFalse());
     }
 
     /** The seed edge keeps the swarm secret and the file form: it is a stack service, and can. */

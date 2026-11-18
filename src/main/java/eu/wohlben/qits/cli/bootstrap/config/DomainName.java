@@ -20,7 +20,7 @@ public final class DomainName {
      * Lowercase only, although DNS is case-insensitive on the wire: the value is compared as text
      * everywhere it is used, so {@code QITS.EU} and {@code qits.eu} would be two spellings of one
      * name. A trailing dot is rejected for the same reason rather than stripped — the value is also
-     * spelled into a certificate request and into the records a person creates at the dns provider,
+     * spelled into a certificate request and is the Hetzner zone the edge writes its records into,
      * and a program that quietly rewrote it would leave those places disagreeing about which of
      * them is right.
      */
@@ -57,8 +57,8 @@ public final class DomainName {
                 + "https://ci.qits.<domain>, idp.qits.<domain>, registry.qits.<domain> — which "
                 + "qits-ci composes from this one value. Without it qits-ci gives this host's runner "
                 + "no address and launches no step, so the boot could never pass. Set QITS_DOMAIN "
-                + "(and QITS_PUBLIC_IP beside it) to a domain whose records resolve to this host, "
-                + "and rerun.";
+                + "(and QITS_PUBLIC_IP and QITS_DNS_HETZNER_TOKEN beside it) to a domain whose zone "
+                + "is at Hetzner — the edge writes its records — and rerun.";
     }
 
     /** The shape check alone, for a caller that already has a value rather than a {@link BootstrapConfig}. */
@@ -69,7 +69,7 @@ public final class DomainName {
                     + "not a domain this platform can serve. It must be a LOWERCASE DNS name of at "
                     + "least two labels, with no trailing dot and no scheme or path — qits.eu, "
                     + "qits-dev.eu. It becomes the name the edge's certificate is issued for and "
-                    + "the name every record at your dns provider hangs under, so it is checked "
+                    + "the Hetzner zone the edge writes every record into, so it is checked "
                     + "here rather than later.");
         }
         return value;

@@ -1477,8 +1477,8 @@ class ComposeTemplateTest {
     }
 
     /**
-     * <b>THE NAMESERVER IS GONE, from the stack file and from the seed's databases.</b> This platform
-     * serves no dns: a domain's records live at whatever provider holds it.
+     * <b>THE NAMESERVER IS GONE, from the stack file and from the seed's databases.</b> The zone is
+     * at Hetzner, and the edge writes its records there.
      */
     @Test
     void theStackCarriesNoRetiredNameserver() {
@@ -1542,6 +1542,8 @@ class ComposeTemplateTest {
                 .contains("QUARKUS_TLS_KEY_STORE_PEM_ACME_KEY: /work/.letsencrypt/current/lets-encrypt.key")
                 .contains("QUARKUS_TLS_RELOAD_PERIOD: 1m")
                 .contains("QITS_EDGE_ACME_ENABLED: \"true\"")
+                // What the edge writes node.<domain> with (qits-2293), beside the token file.
+                .contains("QITS_EDGE_DNS_NODE_ADDRESS: " + DomainTokens.FIXTURE_ADDRESS)
                 .contains("- qits-edge-letsencrypt:/work/.letsencrypt");
         // A mounted volume has to be declared, or compose refuses the file.
         assertThat(compose).contains("qits-edge-letsencrypt:\n    name: qits-edge-letsencrypt");

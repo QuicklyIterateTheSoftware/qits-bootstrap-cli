@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import eu.wohlben.qits.cli.bootstrap.api.BootstrapPublishCredential;
 import eu.wohlben.qits.cli.bootstrap.api.CiApi;
 import eu.wohlben.qits.cli.bootstrap.api.EdgeAddresses;
+import eu.wohlben.qits.cli.bootstrap.api.HetznerZone;
 import eu.wohlben.qits.cli.bootstrap.api.Http;
 import eu.wohlben.qits.cli.bootstrap.api.Json;
 import eu.wohlben.qits.cli.bootstrap.api.SystemApi;
@@ -488,49 +489,156 @@ public class PipelinePhases {
     }
 
     /**
-     * The domain's place in the closing report: the records it needs, and which certificate the edge
+     * The domain's place in the closing report: what the zone holds, and which certificate the edge
      * is serving.
      * <p>
-     * <b>THIS PLATFORM SERVES NO DNS.</b> The records are held wherever the domain is, and this run
-     * writes none of them — so they are printed as a step to CHECK, and they belong BEFORE the run:
-     * the certificate order is answered over the public name.
+     * <b>The edge keeps the zone, and this block reads it back</b> (qits-2293): the {@code dns:}
+     * lines are passed in — {@link #dnsLines} over a Hetzner read and two lookups the summary made —
+     * so the block stays a pure function of what was found.
      * <p>
      * <b>A failed order is a line here, not a failed boot.</b> The commonest reason is a record the
      * world has not seen yet, which fixes itself in minutes to hours and which this program can
      * neither hurry nor detect. So the phase warns and this block prints the retry with the mode and
      * the address already filled in, exactly as the register token's lines do for its own one call.
      */
-    static List<String> domainLines(String domain, String environment, String publicIp,
-            Acme.Mode mode, String email, String certificate, List<String> projectSlugs,
-            List<String> extraSans) {
+    static List<String> domainLines(String domain, String environment, Acme.Mode mode,
+            String email, String certificate, List<String> projectSlugs, List<String> extraSans,
+            List<String> dnsLines) {
         List<String> lines = new ArrayList<>();
-        lines.add("domain:    " + domain + " — DNS IS NOT THIS PLATFORM'S. Check your provider "
-                + "holds these A records:");
-        for (SeedPhases.ZoneRecord record : SeedPhases.zoneRecords(domain, publicIp)) {
-            lines.add("             " + pad(record.name()) + " A  " + record.value() + "   "
-                    + record.why());
-        }
-        lines.add("           A wildcard per DEPTH, not a record per name: a host is read RIGHT TO "
-                + "LEFT as");
-        lines.add("           <app>[.<env>].<project>." + domain + ", so a new environment, a new "
-                + "app vhost or a new");
-        lines.add("           PROJECT needs no dns step. *.*.* answers an application of a project "
-                + "that has");
-        lines.add("           environments — <app>.<env>.<project>." + domain + " — and it is the "
-                + "record that makes");
-        lines.add("           creating a project cost nobody an edit here.");
-        lines.add("           Names are relative to the apex — @ is the apex, and no wildcard "
-                + "matches it.");
-        lines.add("           Every one carries " + publicIp + ", the address this run was given.");
+        lines.add("domain:    " + domain + " — its zone is at Hetzner, and the edge writes every "
+                + "record in it.");
+        lines.addAll(dnsLines);
         lines.addAll(projectLines(projectSlugs, extraSans));
         lines.addAll(tlsLines(domain, mode, email, certificate, environment));
         return lines;
     }
 
+    /** One name the closing report looked up: the addresses it got, or why it got none. */
+    record Lookup(String name, List<String> addresses, String failure) {
+    }
+
+    /** The JVM's resolver, once, for the closing report. A failure is an answer, never a throw. */
+    static Lookup lookup(String name) {
+        try {
+            List<String> addresses = new ArrayList<>();
+            for (java.net.InetAddress address : java.net.InetAddress.getAllByName(name)) {
+                addresses.add(address.getHostAddress());
+            }
+            return new Lookup(name, List.copyOf(addresses), null);
+        } catch (Exception e) {
+            return new Lookup(name, List.of(), e.toString());
+        }
+    }
+
     /**
-     * <b>The project tier, beside the records: what covers it.</b> DNS is fine by construction —
-     * the {@code *.*.*} record above answers every project there will ever be — and so is the
-     * certificate: the edge derives {@code *.<project>.<domain>} and
+     * <b>The {@code dns:} lines: what the zone holds and what a resolver answers</b> (qits-2293).
+     * The RRSets the edge labelled {@code qits-exposure=public} and {@code =private}, counted and
+     * named, then {@code node.<domain>} and {@code idp.qits.<domain>} as this host resolves them,
+     * each held against the given address. A failed read or lookup, or an address that is not the
+     * given one, is a line — never a failed boot: the platform is up, and this is evidence.
+     * <p>
+     * No wildcard is listed because none is wanted: the edge writes exact records only, and a
+     * wildcard beside them is the mixed zone behind the qits-2273 and qits-2280 outages.
+     */
+    static List<String> dnsLines(String domain, String address, HetznerZone.Listing publics,
+            HetznerZone.Listing privates, List<Lookup> lookups) {
+        List<String> lines = new ArrayList<>();
+        lines.add("dns:       the edge writes node." + domain + " (A " + address + "), the apex and "
+                + "a CNAME per host; no wildcard.");
+        lines.addAll(rrsetLines(HetznerZone.PUBLIC, publics));
+        lines.addAll(rrsetLines(HetznerZone.PRIVATE, privates));
+        int width = lookups.stream().mapToInt(l -> l.name().length()).max().orElse(0);
+        for (Lookup lookup : lookups) {
+            String name = lookup.name() + " ".repeat(width - lookup.name().length());
+            if (lookup.failure() != null) {
+                lines.add("             " + name + "  does NOT resolve here: " + lookup.failure());
+            } else if (lookup.addresses().contains(address)) {
+                lines.add("             " + name + "  resolves to " + String.join(", ",
+                        lookup.addresses()) + " — the given address");
+            } else {
+                lines.add("             " + name + "  resolves to " + String.join(", ",
+                        lookup.addresses()) + " — NOT the given address " + address);
+            }
+        }
+        return lines;
+    }
+
+    /** One exposure's RRSets as a count and the names, wrapped; or why the zone was not read. */
+    private static List<String> rrsetLines(String exposure, HetznerZone.Listing listing) {
+        String head = "             " + exposure + " ".repeat(8 - exposure.length());
+        if (listing == null) {
+            return List.of(head + "not read: no QITS_DNS_HETZNER_TOKEN in this run");
+        }
+        if (!listing.ok()) {
+            return List.of(head + "not read: " + listing.failure());
+        }
+        List<String> names = listing.rrsets().stream()
+                .map(rrset -> rrset.name() + " " + rrset.type()).sorted().toList();
+        List<String> lines = new ArrayList<>();
+        lines.add(head + names.size() + " RRSets labelled " + HetznerZone.OWNER_LABEL + "="
+                + exposure + (names.isEmpty() ? "" : ":"));
+        String indent = "               ";
+        StringBuilder line = new StringBuilder();
+        for (String name : names) {
+            if (!line.isEmpty() && indent.length() + line.length() + 2 + name.length() > 100) {
+                lines.add(indent + line);
+                line.setLength(0);
+            }
+            line.append(line.isEmpty() ? "" : ", ").append(name);
+        }
+        if (!line.isEmpty()) {
+            lines.add(indent + line);
+        }
+        return lines;
+    }
+
+    /**
+     * <b>Phase C's test: what {@code dns-records} waits to see listed</b>, as the list of what is
+     * missing — empty when {@code node} A holds the address and the registry host is a CNAME to
+     * {@code node.<domain>.}. Names are relative to the zone, the way Hetzner lists them.
+     */
+    static List<String> recordsMissing(HetznerZone.Listing listing, String domain,
+            String address) {
+        if (!listing.ok()) {
+            return List.of("the zone was not read: " + listing.failure());
+        }
+        List<String> missing = new ArrayList<>();
+        String registry = relativeName(EdgeAddresses.host(Boot.REGISTRY_LABEL, domain), domain);
+        String target = "node." + domain + ".";
+        Optional<HetznerZone.RrSet> node = rrset(listing, "node", "A");
+        if (node.isEmpty()) {
+            missing.add("no node A record");
+        } else if (!node.get().values().contains(address)) {
+            missing.add("node A holds " + node.get().values() + ", not " + address);
+        }
+        Optional<HetznerZone.RrSet> cname = rrset(listing, registry, "CNAME");
+        if (cname.isEmpty()) {
+            missing.add("no " + registry + " CNAME record");
+        } else if (cname.get().values().stream().noneMatch(value -> absolute(value)
+                .equalsIgnoreCase(target))) {
+            missing.add(registry + " CNAME holds " + cname.get().values() + ", not " + target);
+        }
+        return missing;
+    }
+
+    private static Optional<HetznerZone.RrSet> rrset(HetznerZone.Listing listing, String name,
+            String type) {
+        return listing.rrsets().stream().filter(rrset -> rrset.name().equalsIgnoreCase(name)
+                && rrset.type().equalsIgnoreCase(type)).findFirst();
+    }
+
+    /** {@code registry.qits.<domain>} as the zone names it: {@code registry.qits}. */
+    static String relativeName(String host, String domain) {
+        return host.substring(0, host.length() - domain.length() - 1);
+    }
+
+    private static String absolute(String name) {
+        return name.endsWith(".") ? name : name + ".";
+    }
+
+    /**
+     * <b>The project tier, beside the records: what covers it.</b> The certificate is covered by
+     * construction: the edge derives {@code *.<project>.<domain>} and
      * {@code *.<env>.<project>.<domain>} from qits-projects' ProjectCreated events. <b>A project
      * created after this boot needs nothing done to it.</b> The projects are counted against the
      * certificate's name budget rather than listed, because every one is covered.
@@ -595,11 +703,6 @@ public class PipelinePhases {
         return lines;
     }
 
-    /** The record names, in a column, so short names read as a table rather than as prose. */
-    private static String pad(String name) {
-        return name.length() >= 6 ? name : name + " ".repeat(6 - name.length());
-    }
-
     /**
      * The certificate half, in the four states a run can end in: a staging certificate, a production
      * one, issuance switched off, and an order that did not go through.
@@ -644,10 +747,10 @@ public class PipelinePhases {
                     + "over DNS-01: it");
             lines.add("           writes the _acme-challenge TXT records through Hetzner DNS with "
                     + "QITS_DNS_HETZNER_TOKEN");
-            lines.add("           and keeps retrying. The usual reasons are that token, or the "
-                    + "records above not");
-            lines.add("           resolving yet. No port has to reach this host for it — port 80 "
-                    + "plays no part.");
+            lines.add("           and keeps retrying. The usual reasons are that token, or a "
+                    + "name in the dns: lines");
+            lines.add("           above that does not resolve yet. No port has to reach this host "
+                    + "for it — port 80 plays no part.");
             lines.add("           Nothing is lost — rerun the boot, or issue it by hand from a "
                     + "container on qits-net:");
         }
@@ -1555,7 +1658,7 @@ public class PipelinePhases {
                     new DeploymentSettings.Inputs(env, domain, boot.config.port(),
                             mode != Acme.Mode.OFF, mode.word(), Acme.email(boot.config, domain),
                             boot.config.dnsHetznerToken().map(String::strip).orElse(""),
-                            ExtraSans.of(boot.config, domain),
+                            PublicIp.of(boot.config), ExtraSans.of(boot.config, domain),
                             boot.state.pgSuperuserPassword, boot.config.pushToken(),
                             boot.state.daemonSha));
             for (DeploymentSettings.Setting setting : settings) {
@@ -2676,6 +2779,60 @@ public class PipelinePhases {
     List<EdgeProbe> registryProbes(String domain) {
         return edgeProbes(domain).stream()
                 .filter(probe -> Boot.REGISTRY_LABEL.equals(probe.label())).toList();
+    }
+
+    /**
+     * <b>THE REGISTRY'S RECORD IS IN THE ZONE BEFORE ANYTHING LOOKS THE NAME UP</b> (qits-2293).
+     * <p>
+     * {@code registry-ready} dials {@code registry.qits.<domain>} through the host's resolver, and
+     * on a fresh zone that name exists only once the SEED edge has written it (qits-2292's
+     * {@code HostRecords}, from the {@code QITS_EDGE_DNS_NODE_ADDRESS} the stack file hands it). A
+     * lookup made before then caches NXDOMAIN for the zone's negative TTL — an hour on wohlben.eu —
+     * and a record arriving a minute later still stalls the boot. So this asks the ZONE, never a
+     * resolver: the Hetzner API with this run's token, every page of the RRSets labelled
+     * {@code qits-exposure=public}, until {@code node} A holds {@code QITS_PUBLIC_IP} and the
+     * registry host is a CNAME to {@code node.<domain>.}. Bounded by
+     * {@code QITS_EDGE_READY_TIMEOUT}, because it is the first half of the same wait.
+     * <p>
+     * No phase before this one dials a name in the zone: everything up to here dials wire aliases
+     * on qits-net, and a {@code docker tag} under the registry host is a local name, not a dial.
+     */
+    public Phase dnsRecords() {
+        return new Phase("dns-records",
+                "wait for the edge to write node.<domain> and registry.qits.<domain>", ctx -> {
+            String domain = boot.config.requiredDomain();
+            String registry = EdgeAddresses.host(Boot.REGISTRY_LABEL, domain);
+            if (boot.registryCertificateProven()) {
+                ctx.skip(registry + " is already proven");
+            }
+            String address = PublicIp.of(boot.config);
+            String token = boot.config.dnsHetznerToken().map(String::strip).orElse("");
+            if (token.isEmpty()) {
+                throw new IllegalStateException("QITS_DNS_HETZNER_TOKEN is unset, so this run "
+                        + "cannot read the zone the edge writes " + registry + " into. Set it to "
+                        + "the Hetzner Cloud token for " + domain + " and rerun.");
+            }
+            HetznerZone zone = new HetznerZone(boot.http, token, domain);
+            ctx.log("  asking the Hetzner zone, not a resolver, for node." + domain + " A " + address
+                    + " and " + registry + " CNAME node." + domain + ".");
+            try {
+                Waiter.await(ctx, "the edge's records in " + domain, boot.config.edgeReadyTimeout(),
+                        boot.config.pollInterval(), () -> {
+                            List<String> missing = recordsMissing(
+                                    zone.labelled(HetznerZone.PUBLIC), domain, address);
+                            return missing.isEmpty() ? Waiter.Poll.done("listed", "listed")
+                                    : Waiter.Poll.pending(String.join("; ", missing));
+                        });
+            } catch (TimeoutException gaveUp) {
+                String edge = Docker.stackService(Docker.STACK,
+                        PlatformModel.wireAlias("edge", boot.config.envName()));
+                throw new IllegalStateException(gaveUp.getMessage() + "\nThe seed edge writes "
+                        + "these records itself, with QITS_EDGE_DNS_NODE_ADDRESS and the Hetzner "
+                        + "token. Its `host records` log lines say why it has not: docker service "
+                        + "logs " + edge + " 2>&1 | grep 'host records'. Rerun once they are listed.");
+            }
+            ctx.note("node and " + relativeName(registry, domain) + " listed");
+        });
     }
 
     /**
@@ -3809,18 +3966,15 @@ public class PipelinePhases {
                         + "and artifacts trust the network");
             }
             report.add("state:     seed compose + .qits-bootstrap.env in " + boot.state.wrapperDir);
-            // This platform serves no dns, so the records are printed as a step to CHECK at
-            // whatever provider holds the domain; the certificate is the one thing under it the
-            // run does itself.
-            // NOTE: this could be a hook to read those records back from an external dns provider,
-            // and say which of them are actually in place.
-            report.addAll(domainLines(apex, env, PublicIp.of(boot.config), Acme.mode(boot.config),
+            // The edge keeps the zone; the report reads it back and looks two names up, and every
+            // answer — a failed one included — is a line rather than a failed boot.
+            report.addAll(domainLines(apex, env, Acme.mode(boot.config),
                     Acme.email(boot.config, apex), boot.state.certificate,
                     // The name budget grows per PROJECT, so the list comes from the platform. A
                     // read that does not answer prints the shape without the count — the same
                     // courtesy every optional read in this program keeps.
                     projectSlugs(),
-                    ExtraSans.of(boot.config, apex)));
+                    ExtraSans.of(boot.config, apex), dnsReport(apex)));
             report.add("images:    phase 1 built qits/workspace-base, qits/workspace, "
                     + "qits/projects-daemon and");
             report.add("           qits/project-agent at the versions qits-workspaces, qits-projects "
@@ -3830,6 +3984,24 @@ public class PipelinePhases {
             report.addAll(deferredLines());
             report.forEach(ctx::log);
         });
+    }
+
+    /**
+     * The {@code dns:} lines' IO: the zone read twice — public, then private — with this run's
+     * token, and {@code node.<domain>} and {@code idp.qits.<domain>} looked up by the JVM. Done
+     * here, at the very end, because a lookup now caches nothing a later phase depends on.
+     */
+    private List<String> dnsReport(String domain) {
+        String token = boot.config.dnsHetznerToken().map(String::strip).orElse("");
+        HetznerZone.Listing publics = null;
+        HetznerZone.Listing privates = null;
+        if (!token.isEmpty()) {
+            HetznerZone zone = new HetznerZone(boot.http, token, domain);
+            publics = zone.labelled(HetznerZone.PUBLIC);
+            privates = zone.labelled(HetznerZone.PRIVATE);
+        }
+        return dnsLines(domain, PublicIp.of(boot.config), publics, privates, List.of(
+                lookup("node." + domain), lookup(EdgeAddresses.host(Boot.IDP_LABEL, domain))));
     }
 
     /**

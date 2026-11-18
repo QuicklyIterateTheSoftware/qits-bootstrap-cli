@@ -162,16 +162,19 @@ certificate** (owner ruling 2026-11-05). There is no loopback vhost to push thro
 2. The seed edge orders its Let's Encrypt certificate over DNS-01 itself (no listener needed) and
    routes `registry.qits.<domain>` to the seed qits-artifacts in code. It starts from its local
    build, so nothing it needs comes out of the registry — there is no cycle.
-3. `registry-ready`, after `store-seed`: `edge-ready`'s proof narrowed to the `registry` label —
+3. `dns-records`, after `store-seed`: the Hetzner zone is read, never a resolver, until the seed edge
+   has written `node.<domain>` and the `registry.qits.<domain>` CNAME — so the next phase's lookup is
+   the first one and finds the record instead of caching NXDOMAIN.
+4. `registry-ready`, right after it: `edge-ready`'s proof narrowed to the `registry` label —
    `https://registry.qits.<domain>/v2/` asked over the JVM's own trust store, bounded by
    `QITS_EDGE_READY_TIMEOUT`. A placeholder or staging certificate is a failed handshake and never
    passes; ACME off or on staging is refused before a poll. A pass latches the `registry` label:
    the store is read at its public name with the bootstrap's bearer from then on.
-4. `images-publish` and `seed-images-publish` push there, and refuse to run without that latch.
+5. `images-publish` and `seed-images-publish` push there, and refuse to run without that latch.
    The credential is the commissioned `bootstrap-publish` client, as client id and secret in a
    per-phase `docker --config` `config.json` for `registry.qits.<domain>`: docker presents it to the
    edge in HTTP Basic, the edge validates it at the idp and hands docker a bearer.
-5. The seed deploys pull the same name, so none of them ever needed an earlier push.
+6. The seed deploys pull the same name, so none of them ever needed an earlier push.
 
 **The seed edge claims no machine name on `qits-net`** (qits-1434). It used to alias the
 registry, the mirror and the git host under machine names there, for containers that dialled a
@@ -242,11 +245,11 @@ the same names `qits-local-up.sh` read:
 | `QITS_ORG_URL` | the GitHub org | where a repository with no local checkout is cloned from — the wrapper included, on a cold start. Read anonymously |
 | `QITS_PORT` | `8080` | **the host's ONE HTTP port**, bound by qits-platform-edge in swarm INGRESS mode beside its 443. The registry, the mirror and the git host are not reached on it: they are `registry.qits.<domain>`, `mirror.qits.<domain>` and `githost.qits.<domain>` on 443, over the edge's real certificate. The CLI dials the edge's alias instead |
 | `QITS_GIT_HOST_PORT` | `8083` | qits-githost's old host port. **Nothing publishes it any more** — neither the seed, which comes up inside the stack, nor the deployment. A person clones and pushes at `https://githost.qits.<domain>/git/<projectId>/<repo>.git` through the edge, where every method needs a bearer, reads included. The knob stays because this is the number to reopen by hand while an edge is being repaired. Nothing in the CLI dials it; every phase that pushes runs inside a container on qits-net |
-| `QITS_DOMAIN` | unset | **the domain this platform serves, and REQUIRED: a boot without one is refused before anything runs (exit 2).** The platform addresses its services by subdomain, and CI reaches it only through its public names (`https://ci.qits.<domain>` and so on), so a boot without it could never pass. The edge gets ports 80 and 443 with a certificate slot on a volume, and a real Let's Encrypt certificate is ordered for the name. The management port 9000 is NOT published: the challenge-management endpoint is unauthenticated and a swarm publish cannot be loopback-only, so it is reached on qits-net. `QITS_PUBLIC_IP` is **mandatory** beside it. **This platform serves no dns** — the records live at whatever provider holds the domain, and they go in **before** the run. Lowercase, at least two labels, no trailing dot; a bad value stops the run before anything is built. `--domain` is the same knob for one run. **CI is why it is required, from qits-515 on**: the internal step-address plane is gone, and qits-ci now composes every address a step or a runner is told from this variable alone — unset, it hands out none, launches no step (`LAUNCH_FAILED EDGE_PLANE_UNCONFIGURED` on every run) and the runner register door answers 503. A step on the platform host reaches those composed public names directly: measured 2026-09-30 16:38Z from a container on the platform host, `ci.qits.wohlben.eu` resolved to the public address `46.224.171.33` and `/ci/q/health/ready` answered `401` over HTTP/2 — the host's NAT hairpins its own public address back to itself, so no extra-hosts mechanism was built. See qits-ci-runner-daemon's README, "On the platform host" |
-| `QITS_PUBLIC_IP` | unset | **this host's public IPv4 address, and mandatory beside `QITS_DOMAIN`.** It is the data of every A record the domain needs at its dns provider, and the run cannot learn it, because it is a container behind a NAT. The closing report prints the records with it filled in, and the certificate order is answered over a name that carries it. Four dotted octets, no leading zeros; **a hostname is refused rather than resolved**, since the value becomes an A record a resolver later reads back. `--public-ip` for one run |
+| `QITS_DOMAIN` | unset | **the domain this platform serves, and REQUIRED: a boot without one is refused before anything runs (exit 2).** The platform addresses its services by subdomain, and CI reaches it only through its public names (`https://ci.qits.<domain>` and so on), so a boot without it could never pass. The edge gets ports 80 and 443 with a certificate slot on a volume, and a real Let's Encrypt certificate is ordered for the name. The management port 9000 is NOT published: the challenge-management endpoint is unauthenticated and a swarm publish cannot be loopback-only, so it is reached on qits-net. `QITS_PUBLIC_IP` is **mandatory** beside it. **The zone must exist at Hetzner, and the edge writes every record in it** — `node.<domain>`, the apex and one CNAME per host — through `QITS_DNS_HETZNER_TOKEN`; nothing is typed in by hand, and no wildcard is needed (see "The zone is the edge's" below). Lowercase, at least two labels, no trailing dot; a bad value stops the run before anything is built. `--domain` is the same knob for one run. **CI is why it is required, from qits-515 on**: the internal step-address plane is gone, and qits-ci now composes every address a step or a runner is told from this variable alone — unset, it hands out none, launches no step (`LAUNCH_FAILED EDGE_PLANE_UNCONFIGURED` on every run) and the runner register door answers 503. A step on the platform host reaches those composed public names directly: measured 2026-09-30 16:38Z from a container on the platform host, `ci.qits.wohlben.eu` resolved to the public address `46.224.171.33` and `/ci/q/health/ready` answered `401` over HTTP/2 — the host's NAT hairpins its own public address back to itself, so no extra-hosts mechanism was built. See qits-ci-runner-daemon's README, "On the platform host" |
+| `QITS_PUBLIC_IP` | unset | **this host's public IPv4 address, and mandatory beside `QITS_DOMAIN`.** It is what the edge writes the node record with: the run hands it to the seed edge (`QITS_EDGE_DNS_NODE_ADDRESS` in the stack file) and to the deployed one (a settings row), the edge writes `node.<domain>` as an A record holding it, and every public name is a CNAME to that record. The run cannot learn it, because it is a container behind a NAT. Four dotted octets, no leading zeros; **a hostname is refused rather than resolved**, since the value becomes an A record a resolver later reads back. `--public-ip` for one run |
 | `QITS_ACME_MODE` | `staging` | **which Let's Encrypt directory the edge's certificate is ordered from**: `staging`, `production` or `off`. Staging by default and deliberately — production counts *failed* orders per registered domain per week, and the order most likely to fail is the first one, against records the world has not seen yet. Staging issues from an untrusted root, so a browser still refuses the certificate; it proves the records, the challenge and the reload for free. Flipping to production is one rerun with this set and **no redeploy**: the PEMs land on the `qits-edge-letsencrypt` volume under the same two names and the edge's TLS registry reloads them within the hour. `off` keeps the self-signed placeholder and prints the manual command. **A bootstrap refuses anything but `production`, before it starts**: this host's runner is an EDGE runner, and neither it nor docker accepts a staging or placeholder certificate — see phase 68. `--acme-mode` for one run |
 | `QITS_ACME_EMAIL` | `hostmaster@<domain>` | **the ACME account's contact**, where Let's Encrypt sends expiry warnings if a renewal ever stops happening. Derived rather than defaulted: `hostmaster` is the convention for the role that answers for a domain, so a platform with a domain has a working contact without a second knob to fill in. Set it when the mail for that domain is not read. `--acme-email` for one run |
-| `QITS_DNS_HETZNER_TOKEN` | unset | Hetzner Cloud token used by the edge to create and remove DNS-01 TXT records. Required when a domain uses `staging` or `production`; keep it out of source control. |
+| `QITS_DNS_HETZNER_TOKEN` | unset | Hetzner Cloud token for the domain's zone. The edge writes the zone's records and its DNS-01 TXT records with it; the bootstrap only reads the zone back (`dns-records`, the closing report) and never prints it. Required when a domain uses `staging` or `production`; keep it out of source control. |
 | `QITS_DNS_HETZNER_SECRET` | unset | Name of an existing Swarm secret containing the Hetzner token. Preferred for repeat bootstraps; when set, bootstrap verifies and reuses it instead of requiring the plaintext token. |
 | `QITS_SKIP_BUILD` | `0` | 1 = the seed images and the daemon binary exist; skip to the stack deploy and the pushes |
 | `QITS_SHIP_MAINS` | `0` | **ignored**, and kept only so an old `.env` does not fail a boot. It built and deployed the local mains instead of RESTORING each deployable's and publisher's newest release tag. A deployment is `qits/<app>:<version>` now and an unreleased main has no version, so there is nothing to point at — and honouring the build half alone would seed from main beside deployments of the last release, which is the Flyway mismatch the restore exists to prevent. A run that sets it is warned in the `sources` phase. Deploying your commit means cutting a release request in qits-projects |
@@ -307,29 +310,31 @@ is refused because the moment it is created is the last moment it can be changed
 and it is derived rather than written so an application this bootstrap gains reserves its own label.
 
 `--domain <domain>` and `--public-ip <ipv4>` are checked before the payload image is built, because
-both values leave this machine: they become a certificate request to Let's Encrypt and the records a
-person types at a dns provider, and a rerun with the spelling fixed undoes neither. A run without a
-domain is refused, and so is a domain without an address.
+both values leave this machine: they become a certificate request to Let's Encrypt and the records the
+edge writes at Hetzner, and a rerun with the spelling fixed undoes neither. A run without a domain is
+refused, and so is a domain without an address.
 
-**DNS IS NOT THIS PLATFORM'S, and the records go in before the run.** At whatever provider holds
-`<domain>`, as A records for `<QITS_PUBLIC_IP>`:
+**The zone is the edge's (qits-2292, qits-2293).** The domain's zone must exist at Hetzner, and the
+only DNS inputs are the token (`QITS_DNS_HETZNER_TOKEN`) and the address (`QITS_PUBLIC_IP`). The edge
+writes the rest itself, each RRSet labelled `qits-exposure=public` or `=private`:
 
-    @        the apex — the browser door, and no wildcard covers it
-    *        every <project>.<domain> door
-    *.*      every <env>.<project>.<domain> door, and the <app>.<project>.<domain> host of a
-             project with no environments
-    *.*.*    every <app>.<env>.<project>.<domain> host — each service's UI and its wire routes
+    node      A      <QITS_PUBLIC_IP> — the one address record
+    @         A      the apex, the browser door
+    <host>    CNAME  node.<domain>. — one per name the edge serves, the platform's own included
 
-A wildcard per depth rather than a record per name, which is what the edge's routing actually needs:
-the grammar is `<app>[.<env>].<project>.<domain>`, so every project door, every environment door and
-every application of every project there will ever be is covered, and adding any of them needs no
-dns step. The last record
-is the one that matters most in practice: a project is created by a person on a running platform, so
-without it every new project would be a dns edit. The apex is written out because no wildcard matches
-an apex, and depth five and beyond is left to answer NXDOMAIN — the edge stops reading after three
-labels and will not serve a name it cannot say the meaning of. Do it first, because the certificate
-order is answered over the public name — and the closing report prints the same set back with the
-address filled in.
+**No wildcard is needed, and none should be created.** A wildcard beside the edge's exact records is
+the mixed zone behind the qits-2273 and qits-2280 outages; delete any that a past bootstrap told you
+to create. A project created later gets its CNAME from the edge, with no dns step.
+
+**The bootstrap waits for the records rather than looking them up.** `dns-records`, the phase straight
+before `registry-ready`, polls the Hetzner API
+(`GET /v1/zones/<domain>/rrsets?label_selector=qits-exposure=public`, every page) until `node` A holds the given address and `registry.qits` is a
+CNAME to `node.<domain>.`, bounded by `QITS_EDGE_READY_TIMEOUT`. It makes no DNS lookup: a lookup
+before the record exists caches NXDOMAIN for the zone's negative TTL (an hour on wohlben.eu), which
+would stall `registry-ready` long after the record arrived. On a timeout, the seed edge's
+`host records` log lines say why it wrote nothing. The closing report's `dns:` lines read the zone
+back (the public and private RRSets, counted and named) and say whether `node.<domain>` and
+`idp.qits.<domain>` resolve to the given address — a mismatch is a line there, not a failed boot.
 
 The run then **orders the certificate**. The edge is not an ACME client — the Quarkus TLS extension gives
 it a challenge route on the main listener and, on the unpublished management port, one slot to fill
@@ -350,8 +355,8 @@ replaces a production certificate with a staging one.
 certbot answers every name of a multi-name order before the CA validates any of them — so a SAN
 certificate over the environment and app vhosts cannot be ordered through this endpoint. The apex is
 the name that matters: it is the browser's door and the passkey's relying party. Covering the rest
-wants a wildcard, a wildcard wants DNS-01, and DNS-01 wants a TXT record written at the dns provider
-mid-order — so it needs a provider API this program has no hook for yet.
+wants a wildcard, a wildcard wants DNS-01, and DNS-01 wants a TXT record written in the zone
+mid-order — which the edge now does itself, through the Hetzner API.
 
 **A wildcard covers ONE label, and the edge derives one per depth it routes at.** Names are read
 right to left, `<app>[.<env>].<project>.<domain>`, so the set is the apex, `*.<domain>` for every
@@ -786,6 +791,7 @@ workspaces and, after the desk cutover, the desks of this host are all leases on
 | 55–56 | `docker stack deploy` the seed (only what the deployer does not already manage — the rest is left out of the FILE, since a stack deploy takes no service list, and any seed SERVICE of a deployer-managed application is removed); wait for the idp, the edge, the gateway, the store, the mirror, the git host, the alias table (qits-projects, whose readiness is the three databases it refuses to boot without), ci, the deployer, the bus and the container orchestrator — all on qits-net. The orchestrator is polled at its own alias: it has no gateway route and must not have one, because every caller is a machine and a route would put a socket-holding service behind the platform's public door |
 | 57 | mint the ONE-TIME token the first account registers with (`POST /idp/api/register-tokens`, as the edge's own static client) and record it in `.qits-bootstrap.env`. Once per installation: a rerun that finds `IDP_REGISTER_TOKEN` there mints nothing, because every call makes another key to an admin account. A refusal WARNS and the boot goes on — nothing this platform runs waits on a person registering |
 | 58 | **fill the store, once and only here** (`store-seed`, qits-889): ONE container on qits-net uploads the whole `eu/wohlben/qits` subtree of the `qits-maven-seed` volume — the libraries at every pinned version, golden masters, pacts (phase 4's provider replays resolve them), the protocols, the runner, the toolchain tarballs — into `<artifactsUrl>/maven/maven`, a `curl -T` PUT per file presenting the commissioned `bootstrap-publish` bearer on every request. It is the first publish of the boot, so it is where that credential is commissioned: the idp is healthy by now, and there is no bare publish to fall back to — no idp or no secret fails the phase, and with the machine gate off the credential is presented all the same. Each file is asked for with a HEAD first and one the store holds is left alone with its checksums (release paths are immutable, and a rebuilt seed jar's bytes differ); poms go last; `maven-metadata.xml` is not sent, since the store derives it |
+| — | **`dns-records`: the registry's record is in the zone before anything looks the name up.** The Hetzner API with the run's token, every page of `rrsets?label_selector=qits-exposure=public`, until `node` A holds `QITS_PUBLIC_IP` and `registry.qits` is a CNAME to `node.<domain>.` — the seed edge writes both. No DNS lookup, so nothing is negatively cached; bounded by `QITS_EDGE_READY_TIMEOUT`, and a timeout names what is missing and points at the seed edge's `host records` log lines |
 | — | **`registry-ready`: the public registry name has its real certificate before the first push.** `https://registry.qits.<domain>/v2/` over the JVM's own trust store, waited for up to `QITS_EDGE_READY_TIMEOUT` — `edge-ready`'s probe for the `registry` label alone. A placeholder or staging certificate is a failed handshake and keeps it waiting; ACME off or staging is refused at once. A pass latches the `registry` label (the store is read there from now on); nothing pushes without it |
 | 59 | **push the six step images, the runner image and the workspace-side images of 44–48 into the store** — the bases too, because phase 4's release builds of the workspace and agent images start `FROM` them through the registry — `docker --config <dir> push registry.qits.<domain>/…` by the host's daemon, through the edge — refused unless `registry-ready` has passed, with the publishing credential as a pair in a 0700 directory of this phase's own. Since 2026-09-22 qits-ci pins a step image by asking the store for its digest and REFUSES a run the store cannot answer for, so an image the host daemon merely holds is an image no run may use. What the store already holds is left alone, which is every rerun and every live platform |
 | — | **with `QITS_DOMAIN` only**: nothing is ordered by this run. The edge orders its own Let's Encrypt certificate over DNS-01 from the moment the seed edge is up, and renews it there; the bootstrap neither runs certbot nor holds a challenge. What a domain boot DOES require is `QITS_ACME_MODE=production`, refused up front otherwise — see phase 68 |

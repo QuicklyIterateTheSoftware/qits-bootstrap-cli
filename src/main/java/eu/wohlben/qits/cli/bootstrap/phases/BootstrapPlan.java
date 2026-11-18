@@ -222,6 +222,11 @@ public final class BootstrapPlan {
         // store, so a placeholder or staging certificate is a failed handshake and no pass. There
         // is no loopback vhost to push through instead. Nothing before this needs a pushed image:
         // the first pull is the first seed deploy's, through this same name, further down.
+        // AND BEFORE THAT, THE NAME HAS TO EXIST (qits-2293). The seed edge writes
+        // registry.qits.<domain> into the Hetzner zone itself; this waits for it in the zone's own
+        // API, so the lookup registry-ready makes is the first one and finds the record — a lookup
+        // any earlier would cache NXDOMAIN for the zone's negative TTL.
+        phases.add(pipeline.dnsRecords());
         phases.add(pipeline.registryReady());
         //
         // THE IMAGES A RUN IS STARTED FROM, into the store — and the workspace and agent images and
