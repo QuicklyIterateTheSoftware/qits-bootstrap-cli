@@ -53,12 +53,12 @@
              bumps them, and a changed answer the bootstrap cannot read goes red here before it
              ships. Do not hand-edit them to chase a release. -->
         <qits.projects-golden-masters.version>2026.1116.190952</qits.projects-golden-masters.version>
-        <qits.events-golden-masters.version>2026.1118.203913</qits.events-golden-masters.version>
-        <qits.ci-golden-masters.version>2026.1113.31502</qits.ci-golden-masters.version>
-        <qits.deployments-golden-masters.version>2026.1117.72018</qits.deployments-golden-masters.version>
+        <qits.events-golden-masters.version>2026.1120.65904</qits.events-golden-masters.version>
+        <qits.ci-golden-masters.version>2026.1119.60052</qits.ci-golden-masters.version>
+        <qits.deployments-golden-masters.version>2026.1119.141022</qits.deployments-golden-masters.version>
         <qits.idp-golden-masters.version>2026.1109.13349</qits.idp-golden-masters.version>
         <qits.githost-golden-masters.version>2026.1109.41303</qits.githost-golden-masters.version>
-        <qits.artifacts-golden-masters.version>2026.1114.172104</qits.artifacts-golden-masters.version>
+        <qits.artifacts-golden-masters.version>2026.1120.62707</qits.artifacts-golden-masters.version>
         <!-- qits-system's (qits-1535): the targets doors the target-* phases call. The pinned
              release predates the targets module, so every row against it is pending until a
              qits-maintenance bump brings its states. qits-workspaces has no pin any more: the
