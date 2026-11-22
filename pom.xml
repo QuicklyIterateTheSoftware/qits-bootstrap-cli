@@ -43,7 +43,7 @@
         <!-- Every docker argv and the process host that runs it (qits-2212): the library the
              platform's own docker callers use, so a docker behaviour fix lands once. Released by
              qits-containers-javalib; qits-maintenance bumps it. -->
-        <qits.containers-driver.version>2026.1121.22941</qits.containers-driver.version>
+        <qits.containers-driver.version>2026.1121.232208</qits.containers-driver.version>
 
         <!-- Not in any BOM, so it is pinned here. -->
         <assertj.version>3.27.4</assertj.version>
@@ -63,7 +63,7 @@
              release predates the targets module, so every row against it is pending until a
              qits-maintenance bump brings its states. qits-workspaces has no pin any more: the
              bootstrap calls none of its doors since the target replaced its runner. -->
-        <qits.system-golden-masters.version>2026.1121.174825</qits.system-golden-masters.version>
+        <qits.system-golden-masters.version>2026.1122.1345</qits.system-golden-masters.version>
         <qits.containers-golden-masters.version>2026.1114.40637</qits.containers-golden-masters.version>
         <!-- pact-jvm, test scope only. An external library, so it moves by hand; the same version
              as the providers' verifiers and every other consumer on the estate. -->
