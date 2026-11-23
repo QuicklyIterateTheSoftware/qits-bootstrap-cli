@@ -1614,7 +1614,15 @@ class SeedPhasesTest {
                         && command.contains(BootstrapIngressLifecycle.CONTAINER))
                 .findFirst().orElseThrow();
         assertThat(started).containsSubsequence("-p", "80:8080");
-        assertThat(String.join(" ", started)).doesNotContain("443");
+        // Asserted directly, never as a joined substring: the argv carries the JUnit @TempDir
+        // path, whose random number occasionally contains "443" itself.
+        List<String> published = new ArrayList<>();
+        for (int i = 0; i < started.size() - 1; i++) {
+            if (started.get(i).equals("-p")) {
+                published.add(started.get(i + 1));
+            }
+        }
+        assertThat(published).containsExactly("80:8080");
         assertThat(Files.readString(boot.state.bootstrapIngressEnvFile))
                 .contains("QITS_BOOTSTRAP_INGRESS_MODE=PUBLIC_HTTP")
                 .doesNotContain("TLS_PORT");
