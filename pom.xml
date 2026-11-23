@@ -56,7 +56,7 @@
         <qits.events-golden-masters.version>2026.1120.65904</qits.events-golden-masters.version>
         <qits.ci-golden-masters.version>2026.1119.60052</qits.ci-golden-masters.version>
         <qits.deployments-golden-masters.version>2026.1119.141022</qits.deployments-golden-masters.version>
-        <qits.idp-golden-masters.version>2026.1122.143700</qits.idp-golden-masters.version>
+        <qits.idp-golden-masters.version>2026.1123.194348</qits.idp-golden-masters.version>
         <qits.githost-golden-masters.version>2026.1109.41303</qits.githost-golden-masters.version>
         <qits.artifacts-golden-masters.version>2026.1120.165405</qits.artifacts-golden-masters.version>
         <!-- qits-system's (qits-1535): the targets doors the target-* phases call. The pinned
