@@ -45,16 +45,17 @@ class GitTest {
     }
 
     /**
-     * <b>A tree cloned out of the wrapper points its entries at the wrapper's checkouts</b>, every
-     * {@code -c} before the subcommand, and the file transport allowed for them.
+     * <b>A tree cloned out of the wrapper points its entries back at the org</b>, every {@code -c}
+     * before the subcommand.
      */
     @Test
-    void localUrlsAreOverridesBeforeTheSubcommand() {
+    void urlOverridesComeBeforeTheSubcommand() {
         assertThat(Git.submodulesShallowCommand(Path.of("/src/qits-ci-service"),
-                Map.of("qits-ci-frontend", Path.of("/w/components/qits-ci/qits-ci-frontend"))))
+                Map.of("qits-ci-frontend",
+                        "https://github.com/QuicklyIterateTheSoftware/qits-ci-frontend.git")))
                 .containsExactly("git", "-C", "/src/qits-ci-service",
-                        "-c", "protocol.file.allow=always",
-                        "-c", "submodule.qits-ci-frontend.url=/w/components/qits-ci/qits-ci-frontend",
+                        "-c", "submodule.qits-ci-frontend.url="
+                                + "https://github.com/QuicklyIterateTheSoftware/qits-ci-frontend.git",
                         "submodule", "update", "--init", "--checkout", "--force", "--depth", "1");
         assertThat(Git.submodulesShallowCommand(Path.of("/src/x"), Map.of()))
                 .isEqualTo(Git.submodulesShallowCommand(Path.of("/src/x")));
@@ -62,11 +63,11 @@ class GitTest {
 
     /**
      * <b>And it works against real git</b>: a relative {@code ../fe.git} in a tree cloned from a
-     * local path names a directory that does not exist, and fails; overridden with the sibling
-     * checkout, the nested tree is checked out.
+     * local path names a directory that does not exist, and fails; overridden with a remote url —
+     * {@code file://} here, standing in for the org — the nested tree is checked out at its gitlink.
      */
     @Test
-    void aRelativeUrlInALocalCloneResolvesToTheSibling(@TempDir Path temp) throws Exception {
+    void aRelativeUrlInALocalCloneIsPointedBackAtTheRemote(@TempDir Path temp) throws Exception {
         Path fe = temp.resolve("fe");
         git(temp, "init", "-q", "-b", "main", fe.toString());
         Files.writeString(fe.resolve("index.html"), "fe");
@@ -74,8 +75,7 @@ class GitTest {
         git(fe, "commit", "-qm", "fe");
         Path service = temp.resolve("service");
         git(temp, "init", "-q", "-b", "main", service.toString());
-        git(service, "-c", "protocol.file.allow=always", "submodule", "add", "-q", fe.toString(),
-                "webui");
+        git(service, "submodule", "add", "-q", fe.toUri().toString(), "webui");
         git(service, "config", "-f", ".gitmodules", "submodule.webui.url", "../fe.git");
         git(service, "add", ".");
         git(service, "commit", "-qm", "service");
@@ -83,7 +83,8 @@ class GitTest {
         git(temp, "clone", "-q", service.toString(), clone.toString());
 
         assertThat(run(Git.submodulesShallowCommand(clone)).exitCode).isNotZero();
-        Result fixed = run(Git.submodulesShallowCommand(clone, Map.of("webui", fe)));
+        Result fixed = run(Git.submodulesShallowCommand(clone,
+                Map.of("webui", fe.toUri().toString())));
 
         assertThat(fixed.exitCode).as(fixed.out).isZero();
         assertThat(clone.resolve("webui/index.html")).hasContent("fe");
@@ -91,11 +92,17 @@ class GitTest {
 
     private record Result(int exitCode, String out) {}
 
-    /** No global config, so neither the developer's nor CI's protocol settings decide the test. */
+    /**
+     * No global or system config, so neither the developer's nor CI's settings decide the test —
+     * and {@code file://} allowed here alone, since git refuses it for submodules by default.
+     */
     private static Result run(List<String> command) throws Exception {
         ProcessBuilder builder = new ProcessBuilder(command).redirectErrorStream(true);
         builder.environment().put("GIT_CONFIG_GLOBAL", "/dev/null");
         builder.environment().put("GIT_CONFIG_NOSYSTEM", "1");
+        builder.environment().put("GIT_CONFIG_COUNT", "1");
+        builder.environment().put("GIT_CONFIG_KEY_0", "protocol.file.allow");
+        builder.environment().put("GIT_CONFIG_VALUE_0", "always");
         builder.environment().put("GIT_AUTHOR_NAME", "t");
         builder.environment().put("GIT_AUTHOR_EMAIL", "t@t");
         builder.environment().put("GIT_COMMITTER_NAME", "t");

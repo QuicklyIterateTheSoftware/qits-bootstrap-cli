@@ -86,9 +86,9 @@ public class Git {
      * branch tip: git asks the remote for the sha itself, which GitHub answers for any reachable
      * commit.
      */
-    public ProcessResult submodulesShallow(Path repo, Map<String, Path> localUrls,
+    public ProcessResult submodulesShallow(Path repo, Map<String, String> urls,
                                            Consumer<String> out) {
-        return runner.run(Cmd.of(submodulesShallowCommand(repo, localUrls))
+        return runner.run(Cmd.of(submodulesShallowCommand(repo, urls))
                 .timeout(Duration.ofMinutes(30)), out);
     }
 
@@ -98,27 +98,22 @@ public class Git {
     }
 
     /**
-     * The same, with some entries' urls pointed at checkouts on this machine.
+     * The same, with some entries' urls overridden for this one command (qits-2516).
      * <p>
      * <b>A relative url does not survive a clone from a local path.</b> {@code ../<name>.git} is
      * resolved against the clone's origin, and for a repository cloned out of the operator's wrapper
      * that is {@code <wrapper>/components/<component>/<name>.git} — a directory that does not exist,
-     * because git strips no {@code .git} from a local path. So the entry is overridden with the
-     * wrapper's own checkout of the repository it names, for this one command.
-     * {@code protocol.file.allow=always} goes with it: since git 2.38.1 a submodule may not be
-     * cloned over the file transport by default, and refuses with {@code transport 'file' not
-     * allowed}. No override, no extra option — a repository cloned from the org gets exactly the
-     * command it always did.
+     * because git strips no {@code .git} from a local path. So each entry is pointed back at its
+     * twin in the org, which is where the absolute url resolved before, and which answers for the
+     * gitlink whatever the wrapper's own checkout of that frontend is pinned at. No override, no
+     * {@code -c} — a repository cloned from the org gets exactly the command it always did.
      *
-     * @param localUrls entry name to the local checkout that entry should be cloned from
+     * @param urls entry name to the url that entry is cloned from
      */
-    static List<String> submodulesShallowCommand(Path repo, Map<String, Path> localUrls) {
+    static List<String> submodulesShallowCommand(Path repo, Map<String, String> urls) {
         List<String> command = new ArrayList<>(List.of("git", "-C", repo.toString()));
-        if (!localUrls.isEmpty()) {
-            command.addAll(List.of("-c", "protocol.file.allow=always"));
-            new TreeMap<>(localUrls).forEach((entry, path) ->
-                    command.addAll(List.of("-c", "submodule." + entry + ".url=" + path)));
-        }
+        new TreeMap<>(urls).forEach((entry, url) ->
+                command.addAll(List.of("-c", "submodule." + entry + ".url=" + url)));
         command.addAll(List.of("submodule", "update",
                 "--init", "--checkout", "--force", "--depth", "1"));
         return List.copyOf(command);

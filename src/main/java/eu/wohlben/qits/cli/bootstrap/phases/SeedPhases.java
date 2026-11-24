@@ -819,15 +819,14 @@ public class SeedPhases {
     // --- seed images ------------------------------------------------------------------------------
 
     /**
-     * <b>The wrapper's own checkouts of the submodules a source tree declares, by entry name — but
-     * only for a tree the {@code sources} phase cloned out of the wrapper.</b> Such a clone's
-     * origin is a local path, and a relative submodule url ({@code ../qits-ci-frontend.git})
-     * resolves beside it to a directory that does not exist; the sibling checkout is the same
-     * repository and is what the entry is pointed at instead ({@code Git.submodulesShallowCommand}).
-     * A tree cloned from the org resolves its urls against GitHub and gets nothing here, as does an
-     * entry whose repository the wrapper has not checked out.
+     * <b>Every submodule a source tree declares, pointed back at its twin in the org — but only
+     * for a tree the {@code sources} phase cloned out of the wrapper</b> (qits-2516). Such a
+     * clone's origin is a local path, and a relative url ({@code ../qits-ci-frontend.git})
+     * resolves beside it to a directory that does not exist; the org is where it resolved before
+     * the url went relative ({@code Git.submodulesShallowCommand}). A tree cloned from the org
+     * resolves its relative urls there already and gets nothing here.
      */
-    private Map<String, Path> localSubmoduleUrls(String name, Path repo) {
+    private Map<String, String> orgSubmoduleUrls(String name, Path repo) {
         Path gitmodules = repo.resolve(GitmodulesParser.PATH);
         if (!boot.git.isCheckout(boot.state.wrapperCheckout(name))
                 || !Files.isRegularFile(gitmodules)) {
@@ -839,12 +838,9 @@ public class SeedPhases {
         } catch (IOException e) {
             throw new IllegalStateException("cannot read " + gitmodules, e);
         }
-        Map<String, Path> urls = new LinkedHashMap<>();
+        Map<String, String> urls = new LinkedHashMap<>();
         for (GitmodulesParser.Submodule module : GitmodulesParser.parse(content)) {
-            boot.state.wrapperModules().path(module.name())
-                    .map(boot.state.wrapperDir::resolve)
-                    .filter(boot.git::isCheckout)
-                    .ifPresent(sibling -> urls.put(module.entry(), sibling));
+            urls.put(module.entry(), boot.config.orgUrl() + "/" + module.name() + ".git");
         }
         return urls;
     }
@@ -853,7 +849,7 @@ public class SeedPhases {
         return new Phase("seed-image-" + name, "build the seed image qits/" + name + ":latest", ctx -> {
             Path repo = boot.state.repoDir(name);
             ctx.status("fetching submodules of qits-" + name);
-            Boot.must(boot.git.submodulesShallow(repo, localSubmoduleUrls(name, repo), ctx::log),
+            Boot.must(boot.git.submodulesShallow(repo, orgSubmoduleUrls(name, repo), ctx::log),
                     "submodule checkout of qits-" + name + " failed");
 
             // THE REAL CLIENT, built from the webui gitlink the checkout just stood (qits-889). Its
@@ -951,7 +947,7 @@ public class SeedPhases {
                         Path repo = boot.state.repoDir(name);
                         ctx.status("reading the client lock of " + PlatformModel.repo(name));
                         Boot.must(boot.git.submodulesShallow(repo,
-                                        localSubmoduleUrls(name, repo), ctx::log),
+                                        orgSubmoduleUrls(name, repo), ctx::log),
                                 "submodule checkout of " + PlatformModel.repo(name) + " failed");
                         for (NpmSeed.Pkg pin : clientPins(name, repo)) {
                             pinnedBy.merge(pin, PlatformModel.repo(name), (a, b) -> a + ", " + b);
