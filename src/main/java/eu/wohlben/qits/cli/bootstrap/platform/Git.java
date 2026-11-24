@@ -9,6 +9,8 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.function.Consumer;
 
 /** The host's git. Same binary the user runs, same checkouts, same credentials. */
@@ -84,15 +86,42 @@ public class Git {
      * branch tip: git asks the remote for the sha itself, which GitHub answers for any reachable
      * commit.
      */
-    public ProcessResult submodulesShallow(Path repo, Consumer<String> out) {
-        return runner.run(Cmd.of(submodulesShallowCommand(repo))
+    public ProcessResult submodulesShallow(Path repo, Map<String, Path> localUrls,
+                                           Consumer<String> out) {
+        return runner.run(Cmd.of(submodulesShallowCommand(repo, localUrls))
                 .timeout(Duration.ofMinutes(30)), out);
     }
 
     /** The command, in one place, so the flags that make a rerun survivable are provable. */
     static List<String> submodulesShallowCommand(Path repo) {
-        return List.of("git", "-C", repo.toString(), "submodule", "update",
-                "--init", "--checkout", "--force", "--depth", "1");
+        return submodulesShallowCommand(repo, Map.of());
+    }
+
+    /**
+     * The same, with some entries' urls pointed at checkouts on this machine.
+     * <p>
+     * <b>A relative url does not survive a clone from a local path.</b> {@code ../<name>.git} is
+     * resolved against the clone's origin, and for a repository cloned out of the operator's wrapper
+     * that is {@code <wrapper>/components/<component>/<name>.git} — a directory that does not exist,
+     * because git strips no {@code .git} from a local path. So the entry is overridden with the
+     * wrapper's own checkout of the repository it names, for this one command.
+     * {@code protocol.file.allow=always} goes with it: since git 2.38.1 a submodule may not be
+     * cloned over the file transport by default, and refuses with {@code transport 'file' not
+     * allowed}. No override, no extra option — a repository cloned from the org gets exactly the
+     * command it always did.
+     *
+     * @param localUrls entry name to the local checkout that entry should be cloned from
+     */
+    static List<String> submodulesShallowCommand(Path repo, Map<String, Path> localUrls) {
+        List<String> command = new ArrayList<>(List.of("git", "-C", repo.toString()));
+        if (!localUrls.isEmpty()) {
+            command.addAll(List.of("-c", "protocol.file.allow=always"));
+            new TreeMap<>(localUrls).forEach((entry, path) ->
+                    command.addAll(List.of("-c", "submodule." + entry + ".url=" + path)));
+        }
+        command.addAll(List.of("submodule", "update",
+                "--init", "--checkout", "--force", "--depth", "1"));
+        return List.copyOf(command);
     }
 
     public String head(Path repo) {

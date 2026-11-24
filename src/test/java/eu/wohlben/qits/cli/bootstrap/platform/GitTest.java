@@ -1,9 +1,14 @@
 package eu.wohlben.qits.cli.bootstrap.platform;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -37,6 +42,74 @@ class GitTest {
     void theRefreshStaysShallow() {
         assertThat(Git.submodulesShallowCommand(Path.of("/src/x")))
                 .containsSequence("--depth", "1");
+    }
+
+    /**
+     * <b>A tree cloned out of the wrapper points its entries at the wrapper's checkouts</b>, every
+     * {@code -c} before the subcommand, and the file transport allowed for them.
+     */
+    @Test
+    void localUrlsAreOverridesBeforeTheSubcommand() {
+        assertThat(Git.submodulesShallowCommand(Path.of("/src/qits-ci-service"),
+                Map.of("qits-ci-frontend", Path.of("/w/components/qits-ci/qits-ci-frontend"))))
+                .containsExactly("git", "-C", "/src/qits-ci-service",
+                        "-c", "protocol.file.allow=always",
+                        "-c", "submodule.qits-ci-frontend.url=/w/components/qits-ci/qits-ci-frontend",
+                        "submodule", "update", "--init", "--checkout", "--force", "--depth", "1");
+        assertThat(Git.submodulesShallowCommand(Path.of("/src/x"), Map.of()))
+                .isEqualTo(Git.submodulesShallowCommand(Path.of("/src/x")));
+    }
+
+    /**
+     * <b>And it works against real git</b>: a relative {@code ../fe.git} in a tree cloned from a
+     * local path names a directory that does not exist, and fails; overridden with the sibling
+     * checkout, the nested tree is checked out.
+     */
+    @Test
+    void aRelativeUrlInALocalCloneResolvesToTheSibling(@TempDir Path temp) throws Exception {
+        Path fe = temp.resolve("fe");
+        git(temp, "init", "-q", "-b", "main", fe.toString());
+        Files.writeString(fe.resolve("index.html"), "fe");
+        git(fe, "add", "index.html");
+        git(fe, "commit", "-qm", "fe");
+        Path service = temp.resolve("service");
+        git(temp, "init", "-q", "-b", "main", service.toString());
+        git(service, "-c", "protocol.file.allow=always", "submodule", "add", "-q", fe.toString(),
+                "webui");
+        git(service, "config", "-f", ".gitmodules", "submodule.webui.url", "../fe.git");
+        git(service, "add", ".");
+        git(service, "commit", "-qm", "service");
+        Path clone = temp.resolve("src");
+        git(temp, "clone", "-q", service.toString(), clone.toString());
+
+        assertThat(run(Git.submodulesShallowCommand(clone)).exitCode).isNotZero();
+        Result fixed = run(Git.submodulesShallowCommand(clone, Map.of("webui", fe)));
+
+        assertThat(fixed.exitCode).as(fixed.out).isZero();
+        assertThat(clone.resolve("webui/index.html")).hasContent("fe");
+    }
+
+    private record Result(int exitCode, String out) {}
+
+    /** No global config, so neither the developer's nor CI's protocol settings decide the test. */
+    private static Result run(List<String> command) throws Exception {
+        ProcessBuilder builder = new ProcessBuilder(command).redirectErrorStream(true);
+        builder.environment().put("GIT_CONFIG_GLOBAL", "/dev/null");
+        builder.environment().put("GIT_CONFIG_NOSYSTEM", "1");
+        builder.environment().put("GIT_AUTHOR_NAME", "t");
+        builder.environment().put("GIT_AUTHOR_EMAIL", "t@t");
+        builder.environment().put("GIT_COMMITTER_NAME", "t");
+        builder.environment().put("GIT_COMMITTER_EMAIL", "t@t");
+        Process process = builder.start();
+        String out = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        return new Result(process.waitFor(), out);
+    }
+
+    private static void git(Path in, String... args) throws Exception {
+        List<String> command = new ArrayList<>(List.of("git", "-C", in.toString()));
+        command.addAll(List.of(args));
+        Result result = run(command);
+        assertThat(result.exitCode).as(result.out).isZero();
     }
 
     /**
