@@ -192,7 +192,8 @@ public final class BootstrapPlan {
         phases.add(pipeline.seedIdp());
         phases.add(seed.idpClients());
         String domain = boot.config.requiredDomain();
-        phases.add(seed.dnsHetznerSecret(domain));
+        // No edge-dns-secret phase before the stack file any more (qits-2618): the seed edge
+        // mounts no Hetzner token. It calls through qits-egress, which holds the token.
         phases.add(seed.composeFile());
         // BEFORE the edge is started with a keystore, which is what the next phase does: a keystore
         // naming files that do not exist fails startup, so the volume has to hold a certificate

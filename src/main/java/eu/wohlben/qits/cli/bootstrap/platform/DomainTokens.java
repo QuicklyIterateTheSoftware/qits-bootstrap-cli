@@ -3,9 +3,6 @@ package eu.wohlben.qits.cli.bootstrap.platform;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 
 /**
  * What {@code QITS_DOMAIN} adds to the seed stack file, as template values.
@@ -36,30 +33,28 @@ public final class DomainTokens {
 
     /** The token values for this domain, with the defaults a fixture wants. */
     public static Map<String, String> of(String domain) {
-        return of(domain, "staging", "hostmaster@" + domain, "");
+        return of(domain, "staging", "hostmaster@" + domain);
     }
 
     /** The complete edge runtime contract for an externally served domain. */
-    public static Map<String, String> of(String domain, String mode, String email,
-            String hetznerToken) {
-        return of(domain, mode, email, hetznerToken, Optional.empty());
-    }
-
-    /** The complete edge runtime contract, optionally reusing an existing Swarm secret. */
-    public static Map<String, String> of(String domain, String mode, String email,
-            String hetznerToken, Optional<String> existingSecret) {
-        return of(domain, mode, email, hetznerToken, existingSecret, List.of());
+    public static Map<String, String> of(String domain, String mode, String email) {
+        return of(domain, mode, email, List.of());
     }
 
     /** The same, with extra names and the fixture's node address. */
     public static Map<String, String> of(String domain, String mode, String email,
-            String hetznerToken, Optional<String> existingSecret, List<String> extraSans) {
-        return of(domain, mode, email, hetznerToken, existingSecret, extraSans, FIXTURE_ADDRESS);
+            List<String> extraSans) {
+        return of(domain, mode, email, extraSans, FIXTURE_ADDRESS);
     }
 
     /**
      * The complete edge runtime contract, with the names the certificate must carry beyond the
      * wildcards the edge derives for itself.
+     * <p>
+     * <b>No Hetzner token is part of it</b> (qits-2523, qits-2618): the edge sends every Hetzner
+     * call through qits-egress with its own qits bearer, and the token is qits-egress's route
+     * secret, written as a deployer setting ({@link DeploymentSettings}). So the stack file mounts
+     * no swarm secret into the edge and spells no {@code QITS_EDGE_ACME_HETZNER_TOKEN_FILE}.
      *
      * @param extraSans checked names inside the domain — see {@code ExtraSans}. Empty is the
      *     ordinary platform and spells no key at all: an empty list and an absent one are the same
@@ -68,15 +63,12 @@ public final class DomainTokens {
      *     with, the record every public name of the platform is a CNAME to (qits-2292)
      */
     public static Map<String, String> of(String domain, String mode, String email,
-            String hetznerToken, Optional<String> existingSecret, List<String> extraSans,
-            String nodeAddress) {
+            List<String> extraSans, String nodeAddress) {
         Map<String, String> values = new LinkedHashMap<>();
         String additional = String.join(",", extraSans);
-        String secret = existingSecret.map(String::strip).filter(value -> !value.isEmpty())
-                .orElseGet(() -> secretName(hetznerToken));
-        values.put("LETSENCRYPT_VOLUME", letsEncryptVolume(secret));
+        values.put("LETSENCRYPT_VOLUME", LETSENCRYPT_VOLUME);
         values.put("EDGE_SEED_TLS_PORTS", EDGE_TLS_PORTS);
-        values.put("EDGE_TLS", edgeTls(mode, email, secret, additional, nodeAddress));
+        values.put("EDGE_TLS", edgeTls(mode, email, additional, nodeAddress));
         values.put("SEED_DOMAIN", seedDomain(domain));
         return values;
     }
@@ -109,8 +101,7 @@ public final class DomainTokens {
             + "      QITS_DOMAIN: " + domain;
     }
 
-    private static String letsEncryptVolume(String secretName) {
-        return "\n"
+    private static final String LETSENCRYPT_VOLUME = "\n"
             + "  # THE EDGE'S TLS MATERIAL.\n"
             + "  # It holds the placeholder certificate this bootstrap writes before the edge first\n"
             + "  # starts with a keystore; the edge replaces it with versioned DNS-01 PEMs and\n"
@@ -118,11 +109,7 @@ public final class DomainTokens {
             + "  # naming files that are not there refuses to start, so the\n"
             + "  # volume, the placeholder and the env on the edge are one decision.\n"
             + "  qits-edge-letsencrypt:\n"
-            + "    name: qits-edge-letsencrypt\n"
-            + "secrets:\n"
-            + "  " + secretName + ":\n"
-            + "    external: true";
-    }
+            + "    name: qits-edge-letsencrypt";
 
     private static final String EDGE_TLS_PORTS = "\n"
             + "      # DNS-01 needs no public challenge listener; only the TLS port is added.\n"
@@ -158,8 +145,8 @@ public final class DomainTokens {
                 : "\n" + prefix + "QITS_EDGE_ACME_ADDITIONAL_NAMES" + separator + names;
     }
 
-    private static String edgeTls(String mode, String email, String secretName,
-            String additionalNames, String nodeAddress) {
+    private static String edgeTls(String mode, String email, String additionalNames,
+            String nodeAddress) {
         return "\n"
             + "      # WHERE THE CERTIFICATE IS READ FROM, and the whole of what wakes the image's\n"
             + "      # certificate support: it remains inert\n"
@@ -176,33 +163,31 @@ public final class DomainTokens {
             + "      QITS_EDGE_ACME_ENABLED: \"true\"\n"
             + "      QITS_EDGE_ACME_MODE: " + mode + "\n"
             + "      QITS_EDGE_ACME_EMAIL: " + email + "\n"
-            + "      QITS_EDGE_ACME_HETZNER_TOKEN_FILE: /run/secrets/qits-dns-hetzner-token\n"
-            + "      # THE NODE RECORD'S ADDRESS. With the token above, the edge writes node.<domain>\n"
-            + "      # with it, the apex, and one CNAME to node.<domain>. per public host: the\n"
-            + "      # zone is the edge's to keep, and the bootstrap waits for it (dns-records).\n"
+            + "      # NO HETZNER TOKEN (qits-2523): the edge sends its DNS-01 TXT records and its\n"
+            + "      # address records through qits-egress's `hetzner` route with its own qits\n"
+            + "      # bearer, and the token is qits-egress's route secret.\n"
+            + "      # THE NODE RECORD'S ADDRESS. The edge writes node.<domain> with it, the apex,\n"
+            + "      # and one CNAME to node.<domain>. per public host: the zone is the edge's to\n"
+            + "      # keep, and the bootstrap waits for it (dns-records).\n"
             + "      QITS_EDGE_DNS_NODE_ADDRESS: " + nodeAddress
             + acmeAdditionalNames(additionalNames, "      ", ": ") + "\n"
             + "    volumes:\n"
-            + "      - qits-edge-letsencrypt:/work/.letsencrypt\n"
-            + "    secrets:\n"
-            + "      - source: " + secretName + "\n"
-            + "        target: qits-dns-hetzner-token";
+            + "      - qits-edge-letsencrypt:/work/.letsencrypt";
     }
 
     /**
-     * <b>Why a swarm-secret-only configuration is refused.</b> {@code QITS_DNS_HETZNER_SECRET} names
-     * a secret this program can create and the SEED edge can mount; the DEPLOYED edge cannot. The
-     * deployer starts its successor with its settings, which carry env and no swarm secrets at all —
-     * so the token has to be a value the CLI can write into the settings store, and a run that holds
-     * only a secret name has nothing to hand over.
+     * <b>Why a swarm-secret-only configuration is refused</b> (qits-2618). {@code
+     * QITS_DNS_HETZNER_SECRET} named a swarm secret this program mounted into the SEED edge. Nothing
+     * reads a swarm secret any more: the token is qits-egress's route secret, and qits-egress takes
+     * its environment from the deployer's settings store, which this program writes through the
+     * settings door — rows of env, with no swarm secrets in them. A secret's VALUE never leaves the
+     * swarm, so a run that holds only its name has nothing to write there.
      * <p>
-     * <b>Refused at preflight rather than discovered at the cutover.</b> The seed edge serves TLS
-     * from the mounted secret for the whole boot; the failure arrives an hour later, as a deployed
-     * edge on the self-signed placeholder logging {@code NoSuchFileException} once a minute, which
-     * is what happened on 2026-09-05. The option stays because the secret is the direction; the
-     * deployer's gap is what blocks it.
+     * <b>Refused at preflight rather than dropped.</b> Ignoring the name would end the same way the
+     * old secret-only boots did on 2026-09-05: an edge whose every certificate order fails, on the
+     * self-signed placeholder. With a token given beside it, the name is simply not read.
      *
-     * @return the refusal, or null when this run can hand the deployed edge a token
+     * @return the refusal, or null when this run can hand qits-egress a token
      */
     public static String hetznerTokenRefusal(boolean acmeEnabled, String token, String secret) {
         boolean haveToken = token != null && !token.isBlank();
@@ -210,24 +195,11 @@ public final class DomainTokens {
         if (!acmeEnabled || haveToken || !haveSecret) {
             return null;
         }
-        return "QITS_DNS_HETZNER_SECRET names a swarm secret and QITS_DNS_HETZNER_TOKEN is unset, "
-                + "so this run cannot hand the DEPLOYED edge its DNS-01 credential: the deployer "
-                + "starts a successor with its settings, which carry env and no swarm secrets, "
-                + "so the edge would find no token, fail every certificate order and end "
-                + "on the self-signed placeholder. Set QITS_DNS_HETZNER_TOKEN to the token's value "
-                + "and rerun; the seed edge keeps using the secret either way.";
-    }
-
-    public static String secretName(String token) {
-        if (token == null || token.isBlank()) {
-            return "qits-dns-hetzner-token-missing";
-        }
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256")
-                    .digest(token.getBytes(StandardCharsets.UTF_8));
-            return "qits-dns-hetzner-token-" + java.util.HexFormat.of().formatHex(digest, 0, 6);
-        } catch (java.security.NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException(impossible);
-        }
+        return "QITS_DNS_HETZNER_SECRET is no longer read and QITS_DNS_HETZNER_TOKEN is unset. "
+                + "The Hetzner token is qits-egress's route secret (QITS_EGRESS_SECRET_HETZNER_DNS), "
+                + "a deployer setting this run writes as a value, and a swarm secret's value never "
+                + "leaves the swarm — so the edge's DNS-01 and its records would have no "
+                + "credential. Set QITS_DNS_HETZNER_TOKEN to the token's value, drop "
+                + "QITS_DNS_HETZNER_SECRET, and rerun.";
     }
 }

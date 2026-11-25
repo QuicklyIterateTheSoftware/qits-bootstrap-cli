@@ -7,7 +7,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -98,8 +97,7 @@ class ComposeTemplateTest {
     /** The same values again, with names the derived wildcards cannot reach. */
     static Map<String, String> tokens(String domain, List<String> extraSans) {
         Map<String, String> values = tokens(domain);
-        values.putAll(DomainTokens.of(domain, "staging", "hostmaster@" + domain,
-                "hetzner-token", Optional.empty(), extraSans));
+        values.putAll(DomainTokens.of(domain, "staging", "hostmaster@" + domain, extraSans));
         return values;
     }
 
@@ -1569,17 +1567,13 @@ class ComposeTemplateTest {
         assertThat(compose).doesNotContain("INSECURE_REQUESTS");
     }
 
+    /** No swarm secret in the stack since qits-2618: the edge calls Hetzner through qits-egress. */
     @Test
-    void aDomainCanReuseAnExistingDnsSecret() {
-        String existing = "qits-dns-hetzner-token-v1";
-        Map<String, String> values = tokens(DOMAIN);
-        values.putAll(DomainTokens.of(DOMAIN, "staging",
-                "hostmaster@" + DOMAIN, "", Optional.of(existing)));
-
-        String compose = ComposeTemplate.compose(values);
-        assertThat(compose).contains("secrets:\n  " + existing + ":\n    external: true")
-                .contains("- source: " + existing)
-                .doesNotContain("qits-dns-hetzner-token-e3b0c44298fc");
+    void theStackCarriesNoDnsSecret() {
+        String compose = ComposeTemplate.compose(tokens(DOMAIN));
+        assertThat(compose).doesNotContain("qits-dns-hetzner-token")
+                .doesNotContain("QITS_EDGE_ACME_HETZNER_TOKEN");
+        assertThat(compose.lines()).doesNotContain("secrets:", "    secrets:");
     }
 
     @Test

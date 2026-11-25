@@ -16,8 +16,9 @@ import java.util.List;
  * only this run knows — a domain, a password it generated, the port it was told, the ACME account.
  * <p>
  * <b>Only what applies is stated.</b> {@code QITS_PORT} names only when the port is not the
- * images' default of 8080, the daemon override only when this run built one, the DNS token and
- * the node address beside it only when there is a token, the additional certificate names only when there are any. A key a run has
+ * images' default of 8080, the daemon override only when this run built one, the DNS token
+ * (qits-egress's route secret) and the edge's node address beside it only when there is a token,
+ * the additional certificate names only when there are any. A key a run has
  * nothing to say about is left unwritten rather than written empty.
  * <p>
  * <b>Values are never printed.</b> {@link Setting#toString} names the place and the key alone,
@@ -92,12 +93,17 @@ public final class DeploymentSettings {
                 settings.add(plain(edge, "QITS_EDGE_ACME_MODE", in.acmeMode()));
             }
             settings.add(plain(edge, "QITS_EDGE_ACME_EMAIL", in.acmeEmail()));
-            // A VALUE, never the _FILE form the seed edge reads: the deployer mounts no swarm
-            // secrets, and the file form wins when both are set.
+            // THE TOKEN IS qits-egress'S, NOT THE EDGE'S (qits-2523, qits-2618). The edge sends its
+            // Hetzner calls — the DNS-01 TXT records and the address records — to qits-egress's
+            // `hetzner` route with its own qits bearer, and qits-egress injects the token held in
+            // its route secret QITS_EGRESS_SECRET_<NAME>. So the edge is given no token at all, and
+            // the one row that carries it is qits-egress's. A VALUE, because the deployer mounts no
+            // swarm secrets.
             if (present(in.hetznerToken())) {
-                settings.add(secret(edge, "QITS_EDGE_ACME_HETZNER_TOKEN", in.hetznerToken()));
-                // What the edge writes node.<domain> with, beside the token it writes it through
-                // (qits-2292). Without it the deployed edge keeps no public record at all.
+                settings.add(secret(PlatformModel.application("egress"),
+                        "QITS_EGRESS_SECRET_HETZNER_DNS", in.hetznerToken()));
+                // What the edge writes node.<domain> with (qits-2292), through qits-egress. Without
+                // it the deployed edge keeps no public record at all.
                 settings.add(plain(edge, "QITS_EDGE_DNS_NODE_ADDRESS", in.nodeAddress()));
             }
             // Names the derived wildcards cannot reach; usually none, and then no key.

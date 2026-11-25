@@ -130,14 +130,15 @@ class StackFileTest {
     void theNetworkIsExternalAndDeclaredOnce() {
         assertThat(stack()).contains("  qits-net:\n").contains("    name: qits-net\n")
                 .contains("    external: true\n");
-        // Declared once. The one other external object is the edge's DNS-01 token, a swarm secret
-        // this run creates before the stack is deployed.
+        // Declared once, and the only external object: the edge's DNS-01 token is no swarm
+        // secret any more (qits-2618) — it is qits-egress's route secret, a deployer setting.
         assertThat(stack().lines().filter(line -> line.equals("  qits-net:")).count())
                 .isEqualTo(1);
         assertThat(stack().lines().filter(line -> line.equals("    external: true")).count())
-                .isEqualTo(2);
-        assertThat(stack()).contains("secrets:\n  qits-dns-hetzner-token-missing:\n"
-                + "    external: true");
+                .isEqualTo(1);
+        assertThat(stack()).doesNotContain("qits-dns-hetzner-token")
+                .doesNotContain("QITS_EDGE_ACME_HETZNER_TOKEN");
+        assertThat(stack().lines()).doesNotContain("secrets:");
     }
 
     /**

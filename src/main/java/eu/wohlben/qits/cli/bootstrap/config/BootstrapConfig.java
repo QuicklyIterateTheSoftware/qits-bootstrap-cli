@@ -85,7 +85,8 @@ public interface BootstrapConfig {
      * mandatory beside this, because the edge needs an address to write the node record with.
      * <p>
      * <b>THE ZONE IS AT HETZNER, AND THE EDGE KEEPS IT</b> (qits-2292). It writes
-     * {@code node.<domain>}, the apex and one CNAME per host through {@code QITS_DNS_HETZNER_TOKEN};
+     * {@code node.<domain>}, the apex and one CNAME per host through qits-egress, which holds
+     * {@code QITS_DNS_HETZNER_TOKEN};
      * nothing is typed in by hand, and no wildcard is wanted. The {@code dns-records} phase waits
      * for the records the first push needs, and the closing report reads the zone back.
      * <p>
@@ -175,13 +176,18 @@ public interface BootstrapConfig {
     Optional<String> acmeExtraSans();
 
     /**
-     * The Hetzner Cloud token for the domain's zone. The edge writes the zone's records and its
-     * DNS-01 TXT records with it; this run only reads the zone back ({@code dns-records}, the
-     * closing report) and never logs it.
+     * The Hetzner Cloud token for the domain's zone. It is written as qits-egress's route secret
+     * ({@code QITS_EGRESS_SECRET_HETZNER_DNS}, qits-2618): the edge writes the zone's records and
+     * its DNS-01 TXT records through qits-egress and holds no token. This run also reads the zone
+     * back with it ({@code dns-records}, the closing report) and never logs it.
      */
     Optional<String> dnsHetznerToken();
 
-    /** Existing Swarm secret containing the Hetzner token, for repeat bootstraps. */
+    /**
+     * NO LONGER READ (qits-2618): the name of a swarm secret the seed edge used to mount. Kept only
+     * so a run that sets it alone is refused with the replacement named
+     * ({@code DomainTokens.hetznerTokenRefusal}) rather than silently left without a token.
+     */
     Optional<String> dnsHetznerSecret();
 
     /**

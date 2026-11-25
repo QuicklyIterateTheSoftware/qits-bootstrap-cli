@@ -336,8 +336,10 @@ forced. Add to that list rather than deviating quietly.
   bearer, values never printed. **The TLS PEM paths, the reload period, and ACME on/production are
   the edge image's own defaults now (qits-2009)**: a row is stated only where this installation
   differs from them — `QITS_EDGE_ACME_ENABLED` only to turn ACME off, `QITS_EDGE_ACME_MODE` only
-  for a mode other than production — and the email, the Hetzner token and the extra SANs are stated
-  whenever ACME is on, because the image has no default for any of those three. **Its place is the
+  for a mode other than production — and the email and the extra SANs are stated whenever ACME is
+  on, because the image has no default for either. The Hetzner token is stated beside them but is
+  **qits-egress's** row, `QITS_EGRESS_SECRET_HETZNER_DNS` (qits-2618): the edge calls Hetzner
+  through qits-egress and holds no token, and the seed stack mounts no swarm secret for it. **Its place is the
   whole ordering argument**: after `environment`, which proves the seed deployer answers writes,
   and immediately before the first `seed-deploy-*`, because every deployment reads the rows — the
   edge's ACME account rows above all, or its cutover orders no certificate for the domain it is

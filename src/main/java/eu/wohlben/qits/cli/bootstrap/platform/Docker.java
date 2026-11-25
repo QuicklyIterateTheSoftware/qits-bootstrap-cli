@@ -422,20 +422,6 @@ public class Docker {
                 out);
     }
 
-    /** {@code secret inspect <name>}: whether the swarm holds a secret by that name. */
-    public ProcessResult secretInspect(String name, Consumer<String> out) {
-        return runner.run(Cmd.of(SwarmArgv.secretInspect(BIN, name)), out);
-    }
-
-    /**
-     * {@code secret create <name> -}, the value fed on stdin and masked: it is never an argument,
-     * so it never reaches a process listing.
-     */
-    public ProcessResult secretCreate(String name, String value, Consumer<String> out) {
-        return runner.run(Cmd.of(SwarmArgv.secretCreateFromStdin(BIN, name)).stdin(value)
-                .mask(value), out);
-    }
-
     /**
      * The name of every swarm service on this node's swarm.
      * <p>

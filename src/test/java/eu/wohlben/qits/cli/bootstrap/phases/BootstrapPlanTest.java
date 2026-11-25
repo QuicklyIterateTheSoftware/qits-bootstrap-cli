@@ -684,8 +684,8 @@ class BootstrapPlanTest {
      * <p>
      * The PLACEHOLDER certificate goes before the seed stack, because the edge is started there with
      * a keystore and a keystore whose files are missing fails startup. There is no ACME phase at all:
-     * the running edge orders its certificate itself over DNS-01 — TXT records written through
-     * Hetzner DNS — so no listener, and no port 80, has to reach this host for it.
+     * the running edge orders its certificate itself over DNS-01 — TXT records written at Hetzner
+     * through qits-egress — so no listener, and no port 80, has to reach this host for it.
      * <p>
      * There is no zone phase between them any more: the edge writes the zone's records itself, and
      * {@code dns-records} only reads them back, after the seed stack is up.
@@ -696,6 +696,11 @@ class BootstrapPlanTest {
 
         assertThat(ids).containsSubsequence("compose-file", "edge-cert", "seed-stack", "seed-health");
         assertThat(ids).doesNotContain("dns-zone", "edge-acme");
+        // No swarm secret for the edge's DNS token either (qits-2618): the edge calls Hetzner
+        // through qits-egress, and the token is qits-egress's route secret, a deployer setting.
+        assertThat(ids).doesNotContain("edge-dns-secret");
+        assertThat(ids).containsSubsequence("idp-clients", "compose-file");
+        assertThat(ids.get(ids.indexOf("compose-file") - 1)).isEqualTo("idp-clients");
     }
 
     /**

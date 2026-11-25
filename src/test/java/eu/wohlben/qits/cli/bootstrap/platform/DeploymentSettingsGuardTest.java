@@ -49,7 +49,9 @@ class DeploymentSettingsGuardTest {
                 "qits-deployments QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD",
                 "qits-deployments QITS_PLATFORM_DEPLOYMENTS_REGISTRY_AUTH",
                 "qits-edge QITS_EDGE_ACME_EMAIL",
-                "qits-edge QITS_EDGE_ACME_HETZNER_TOKEN",
+                // The Hetzner token is qits-egress's route secret since qits-2618; the edge calls
+                // through it and holds none.
+                "qits-egress QITS_EGRESS_SECRET_HETZNER_DNS",
                 "qits-edge QITS_EDGE_DNS_NODE_ADDRESS",
                 "qits-ci QITS_CI_DAEMON_VERSION_OVERRIDE",
                 "qits-githost QITS_REPOSITORIES_GIT_PUSH_TOKEN",
@@ -78,6 +80,8 @@ class DeploymentSettingsGuardTest {
         assertThat(value(settings, "qits-githost", "QITS_REPOSITORIES_GIT_PUSH_TOKEN"))
                 .isEqualTo(value(settings, "qits-projects", "QITS_REPOSITORIES_GIT_PUSH_TOKEN"))
                 .isEqualTo("push-token-secret");
+        assertThat(value(settings, "qits-egress", "QITS_EGRESS_SECRET_HETZNER_DNS"))
+                .isEqualTo("hetzner-secret");
     }
 
     @Test
@@ -89,7 +93,7 @@ class DeploymentSettingsGuardTest {
                 .extracting(s -> s.application() + " " + s.key())
                 .containsExactlyInAnyOrder(
                         "qits-deployments QITS_PLATFORM_DEPLOYMENTS_POSTGRES_ADMIN_PASSWORD",
-                        "qits-edge QITS_EDGE_ACME_HETZNER_TOKEN",
+                        "qits-egress QITS_EGRESS_SECRET_HETZNER_DNS",
                         "qits-githost QITS_REPOSITORIES_GIT_PUSH_TOKEN",
                         "qits-projects QITS_REPOSITORIES_GIT_PUSH_TOKEN",
                         "qits-oci-postgresql POSTGRES_PASSWORD");
@@ -109,7 +113,7 @@ class DeploymentSettingsGuardTest {
         List<String> plain = keys(DeploymentSettings.of(inputs(8080, List.of(), "")));
         assertThat(plain).doesNotContain("qits-deployments QITS_PORT",
                 "qits-deployments QITS_ARTIFACTS_REGISTRY_HOST", "qits-ci QITS_ARTIFACTS_REGISTRY_HOST",
-                "qits-edge QITS_EDGE_ACME_HETZNER_TOKEN", "qits-edge QITS_EDGE_DNS_NODE_ADDRESS",
+                "qits-egress QITS_EGRESS_SECRET_HETZNER_DNS", "qits-edge QITS_EDGE_DNS_NODE_ADDRESS",
                 "qits-edge QITS_EDGE_ACME_ADDITIONAL_NAMES");
 
         List<DeploymentSettings.Setting> moved = DeploymentSettings.of(
@@ -130,7 +134,7 @@ class DeploymentSettingsGuardTest {
 
         assertThat(keys(settings)).contains("qits-edge QITS_EDGE_ACME_ENABLED")
                 .doesNotContain("qits-edge QITS_EDGE_ACME_MODE", "qits-edge QITS_EDGE_ACME_EMAIL",
-                        "qits-edge QITS_EDGE_ACME_HETZNER_TOKEN",
+                        "qits-egress QITS_EGRESS_SECRET_HETZNER_DNS",
                         "qits-ci QITS_CI_DAEMON_VERSION_OVERRIDE");
         // The image's own default is ACME on, so this installation states it only to turn it off.
         assertThat(value(settings, "qits-edge", "QITS_EDGE_ACME_ENABLED")).isEqualTo("false");

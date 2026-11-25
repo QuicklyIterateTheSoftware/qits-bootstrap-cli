@@ -4,14 +4,13 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The edge's TLS contract, on the seed stack and in the deployed edge's settings. What these pin is the one thing
- * that made a green boot end on a self-signed certificate: the DEPLOYED edge and the SEED edge read
- * their DNS-01 token from different places, and only one of the two has a swarm secret to read.
+ * The edge's TLS contract, on the seed stack and in the deployed settings. What these pin since
+ * qits-2618: NO edge reads a Hetzner token any more — seed or deployed. The edge calls Hetzner through
+ * qits-egress, and the token is qits-egress's route secret, written as a deployer setting.
  */
 class DomainTokensTest {
 
@@ -19,45 +18,40 @@ class DomainTokensTest {
 
     private static Map<String, String> tokens() {
         return DomainTokens.of("wohlben.dev", "staging", "hostmaster@wohlben.dev",
-                TOKEN, Optional.empty(), List.of(), "198.51.100.4");
+                List.of(), "198.51.100.4");
     }
 
     /**
-     * <b>The deployed edge is handed the token as a VALUE, and no file.</b> The deployer starts a
-     * successor with its settings rows, and it mounts no swarm secrets, so the file the seed reads
-     * names nothing on the successor. The edge prefers the file whenever it is set, which is why
-     * the setting is the value form: with the file, every reconciliation failed on
-     * {@code NoSuchFileException} once a minute and the platform kept the placeholder (measured
-     * 2026-09-05).
+     * <b>The token is qits-egress's route secret, as a VALUE, and the edge has none</b>
+     * (qits-2618). The edge sends its Hetzner calls to qits-egress's {@code hetzner} route with its
+     * own bearer; qits-egress injects {@code QITS_EGRESS_SECRET_HETZNER_DNS}. The deployer mounts
+     * no swarm secrets, so it is the value form, and masked.
      */
     @Test
-    void theDeployedEdgeGetsTheTokenValueAndNoFile() {
+    void theTokenIsQitsEgressesRouteSecretAndTheEdgeHasNone() {
         List<DeploymentSettings.Setting> settings = DeploymentSettings.of(
                 new DeploymentSettings.Inputs("prod", "wohlben.dev", 8080, true, "staging",
                         "hostmaster@wohlben.dev", TOKEN, "198.51.100.4", List.of(), "pg", "push",
                         ""));
 
-        assertThat(settings).filteredOn(s -> s.application().equals("qits-edge"))
-                .extracting(DeploymentSettings.Setting::key)
-                .contains("QITS_EDGE_ACME_HETZNER_TOKEN")
-                .doesNotContain("QITS_EDGE_ACME_HETZNER_TOKEN_FILE");
-        assertThat(settings).filteredOn(s -> s.key().equals("QITS_EDGE_ACME_HETZNER_TOKEN"))
+        assertThat(settings).filteredOn(s -> s.value().equals(TOKEN))
                 .singleElement()
-                .satisfies(s -> assertThat(s.value()).isEqualTo(TOKEN))
+                .satisfies(s -> assertThat(s.application()).isEqualTo("qits-egress"))
+                .satisfies(s -> assertThat(s.key()).isEqualTo("QITS_EGRESS_SECRET_HETZNER_DNS"))
                 .satisfies(s -> assertThat(s.secret()).isTrue());
+        assertThat(settings).extracting(DeploymentSettings.Setting::key)
+                .noneMatch(key -> key.startsWith("QITS_EDGE_ACME_HETZNER_TOKEN"));
     }
 
     /**
-     * <b>Both edges are told the node address, beside the token</b> (qits-2293): it is what the
-     * edge writes {@code node.<domain>} with, and without it qits-2292's records stay unwritten. A
-     * plain row, because an address is no secret.
+     * <b>Both edges are told the node address</b> (qits-2293): it is what the edge writes
+     * {@code node.<domain>} with, and without it qits-2292's records stay unwritten. A plain row,
+     * because an address is no secret.
      */
     @Test
-    void bothEdgesAreToldTheNodeAddressBesideTheToken() {
+    void bothEdgesAreToldTheNodeAddress() {
         String compose = tokens().get("EDGE_TLS");
-        assertThat(compose).contains("QITS_EDGE_ACME_HETZNER_TOKEN_FILE: "
-                + "/run/secrets/qits-dns-hetzner-token\n")
-                .contains("\n      QITS_EDGE_DNS_NODE_ADDRESS: 198.51.100.4\n");
+        assertThat(compose).contains("\n      QITS_EDGE_DNS_NODE_ADDRESS: 198.51.100.4\n");
 
         List<DeploymentSettings.Setting> settings = DeploymentSettings.of(
                 new DeploymentSettings.Inputs("prod", "wohlben.dev", 8080, true, "production",
@@ -70,40 +64,45 @@ class DomainTokensTest {
                 .satisfies(s -> assertThat(s.secret()).isFalse());
     }
 
-    /** The seed edge keeps the swarm secret and the file form: it is a stack service, and can. */
+    /**
+     * <b>The seed edge mounts no swarm secret and reads no token file</b> (qits-2618): it calls
+     * through qits-egress like the deployed one, so the stack file carries no secret at all.
+     */
     @Test
-    void theSeedEdgeStillMountsTheSecretAndReadsTheFile() {
-        String compose = tokens().get("EDGE_TLS");
+    void theSeedEdgeMountsNoSecretAndReadsNoTokenFile() {
+        Map<String, String> tokens = tokens();
 
-        assertThat(compose).contains(
-                "QITS_EDGE_ACME_HETZNER_TOKEN_FILE: /run/secrets/qits-dns-hetzner-token");
-        assertThat(compose).contains("target: qits-dns-hetzner-token");
-        // And it never carries the value: a stack file is not the place for one.
-        assertThat(compose).doesNotContain(TOKEN);
+        assertThat(tokens.get("EDGE_TLS")).doesNotContain("QITS_EDGE_ACME_HETZNER_TOKEN")
+                .doesNotContain("/run/secrets/").doesNotContain("secrets:")
+                .doesNotContain("qits-dns-hetzner-token");
+        assertThat(tokens.get("LETSENCRYPT_VOLUME")).doesNotContain("secrets:")
+                .doesNotContain("qits-dns-hetzner-token");
+        assertThat(String.join("\n", tokens.values())).doesNotContain(TOKEN);
     }
 
     /**
-     * <b>A secret name alone is refused at preflight.</b> This program can create the secret and
-     * the seed edge can mount it, but the deployed one cannot — so a boot that held only a name
-     * would serve TLS all the way to the cutover and then quietly fall back to the placeholder.
+     * <b>A secret name alone is refused at preflight, naming the replacement</b> (qits-2618). The
+     * token has to reach qits-egress as a deployer setting, which is a value; a swarm secret's value
+     * never leaves the swarm, so a run holding only its name has nothing to write.
      */
     @Test
     void aSwarmSecretWithNoTokenValueIsRefused() {
         assertThat(DomainTokens.hetznerTokenRefusal(true, null, "qits-dns-hetzner-token-abc"))
-                .contains("QITS_DNS_HETZNER_TOKEN")
-                .contains("no swarm secrets");
+                .contains("QITS_DNS_HETZNER_SECRET is no longer read")
+                .contains("Set QITS_DNS_HETZNER_TOKEN")
+                .contains("QITS_EGRESS_SECRET_HETZNER_DNS");
         assertThat(DomainTokens.hetznerTokenRefusal(true, "  ", "some-secret")).isNotNull();
     }
 
     /** Everything else is allowed: a token given, or issuance off. */
     @Test
     void aRunThatCanHandOverATokenIsNotRefused() {
-        // The ordinary domain platform: a token, with or without a secret name beside it.
+        // The ordinary domain platform: a token, with or without a (now unread) secret name.
         assertThat(DomainTokens.hetznerTokenRefusal(true, TOKEN, "some-secret")).isNull();
         assertThat(DomainTokens.hetznerTokenRefusal(true, TOKEN, null)).isNull();
         // QITS_ACME_MODE=off: the edge keeps the placeholder on purpose.
         assertThat(DomainTokens.hetznerTokenRefusal(false, null, "some-secret")).isNull();
-        // Neither configured is a different failure, and the secret phase is where it is named.
+        // Neither configured is a different failure: dns-records names the missing token.
         assertThat(DomainTokens.hetznerTokenRefusal(true, null, null)).isNull();
     }
 
@@ -119,7 +118,7 @@ class DomainTokensTest {
     @Test
     void theEdgeIsToldTheDomainItReadsNamesAgainstEvenWithIssuanceOff() {
         Map<String, String> off = DomainTokens.of("wohlben.dev", "off",
-                "hostmaster@wohlben.dev", TOKEN, Optional.empty(), List.of());
+                "hostmaster@wohlben.dev", List.of());
 
         // STILL TOLD, AND TOLD WHATEVER ISSUANCE IS DOING — under the single name now. The ACME
         // block spells no domain of its own, because a certificate's domain and a router's domain
