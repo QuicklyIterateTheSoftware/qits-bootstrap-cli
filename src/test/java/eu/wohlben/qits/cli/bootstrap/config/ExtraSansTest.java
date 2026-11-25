@@ -3,6 +3,7 @@ package eu.wohlben.qits.cli.bootstrap.config;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -45,7 +46,7 @@ class ExtraSansTest {
     @Test
     void anOrdinaryPlatformOrdersNoAdditionalNames() {
         Map<String, String> tokens = eu.wohlben.qits.cli.bootstrap.platform.DomainTokens.of(
-                DOMAIN, "staging", "hostmaster@" + DOMAIN,
+                DOMAIN, "staging", "hostmaster@" + DOMAIN, "token", Optional.empty(),
                 ExtraSans.of(TestConfig.from(Map.of()), DOMAIN));
 
         assertThat(tokens.values()).noneMatch(value -> value.contains("ADDITIONAL_NAMES"));

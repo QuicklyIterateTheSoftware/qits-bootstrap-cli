@@ -338,8 +338,11 @@ forced. Add to that list rather than deviating quietly.
   differs from them — `QITS_EDGE_ACME_ENABLED` only to turn ACME off, `QITS_EDGE_ACME_MODE` only
   for a mode other than production — and the email and the extra SANs are stated whenever ACME is
   on, because the image has no default for either. The Hetzner token is stated beside them but is
-  **qits-egress's** row, `QITS_EGRESS_SECRET_HETZNER_DNS` (qits-2618): the edge calls Hetzner
-  through qits-egress and holds no token, and the seed stack mounts no swarm secret for it. **Its place is the
+  **qits-egress's** row, `QITS_EGRESS_SECRET_HETZNER_DNS` (qits-2618): the deployed edge calls
+  Hetzner through qits-egress and holds no token. The SEED edge alone talks to Hetzner directly —
+  the swarm secret, `QITS_EDGE_ACME_HETZNER_TOKEN_FILE` and `QITS_EDGE_ACME_HETZNER_API_URL` in the
+  stack file — because qits-egress is deployed by the train, which needs the certificate the seed
+  edge orders. **Its place is the
   whole ordering argument**: after `environment`, which proves the seed deployer answers writes,
   and immediately before the first `seed-deploy-*`, because every deployment reads the rows — the
   edge's ACME account rows above all, or its cutover orders no certificate for the domain it is

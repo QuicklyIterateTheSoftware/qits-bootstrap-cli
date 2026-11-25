@@ -745,10 +745,10 @@ public class PipelinePhases {
                     + "holds the PLACEHOLDER");
             lines.add("           certificate and browsers reject it. The edge orders it itself "
                     + "over DNS-01: it");
-            lines.add("           writes the _acme-challenge TXT records at Hetzner through "
-                    + "qits-egress, which holds QITS_DNS_HETZNER_TOKEN");
-            lines.add("           and keeps retrying. The usual reasons are that token, "
-                    + "qits-egress not running, or a name in the dns: lines");
+            lines.add("           writes the _acme-challenge TXT records at Hetzner with "
+                    + "QITS_DNS_HETZNER_TOKEN (the seed edge directly,");
+            lines.add("           the deployed edge through qits-egress) and keeps retrying. The "
+                    + "usual reasons are that token, qits-egress, or a name in the dns: lines");
             lines.add("           above that does not resolve yet. No port has to reach this host "
                     + "for it — port 80 plays no part.");
             lines.add("           Nothing is lost — rerun the boot, or issue it by hand from a "
@@ -2827,10 +2827,9 @@ public class PipelinePhases {
                 String edge = Docker.stackService(Docker.STACK,
                         PlatformModel.wireAlias("edge", boot.config.envName()));
                 throw new IllegalStateException(gaveUp.getMessage() + "\nThe seed edge writes "
-                        + "these records itself, with QITS_EDGE_DNS_NODE_ADDRESS, through "
-                        + "qits-egress, which holds the Hetzner token — so qits-egress has to be "
-                        + "running and grant the edge its hetzner route. Its `host records` log "
-                        + "lines say why it has not: docker service "
+                        + "these records itself, with QITS_EDGE_DNS_NODE_ADDRESS and the Hetzner "
+                        + "token, calling Hetzner directly. Its `host records` log lines say why "
+                        + "it has not: docker service "
                         + "logs " + edge + " 2>&1 | grep 'host records'. Rerun once they are listed.");
             }
             ctx.note("node and " + relativeName(registry, domain) + " listed");

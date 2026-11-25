@@ -93,12 +93,13 @@ public final class DeploymentSettings {
                 settings.add(plain(edge, "QITS_EDGE_ACME_MODE", in.acmeMode()));
             }
             settings.add(plain(edge, "QITS_EDGE_ACME_EMAIL", in.acmeEmail()));
-            // THE TOKEN IS qits-egress'S, NOT THE EDGE'S (qits-2523, qits-2618). The edge sends its
-            // Hetzner calls — the DNS-01 TXT records and the address records — to qits-egress's
-            // `hetzner` route with its own qits bearer, and qits-egress injects the token held in
-            // its route secret QITS_EGRESS_SECRET_<NAME>. So the edge is given no token at all, and
-            // the one row that carries it is qits-egress's. A VALUE, because the deployer mounts no
-            // swarm secrets.
+            // THE TOKEN IS qits-egress'S, NOT THE DEPLOYED EDGE'S (qits-2523, qits-2618). The
+            // deployed edge sends its Hetzner calls — the DNS-01 TXT records and the address
+            // records — to qits-egress's `hetzner` route with its own qits bearer, and qits-egress
+            // injects the token held in its route secret QITS_EGRESS_SECRET_<NAME>. So the deployed
+            // edge is given no token at all, and the one row that carries it is qits-egress's. A
+            // VALUE, because the deployer mounts no swarm secrets. (The SEED edge alone calls
+            // Hetzner directly, from the swarm secret the stack file mounts — see DomainTokens.)
             if (present(in.hetznerToken())) {
                 settings.add(secret(PlatformModel.application("egress"),
                         "QITS_EGRESS_SECRET_HETZNER_DNS", in.hetznerToken()));

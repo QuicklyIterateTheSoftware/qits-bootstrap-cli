@@ -4161,10 +4161,41 @@ public class SeedPhases {
 
     // --- what a domain adds -----------------------------------------------------------------------
 
-    // NO edge-dns-secret PHASE ANY MORE (qits-2618). It created a content-named swarm secret for
-    // the SEED edge to mount; the edge reads no Hetzner token now — it calls through qits-egress,
-    // whose route secret is a deployer setting (DeploymentSettings) — so there is nothing to
-    // create. A secret a past run created is left in the swarm, unreferenced; remove it by hand.
+    /**
+     * Creates the immutable, content-versioned Swarm secret consumed by the SEED edge's DNS client.
+     * The seed edge alone calls Hetzner directly (qits-2618); the deployed edge goes through
+     * qits-egress, which gets the token as a deployer setting instead.
+     */
+    public Phase dnsHetznerSecret(String domain) {
+        return new Phase("edge-dns-secret", "store the edge DNS credential in Swarm", ctx -> {
+            if (Acme.mode(boot.config) == Acme.Mode.OFF) {
+                ctx.skip("QITS_ACME_MODE=off — no DNS credential is needed");
+            }
+            Optional<String> configuredSecret = boot.config.dnsHetznerSecret()
+                    .map(String::strip).filter(value -> !value.isEmpty());
+            if (configuredSecret.isPresent()) {
+                String name = configuredSecret.orElseThrow();
+                Boot.must(boot.docker.secretInspect(name, null),
+                        "configured edge DNS Swarm secret " + name + " does not exist");
+                ctx.note("kept " + name);
+                return;
+            }
+            String token = boot.config.dnsHetznerToken()
+                    .map(String::strip)
+                    .filter(value -> !value.isEmpty())
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "QITS_DNS_HETZNER_TOKEN is required for DNS-01 on " + domain));
+            String name = DomainTokens.secretName(token);
+            ProcessResult existing = boot.docker.secretInspect(name, null);
+            if (existing.ok()) {
+                ctx.note("kept " + name);
+                return;
+            }
+            ProcessResult created = boot.docker.secretCreate(name, token, ctx::log);
+            Boot.must(created, "creating the edge DNS Swarm secret failed");
+            ctx.note("created " + name);
+        });
+    }
 
     /**
      * <b>A self-signed certificate for the domain, so the edge can start at all.</b>
@@ -4538,6 +4569,7 @@ public class SeedPhases {
         String domain = boot.config.requiredDomain();
         values.putAll(DomainTokens.of(domain, Acme.mode(boot.config).word(),
                 Acme.email(boot.config, domain),
+                boot.config.dnsHetznerToken().orElse(""), boot.config.dnsHetznerSecret(),
                 // The names the derived wildcards cannot reach, and there are usually none: the
                 // edge works the per-environment AND per-project wildcards out for itself, so
                 // this is ad-hoc names only. Checked here, where a refusal is a message about a

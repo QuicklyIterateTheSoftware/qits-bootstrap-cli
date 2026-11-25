@@ -161,9 +161,9 @@ certificate** (owner ruling 2026-11-05). There is no loopback vhost to push thro
    serving the page on port 80; in the other modes it never held 443.
 2. The seed edge orders its Let's Encrypt certificate over DNS-01 itself (no listener needed) and
    routes `registry.qits.<domain>` to the seed qits-artifacts in code. It starts from its local
-   build, so nothing it needs comes out of the registry. Its DNS-01 and its records go through
-   qits-egress now, which the seed does not start — the open cold-boot gap under "The token is
-   qits-egress's".
+   build, so nothing it needs comes out of the registry, and it calls Hetzner directly with the
+   swarm-secret token — there is no cycle. Only the deployed edge goes through qits-egress (see "Two
+   holders of the token").
 3. `dns-records`, after `store-seed`: the Hetzner zone is read, never a resolver, until the seed edge
    has written `node.<domain>` and the `registry.qits.<domain>` CNAME — so the next phase's lookup is
    the first one and finds the record instead of caching NXDOMAIN.
@@ -251,8 +251,8 @@ the same names `qits-local-up.sh` read:
 | `QITS_PUBLIC_IP` | unset | **this host's public IPv4 address, and mandatory beside `QITS_DOMAIN`.** It is what the edge writes the node record with: the run hands it to the seed edge (`QITS_EDGE_DNS_NODE_ADDRESS` in the stack file) and to the deployed one (a settings row), the edge writes `node.<domain>` as an A record holding it, and every public name is a CNAME to that record. The run cannot learn it, because it is a container behind a NAT. Four dotted octets, no leading zeros; **a hostname is refused rather than resolved**, since the value becomes an A record a resolver later reads back. `--public-ip` for one run |
 | `QITS_ACME_MODE` | `staging` | **which Let's Encrypt directory the edge's certificate is ordered from**: `staging`, `production` or `off`. Staging by default and deliberately — production counts *failed* orders per registered domain per week, and the order most likely to fail is the first one, against records the world has not seen yet. Staging issues from an untrusted root, so a browser still refuses the certificate; it proves the records, the challenge and the reload for free. Flipping to production is one rerun with this set and **no redeploy**: the PEMs land on the `qits-edge-letsencrypt` volume under the same two names and the edge's TLS registry reloads them within the hour. `off` keeps the self-signed placeholder and prints the manual command. **A bootstrap refuses anything but `production`, before it starts**: this host's runner is an EDGE runner, and neither it nor docker accepts a staging or placeholder certificate — see phase 68. `--acme-mode` for one run |
 | `QITS_ACME_EMAIL` | `hostmaster@<domain>` | **the ACME account's contact**, where Let's Encrypt sends expiry warnings if a renewal ever stops happening. Derived rather than defaulted: `hostmaster` is the convention for the role that answers for a domain, so a platform with a domain has a working contact without a second knob to fill in. Set it when the mail for that domain is not read. `--acme-email` for one run |
-| `QITS_DNS_HETZNER_TOKEN` | unset | Hetzner Cloud token for the domain's zone. It is written as **qits-egress's** route secret, the masked deployer setting `QITS_EGRESS_SECRET_HETZNER_DNS`; the edge sends the zone's records and its DNS-01 TXT records through qits-egress and holds no token itself (qits-2618, see "The token is qits-egress's" below). The bootstrap also reads the zone back with it (`dns-records`, the closing report) and never prints it. Required when a domain uses `staging` or `production`; keep it out of source control. |
-| `QITS_DNS_HETZNER_SECRET` | unset | **No longer read (qits-2618).** It named a Swarm secret the seed edge mounted; the token now has to reach qits-egress as a deployer setting, which is a value, and a swarm secret's value never leaves the swarm. Set alone with ACME on, the run is refused at preflight and told to set `QITS_DNS_HETZNER_TOKEN`; beside a token it is ignored. A `qits-dns-hetzner-token-*` secret a past run created is no longer referenced by the stack and can be removed with `docker secret rm`. |
+| `QITS_DNS_HETZNER_TOKEN` | unset | Hetzner Cloud token for the domain's zone. It has two holders (qits-2618, see "Two holders of the token" below): the **seed** edge reads it from a swarm secret and calls Hetzner directly, and the masked deployer setting `QITS_EGRESS_SECRET_HETZNER_DNS` gives it to **qits-egress**, which the deployed edge calls through. The bootstrap also reads the zone back with it (`dns-records`, the closing report) and never prints it. Required when a domain uses `staging` or `production`; keep it out of source control. |
+| `QITS_DNS_HETZNER_SECRET` | unset | Name of an existing Swarm secret containing the Hetzner token, for repeat bootstraps; when set, bootstrap verifies it and mounts it into the **seed** edge instead of creating one. It reaches the seed edge only: qits-egress's setting needs the value, so with ACME on a run that has the secret name and no `QITS_DNS_HETZNER_TOKEN` is refused at preflight, as before. |
 | `QITS_SKIP_BUILD` | `0` | 1 = the seed images and the daemon binary exist; skip to the stack deploy and the pushes |
 | `QITS_SHIP_MAINS` | `0` | **ignored**, and kept only so an old `.env` does not fail a boot. It built and deployed the local mains instead of RESTORING each deployable's and publisher's newest release tag. A deployment is `qits/<app>:<version>` now and an unreleased main has no version, so there is nothing to point at — and honouring the build half alone would seed from main beside deployments of the last release, which is the Flyway mismatch the restore exists to prevent. A run that sets it is warned in the `sources` phase. Deploying your commit means cutting a release request in qits-projects |
 | `QITS_CI_CONCURRENT_BUILDS` | computed | **how many builds this host's target runs at once, and it is sized by this host's memory rather than written down**: `max(1, floor((total GiB - 10) / 6))` — 1 on a 16 GB host, 2 from 22 GB, 3 from 28 GB. It is the `min_ci` the `target-localhost` phase declares the `localhost` target with, and the CI share of the `QITS_SYSTEM_RUNNER_SLOTS` it starts the target's runner with (`TargetSlots`); it sized this host's CI runner until the target replaced it (qits-1547), and it sized qits-ci's own in-process executor the same way before qits-443 retired that executor. A step's `docker build` is served by the HOST daemon, so a GraalVM-native build runs OUTSIDE the step container's `QITS_CI_MEMORY_LIMIT=4g` and costs gigabytes of its own; two of them on a 16 GB host with no swap livelocked the machine on 2026-08-22, and the literal `2` this replaces is what wrote an operator's hand-set `1` back over on the next re-bootstrap. Set this to use a number of your own instead |
@@ -324,23 +324,23 @@ writes the rest itself, each RRSet labelled `qits-exposure=public` or `=private`
     @         A      the apex, the browser door
     <host>    CNAME  node.<domain>. — one per name the edge serves, the platform's own included
 
-**The token is qits-egress's (qits-2523, qits-2618).** The edge sends every Hetzner call — the
-DNS-01 TXT records and the address records — to qits-egress's `hetzner` route
-(`http://<env>-qits-egress:8081/hetzner/v1/…`) with its own qits bearer, and qits-egress injects the
-token. So `deployment-settings` writes `QITS_DNS_HETZNER_TOKEN` as qits-egress's masked row
-`QITS_EGRESS_SECRET_HETZNER_DNS`, and no row on qits-edge; the seed stack mounts no swarm secret into
-the edge and sets no `QITS_EDGE_ACME_HETZNER_TOKEN_FILE`. The bootstrap's own zone reads
-(`dns-records`, the closing report) keep their copy of the token: they run on this machine, before
-any platform exists.
+**Two holders of the token (qits-2523, qits-2618).** The **deployed** qits-edge holds no token: it
+sends every Hetzner call — the DNS-01 TXT records and the address records — to qits-egress's
+`hetzner` route (`http://<env>-qits-egress:8081/hetzner/v1/…`, its default
+`qits.edge.acme.hetzner-api-url`) with its own qits bearer, and qits-egress injects the token. So
+`deployment-settings` writes `QITS_DNS_HETZNER_TOKEN` as qits-egress's masked row
+`QITS_EGRESS_SECRET_HETZNER_DNS`, and no token row on qits-edge.
 
-**Cold-boot gap, open:** qits-egress is neither in the seed stack nor seed-deployed — the train
-deploys it, after `registry-ready`. Once the edge release that calls through qits-egress is the
-estate's, a COLD boot's seed edge can write no record and order no certificate until qits-egress
-runs, while everything that could bring qits-egress up (any deployer pull through
-`registry.qits.<domain>`, qits-egress's own idp at `https://idp.qits.<domain>`, the grant table the
-deployer pushes to `https://egress.qits.<domain>`) needs that certificate first. `dns-records` then
-times out. A warm platform, whose edge already holds a certificate and whose qits-egress is deployed,
-is not affected. See the qits-2618 thread for the analysis and the options.
+The **seed** edge alone talks to Hetzner directly, to get the platform's first certificate and
+records: `edge-dns-secret` puts the token in a content-named swarm secret, and the stack file mounts
+it with `QITS_EDGE_ACME_HETZNER_TOKEN_FILE` and sets `QITS_EDGE_ACME_HETZNER_API_URL=https://api.hetzner.cloud/v1/`.
+It has to: qits-egress is not in the seed — the train deploys it, after `registry-ready` — and
+everything that brings it up (the deployer's pull through `registry.qits.<domain>`, qits-egress's idp
+at `https://idp.qits.<domain>`, the grant table the deployer pushes to `https://egress.qits.<domain>`)
+needs that certificate first. Through qits-egress, a cold boot would wait at `dns-records` for ever.
+The edge's seed deploy replaces it with the deployed edge, which renews through qits-egress from then
+on. The bootstrap's own zone reads (`dns-records`, the closing report) keep their copy of the token
+too: they run on this machine.
 
 **No wildcard is needed, and none should be created.** A wildcard beside the edge's exact records is
 the mixed zone behind the qits-2273 and qits-2280 outages; delete any that a past bootstrap told you
@@ -376,7 +376,8 @@ certbot answers every name of a multi-name order before the CA validates any of 
 certificate over the environment and app vhosts cannot be ordered through this endpoint. The apex is
 the name that matters: it is the browser's door and the passkey's relying party. Covering the rest
 wants a wildcard, a wildcard wants DNS-01, and DNS-01 wants a TXT record written in the zone
-mid-order — which the edge now does itself, through the Hetzner API (by way of qits-egress).
+mid-order — which the edge now does itself, through the Hetzner API (the seed edge directly, the
+deployed edge by way of qits-egress).
 
 **A wildcard covers ONE label, and the edge derives one per depth it routes at.** Names are read
 right to left, `<app>[.<env>].<project>.<domain>`, so the set is the apex, `*.<domain>` for every

@@ -130,15 +130,19 @@ class StackFileTest {
     void theNetworkIsExternalAndDeclaredOnce() {
         assertThat(stack()).contains("  qits-net:\n").contains("    name: qits-net\n")
                 .contains("    external: true\n");
-        // Declared once, and the only external object: the edge's DNS-01 token is no swarm
-        // secret any more (qits-2618) — it is qits-egress's route secret, a deployer setting.
+        // Declared once. The one other external object is the SEED edge's DNS-01 token, a swarm
+        // secret this run creates before the stack is deployed (the deployed edge has none since
+        // qits-2618: it calls through qits-egress).
         assertThat(stack().lines().filter(line -> line.equals("  qits-net:")).count())
                 .isEqualTo(1);
         assertThat(stack().lines().filter(line -> line.equals("    external: true")).count())
-                .isEqualTo(1);
-        assertThat(stack()).doesNotContain("qits-dns-hetzner-token")
-                .doesNotContain("QITS_EDGE_ACME_HETZNER_TOKEN");
-        assertThat(stack().lines()).doesNotContain("secrets:");
+                .isEqualTo(2);
+        assertThat(stack()).contains("secrets:\n  qits-dns-hetzner-token-missing:\n"
+                + "    external: true");
+        // The seed edge alone talks to Hetzner directly; the deployed edge's default is the
+        // egress gateway.
+        assertThat(block(stack(), alias("edge")))
+                .contains("QITS_EDGE_ACME_HETZNER_API_URL: https://api.hetzner.cloud/v1/");
     }
 
     /**
