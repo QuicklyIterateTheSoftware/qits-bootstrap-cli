@@ -103,8 +103,8 @@ public final class PlatformModel {
      * deployer reads its settings store and nothing reads qits-configuration, so the boot neither
      * builds, clones nor deploys it.
      * <p>
-     * <b>qits-certificates joined on 2026-11-25 (qits-2524, qits-2645), and it is in the seed
-     * because a container needs something to trust before it can dial the edge over TLS.</b> It is
+     * <b>qits-certificates joined on 2026-11-25 (qits-2524, qits-2645), and it is in the seed so
+     * that the containers the platform creates from then on can be given its trust anchors.</b> It is
      * the platform's own certificate authority: a {@code resources: idp:client} service with no
      * database, built here like every other CORE entry and seed-deployed directly after the idp —
      * every seed-deployed application that reads its trust bundle comes after it in
@@ -192,9 +192,9 @@ public final class PlatformModel {
      * and the train is where the release image replaces it.
      * <p>
      * <b>qits-certificates sits directly after the idp</b> (qits-2524, qits-2645): it is the
-     * platform's own certificate authority, and every other seed-deployed application that will
-     * read its trust bundle — the mirror, the artifacts store, the git host, the orchestrator, ci,
-     * the target's own service and the edge last of all — has to find it already deployed. Unlike
+     * platform's own certificate authority, and every application that hands its trust bundle to
+     * the containers it creates (the deployer, workspaces, ci, agents, projects) finds it already
+     * deployed. Unlike
      * the rest it has no hand-started container in the seed stack to be adopted from: the deployer
      * creates it fresh here, the same way it would for any ordinary application with nothing
      * running yet.
