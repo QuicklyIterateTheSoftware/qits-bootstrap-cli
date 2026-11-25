@@ -102,10 +102,24 @@ public final class PlatformModel {
      * qits-configuration joined beside it and left again with its retirement (qits-1396): the
      * deployer reads its settings store and nothing reads qits-configuration, so the boot neither
      * builds, clones nor deploys it.
+     * <p>
+     * <b>qits-certificates joined on 2026-11-25 (qits-2524, qits-2645), and it is in the seed
+     * because a container needs something to trust before it can dial the edge over TLS.</b> It is
+     * the platform's own certificate authority: a {@code resources: idp:client} service with no
+     * database, built here like every other CORE entry and seed-deployed directly after the idp —
+     * every seed-deployed application that reads its trust bundle comes after it in
+     * {@link #SEED_DEPLOYED}. <b>It carries no block in the generated seed STACK, and that is
+     * deliberate rather than an oversight</b> ({@code ComposeTemplateTest} and {@code StackFileTest}
+     * name the exception where they would otherwise walk every {@code CORE} entry): nothing the
+     * compose window brings up dials anything over TLS that needs a trust anchor from it — every
+     * address on {@code qits-net} is a plain wire alias, never the public edge — so there is no
+     * hand-started container for the deployer to adopt. The deployer creates it fresh, through the
+     * manual door, once the images are in the store, exactly the way it creates any other
+     * seed-deployed application with nothing running yet.
      */
     public static final List<String> CORE = List.of(
             "edge", "mirror", "artifacts", "githost", "projects", "ci",
-            "containers", "deployments", "idp", "events", "system",
+            "containers", "deployments", "idp", "certificates", "events", "system",
             "workspaces", "oci-postgresql");
 
     /**
@@ -176,10 +190,18 @@ public final class PlatformModel {
      * Each of them is deployed a SECOND time in the train, from the image its release run builds:
      * a seed image is the release's code built by this run rather than by the release's own run,
      * and the train is where the release image replaces it.
+     * <p>
+     * <b>qits-certificates sits directly after the idp</b> (qits-2524, qits-2645): it is the
+     * platform's own certificate authority, and every other seed-deployed application that will
+     * read its trust bundle — the mirror, the artifacts store, the git host, the orchestrator, ci,
+     * the target's own service and the edge last of all — has to find it already deployed. Unlike
+     * the rest it has no hand-started container in the seed stack to be adopted from: the deployer
+     * creates it fresh here, the same way it would for any ordinary application with nothing
+     * running yet.
      */
     public static final List<String> SEED_DEPLOYED = List.of(
-            "idp", "projects", "workspaces", "events", "mirror", "artifacts", "githost",
-            "containers", "ci", "system", "edge");
+            "idp", "certificates", "projects", "workspaces", "events", "mirror", "artifacts",
+            "githost", "containers", "ci", "system", "edge");
 
     /**
      * <b>There is no platform plane, and this is where it used to be listed.</b>
@@ -427,6 +449,7 @@ public final class PlatformModel {
 
             // The environment tier's services.
             Map.entry("artifacts", "qits-artifacts-service"),
+            Map.entry("certificates", "qits-certificates-service"),
             Map.entry("ci", "qits-ci-service"),
             Map.entry("containers", "qits-containers-service"),
             Map.entry("docs", "qits-docs-service"),
@@ -818,6 +841,15 @@ public final class PlatformModel {
      * {@code deployments.yml} declares {@code idp:client}, and every git-host, qits-projects,
      * qits-system and qits-containers call it makes carries a bearer minted from that client — so a
      * seed container started without one answers every workspace start with a 401 from a peer.
+     * <p>
+     * <b>qits-certificates does NOT join this list, despite declaring {@code idp:client} too</b>
+     * (qits-2524, qits-2645). It is a CORE entry with no block in the seed stack ({@link #CORE}):
+     * nothing hand-starts it, so it never runs before the deployer does, and {@code seed-deploy-}
+     * creates it fresh through the manual door once the images are in the store — by which point
+     * qits-deployments, the idp and the registry are all already up. That is exactly the ORDINARY
+     * path {@code idp:client} takes for every application the train deploys later, so this list has
+     * nothing to do for it. This list is only for the applications that speak to a peer, or BECOME
+     * the deployer, before any deployer-managed creation path could answer for them.
      */
     public static final List<String> SEED_IDP_CLIENT_APPS =
             List.of("projects", "ci", "containers", "deployments", "edge", "system", "workspaces");

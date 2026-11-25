@@ -392,8 +392,9 @@ class BootstrapPlanTest {
 
             List<String> seedDeploys = ids.stream().filter(id -> id.startsWith("seed-deploy-"))
                     .toList();
-            assertThat(seedDeploys).containsExactly("seed-deploy-idp", "seed-deploy-projects",
-                    "seed-deploy-workspaces", "seed-deploy-events", "seed-deploy-mirror", "seed-deploy-artifacts",
+            assertThat(seedDeploys).containsExactly("seed-deploy-idp", "seed-deploy-certificates",
+                    "seed-deploy-projects", "seed-deploy-workspaces", "seed-deploy-events",
+                    "seed-deploy-mirror", "seed-deploy-artifacts",
                     "seed-deploy-githost", "seed-deploy-containers", "seed-deploy-ci",
                     "seed-deploy-system", "seed-deploy-edge");
             // Contiguous: nothing builds, publishes or pushes in the middle of step two.

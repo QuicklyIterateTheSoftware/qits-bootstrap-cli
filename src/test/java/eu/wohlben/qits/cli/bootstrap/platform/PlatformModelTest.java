@@ -218,6 +218,7 @@ class PlatformModelTest {
         Map<String, String> expected = new LinkedHashMap<>();
         // The environment tier's services.
         expected.put("artifacts", "qits-artifacts-service");
+        expected.put("certificates", "qits-certificates-service");
         expected.put("ci", "qits-ci-service");
         expected.put("containers", "qits-containers-service");
         expected.put("docs", "qits-docs-service");
@@ -398,7 +399,7 @@ class PlatformModelTest {
                 "observability", "idp", "stt", "projects",
                 "workspaces", "events", "mirror", "artifacts", "githost", "docs",
                 "containers", "ci", "orchestrator", "maintenance", "system",
-                "edge", "deployments");
+                "edge", "deployments", "certificates");
         // qits-configuration was a deployable until its retirement (qits-765, qits-1396).
         assertThat(ESTATE.deploys()).doesNotContain("configuration");
         // postgres is neither here nor a deployable: it is the seed database, a seed-only service
@@ -435,9 +436,12 @@ class PlatformModelTest {
         // qits-workspaces is in it since 2026-10-30 (qits-889), because phase 1 builds everything
         // the platform runs in steady state. qits-configuration joined with it and left with its
         // retirement (qits-1396).
+        // qits-certificates is in it since 2026-11-25 (qits-2524, qits-2645): the platform's own
+        // certificate authority, built here like everything else but with no block in the
+        // generated seed STACK — see PlatformModel.CORE's own javadoc.
         assertThat(PlatformModel.CORE).containsExactlyInAnyOrder(
                 "edge", "mirror", "artifacts", "githost", "projects", "ci",
-                "containers", "deployments", "idp", "events", "system",
+                "containers", "deployments", "idp", "certificates", "events", "system",
                 "workspaces", "oci-postgresql");
         // Every seed service is also deployed through the pipeline afterwards, with ONE exception:
         // postgres stays the seed service for good, because re-reading its spec from qits-githost
@@ -456,7 +460,7 @@ class PlatformModelTest {
     @Test
     void theSeedDeployedAreTheCoreLessTheDeployerInTrainOrder() {
         assertThat(PlatformModel.SEED_DEPLOYED).containsExactly(
-                "idp", "projects", "workspaces", "events", "mirror", "artifacts",
+                "idp", "certificates", "projects", "workspaces", "events", "mirror", "artifacts",
                 "githost", "containers", "ci", "system", "edge");
         assertThat(PlatformModel.SEED_DEPLOYED).doesNotContain("deployments", "oci-postgresql");
     }
@@ -1138,14 +1142,14 @@ class PlatformModelTest {
      * bootstrap since. A derivation asserted against itself would pass while the platform and the
      * template disagreed.
      * <p>
-     * Nineteen entries: the environment, the seventeen deployables' browser labels, and the one edge
+     * Twenty entries: the environment, the eighteen deployables' browser labels, and the one edge
      * app label no application name spells ({@code registry} is qits-artifacts). {@code idp} and {@code edge} are in it twice over — from
      * the derived deploys and by name — and appear once.
      */
     @Test
     void theReservedSlugsAreTheEnvironmentAndEveryServiceLabel() {
         assertThat(PlatformModel.reservedSlugs("dev", ESTATE.deploys())).isEqualTo("dev,"
-                + "artifacts,ci,containers,deployments,docs,edge,events,"
+                + "artifacts,certificates,ci,containers,deployments,docs,edge,events,"
                 + "githost,idp,maintenance,mirror,observability,orchestrator,projects,registry,"
                 + "stt,system,workspaces");
     }

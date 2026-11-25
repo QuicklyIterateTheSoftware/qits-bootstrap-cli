@@ -1819,6 +1819,7 @@ class PipelinePhasesTest {
         assertThat(runner.argv.stream().filter(command -> command.contains("push"))
                 .map(List::getLast)).containsExactly(
                 "registry.qits.qits-dev.eu/qits/qits-idp:" + RELEASE,
+                "registry.qits.qits-dev.eu/qits/qits-certificates:" + RELEASE,
                 "registry.qits.qits-dev.eu/qits/qits-projects:" + RELEASE,
                 "registry.qits.qits-dev.eu/qits/qits-workspaces:" + RELEASE,
                 "registry.qits.qits-dev.eu/qits/qits-events:" + RELEASE,
@@ -1858,7 +1859,7 @@ class PipelinePhasesTest {
         assertThatThrownBy(() -> new PipelinePhases(rerun).seedImagesPublish().action()
                 .run(new CiLogStreamTest.Recorder()))
                 .isInstanceOf(PhaseSkipped.class)
-                .hasMessageContaining("the registry holds all 11 seed-deployed images");
+                .hasMessageContaining("the registry holds all 12 seed-deployed images");
         assertThat(again.lines()).noneMatch(line -> line.startsWith("docker tag")
                 || line.contains(" push "));
     }

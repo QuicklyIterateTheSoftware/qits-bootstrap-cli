@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-certificates</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+    <!-- The domain: the certificate authority (control/). No datasource, no persistence unit, no
+         Flyway: the anchors are files on the /work/ca volume. Internal, not published: `service`
+         builds it from source.
+
+         The directory is `domain/` while the artifactId is `qits-certificates-domain`: generic
+         coordinates would collide in the shared ~/.m2 every workspace container mounts. -->
+    <artifactId>qits-certificates-domain</artifactId>
+    <name>qits-certificates :: domain</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <!-- JcaX509v3CertificateBuilder, JcaPKCS10CertificationRequest, PEMParser and
+                 JcaPEMWriter. The version is the Quarkus BOM's, the same as bcprov's below. -->
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Declared DIRECTLY next to bcpkix, as qits-edge declares it: bcpkix needs it on the
+                 classpath (ASN.1, X500Name), and a native image must see it as an application
+                 dependency. NOT registered as a JCA provider: every key and every signature is the
+                 JDK's (SunEC). Should a native build ever need the provider registered, the edge's
+                 shape applies: quarkus-security + quarkus.security.security-providers=BC. -->
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+        </dependency>
+        <dependency>
+            <!-- state.json, read and written through the tree model (no reflection, so nothing to
+                 register for the native image). The version is the Quarkus BOM's. -->
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <dependency>
+            <!-- Pure unit tests. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- The consuming Quarkus app needs an index of this jar's beans. -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

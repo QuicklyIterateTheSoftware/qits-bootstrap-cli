@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- qits-certificates — the platform's own certificate authority (epic qits-2524).
+
+         It keeps the platform's trust anchors (EC P-384 roots) on its private volume /work/ca and
+         signs short-lived leaf certificates for the platform callers allowed to ask for one. See
+         README.md for the design. THERE IS NO DATABASE: every durable fact is a file on the volume.
+
+         Two modules, as qits-agents has:
+
+           domain   the certificate authority itself: keys, anchors, the leaf policy (Bouncy Castle
+                    bcpkix for the X.509 and PKCS#10 structures, the JDK's SunEC for every key and
+                    every signature).
+           service  the deployable: health, the REST surface under /certificates/api, and the
+                    packaged-artifact stories.
+
+         There is no parent and no BOM of the estate's own: a clone of THIS repository alone must
+         build. The Quarkus platform and the platform jars are pinned here, at the versions
+         qits-agents-service pins. Exact versions, never ranges: qits-maintenance bumps each one. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-certificates</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>qits-certificates</name>
+
+    <modules>
+        <module>domain</module>
+        <module>service</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <!-- ConsumerPactVerificationTest (test scope), as qits-agents pins it. -->
+        <pact.version>4.7.5</pact.version>
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.version>3.40.1</quarkus.platform.version>
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+        <failsafe-plugin.version>${surefire-plugin.version}</failsafe-plugin.version>
+        <jandex-plugin.version>3.4.0</jandex-plugin.version>
+        <qits.arch-rules.version>2026.1113.14706</qits.arch-rules.version>
+        <!-- Machine identity: the rollout gate every sibling shares. -->
+        <qits.auth-core.version>2026.1106.507</qits.auth-core.version>
+        <!-- Caller stamping on inbound and outbound HTTP. -->
+        <qits.http-core.version>2026.1106.507</qits.http-core.version>
+        <!-- OTLP export to qits-observability through the edge, with the `qits` client's bearer. -->
+        <qits.telemetry-core.version>2026.1106.507</qits.telemetry-core.version>
+        <!-- The user-story framework and the recording service mocks (test scope): the userflow
+             catalogue (stories/**IT) boots the PACKAGED service against idp.MockIdp and emits its
+             documentation under service/target/userstories/, which the java-service release recipe
+             requires and publishes as @userflows/qits-certificates. -->
+        <qits.userflows.version>2026.1106.205</qits.userflows.version>
+        <qits.service-mock.version>2026.1106.507</qits.service-mock.version>
+        <qits.maven.repository.url>https://registry.qits.wohlben.eu/artifacts/maven/maven</qits.maven.repository.url>
+        <!-- Integration tests run against a PACKAGED artifact; a plain `mvn verify` skips them. -->
+        <skipITs>true</skipITs>
+        <argLine/>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <!-- Also manages org.bouncycastle:bcprov-jdk18on and bcpkix-jdk18on (one version
+                     for both), which `domain` declares directly. -->
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-arch-rules</artifactId>
+                <version>${qits.arch-rules.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-auth-core</artifactId>
+                <version>${qits.auth-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-http-core</artifactId>
+                <version>${qits.http-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-telemetry-core</artifactId>
+                <version>${qits.telemetry-core.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-userflows</artifactId>
+                <version>${qits.userflows.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-service-mock</artifactId>
+                <version>${qits.service-mock.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>au.com.dius.pact.provider</groupId>
+                <artifactId>junit5</artifactId>
+                <version>${pact.version}</version>
+            </dependency>
+            <!-- The reactor's own module, so `service` depends on it version-less. -->
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-certificates-domain</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <repositories>
+        <!-- The platform's own Maven repository, where the qits-* jars above are published. The id
+             must stay `qits-maven` (.qits-maven-settings.xml mirrors exactly that id). -->
+        <repository>
+            <id>qits-maven</id>
+            <url>${qits.maven.repository.url}</url>
+        </repository>
+    </repositories>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>${quarkus.platform.group-id}</groupId>
+                    <artifactId>quarkus-maven-plugin</artifactId>
+                    <version>${quarkus.platform.version}</version>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${compiler-plugin.version}</version>
+                    <configuration>
+                        <parameters>true</parameters>
+                        <useIncrementalCompilation>false</useIncrementalCompilation>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${surefire-plugin.version}</version>
+                    <configuration>
+                        <systemPropertyVariables>
+                            <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                        </systemPropertyVariables>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <version>${failsafe-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>io.smallrye</groupId>
+                    <artifactId>jandex-maven-plugin</artifactId>
+                    <version>${jandex-plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>make-index</id>
+                            <goals>
+                                <goal>jandex</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>

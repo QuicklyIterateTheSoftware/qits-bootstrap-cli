@@ -104,6 +104,12 @@ class StackFileTest {
 
         assertThat(keysOnly(stack)).doesNotContain("restart: unless-stopped");
         for (String app : PlatformModel.CORE) {
+            // qits-certificates has no block in this file at all (qits-2645,
+            // PlatformModel.CORE's own javadoc): nothing hand-starts it, so there is no deploy
+            // block of its own to check.
+            if (app.equals("certificates")) {
+                continue;
+            }
             assertThat(block(stack, alias(app))).as("the deploy block of %s", app)
                     .contains("    deploy:")
                     .contains("      replicas: 1")

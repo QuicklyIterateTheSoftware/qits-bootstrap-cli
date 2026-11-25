@@ -1,0 +1,30 @@
+# How qits-deployments deploys this repository. It reads this file from the git host at the built
+# sha, so the answer travels with the commit; carrying the file at all is what says it deploys.
+#
+# THE DEPLOYED IDENTITY: the application qits-certificates, its image qits/qits-certificates, its
+# idp client and its private volume all carry this name.
+application: qits-certificates
+
+# https://certificates.qits.<domain>/certificates: the API at /certificates/api, health and the API
+# document at /certificates/q.
+host: certificates
+routes: /certificates
+
+# PRIVATE: the platform's certificate authority stays off the internet. qits-edge-private serves
+# certificates.qits.<domain>; platform callers reach it there, through the edge, as every platform
+# host is reached.
+exposure: private
+
+# NO DATABASE. One service client: idp:client is this application's own qits-idp client,
+# `<env>-qits-certificates`, the bearer the telemetry exporters present.
+resources: idp:client
+
+health_path: /certificates/q/health/ready
+
+# THE CA'S ONLY STORE: the anchors' certificates, keys and states, on the private volume
+# `qits-certificates-ca`, mounted at /work/ca (docker/Dockerfile creates it, uid 1001, mode 0700).
+volumes: private:ca:/work/ca
+
+# The volume has ONE writer: the old container stops before the new one starts. Replicas stay at
+# the default of 1.
+update_order: stop-first

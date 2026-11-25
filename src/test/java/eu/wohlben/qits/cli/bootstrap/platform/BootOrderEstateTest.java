@@ -72,7 +72,7 @@ class BootOrderEstateTest {
         assertThat(order.deploys()).containsExactlyInAnyOrder(
                 "observability", "idp", "stt", "projects", "workspaces", "events", "mirror",
                 "artifacts", "githost", "docs", "containers", "ci", "orchestrator", "maintenance",
-                "system", "edge", "deployments");
+                "system", "edge", "deployments", "certificates");
         assertThat(order.deploys()).as(BootOrder.SEED_HELD_RESOURCES
                 + " is the seed's: its provider declares a deployment and is no deploy")
                 .doesNotContain("oci-postgresql");
@@ -137,6 +137,7 @@ class BootOrderEstateTest {
             pair("idp", "githost"), pair("idp", "docs"), pair("idp", "containers"),
             pair("idp", "ci"), pair("idp", "orchestrator"), pair("idp", "maintenance"),
             pair("idp", "system"), pair("idp", "edge"), pair("idp", "deployments"),
+            pair("idp", "certificates"),
             // mirror, artifacts, githost, ci
             pair("mirror", "artifacts"), pair("mirror", "githost"), pair("mirror", "ci"),
             pair("artifacts", "githost"), pair("artifacts", "ci"), pair("githost", "ci"),

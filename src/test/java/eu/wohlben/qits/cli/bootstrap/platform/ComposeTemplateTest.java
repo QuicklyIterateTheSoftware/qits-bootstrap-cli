@@ -331,6 +331,11 @@ class ComposeTemplateTest {
         // qualified one, so it answered to both through the seed window. One name now.
         assertThat(PlatformModel.CORE).isNotEmpty();
         for (String name : PlatformModel.CORE) {
+            // qits-certificates has no block in this file at all (qits-2645, PlatformModel.CORE's
+            // own javadoc): there is no alias line to find, and serviceBlock refuses an empty one.
+            if (name.equals("certificates")) {
+                continue;
+            }
             String alias = PlatformModel.wireAlias(name, ENV);
             String block = serviceBlock(compose, alias);
             assertThat(block.lines().map(String::strip).filter(l -> l.equals("- " + alias)).toList())
@@ -349,17 +354,24 @@ class ComposeTemplateTest {
 
         // The service KEY is the name now: a stack ignores container_name, and what a peer
         // resolves is the service — under qits_<alias> and under the bare alias both.
+        // qits-certificates is CORE's one exception (qits-2645, PlatformModel.CORE's own javadoc):
+        // it has no hand-started container for the deployer to adopt, so there is nothing here to
+        // look for.
         for (String name : PlatformModel.CORE) {
+            if (name.equals("certificates")) {
+                continue;
+            }
             assertThat(compose).contains("\n  " + PlatformModel.wireAlias(name, ENV) + ":\n");
         }
-        // THE SEED IS EXACTLY CORE, and the negative half is the rule rather than a list of names.
-        // qits-orchestrator, qits-maintenance and qits-system are
+        // THE SEED IS EXACTLY CORE LESS qits-certificates, and the negative half is the rule rather
+        // than a list of names. qits-orchestrator, qits-maintenance and qits-system are
         // deployed through the pipeline like every other ordinary application: nothing calls them
         // during the seed window, so nothing waits on them — and a seed block for one of them
         // would be a service standing beside its own deployed container, which no `depends_on`
         // and no rerun ever recovers from.
         assertThat(serviceKeys(compose)).containsExactlyInAnyOrderElementsOf(
                 PlatformModel.CORE.stream()
+                        .filter(name -> !name.equals("certificates"))
                         .map(name -> PlatformModel.wireAlias(name, ENV))
                         .toList());
         // One component replaced both: neither ancestor is in the seed any more.
@@ -1462,12 +1474,18 @@ class ComposeTemplateTest {
         String url = "http://prod-qits-observability:8080";
         String compose = ComposeTemplate.compose(tokens());
 
-        // qits-oci-postgresql is the one exception, and it is not an omission: it is upstream
+        // qits-oci-postgresql is one exception, and it is not an omission: it is upstream
         // postgres, which has no exporter to point anywhere.
         for (String name : PlatformModel.CORE) {
             if (name.equals("oci-postgresql")) {
                 assertThat(serviceBlock(compose, PlatformModel.wireAlias(name, ENV)))
                         .doesNotContain("QITS_OBSERVABILITY_URL");
+                continue;
+            }
+            // qits-certificates is the other: it has no block in this file at all (qits-2645,
+            // PlatformModel.CORE's own javadoc), so there is no service to look for either, and
+            // serviceBlock refuses an empty one.
+            if (name.equals("certificates")) {
                 continue;
             }
             assertThat(serviceBlock(compose, PlatformModel.wireAlias(name, ENV)))

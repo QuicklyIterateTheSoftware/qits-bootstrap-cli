@@ -110,6 +110,11 @@ public final class BootstrapPlan {
             phases.add(seed.seedImage("ci"));
             phases.add(seed.seedImage("deployments"));
             phases.add(seed.seedImage("idp"));
+            // THE PLATFORM'S OWN CERTIFICATE AUTHORITY (qits-2524, qits-2645), right after the idp
+            // whose client it holds. No database and no client bundle: its reactor resolves
+            // qits-arch-rules, qits-auth-core, qits-http-core and qits-telemetry-core out of the
+            // file repository, nothing more.
+            phases.add(seed.seedImage("certificates"));
             // The orchestrator's own image. Its reactor resolves four qits jars out of the file
             // repository. It has no client bundle to place: the service serves machines and there
             // is no SPA to stand in for.

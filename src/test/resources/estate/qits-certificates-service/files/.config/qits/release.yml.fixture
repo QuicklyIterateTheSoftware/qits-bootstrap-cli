@@ -1,0 +1,26 @@
+# How this repository releases: the packaged java-service recipe (qits-ci-service
+# ci/src/main/resources/release-archetypes/java-service.yml) — build and test the fold, then push the
+# one image and publish the declared contracts.
+archetype: java-service
+
+artifacts:
+  - { type: docker, name: qits/qits-certificates, sbom: .sbom/sbom.json }
+  # The committed OpenAPI document, published as `@apidocs/qits-certificates` on every release
+  # (OpenApiSchemaExportTest keeps it current).
+  - { type: docs, name: "@apidocs/qits-certificates", path: docs/openapi.yml }
+
+# The userflow catalogue (service/src/test/.../stories/**IT), published as
+# @userflows/qits-certificates: the java-service recipe's build-and-test step requires
+# */target/userstories from the verify.
+userflows: qits-certificates
+
+# The provider golden masters: the platform packages `golden-masters/` as
+# `eu.wohlben.qits:qits-certificates-golden-masters`. contracts/GoldenMasterRecordingTest records
+# them: `one ACTIVE anchor` and `one ACTIVE and one PENDING anchor` (qits-2524 C2); the leaves
+# door's states come with C3.
+#
+# No `entities:` and no `database:`: there is no database. No pacts yet: this service calls no
+# provider of its own (the idp's discovery and JWKS reads come with the first protected door).
+contracts:
+  application: qits-certificates
+  golden-masters: { from: golden-masters/, packages: [maven] }
