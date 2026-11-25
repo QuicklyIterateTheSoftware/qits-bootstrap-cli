@@ -52,11 +52,11 @@
              (qits-1149). One pin per provider that publishes golden masters; qits-maintenance
              bumps them, and a changed answer the bootstrap cannot read goes red here before it
              ships. Do not hand-edit them to chase a release. -->
-        <qits.projects-golden-masters.version>2026.1122.200309</qits.projects-golden-masters.version>
+        <qits.projects-golden-masters.version>2026.1125.32444</qits.projects-golden-masters.version>
         <qits.events-golden-masters.version>2026.1120.65904</qits.events-golden-masters.version>
         <qits.ci-golden-masters.version>2026.1119.60052</qits.ci-golden-masters.version>
         <qits.deployments-golden-masters.version>2026.1119.141022</qits.deployments-golden-masters.version>
-        <qits.idp-golden-masters.version>2026.1123.194348</qits.idp-golden-masters.version>
+        <qits.idp-golden-masters.version>2026.1125.71255</qits.idp-golden-masters.version>
         <qits.githost-golden-masters.version>2026.1109.41303</qits.githost-golden-masters.version>
         <qits.artifacts-golden-masters.version>2026.1124.154841</qits.artifacts-golden-masters.version>
         <!-- qits-system's (qits-1535): the targets doors the target-* phases call. The pinned
